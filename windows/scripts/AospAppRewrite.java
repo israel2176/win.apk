@@ -241,7 +241,38 @@ public class AospAppRewrite {
             "checkCallingOrSelfPermission(Ljava/lang/String;)I",
             "enforcePermission(Ljava/lang/String;IILjava/lang/String;)V",
             "enforceCallingPermission(Ljava/lang/String;Ljava/lang/String;)V",
-            "enforceCallingOrSelfPermission(Ljava/lang/String;Ljava/lang/String;)V");
+            "enforceCallingOrSelfPermission(Ljava/lang/String;Ljava/lang/String;)V",
+            // Receivers, broadcasts and services: Win.apk's dispatch (its receiver registry, the
+            // host's broadcasts, ServiceRegistry and the broker's services), until they are
+            // ActivityThread's over the in-process activity manager (step A3).
+            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;",
+            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;I)Landroid/content/Intent;",
+            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;)Landroid/content/Intent;",
+            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;I)Landroid/content/Intent;",
+            "unregisterReceiver(Landroid/content/BroadcastReceiver;)V",
+            "sendBroadcast(Landroid/content/Intent;)V",
+            "sendBroadcast(Landroid/content/Intent;Ljava/lang/String;)V",
+            "sendBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/os/Bundle;)V",
+            "sendOrderedBroadcast(Landroid/content/Intent;ILjava/lang/String;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;Landroid/os/Bundle;)V",
+            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;)V",
+            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
+            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/os/Bundle;)V",
+            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/os/Bundle;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
+            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
+            "sendStickyBroadcast(Landroid/content/Intent;)V",
+            "sendStickyBroadcast(Landroid/content/Intent;Landroid/os/Bundle;)V",
+            "removeStickyBroadcast(Landroid/content/Intent;)V",
+            "startService(Landroid/content/Intent;)Landroid/content/ComponentName;",
+            "startForegroundService(Landroid/content/Intent;)Landroid/content/ComponentName;",
+            "stopService(Landroid/content/Intent;)Z",
+            "bindService(Landroid/content/Intent;ILjava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
+            "bindService(Landroid/content/Intent;Landroid/content/Context$BindServiceFlags;Ljava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
+            "bindService(Landroid/content/Intent;Landroid/content/ServiceConnection;I)Z",
+            "bindService(Landroid/content/Intent;Landroid/content/ServiceConnection;Landroid/content/Context$BindServiceFlags;)Z",
+            "bindIsolatedService(Landroid/content/Intent;ILjava/lang/String;Ljava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
+            "bindIsolatedService(Landroid/content/Intent;Landroid/content/Context$BindServiceFlags;Ljava/lang/String;Ljava/util/concurrent/Executor;Landroid/content/ServiceConnection;)Z",
+            "unbindService(Landroid/content/ServiceConnection;)V",
+            "updateServiceGroup(Landroid/content/ServiceConnection;II)V");
 
     /** The in-process system services: AIDL interface -> the plain class that answers it
      *  (windows/java/aosp_app). */
