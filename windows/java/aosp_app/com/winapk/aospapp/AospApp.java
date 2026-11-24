@@ -59,6 +59,8 @@ public final class AospApp {
     final Intent launch;
     private final Runnable onTaskEmpty;
     private Runnable onMoveToBack;
+    java.util.function.Predicate<Intent> hostStart;
+    java.util.function.BiConsumer<String[], com.macapk.loader.SpecialAccessHandler.PermissionSink> hostPermissions;
 
     private AospApp(ApplicationInfo info, Configuration config, Resolver resolver, ClassLoader cl,
                     PackageManager pm, Intent launch, Consumer<Application> beforeOnCreate, Runnable empty) {
@@ -102,6 +104,8 @@ public final class AospApp {
         AospApp app = new AospApp(s.info, s.config, null, s.classLoader, s.packageManager, s.launch,
                 s.beforeApplicationOnCreate, s.taskEmpty);
         app.onMoveToBack = s.moveToBack;
+        app.hostStart = s.hostStart;
+        app.hostPermissions = s.hostPermissions;
         return start(app);
     }
 

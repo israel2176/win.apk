@@ -17,6 +17,14 @@ public final class AospAppHost implements AppHost {
 
     @Override public boolean started() { return AospApp.get() != null; }
 
+    @Override public android.app.Activity topActivity() {
+        AospApp app = AospApp.get();
+        android.app.ActivityThread thread = android.app.ActivityThread.currentActivityThread();
+        if (app == null || thread == null) return null;
+        android.os.IBinder token = app.tasks.topToken();
+        return token != null ? thread.getActivity(token) : null;
+    }
+
     @Override public boolean terminate(long timeoutMs) {
         AospApp app = AospApp.get();
         if (app == null) return true;
@@ -33,6 +41,26 @@ public final class AospAppHost implements AppHost {
     @Override public void hostMinimized() {
         AospApp app = AospApp.get();
         if (app != null) app.tasks.handler.post(app.tasks::toBack);
+    }
+
+    @Override public com.macapk.loader.SpecialAccessHandler.Cover hostCover(boolean opaque) {
+        return new com.macapk.loader.SpecialAccessHandler.Cover() {
+            @Override public void cover() {
+                AospApp app = AospApp.get();
+                if (app != null) app.tasks.handler.post(() -> app.tasks.cover(opaque));
+            }
+
+            @Override public void uncover() { uncoverWithResult(null); }
+
+            @Override public void uncoverWithResult(Runnable result) {
+                AospApp app = AospApp.get();
+                if (app == null) {
+                    if (result != null) result.run();
+                    return;
+                }
+                app.tasks.handler.post(() -> app.tasks.uncover(result));
+            }
+        };
     }
 
     @Override public void configurationChanged(android.content.res.Configuration next) {

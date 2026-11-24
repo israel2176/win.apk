@@ -2940,6 +2940,9 @@ public final class Boot {
                     + " starts again when it is brought back");
             try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
         };
+        start.hostStart = ActivityHost::macapkStartOnHost;
+        start.hostPermissions = (perms, sink) -> SpecialAccessHandler.requestPermissions(
+                android.app.ActivityThread.currentApplication(), perms, sink, ActivityHost.hostCover(false));
         start.moveToBack = () -> {
             try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
         };

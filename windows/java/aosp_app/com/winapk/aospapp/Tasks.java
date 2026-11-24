@@ -169,6 +169,56 @@ public final class Tasks {
 
     boolean inBackground() { return inBackground; }
 
+    // ---- The host's windows over the task (com.macapk.loader.SpecialAccessHandler.Cover) ----
+
+    private Record covered;
+
+    /** A window of the host's over the app (as an activity of the system's would be): the resumed
+     *  top paused, and stopped too when the window hides it. */
+    void cover(boolean opaque) {
+        Record r = top();
+        if (r == null || r.state != State.RESUMED) return;
+        covered = r;
+        if (opaque) {
+            r.state = State.STOPPING;
+            ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+            tx.setLifecycleStateRequest(StopActivityItem.obtain(0));
+            schedule(tx);
+        } else {
+            pause(r, false);
+        }
+    }
+
+    /** The host's window went: `result` (its HostResult's deliverNow) first, then the covered
+     *  activity resumed with it, if it is still the top. */
+    void uncover(Runnable result) {
+        if (result != null) result.run();
+        Record r = covered;
+        covered = null;
+        if (r != null && r == top() && !r.finishing && !inBackground) resume(r);
+        else if (r == null) {
+            Record t = top();
+            if (t != null && t.state == State.RESUMED && !t.results.isEmpty()) resumeWithResults(t);
+        }
+    }
+
+    /** ActivityRecord.sendResult: the result kept on the record; one that is resumed gets it now
+     *  (paused for it, then resumed), any other at its next resume. */
+    void deliverResult(IBinder token, String who, int requestCode, int resultCode, Intent data, boolean now) {
+        Record r = find(token);
+        if (r == null || r.finishing) return;
+        r.results.add(new ResultInfo(who, requestCode, resultCode, data));
+        if (now && r.state == State.RESUMED && covered != r) resumeWithResults(r);
+    }
+
+    private void resumeWithResults(Record r) {
+        ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+        tx.addCallback(ActivityResultItem.obtain(new ArrayList<>(r.results)));
+        r.results.clear();
+        tx.setLifecycleStateRequest(ResumeActivityItem.obtain(false, false));
+        schedule(tx);
+    }
+
     /** ActivityTaskManagerService.updateGlobalConfigurationLocked, then each activity's
      *  ActivityRecord.ensureActivityConfiguration: the process gets the configuration
      *  (ConfigurationChangeItem: its Resources, the Application's onConfigurationChanged); an
@@ -223,6 +273,26 @@ public final class Tasks {
         int i = task.indexOf(r);
         for (int j = i - 1; j >= 0; j--) if (!task.get(j).finishing) return task.get(j);
         return null;
+    }
+
+    /** The top launched record's token, from any thread: asked on the system thread, which never
+     *  waits for another (ActivityThread maps the token to the instance). */
+    IBinder topToken() {
+        java.util.concurrent.Callable<IBinder> q = () -> {
+            for (int i = task.size() - 1; i >= 0; i--) {
+                Record r = task.get(i);
+                if (!r.finishing && r.launched) return r.token;
+            }
+            return null;
+        };
+        try {
+            if (handler.getLooper().isCurrentThread()) return q.call();
+            java.util.concurrent.FutureTask<IBinder> f = new java.util.concurrent.FutureTask<>(q);
+            handler.post(f);
+            return f.get();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     boolean isRoot(Record r) { return !task.isEmpty() && task.get(0) == r; }

@@ -92,7 +92,12 @@ public final class ActivityHost {
         return a;
     }
 
-    public static Activity peek() { return stack.peek(); }
+    public static Activity peek() {
+        // The app's process is AOSP's: the top of its task, as ActivityThread has the instance.
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) return appHost.topActivity();
+        return stack.peek();
+    }
 
     /** True while `a` is STOPPED because another activity covers it
      *  (stopForNewTop). Read by GLSurfaceView's GL-BEHIND-TOP detector. */
@@ -2424,6 +2429,10 @@ public final class ActivityHost {
      * already did that, and the result is delivered anyway.
      */
     static SpecialAccessHandler.Cover hostCover(final boolean opaque) {
+        // The app's process is AOSP's: its task manager pauses (and stops) the top activity for the
+        // host's window and brings it back, as for an activity of the system's over it.
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) return appHost.hostCover(opaque);
         return new SpecialAccessHandler.Cover() {
             private Activity covered;
             @Override public void cover() {
@@ -2478,6 +2487,14 @@ public final class ActivityHost {
      * wrapper or not. Anything else returns false (unhandled), which is the
      * same observable result as a device with no app registered for it.
      */
+    /** A start no activity of the app answers, offered to the host (AppHost.Start.hostStart): the
+     *  browser, mail, a share, an install, a settings page, a picker, the camera...; true when the
+     *  host took it. A result it produces goes to the HostResult offered for `intent`
+     *  (HostResults). */
+    public static boolean macapkStartOnHost(Intent intent) {
+        return resolveImplicitToHost(intent);
+    }
+
     private static boolean resolveImplicitToHost(Intent intent) {
         // The intent under resolution, which for a chooser is the one INSIDE it.
         Intent real = unwrapChooser(intent);

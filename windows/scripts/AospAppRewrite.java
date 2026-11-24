@@ -87,6 +87,8 @@ public class AospAppRewrite {
             "android/app/SystemServiceRegistry.createServiceCache()[Ljava/lang/Object;",
             "android/os/storage/StorageManager.mkdirs(Ljava/io/File;)V",
             "android/os/FileUtils.sync(Ljava/io/FileOutputStream;)Z",
+            "android/content/pm/PackageManager.buildRequestPermissionsIntent([Ljava/lang/String;)Landroid/content/Intent;",
+            "android/content/pm/PackageManager.shouldShowRequestPermissionRationale(Ljava/lang/String;)Z",
             "android/content/pm/PackageManager.getPackageInfoAsUserCached(Ljava/lang/String;JI)Landroid/content/pm/PackageInfo;",
             "android/content/pm/PackageManager.getApplicationInfoAsUserCached(Ljava/lang/String;JI)Landroid/content/pm/ApplicationInfo;");
 

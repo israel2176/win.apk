@@ -25,13 +25,56 @@ public final class ActivityTaskService {
     public int startActivity(IApplicationThread caller, String callingPackage, String callingFeatureId,
             Intent intent, String resolvedType, IBinder resultTo, String resultWho, int requestCode,
             int flags, ProfilerInfo profilerInfo, Bundle options) {
+        if (android.content.pm.PackageManager.ACTION_REQUEST_PERMISSIONS.equals(intent.getAction())) {
+            return requestPermissions(intent, resultTo, resultWho, requestCode);
+        }
         ActivityInfo info = app.resolver.resolveActivity(intent, resolvedType);
-        if (info == null) return ActivityManager.START_INTENT_NOT_RESOLVED;
+        // Another package's activity runs in that package's process on a device: here the host
+        // takes it (another installed app, the system's settings pages, the browser...).
+        if (info == null || !app.info.packageName.equals(info.packageName)) {
+            return startOnHost(intent, resultTo, resultWho, requestCode);
+        }
         Intent copy = new Intent(intent);
         copy.setComponent(new android.content.ComponentName(info.packageName, info.name));
         app.tasks.handler.post(() -> {
             Tasks.Record from = resultTo != null ? app.tasks.find(resultTo) : null;
             app.tasks.start(info, copy, callingPackage, from, resultWho, from != null ? requestCode : -1);
+        });
+        return ActivityManager.START_SUCCESS;
+    }
+
+    /** A start no activity of the app answers: the host's hand-off (AppHost.Start.hostStart), as
+     *  another app or the system would take it on a device, run here on the caller's thread with
+     *  the requester's HostResult on offer; START_INTENT_NOT_RESOLVED when the host has nothing. */
+    private int startOnHost(Intent intent, IBinder resultTo, String resultWho, int requestCode) {
+        if (app.hostStart == null) return ActivityManager.START_INTENT_NOT_RESOLVED;
+        com.macapk.loader.app.HostResults.offer(intent, resultTo != null && requestCode >= 0
+                ? new AospHostResult(app.tasks, resultTo, resultWho, requestCode) : null);
+        try {
+            boolean taken = app.hostStart.test(intent);
+            System.err.println("[aosp-app] a start no activity of the app answers, " + (taken ? "taken" : "refused")
+                    + " by the host: " + intent);
+            return taken ? ActivityManager.START_SUCCESS : ActivityManager.START_INTENT_NOT_RESOLVED;
+        } finally {
+            com.macapk.loader.app.HostResults.offer(null, null);
+        }
+    }
+
+    /** PackageManager.ACTION_REQUEST_PERMISSIONS (Activity.requestPermissions): the permission
+     *  controller's prompt on a device, the host's here (AppHost.Start.hostPermissions); its answer
+     *  goes back as GrantPermissionsActivity's result: RESULT_OK with the names and the grants. */
+    private int requestPermissions(Intent intent, IBinder resultTo, String resultWho, int requestCode) {
+        String[] names = intent.getStringArrayExtra(android.content.pm.PackageManager.EXTRA_REQUEST_PERMISSIONS_NAMES);
+        if (names == null) names = new String[0];
+        AospHostResult result = resultTo != null && requestCode >= 0
+                ? new AospHostResult(app.tasks, resultTo, resultWho, requestCode) : null;
+        if (app.hostPermissions == null) return ActivityManager.START_INTENT_NOT_RESOLVED;
+        app.hostPermissions.accept(names, (perms, grants) -> {
+            if (result == null) return;
+            Intent data = new Intent(android.content.pm.PackageManager.ACTION_REQUEST_PERMISSIONS)
+                    .putExtra(android.content.pm.PackageManager.EXTRA_REQUEST_PERMISSIONS_NAMES, perms)
+                    .putExtra(android.content.pm.PackageManager.EXTRA_REQUEST_PERMISSIONS_RESULTS, grants);
+            result.deliver(android.app.Activity.RESULT_OK, data);
         });
         return ActivityManager.START_SUCCESS;
     }
