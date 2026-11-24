@@ -16,6 +16,12 @@ class Capture;
 // Microphone): false when it is off for desktop programs.
 bool microphone_allowed();
 
+// Whether the app holds android.permission.RECORD_AUDIO, asked as
+// AudioRecord asks it (AudioInputBridge.open: SpecialAccessStore.holds); true
+// when the store has no answer or no JVM runs. Any thread: one that is not a
+// Java thread is attached as a daemon.
+bool record_audio_permitted();
+
 // A capture of `channels` channels at `rate` Hz, buffering at least
 // `buffer_frames` (and a second) of what was captured; nothing is opened yet.
 std::shared_ptr<Capture> capture_create(int rate, int channels, int buffer_frames);
