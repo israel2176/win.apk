@@ -349,6 +349,20 @@ public final class DisplayConfig {
             + " [owner=" + android.os.Looper.macapkIsActivityThread() + "]");
         if (diff == 0 && !bounds && !metricsChanged) return;
 
+        // The app's process is AOSP's (com.macapk.loader.app.AppHost): its activity task manager
+        // sends the configuration to the process and its activities (onConfigurationChanged, or a
+        // relaunch), and AOSP's ResourcesManager updates every Resources, the system's included.
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) {
+            appHost.configurationChanged(next);
+            try { android.hardware.display.DisplayManager.macapkNotifyDisplayChanged(0); }
+            catch (Throwable t) { NativeLog.w(TAG, "display listener dispatch threw: " + t); }
+            if (!activityTransition && android.os.Looper.MACAPK_REAL_LOOPER) {
+                try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
+            }
+            return;
+        }
+
         // 1. RESOURCES. The index bakes qualifiers at construction, so build a
         //    new one only when an app or framework threshold (or orientation) is
         //    actually crossed; a drag that stays inside every bucket reuses it.

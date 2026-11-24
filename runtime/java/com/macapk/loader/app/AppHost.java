@@ -58,6 +58,10 @@ public interface AppHost {
     /** The window came back: the task comes to the front (restarted, started, resumed). */
     void taskToFront();
 
+    /** The display's configuration changed (the window resized or turned, the system's language
+     *  or night mode): the process's, then each activity's, as WindowManagerService sends them. */
+    void configurationChanged(Configuration next);
+
     /** aosp-app.jar's, or null when the class path has none (a plain JVM's test). */
     static AppHost get() { return Holder.HOST; }
 
