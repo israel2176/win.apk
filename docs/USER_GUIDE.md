@@ -377,20 +377,29 @@ phone.
 ## Screen readers
 
 Narrator, NVDA, JAWS and any other UI Automation tool can read an app's
-window: its buttons, texts, fields, check boxes, sliders and lists, as
-TalkBack reads them on a phone. Each view is named by its description or its
-text (a field by its hint, with its text as the value), in the order Android
-reads them (right to left in a Hebrew layout), and in the app's language, so
-the screen reader picks a Hebrew voice for a Hebrew app. The reader can press
-a button, check a box, type into a field, move a slider and scroll a list, and
-it follows the keyboard focus and hears what the app announces. Apps built
-with Compose, and other views that describe themselves to accessibility
-services, are read the same way.
+window: its buttons, texts, fields, check boxes, switches, sliders, lists,
+tabs and dialogs, as TalkBack reads them on a phone. Each view is named by its
+description or its text; a field by the label next to it (or its hint), with
+its text as the value; a list row by the texts inside it, read once. Items of
+a list say where they are ("3 of 12"), headings are headings, and everything
+is read in the order Android reads it (right to left in a Hebrew layout) and in
+the app's language, so the screen reader picks a Hebrew voice for a Hebrew
+app.
+
+The reader can press a button, check a box, flip a switch, type into a field,
+select text, move a slider, open or close what expands, choose a list item or
+a tab, and scroll a list or a page. In a text field it reads by character, by
+word and by line as the field shows them, and follows the caret and the
+selection. It follows the keyboard focus, and speaks what the app announces,
+a toast, and a live region's new text (a counter, a status line) as they
+change. Apps built with Compose, and other views that describe themselves to
+accessibility services, are read the same way. A web page in an app is read
+through Edge WebView2's own support.
 
 Nothing of this runs until a screen reader asks for the window: then the app
 is told an accessibility service is on, as when TalkBack is turned on, and the
-log says `accessibility: a screen reader is reading the app`. After a minute
-in which no screen reader asks, it is turned off again.
+app's log says `a screen reader reads the app`. After a minute in which no
+screen reader asks or listens, it is turned off again.
 
 ## Shortcuts and file types
 

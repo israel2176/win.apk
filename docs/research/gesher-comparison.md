@@ -115,8 +115,11 @@ Imported since: per-APK icons in Explorer (`windows/shell/`, a thumbnail handler
 itself where the other runtime's icon handler runs its runtime per file), and apps follow Windows' proxy
 (`java.net.useSystemProxies`; before it they went direct whatever Windows said). A per-app proxy was not
 added: Windows' proxy setting is the one place, as a phone's network settings are.
-Imported since too: the other runtime's UI Automation accessibility bridge (`windows/host/uia_provider.cpp`,
-`HostAccessibility.java`; providers answer from a snapshot the main thread publishes).
+Screen readers were first imported from the other runtime's UI Automation bridge, then replaced (November 2026)
+by Win.apk's own, written from Microsoft's and AOSP's documentation alone (`windows/host/uia_tree.h`,
+`uia_provider.cpp`, `HostAccessibility.java`, `aosp_views/AccessibilityTree.java`): snapshots sent on
+the views' own accessibility events instead of polling frames, events only while a client listens, the
+Text, ExpandCollapse and Selection patterns, names as TalkBack speaks them.
 
 ## Running both (`comparison`)
 
