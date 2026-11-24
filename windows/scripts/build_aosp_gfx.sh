@@ -46,7 +46,9 @@ FRAMEWORK="$OUT/lib/android-framework.jar"
 [[ -f "$FRAMEWORK" ]] || { echo "[aosp-gfx] no $FRAMEWORK: run build_java.sh first" >&2; exit 1; }
 # The closure below is what the whole framework lacks: a framework stage_runtime.sh has already
 # dropped the classes AOSP's resources and views shadow from would make it take those too.
-if unzip -Z1 "$FRAMEWORK" META-INF/winapk-aosp-shadowed.txt > /dev/null 2>&1; then
+# By the listing, not zipinfo's exit code (MSYS2's answers 0 for a name that is not there); no grep -q,
+# whose early exit would kill unzip with SIGPIPE under pipefail.
+if unzip -Z1 "$FRAMEWORK" | grep -x "META-INF/winapk-aosp-shadowed.txt" > /dev/null; then
     echo "[aosp-gfx] $FRAMEWORK lacks the classes stage_runtime.sh dropped: run build_java.sh again" >&2
     exit 1
 fi
