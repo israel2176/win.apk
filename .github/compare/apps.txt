@@ -2,6 +2,8 @@
 # <package> <versionCode> <SHA-256 of the APK>   # kind
 # Editor, Currency and Puzzles are in the other runtime's own e2e set (tests/e2e/apps.json) with the same pins.
 # F-Droid has no app bundles, so no bundle install is compared.
+# Until comparison is on main (where workflow_dispatch can see it), a push that changes this
+# list or the workflow runs it on that branch, with the inputs' defaults.
 org.billthefarmer.editor 198 343d17e11d0914e1a7708df2781580a0413e52501c0a41d91f7ef725d9615fe9 # Java views, no native code
 org.billthefarmer.currency 158 fb2583289e09bea7f1c8c3ed742db3a118769f7dc9df312adcb88a3d198a21aa # Java views, network
 org.fossify.notes 13 5a56e0e39cc488e1f3b947d3801006d3b7450ec73c67f03195c64c5fd3b6bced # Kotlin views
