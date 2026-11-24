@@ -886,6 +886,22 @@ New bugs found with AOSP views:
   font from the next start) remains possible should exact CJK metrics be
   wanted: `HostCjkFonts.setUp` already steps aside when
   `NotoSansCJK-Regular.ttc` is in the fonts folder.
+- **Built-in VP8/VP9/AV1/Opus decoders and WebM demuxing** (November 2026,
+  from the other runtime's `soft_video.cc` and `media_video_codecs.cmake`): libvpx,
+  dav1d, libopus and libwebm's mkvparser in `winapk-runtime.exe`, about 1.5 MB
+  installed and 0.6 MB in the installer (`windows/README.md` "Footprint").
+  `MediaCodec` opens Media Foundation's decoder first and these where it has
+  none or refuses the stream; `MediaExtractor` reads WebM/MKV files.
+  Checked: `winapk-soft-codecs-test` on Linux (ASan) and under Wine, the
+  wiring compiled with MinGW clang. **Not checked**: an app on real Windows
+  (ExoPlayer with a VP9/Opus WebM stream; NewPipe); the speed of the C-only
+  decoders at 1080p (decide then whether libvpx's SIMD and dav1d's assembly,
+  about twice the size and nasm in the build, are worth it). **Left**:
+  `MediaPlayer`/`VideoView` (Media Foundation's player alone: no WebM, no
+  VP9/AV1 without the codec packs); a WebM from an http(s) URL in
+  `MediaExtractor`; Vorbis and FLAC in `MediaCodec` (advertised by
+  `MediaCodecList`, fail at `start()`); WebM/Ogg/Opus encoding (the other runtime has
+  mkvmuxer and an Opus encoder); libhevc not taken (see "Footprint").
 - **Memory has no budget yet**: the smoke test records each app's peak working
   set; add a limit once a few CI runs show the spread.
 - **Frame time has only a collapse budget** (`windows/README.md` "Frame

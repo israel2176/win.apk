@@ -12,6 +12,7 @@
 - Your PC's hardware for apps: webcam, microphone, location, Bluetooth, game controllers, and your Windows folders.
 - **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account); Google Play opens inside the Win.apk window.
 - An app's window opens the moment you start it, showing its icon until the app has drawn, as on a phone; an install shows the app's own icon and name while it runs.
+- Video apps built on ExoPlayer and the like play VP8, VP9 and AV1 video and Opus sound, and read WebM files, without Microsoft's codec packs: the decoders are built into Win.apk.
 - An app's "take a photo" button opens a camera window on your webcam, or lets you choose a picture file.
 - English and Hebrew, light and dark.
 - Apps start about a fifth sooner than in 0.8 and use about 30 MB less memory each: Win.apk ships its own, smaller Java runtime and keeps the Java classes every app loads ready to map, a file it makes in the background after the first app start.

@@ -268,7 +268,8 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `ScanRecordTest` (`test/java/`) | `ScanRecord`'s advertisement parser and `ScanFilter` against the built jars |
 | `Camera2StillTest` (`test/java/`) | A camera2 still on the virtual camera against the built jars (run by hand, no natives): JPEG sizes in the stream map, a `TEMPLATE_STILL_CAPTURE` into an `ImageReader(JPEG)` giving a one-plane Image that `javax.imageio` decodes at the reader's size, EXIF orientation and thumbnail, one timestamp across Image and result, callback order, `maxImages`, a still beside a repeating YUV reader, a recorder-only session failing to configure |
 | `CameraOrientationTest` (`test/java/`) | The camera's orientation as apps compute with it, on a plain JVM (`MACAPK_LOG_LEVEL=7`): Scanovate's cheque-scanner angle `(orientation - rotation*90) mod 360` is 0 in a landscape and a portrait window, so are camera1's documented formula and CameraX's `rotationDegrees` at every rotation, back and front; AOSP's `degToTransform`, `getRotationTransform` and GLConsumer's matrix; the virtual camera as a fixed-focus camera without a torch (`setParameters` refusing "auto" and "torch", `autoFocus` answering true, camera2's AF OFF only, minimum focus distance 0, `setTorchMode` throwing); no accelerometer, gyroscope or other sensor in `SensorManager` or the features |
-| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists. Then what recording and `MediaExtractor` stand on: the demuxer on that file (tracks, csd, samples into the decoders), the H.264 and AAC encoders (codec config first, key frames, times; decoded back), and the MP4 writer (its file read back by the demuxer and the source reader). It prints the encoder MFTs the machine has and skips what needs a missing one |
+| `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists. Then what recording and `MediaExtractor` stand on: the demuxer on that file (tracks, csd, samples into the decoders), the H.264 and AAC encoders (codec config first, key frames, times; decoded back), and the MP4 writer (its file read back by the demuxer and the source reader). It prints the encoder MFTs the machine has and skips what needs a missing one. First, needing no Media Foundation codec (it runs under Wine): `test/video/color.webm` (VP9 + Opus) through the WebM demuxer and `Decoder` / `AudioDecoder`, Media Foundation's VP9 when installed, else libvpx, and libopus |
+| `winapk-soft-codecs-test <test/video dir>` | The built-in software decoders and the WebM demuxer alone (`host/soft_codecs.h`, `host/webm_demux.h`; it builds on Linux too): `test/video`'s `color.webm` (VP9 + Opus), `color_vp8.webm`, `color_vp9_10bit.webm` (profile 2) and `color_av1.webm`, each 1 s of 64x48 red over blue: tracks and formats, 25 pictures the right way up and coloured at 40 ms steps, a seek to the key frame at or before 0.5 s, the Opus tone's length (pre-skip dropped) and pitch, an MP4 not taken for a WebM |
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution and its order (libc at its place in `DT_NEEDED`, the global group before it), `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr`, a library opened by its Android path; `thread_local` destructors (a thread's end runs them; a child that leaves by `exit()` and by `ExitProcess` with destructors pending runs none and ends) |
@@ -1092,6 +1093,28 @@ its readers move; the 806 classes of `android-framework.jar` they shadow, 1.4 MB
 -2.5 MB installed and -2.5 MB in the installer; the Java2D fonts in `android-framework.jar`
 (6.9 MB, read only with `WINAPK_AOSP_GFX=0`) could go too (`docs/research/aosp-views.md`, "Making
 R1 and V1/V2 the default").
+
+The built-in software codecs (`host/soft_codecs.h`, `host/webm_demux.h`,
+`cmake/soft_codecs.cmake`) are compiled into `winapk-runtime.exe`; what each
+adds to a stripped, static Windows x64 executable (November 2026, clang -O2,
+measured one library at a time against an empty program), and under `xz -9e`,
+the installer's LZMA's estimate:
+
+| Library | Installed | In the installer |
+|---|---:|---:|
+| libvpx 1.15.2, VP8 and VP9 decoders, generic C, 10-bit included | 0.46 MB | 0.18 MB |
+| dav1d 1.5.1, AV1, C only, 8 and 10-bit | 0.64 MB | 0.25 MB |
+| libopus 1.5.2, the decoder (float) | 0.19 MB | 0.10 MB |
+| libwebm 1.0.0.31, mkvparser (with libstdc++ parts the runtime has anyway) | 0.19 MB | 0.08 MB |
+| In all, at most | 1.5 MB | 0.6 MB |
+
+They are C without assembly or intrinsics, as Android and the other runtime build them
+for x86-64: libvpx's x86 SIMD and dav1d's AVX2 assembly would make them
+several times faster at about twice the size, and need nasm in the build. Not
+taken: libhevc (H.265, the other runtime has it): Media Foundation's HEVC decoder comes
+with Microsoft's codec pack, the source has no release tarball to pin, and
+HEVC's patent pool covers a decoder shipped with an app, which the free
+formats above do not raise.
 
 What a user's data folder adds: once, for all apps, `cds\` (the framework
 archive, 40 MB) and `cache\` (16 MB: `android-system-fonts\` 12,
@@ -2298,7 +2321,9 @@ every such change is listed here:
   calls back to find MediaCodec's registered SurfaceView sink or
   SurfaceTexture target (the Mac's video plane does the same lookups in
   native code), and `vpxBuiltIn`: whether libvpx is built in (the Mac) or
-  VP8/VP9 are the host's, listed by `nativeVideoSupportedMimes` when present.
+  VP8/VP9 are listed by `nativeVideoSupportedMimes` (Windows: Media
+  Foundation's decoders, else the host's own libvpx, `soft_codecs.h`, with
+  their profile/level tables from `nativeVideoCapabilities`).
   `MediaCodec.isVideoMimeSupported` and `MediaCodecList`'s libvpx provider
   ask it instead of assuming libvpx. On the Mac every native is unbound and
   nothing changes.
@@ -2306,8 +2331,8 @@ every such change is listed here:
   H.264 and AAC encoders and MP4 writer (`windows/host/native_media_codec.cpp`
   over `video_decode.h`'s `Demuxer`, `media_encode.h`, `mp4_writer.h`).
   `android/media/MediaExtractor.java` reads every audio and video track
-  through it (upstream's `NativeMedia.nativeDemux*` is an audio-only demuxer
-  Windows does not have) and `MediaMetadataRetriever.java` answers from that
+  through it, `csd-0` to `csd-2` (a WebM's Opus has three; upstream's
+  `NativeMedia.nativeDemux*` is an audio-only demuxer Windows does not have) and `MediaMetadataRetriever.java` answers from that
   extractor and decodes frames for a path or URL; `MediaMuxer.java` writes MP4
   and 3GPP (H.264 + AAC) and refuses the rest; `MediaCodec.java` gains its
   encoder mode (`CONFIGURE_FLAG_ENCODE`, `createEncoderByType`,

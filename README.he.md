@@ -163,6 +163,10 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
   [WebView2 SDK](https://www.nuget.org/packages/Microsoft.Web.WebView2) של
   Microsoft, ‏[Bouncy Castle](https://www.bouncycastle.org/),
   ‏[libwebp](https://chromium.googlesource.com/webm/libwebp),
+  ‏[libvpx](https://chromium.googlesource.com/webm/libvpx),
+  ‏[dav1d](https://code.videolan.org/videolan/dav1d),
+  ‏[Opus](https://opus-codec.org/),
+  ‏[libwebm](https://chromium.googlesource.com/webm/libwebm),
   ‏[SQLite](https://sqlite.org/), ‏[stb_vorbis](https://github.com/nothings/stb)
   ו-[zlib](https://zlib.net/). הרישיון של כל אחד מהם ב-
   [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).

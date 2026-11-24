@@ -59,7 +59,8 @@ they are closed.
 - **Graphics** go through ANGLE, which turns the app's OpenGL ES into
   Direct3D 11, the graphics API every Windows GPU supports.
 - **Everything else** is Windows: WASAPI for sound, Media Foundation for video
-  and webcams, WebView2 (Microsoft Edge) for web pages, the Windows location
+  and webcams (with VP8, VP9, AV1 and Opus decoders built into Win.apk for
+  what Windows lacks without Microsoft's codec packs), WebView2 (Microsoft Edge) for web pages, the Windows location
   service, Windows' Bluetooth and Wi-Fi APIs, Windows notifications.
 
 ## Permissions and privacy
