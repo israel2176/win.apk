@@ -41,9 +41,9 @@ endfunction()
 set(_codec_flags -w -O2 -DNDEBUG)
 
 # --- libvpx 1.15.2: VP8 and VP9 decoding -----------------------------------------------------
-# Debian's copy of the release tarball (the same bytes as the tag's archive on GitHub).
-winapk_fetch_codec(libvpx https://deb.debian.org/debian/pool/main/libv/libvpx/libvpx_1.15.2.orig.tar.gz
-                   26fcd3db88045dee380e581862a6ef106f49b74b6396ee95c2993a260b4636aa libvpx-1.15.2)
+# The WebM project's release tarball (where libwebp's comes from too).
+winapk_fetch_codec(libvpx https://storage.googleapis.com/downloads.webmproject.org/releases/webm/libvpx-1.15.2.tar.gz
+                   79c99e7038c281e63f4540c51c264efd6ab1a8a005a9221d6e1f77109e6f57b5 libvpx-1.15.2)
 set(_vpx ${CMAKE_BINARY_DIR}/libvpx-1.15.2)
 set(_vpx_srcs
   vp8/common/alloccommon.c vp8/common/blockd.c vp8/common/dequantize.c vp8/common/entropy.c
@@ -79,8 +79,8 @@ target_compile_options(winapk_vpx PRIVATE ${_codec_flags})
 
 # --- dav1d 1.5.1: AV1 decoding --------------------------------------------------------------
 # C only, as Android builds it for x86-64; 8-bit and 10/12-bit pictures (the templates twice).
-winapk_fetch_codec(dav1d https://code.videolan.org/videolan/dav1d/-/archive/1.5.1/dav1d-1.5.1.tar.gz
-                   fa635e2bdb25147b1384007c83e15de44c589582bb3b9a53fc1579cb9d74b695 dav1d-1.5.1)
+winapk_fetch_codec(dav1d https://downloads.videolan.org/pub/videolan/dav1d/1.5.1/dav1d-1.5.1.tar.xz
+                   401813f1f89fa8fd4295805aa5284d9aed9bc7fc1fdbe554af4292f64cbabe21 dav1d-1.5.1)
 set(_dav1d ${CMAKE_BINARY_DIR}/dav1d-1.5.1)
 set(_dav1d_includes ${_codecs_cfg}/dav1d ${_dav1d} ${_dav1d}/include)
 set(_dav1d_tmpl cdef_apply_tmpl.c cdef_tmpl.c fg_apply_tmpl.c filmgrain_tmpl.c ipred_prepare_tmpl.c
@@ -129,6 +129,7 @@ target_compile_definitions(winapk_opus PRIVATE OPUS_BUILD USE_ALLOCA HAVE_LRINT 
 target_compile_options(winapk_opus PRIVATE ${_codec_flags})
 
 # --- libwebm 1.0.0.31: mkvparser, the WebM/Matroska demuxer ----------------------------------
+# libwebm publishes its releases as git tags only: Debian's tarball of the libwebm-1.0.0.31 tag.
 winapk_fetch_codec(libwebm https://deb.debian.org/debian/pool/main/libw/libwebm/libwebm_1.0.0.31.orig.tar.xz
                    0a2597bb7c6ee10bd53f40ac16de10368b97cb7bb50acf9543c9d6a84aa9babe libwebm-1.0.0.31)
 set(_webm ${CMAKE_BINARY_DIR}/libwebm-1.0.0.31)
