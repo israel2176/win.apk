@@ -5,11 +5,12 @@ Status: steps A0 and A1 built ("A1 as built", after section 4), A2 built
 dispatch through AOSP's `ContextImpl`): every
 app's process starts on AOSP 14's own `ActivityThread` (`lib/aosp-app.jar`,
 staged by `stage_runtime.sh` and shipped), through the `AppHost` seam, with no
-switch (the owner's decision: a layer lands as the only path). A4 begun:
-`Boot`'s own start (Win.apk's `Application` made, attached and created, the
-first activity through `ActivityHost`) is deleted, and a runtime without
-`aosp-app.jar` does not start an app. Win.apk's own `Activity`,
-`Application` and `ActivityHost` lifecycle code is off the path and goes next.
+switch (the owner's decision: a layer lands as the only path). A4 built ("A4
+as built"): Win.apk's own `Activity`, `Application`, `ActivityThread`,
+`Instrumentation`, `LoadedApk` and framework `Fragment` classes are deleted,
+the framework is compiled against AOSP's, `ActivityHost` keeps only the host's
+side, and `Boot`'s own start is gone. Left: A3's second part (services,
+receivers and providers run by `ActivityThread` itself).
 
 The model is `aosp-views.md` (resources and views). This layer comes after
 them and assumes AOSP's graphics, resources and views are all on, as they are
@@ -180,7 +181,7 @@ A0, the seam, as `ViewHost` and `ResBackend` were: an `AppHost` interface in
 switch off nothing changes byte for byte and with it on the AOSP side answers
 from `ActivityThread`'s records. A1 added four statics to AOSP's `Application`
 at build time instead (`ApplicationStatics`), which is enough for the test;
-A0 replaces them.
+A4 replaced them with `com.macapk.loader.app.Apps`.
 
 ## 4. Steps
 
@@ -232,7 +233,8 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   `ResumeActivityItem`), and destroys the finishing one when the one under it
   is idle; the last one destroyed ends the task.
 - `PackageService` (`IPackageManager`): the uid's package, the app's info.
-- `Compat`, `ApplicationStatics`: below.
+- `Compat`: below. (`ApplicationStatics`, the four statics added to AOSP's
+  `Application`, went at A4: the framework asks `com.macapk.loader.app.Apps`.)
 
 `windows/scripts/AospAppRewrite.java` (ASM, as `AospViewsRewrite`) then:
 generates each service as a subclass of its AIDL `Stub`; makes 2 natives inert
@@ -386,6 +388,48 @@ is relaunched and redrawn, `--install-only`, `--gms`, `--verify-apk` and
 `--system` answer as before. Not yet: `ActivityThread`'s own services,
 receivers and providers over the in-process activity manager (A3's second
 part), and the deletions (A4).
+
+## A4 as built
+
+- **Deleted:** Win.apk's `android/app/Activity.java`, `Application.java`,
+  `ActivityThread.java`, `Instrumentation.java`, `LoadedApk.java`,
+  `ActionBar.java`, `ActivityOptions.java`, `DirectAction.java`, the
+  framework `Fragment`, `FragmentManager`, `FragmentManagerImpl`,
+  `FragmentTransaction`, `FragmentBreadCrumbs`, `DialogFragment`,
+  `ListFragment`, `ListActivity`, `LoaderManager`, `PictureInPictureParams`,
+  `PictureInPictureUiState`, `SharedElementCallback`, `TaskStackBuilder`,
+  `VoiceInteractor` (22 files, about 12,300 lines), `MacApkToolbarActionBar`,
+  `FragmentInflaterFactory`, `FragmentLifecycle`, `AutoRefresh`, and
+  `ActivityHost`'s activity stack, lifecycle, window policy, focus and
+  view-tree lifecycle code (5,375 lines to about 1,300), `Boot`'s own start
+  (846 lines) and `DisplayConfig`'s own delivery.
+- **The build:** `build_java.sh` compiles the framework against android-all's
+  classes of `windows/scripts/aosp_app_take.sh`, the list `build_aosp_app.sh`
+  takes them by, as for the graphics. The framework's 118 sites that asked
+  Win.apk's `Application` statically ask `com.macapk.loader.app.Apps`
+  (`ActivityThread.currentApplication()` and its `ApplicationInfo`).
+- **What the old stack did, now the task manager's:** the window's
+  orientation per activity (`Tasks.windowOnStart`, `windowOnRevealed`,
+  `requestOrientation`: the box owner is the topmost activity whose theme
+  occludes, read as `ActivityRecord.occludesParent` reads it; the host turns
+  the window through `AppHost.Start.orientation`); the close (`Tasks.terminate`
+  pauses the visible top first, as `finishIfPossible` does, so the host takes
+  the window off screen then, and the wait keeps ticking the renderer); a dying
+  secondary process's activities and a leaving one's owed starts
+  (`AppHost.finishActivities`, `pendingStarts`, for `MacApkProcessExit`);
+  FLAG_SECURE (`AospWindows.secureChanged`); locale and night mode changes
+  (`LocaleManager`, `Boot`'s appearance flip) through
+  `AppHost.configurationChanged`. `Context.startActivity` on a context of
+  Win.apk's own hands the start to the application's context, a new task.
+- **Tests:** `--java-test` puts `aosp-app.jar` on the class path, and CI's
+  framework tests do too (a `View` names `Application`).
+
+Checked under Wine: the ten smoke apps draw (Tensy now turns the window for
+SDL's `SENSOR_LANDSCAPE`, as a device does), the UI probe's 2166 lines are
+those of the base, the service host and `--system` start, `--install-only`,
+`--gms` and `--verify-apk` answer as before, Open Sudoku resized to landscape
+is relaunched; on Linux the lifecycle and accessibility tests and the CI's
+plain-JVM framework tests pass.
 
 ## 5. Size, start and memory
 
