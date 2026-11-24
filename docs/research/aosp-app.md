@@ -1,6 +1,8 @@
 # AOSP's app layer in Win.apk: plan and first step
 
-Status: steps A0 and A1 built ("A1 as built", after section 4), A2 begun: every
+Status: steps A0 and A1 built ("A1 as built", after section 4), A2 built
+("A2 as built"), A3 begun (receivers, broadcasts and services reach Win.apk's
+dispatch through AOSP's `ContextImpl`): every
 app's process starts on AOSP 14's own `ActivityThread` (`lib/aosp-app.jar`,
 staged by `stage_runtime.sh` and shipped), through the `AppHost` seam, with no
 switch (the owner's decision: a layer lands as the only path). Win.apk's own
@@ -330,9 +332,47 @@ of its own, headless, 150 frames): all ten smoke apps draw their first screen
 Editor's dialog, Fossify Notes, Jellyfin, Jitsi's splash, PPSSPP's logo,
 Tensy, Open Sudoku's "Latest changes"), the UI probe's lines are byte for byte
 those of the same probe on a stage without the app layer, and the plain-JVM
-lifecycle test passes. Not yet run: a window resized or turned (the
-configuration path), the host's hand-offs to other apps and the system
-(A2), services, receivers and providers through `ActivityThread` (A3).
+lifecycle test passes.
+
+## A2 as built, A3 begun
+
+- **Launch modes and flags** (`Tasks.start`, from `ActivityStarter` and
+  `Task.performClearTop` for the one task): `singleTop` and
+  `FLAG_ACTIVITY_SINGLE_TOP` give the top record the intent;
+  `FLAG_ACTIVITY_CLEAR_TOP`, `singleTask` and `singleInstance` finish what is
+  above an instance and give it the intent (a standard activity without
+  `SINGLE_TOP` is finished and made again); `REORDER_TO_FRONT` moves it up;
+  `NEW_TASK|CLEAR_TASK` finishes the whole task first. A reused record gets
+  `NewIntentItem` when resumed, else its intents at its resume.
+- **Results, Up and Back.** Results are delivered before resume
+  (`ActivityResultItem`); `navigateUpTo` and `shouldUpRecreateTask` as
+  `Task.navigateUpTo`; Back at a launcher-started root moves the task behind
+  (Android 12's rule), elsewhere the activity finishes.
+- **Configuration.** The display's changes (`DisplayConfig`: a resize, a
+  turn, density) go to the process (`ConfigurationChangeItem`) and to each
+  activity: relaunched (`ActivityRelaunchItem`) unless its `configChanges`
+  covers the change, else `ActivityConfigurationChangeItem`.
+- **The host's hand-offs.** A start no activity of the app answers, or
+  another package's, goes to the host (`ActivityHost.resolveImplicitToHost`:
+  the camera, pickers, installs, URLs, the launcher); their results come back
+  through `HostResult` as `ActivityResultItem`s, with the host's window
+  covering the task meanwhile (`AppHost.hostCover`). `requestPermissions`
+  (`ACTION_REQUEST_PERMISSIONS`) asks the launcher's prompt and answers with
+  the result intent Android's permission controller gives.
+- **Receivers, broadcasts and services** (A3, the first part): AOSP's
+  `ContextImpl` hands `registerReceiver`, `sendBroadcast` and its ordered and
+  sticky kinds, `startService`, `bindService` and their overloads to Win.apk's
+  `Context` (its receiver registry, the broker's broadcasts, `ServiceRegistry`),
+  as it already did for system services and permission checks. The lifecycle
+  test checks a receiver of the application's context hearing an activity's
+  broadcast. The system broker (`--system`) and a service host
+  (`MACAPK_SERVICE_HOST`, no activity) start on the same path.
+
+Checked under Wine: the ten smoke apps draw, Open Sudoku resized to landscape
+is relaunched and redrawn, `--install-only`, `--gms`, `--verify-apk` and
+`--system` answer as before. Not yet: `ActivityThread`'s own services,
+receivers and providers over the in-process activity manager (A3's second
+part), and the deletions (A4).
 
 ## 5. Size, start and memory
 

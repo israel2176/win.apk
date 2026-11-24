@@ -35,6 +35,8 @@ import java.util.Map;
 public class AospAppLifecycleTest {
     static final String PKG = "com.winapk.lifecycletest";
     static final List<String> log = new ArrayList<>();
+    static final String PING = PKG + ".PING";
+    static volatile String heard;
 
     static synchronized void note(String s) {
         log.add(s);
@@ -45,6 +47,14 @@ public class AospAppLifecycleTest {
         @Override public void onCreate() {
             super.onCreate();
             note("App.onCreate");
+            // A receiver registered on the application's context hears a broadcast an activity sends
+            // (step A3: ContextImpl's receivers and broadcasts). Not in the callback order: when it
+            // is heard is the broadcast queue's, checked once at the end.
+            registerReceiver(new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context c, Intent i) {
+                    heard = i.getStringExtra("v");
+                }
+            }, new android.content.IntentFilter(PING), RECEIVER_NOT_EXPORTED);
         }
     }
 
@@ -69,6 +79,7 @@ public class AospAppLifecycleTest {
             if (!started) {
                 started = true;
                 note("First: getApplication() is App: " + (getApplication() instanceof App));
+                sendBroadcast(new Intent(PING).setPackage(PKG).putExtra("v", "pong"));
                 startActivityForResult(new Intent(this, Second.class).putExtra("x", 7), 42);
             }
         }
@@ -241,6 +252,10 @@ public class AospAppLifecycleTest {
                 System.out.println("FAILED at " + i + ": got \"" + got + "\", Android gives \"" + want + "\"");
                 System.exit(1);
             }
+        }
+        if (!"pong".equals(heard)) {
+            System.out.println("FAILED: the application's receiver heard " + heard + ", not the activity's broadcast");
+            System.exit(1);
         }
         System.out.println("ALL PASSED");
         System.exit(0);
