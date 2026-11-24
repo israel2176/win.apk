@@ -133,7 +133,7 @@ public final class HostAccessibility {
     private static void setActive(boolean on) {
         if (sActive == on) return;
         sActive = on;
-        NativeLog.i(TAG, on ? "a screen reader reads the app" : "no screen reader reads the app");
+        NativeLog.i(TAG, on ? "a screen reader reads the app" : "no screen reader reads the app any more");
         com.macapk.loader.view.ViewHost.get().accessibilityEnabled(on);
         if (on) requestSnapshot();
     }
