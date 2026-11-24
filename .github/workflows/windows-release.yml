@@ -46,10 +46,6 @@ jobs:
           cmake --build build
       - uses: actions/cache@v4
         with:
-          path: thirdparty/framework-res
-          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
-      - uses: actions/cache@v4
-        with:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
       # android-all 14 and Robolectric's native runtime, for AOSP's graphics' files (as in ci.yml).
@@ -60,10 +56,12 @@ jobs:
       - name: Stage and package
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          # With AOSP's graphics' files (build_aosp_gfx.sh, ~37 MB in the installer): apps draw
-          # on them by default.
+          # With AOSP's graphics', resources' and views' files (build_aosp_{gfx,res,views}.sh): apps
+          # run on them.
           windows/scripts/stage_runtime.sh build Win.apk
           test -f Win.apk/lib/aosp-graphics.jar && test -f Win.apk/bin/robolectric-nativeruntime.dll
+          test -f Win.apk/lib/aosp-resources.jar && test -f Win.apk/lib/aosp-views.jar
+          test -f Win.apk/bin/aosp/framework-res-34.apk
           # The Java runtime: Temurin 21's modules with Win.apk's patch classes
           # baked in and its class-data sharing archive (bake_jre.sh, host/cds.h).
           windows/scripts/bake_jre.sh "$JAVA_HOME" Win.apk/lib Win.apk/jre
@@ -82,6 +80,7 @@ jobs:
           grep -E "frames presented" boot.log
           grep -F "class-data sharing ON" boot.log
           grep -F "AOSP graphics: on" boot.log
+          grep -F "AOSP views: on" boot.log
       - name: Build the installer
         shell: pwsh
         run: |

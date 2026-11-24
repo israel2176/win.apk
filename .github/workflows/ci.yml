@@ -41,7 +41,6 @@ on:
     paths:
       - 'windows/**'
       - 'runtime/**'
-      - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
       - '.github/ci/**'
       - '.github/probe/fdroid_fetch.py'
@@ -50,7 +49,6 @@ on:
     paths:
       - 'windows/**'
       - 'runtime/**'
-      - 'scripts/build_framework_res.sh'
       - '.github/workflows/ci.yml'
       - '.github/ci/**'
       - '.github/probe/fdroid_fetch.py'
@@ -212,10 +210,6 @@ jobs:
           path: .ccache
           key: ccache-${{ github.sha }}
           restore-keys: ccache-
-      - uses: actions/cache@v4
-        with:
-          path: thirdparty/framework-res
-          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
       - uses: actions/cache@v4
         with:
           path: thirdparty/angle-win
@@ -599,7 +593,7 @@ jobs:
       - name: Run the APK signature verification test
         run: |
           # com.macapk.loader.ApkVerification (apksig) on APKs the test signs
-          # from the staged framework-res.apk: signed ones verify; tampered ones,
+          # from the staged framework-res-34.apk: signed ones verify; tampered ones,
           # a pasted signing block and a pasted v1 certificate do not; a rotated
           # key reports its lineage as AOSP's PackageManager does (GET_SIGNATURES
           # the oldest, checkSignatures and hasSigningCertificate through it, and
@@ -610,7 +604,7 @@ jobs:
           cp="$(cygpath -w stage/lib/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/apkverify-test windows/test/java/com/macapk/loader/ApkVerificationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/apkverify-test)" \
-            com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/tools/framework-res.apk)" \
+            com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/aosp/framework-res-34.apk)" \
             "$(cygpath -w "$RUNNER_TEMP/apkverify")" | tee apkverify-test.log
           grep -q "ALL PASSED" apkverify-test.log
       - name: Run the App Link verification test

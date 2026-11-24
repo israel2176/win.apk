@@ -116,11 +116,13 @@ for round in 1 2 3 4; do
 done
 
 # AOSP's drawables read their XML through com.android.internal.R.styleable, and AdaptiveIconDrawable
-# has a private string's id compiled in: both linked to the platform table Win.apk ships (its private
-# ids are not android-14's), never android-all's R (AospResIds.java says how).
-FWRES="$OUT/bin/tools/framework-res.apk"
-[[ -f "$FWRES" ]] || { echo "[aosp-gfx] no $FWRES: run build_framework_res.sh first" >&2; exit 1; }
-echo "[aosp-gfx] com.android.internal.R and private ids, from $FWRES"
+# has a private string's id compiled in: both linked to the platform table Win.apk ships
+# (AospResIds.java says how). That table is android-all 14's own resources.arsc, which
+# build_aosp_res.sh ships as bin/aosp/framework-res-34.apk, so it is read from android-all here:
+# every id comes out as android-14 has it (aosp-resources.jar's own com.android.internal.R and
+# AdaptiveIconDrawable, first on the class path, shadow these two anyway).
+FWRES="$ALL"
+echo "[aosp-gfx] com.android.internal.R and private ids, from android-all 14's resources.arsc"
 mkdir -p "$WORK/gen"
 "$JAVA" "$(native_path "$HERE/AospResIds.java")" "$(native_path "$ALL")" "$(native_path "$CLASSES")" \
     "$(native_path "$FWRES")" "$(native_path "$WORK/gen/R.java")"

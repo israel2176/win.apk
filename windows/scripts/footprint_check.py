@@ -22,7 +22,8 @@ import sys
 # the last part takes every file the others do not.
 BUDGETS = [
     # Before AOSP graphics' part, whose bin/aosp/ would take the table. AOSP's resources and views,
-    # the only ones apps run on since November 2026 (Win.apk's own left android-framework.jar):
+    # the only ones apps run on since November 2026 (Win.apk's own left android-framework.jar, and
+    # bin/tools/framework-res.apk, Win.apk's API-36 table, 22.9 MB, went):
     # 1.4 + 6.7 + 13.7 MB, about 19.0 MB under LZMA (the table's three default_wallpaper PNGs are
     # 1x1, build_aosp_res.sh).
     ("AOSP resources and views", ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"],
@@ -31,7 +32,8 @@ BUDGETS = [
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),
     ("ARM translation's compiler (clang/)", ["clang/"], 250),
-    ("Win.apk itself (the rest, bin/tools/ included)", None, 120),
+    # 120 until November 2026; 24 MB less since (the API-36 table and the framework's shadowed classes).
+    ("Win.apk itself (the rest, bin/tools/ included)", None, 100),
 ]
 TOTAL_BUDGET = 580       # the installed folder
 INSTALLER_BUDGET = 165   # Win.apk-Setup.exe
