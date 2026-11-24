@@ -493,7 +493,7 @@ jobs:
           # since milestone 2 (docs/research/open-issues.md); this ran on Java2D's until those went.
           # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
           # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
-          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/damage-test windows/test/java/DamageRectTest.java
           MACAPK_FRAMESPEED_DAMAGE=1 MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
             --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/damage-test)" DamageRectTest
@@ -506,7 +506,7 @@ jobs:
           # JPEG encoding is a Bitmap's compress, AOSP's graphics.
           # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
           # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
-          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera2-test windows/test/java/Camera2StillTest.java
           ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
             --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/camera2-test)" Camera2StillTest
@@ -517,7 +517,7 @@ jobs:
           # transforms, a fixed-focus camera without a torch, and no
           # synthetic accelerometer; on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/camera-orientation-test windows/test/java/CameraOrientationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true \
             -cp "$cp;$(cygpath -w build/camera-orientation-test)" CameraOrientationTest
@@ -526,14 +526,14 @@ jobs:
           # What ConnectivityManager makes of the host's default-route adapter
           # (its type, addresses, DNS servers), on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hosttouch-test windows/test/java/com/macapk/loader/HostTouchTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hosttouch-test)" com.macapk.loader.HostTouchTest
       - name: Run the text services' edits test
@@ -542,7 +542,7 @@ jobs:
           # WindowsTextInput applies them to an InputConnection, and the copy of the editor
           # it sends back, on a plain JVM.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/textinput-test windows/test/java/com/macapk/loader/WindowsTextInputTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/textinput-test)" com.macapk.loader.WindowsTextInputTest
       - name: Run the framework stubs test
@@ -554,7 +554,7 @@ jobs:
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           # In winapk-runtime (--java-test): the framework as compiled (build/java, Win.apk's own views and
           # resources, which these tests exercise) with AOSP's graphics bound, the only graphics it has.
-          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
           MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
             --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/stubs-test)" FrameworkStubsTest
@@ -564,7 +564,7 @@ jobs:
           # AOSP 14 has it: the short time today, the short date outside it,
           # relative "now", "5m", "in 2d" and the accessibility text.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/datetimeview-test windows/test/java/DateTimeViewTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
             -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
@@ -576,7 +576,7 @@ jobs:
           # answer from Java (IcuFallback) instead of throwing: MeasureFormat as
           # Hermes' Intl.NumberFormat calls it, LocaleData.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/icu-fallback-test \
             windows/test/java/com/macapk/icu/HostIcuFallbackTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
@@ -602,7 +602,7 @@ jobs:
           # PermissionController's rules (grant, deny, deny twice, auto grant,
           # background permissions, legacy targets, App info rows).
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/java/android-framework.jar)"
+          cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
       - name: Run the APK signature verification test
@@ -617,7 +617,7 @@ jobs:
           # and PresentedSdk's minSdk floor.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
           # aosp-graphics.jar: android.graphics is AOSP's alone now (MacApkPackageManager names Drawable).
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/apkverify-test windows/test/java/com/macapk/loader/ApkVerificationTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/apkverify-test)" \
             com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/aosp/framework-res-34.apk)" \
@@ -629,7 +629,7 @@ jobs:
           # redirect host checked on its own, its verdict cached per APK (TTLs,
           # a new APK drops it). No network: the fetch is the test's.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/applinks-test windows/test/java/com/macapk/loader/AppLinksTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/applinks-test)" \
             com.macapk.loader.AppLinksTest "$(cygpath -w "$RUNNER_TEMP/applinks")" | tee applinks-test.log
@@ -642,7 +642,7 @@ jobs:
           # nothing when off, a real record over both; PackageManager's
           # getInstallerPackageName and getInstallSourceInfo give one answer.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/installer-test windows/test/java/com/macapk/loader/InstallerOfRecordTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/installer-test)" \
             com.macapk.loader.InstallerOfRecordTest "$(cygpath -w "$RUNNER_TEMP/installer")" | tee installer-test.log
@@ -653,7 +653,7 @@ jobs:
           # when due and their constraints hold, persisted across a reboot) and an
           # update through PackageInstaller's session API with AOSP's update rules.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/update-tests \
             windows/test/java/com/macapk/loader/BrokerJobsTest.java windows/test/java/com/macapk/loader/SessionUpdateTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/update-tests)" \
@@ -667,7 +667,7 @@ jobs:
           # android.bluetooth.le.ScanRecord's parser over the advertising bytes
           # the LE scan delivers, and ScanFilter over the result.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
       - name: Run the cross-process Binder test
@@ -679,7 +679,7 @@ jobs:
           # refused; android:exported), and the Google account mirror.
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           jh="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$jh/bin/javac" -cp "$cp" -d build/binder-test windows/test/java/com/macapk/loader/BinderTransportTest.java
           ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/binder-test)" com.macapk.loader.BinderTransportTest \
             | tee binder-test.log
@@ -693,7 +693,7 @@ jobs:
           export PATH="$(cygpath -u "$JAVA_HOME")/bin/server:$(cygpath -u "$JAVA_HOME")/bin:$PATH"
           # The test host binds the Binder transport's natives too, so the
           # framework jars are on the classpath.
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$(cygpath -u "$JAVA_HOME")/bin/javac" -d build/share-delete-test windows/test/java/FileShareDeleteTest.java
           WINAPK_TEST_JAVA_BASE_PATCH="$(cygpath -w stage/lib/java_base_patch)" \
             ./build/winapk-binder-test.exe "$cp;$(cygpath -w build/share-delete-test)" FileShareDeleteTest \

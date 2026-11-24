@@ -989,13 +989,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         private boolean mMacapkForcedNavigationBarColor;
         boolean mMacapkEdgeToEdgeEnforced;
         private void macapkGenerateBarColors() {
-            if (!MACAPK_WINDOW_BAR_COLORS || mContext == null) return;
-            final int[] r = Activity.macapkGenerateBarColors(mContext, mMacapkStatusBarColor,
-                    mMacapkNavigationBarColor, mMacapkForcedStatusBarColor,
-                    mMacapkForcedNavigationBarColor, MACAPK_EDGE_TO_EDGE);
-            mMacapkStatusBarColor = r[0];
-            mMacapkNavigationBarColor = r[1];
-            mMacapkEdgeToEdgeEnforced = r[2] != 0;
+            // Shadowed by AOSP's Dialog (aosp-views.jar): its PhoneWindow generates the colours.
         }
         @Override public int getStatusBarColor() {
             return MACAPK_WINDOW_BAR_COLORS ? mMacapkStatusBarColor : super.getStatusBarColor();

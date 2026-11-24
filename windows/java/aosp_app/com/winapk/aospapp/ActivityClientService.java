@@ -107,7 +107,7 @@ public final class ActivityClientService {
     public void setRequestedOrientation(IBinder token, int orientation) {
         tasks().handler.post(() -> {
             Tasks.Record r = tasks().find(token);
-            if (r != null) r.requestedOrientation = orientation;
+            if (r != null) tasks().requestOrientation(r, orientation);
         });
     }
 

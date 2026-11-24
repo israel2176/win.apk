@@ -543,7 +543,9 @@ public class LauncherApps {
         launch.setPackage(null);
         launch.setComponent(component);
         launch.setSourceBounds(sourceBounds);
-        com.macapk.loader.ActivityHost.start(launch);
+        launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        android.app.Application app = com.macapk.loader.app.Apps.current();
+        if (app != null) app.startActivity(launch);
     }
 
     /** AOSP: "Starts the settings activity to show the application details for

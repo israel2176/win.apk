@@ -383,9 +383,6 @@ public class LayoutInflater {
         // mechanism. Stateless singleton (resolves the host FM from the current
         // Activity at call time), so no per-context caching is required and it is
         // a no-op for every non-fragment tag. Flag-OFF: byte-for-byte unchanged.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            li.privateFactory = com.macapk.loader.FragmentInflaterFactory.INSTANCE;
-        }
         macapkPerContext.put(context, li);
         return li;
     }
@@ -880,7 +877,6 @@ public class LayoutInflater {
             // FrameLayout instead, which is what the content frame is.
             android.widget.FrameLayout frame = new android.widget.FrameLayout(context);
             // Activity.findViewById finds the children as they are added, as in that content frame.
-            if (context instanceof android.app.Activity activity) activity.macapkContentMergeFrame(frame);
             inflateElement(rootElem, frame);
             inflated = frame;
         } else {

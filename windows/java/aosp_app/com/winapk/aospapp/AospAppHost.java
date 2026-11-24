@@ -25,17 +25,16 @@ public final class AospAppHost implements AppHost {
         return token != null ? thread.getActivity(token) : null;
     }
 
-    @Override public boolean terminate(long timeoutMs) {
-        AospApp app = AospApp.get();
-        if (app == null) return true;
+    @Override public CountDownLatch terminate(Runnable topPaused) {
         CountDownLatch done = new CountDownLatch(1);
-        app.tasks.handler.post(() -> app.tasks.terminate(done));
-        try {
-            return done.await(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
+        AospApp app = AospApp.get();
+        if (app == null) {
+            if (topPaused != null) topPaused.run();
+            done.countDown();
+            return done;
         }
+        app.tasks.handler.post(() -> app.tasks.terminate(done, topPaused));
+        return done;
     }
 
     @Override public void hostMinimized() {
@@ -68,6 +67,25 @@ public final class AospAppHost implements AppHost {
         if (app == null) return;
         android.content.res.Configuration copy = new android.content.res.Configuration(next);
         app.tasks.handler.post(() -> app.tasks.configurationChanged(copy));
+    }
+
+    @Override public void finishActivities(java.util.Set<String> classNames) {
+        AospApp app = AospApp.get();
+        if (app != null) app.tasks.handler.post(() -> app.tasks.finishActivities(classNames));
+    }
+
+    @Override public java.util.List<android.content.Intent> pendingStarts() {
+        AospApp app = AospApp.get();
+        if (app == null) return java.util.List.of();
+        if (app.tasks.handler.getLooper().isCurrentThread()) return app.tasks.pendingStarts();
+        java.util.concurrent.FutureTask<java.util.List<android.content.Intent>> f =
+                new java.util.concurrent.FutureTask<>(app.tasks::pendingStarts);
+        app.tasks.handler.post(f);
+        try {
+            return f.get(2, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return java.util.List.of();
+        }
     }
 
     @Override public void deliver(android.content.Intent intent, String sender) {

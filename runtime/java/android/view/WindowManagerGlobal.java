@@ -144,7 +144,7 @@ public final class WindowManagerGlobal {
      *  window: this IS the base window every overlay draws on top of. */
     private static View activityRoot() {
         android.app.Activity a = com.macapk.loader.ActivityHost.peek();
-        return (a != null) ? a.macapkContentView() : null;
+        return (a != null) ? com.macapk.loader.ActivityHost.contentRoot(a) : null;
     }
 
     /** AOSP names a root by its window's title (falls back to a synthetic
@@ -157,7 +157,7 @@ public final class WindowManagerGlobal {
     public String[] getViewRootNames() {
         List<String> names = new ArrayList<>();
         android.app.Activity a = com.macapk.loader.ActivityHost.peek();
-        if (a != null && a.macapkContentView() != null) names.add(a.getClass().getName());
+        if (a != null && com.macapk.loader.ActivityHost.contentRoot(a) != null) names.add(a.getClass().getName());
         for (com.macapk.loader.WindowOverlayStack.Layer l : com.macapk.loader.WindowOverlayStack.snapshot()) {
             if (l.view == null) continue;
             CharSequence t = (l.params != null) ? l.params.getTitle() : null;
@@ -211,7 +211,7 @@ public final class WindowManagerGlobal {
     public View getRootView(String name) {
         if (name == null) return null;
         android.app.Activity a = com.macapk.loader.ActivityHost.peek();
-        if (a != null && name.equals(a.getClass().getName())) return a.macapkContentView();
+        if (a != null && name.equals(a.getClass().getName())) return com.macapk.loader.ActivityHost.contentRoot(a);
         for (com.macapk.loader.WindowOverlayStack.Layer l : com.macapk.loader.WindowOverlayStack.snapshot()) {
             if (l.view == null) continue;
             CharSequence t = (l.params != null) ? l.params.getTitle() : null;

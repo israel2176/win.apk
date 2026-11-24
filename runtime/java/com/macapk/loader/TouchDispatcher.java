@@ -295,7 +295,7 @@ public class TouchDispatcher {
                                  float viewW, float viewH) {
         Activity active = ActivityHost.peek();
         if (active == null) return;
-        View croot = active.macapkContentView();
+        View croot = com.macapk.loader.ActivityHost.contentRoot(active);
         if (croot == null) return;
         final float scale = macapkBackingScale();
         float px = cx * scale;
@@ -887,7 +887,7 @@ public class TouchDispatcher {
     private static boolean injectTargetsSurfaceTree(Activity a) {
         if (a == null) return false;
         try {
-            View root = a.macapkContentView();
+            View root = com.macapk.loader.ActivityHost.contentRoot(a);
             return root != null && hostInputTree(root);
         } catch (Throwable t) {
             return false;
@@ -1953,7 +1953,7 @@ public class TouchDispatcher {
         // v1.0.939: identity, not name -- see Looper.macapkIsActivityThread.
         if (android.os.Looper.macapkIsActivityThread()) return false; // already on loop
         if (active == null) return false;
-        View root = active.macapkContentView();
+        View root = com.macapk.loader.ActivityHost.contentRoot(active);
         // An activity with NO content yet is one being created right now: the
         // launch pushed it (ActivityHost.performLaunch) and its onCreate is
         // running, or about to, on the loop. Its input belongs on the loop too
@@ -2322,7 +2322,7 @@ public class TouchDispatcher {
                 if (od instanceof android.window.WindowOnBackInvokedDispatcher)
                     d = (android.window.WindowOnBackInvokedDispatcher) od;
                 where = "activity " + active.getClass().getName();
-                probeRoot = active.macapkContentView();
+                probeRoot = com.macapk.loader.ActivityHost.contentRoot(active);
                 if (probeRoot == null && w != null) probeRoot = w.peekDecorView();
             }
             if (d == null || !d.isOnBackInvokedCallbackEnabled())
@@ -2439,7 +2439,7 @@ public class TouchDispatcher {
                     Activity a = (Activity) c;
                     android.view.Window w = a.getWindow();
                     boolean isRoot = w != null
-                            && (w.peekDecorView() == root || a.macapkContentView() == root);
+                            && (w.peekDecorView() == root || com.macapk.loader.ActivityHost.contentRoot(a) == root);
                     return isRoot ? w.getOnBackInvokedDispatcher() : null;
                 }
                 if (!(c instanceof android.content.ContextWrapper)) break;
@@ -3393,7 +3393,7 @@ public class TouchDispatcher {
         // uses to paint the pill, so a Unity/GL app's input is untouched). The
         // bottom pill is an OVERLAY now, not a reserved strip, so we do NOT
         // consume bottom touches -- the app's own bottom nav lives there.
-        View croot = active.macapkContentView();
+        View croot = com.macapk.loader.ActivityHost.contentRoot(active);
         if (android.os.Looper.MACAPK_REAL_LOOPER
                 && croot != null && !treeHasSurfaceView(croot)) {
             // v1.0.406: tappable BACK button in the bottom nav strip. A tap
@@ -3814,7 +3814,7 @@ public class TouchDispatcher {
     private static android.view.View macapkDecor(Activity a) {
         if (a == null) return null;
         try {
-            android.view.View cv = a.macapkContentView();
+            android.view.View cv = com.macapk.loader.ActivityHost.contentRoot(a);
             if (cv != null) return cv.getRootView();
             android.view.Window w = a.getWindow();
             return (w == null) ? null : w.getDecorView();
@@ -4075,7 +4075,7 @@ public class TouchDispatcher {
         s_boundActivity = null;
         s_queueServiced = false;
         s_owner = null;
-        View root = active.macapkContentView();
+        View root = com.macapk.loader.ActivityHost.contentRoot(active);
         if (root == null) return;
         Object[] ownerAndRenderer = findRendererInTree(root);
         if (ownerAndRenderer == null) return;

@@ -1957,69 +1957,37 @@ public abstract class Context {
         return out;
     }
 
-    // Route to ActivityHost.start, exactly as startActivities (below) routes to
-    // ActivityHost.startAll. Activity overrides this to ALSO thread the
-    // (caller, requestCode) result pairing, but the base launch is the same
-    // ActivityThread path, and a NON-Activity context must perform it too.
-    //
-    // ⚠ v1.0.953: this used to be an empty no-op, on the reasoning that only an
-    // Activity starts activities. That silently dropped every launch made from
-    // an app/service context -- most importantly PendingIntent.send(), whose
-    // dispatch runs startActivity on its creator context. That creator is
-    // routinely the Application (PendingIntent.getActivity(getApplicationContext(),
-    // ...)), so a notification tap, an alarm callback, or a widget action that
-    // wraps an activity fired into a no-op. Concretely it blocked the F-Droid
-    // install end to end: DefaultInstaller broadcasts INSTALL_USER_INTERACTION
-    // with a PendingIntent wrapping DefaultInstallerActivity, AppDetailsActivity
-    // fires PendingIntent.send() on it, and the activity that would issue
-    // ACTION_INSTALL_PACKAGE never launched. AOSP allows an app-context
-    // startActivity (it requires FLAG_ACTIVITY_NEW_TASK, which
-    // PendingIntent.getActivity sets); ActivityHost models the single foreground
-    // task, so the flag is a no-op here and the launch is correct.
+    // Android: abstract. ContextImpl's (AOSP's, lib/aosp-app.jar) start through the activity task
+    // manager, and every context an app has (its Application, an Activity, a Service) is a wrapper
+    // over one. A context of Win.apk's own with no base of that kind starts through the
+    // application's, as a start from outside an activity is: a new task (FLAG_ACTIVITY_NEW_TASK,
+    // which PendingIntent.getActivity sets too). Each form hands its own call over, never to the
+    // other form on the same object: a wrapper that overrides the two the other way round (Chrome's)
+    // would go round until the stack ran out.
     public void startActivity(Intent intent) {
-        com.macapk.loader.ActivityHost.start(intent);
+        applicationForStarts().startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
-    // AOSP API-16+ overload (intent + ActivityOptions.toBundle()). Apps invoke
-    // this against the Context static type (e.g. F-Droid's row-click handler
-    // -> Context.startActivity(intent, options.toBundle())), so it must be
-    // declared here for resolution; delegate to the single-arg form so any
-    // subclass that only overrides startActivity(Intent) (Activity does, via
-    // ActivityHost.start) still performs the launch. The Bundle (launch
-    // animation hints) is ignored -- Mac.apk has no activity transitions.
-    // Win.apk: it launches by itself. It called startActivity(intent) on this object, and a
-    // wrapper that overrides the two the other way round (Chrome's: its one-argument form goes
-    // through super to here, its two-argument form calls its one-argument form) went round
-    // until the stack ran out, at Chrome's start. AOSP's two forms never call each other on
-    // the same object: each ContextWrapper method hands its own call to the base context.
-    // Activity overrides both and launches from each.
     public void startActivity(Intent intent, android.os.Bundle options) {
-        com.macapk.loader.ActivityHost.start(intent);
+        applicationForStarts().startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options);
     }
-    // AOSP startActivities(Intent[]) launches a back-STACK: intents[0] is the
-    // ROOT of the task and each later intent is pushed on top of it, so the
-    // LAST one ends up visible/resumed and every earlier one sits underneath.
-    // androidx TaskStackBuilder.startActivities() routes here, and the parent
-    // stack it synthesises is the entire reason the API exists.
-    //
-    // v1.0.834: this used to start ONLY the top-most intent carrying a
-    // component, on the reasoning that Mac.apk has a single foreground
-    // activity. But com.macapk.loader.ActivityHost keeps a real LIFO task
-    // stack and reveals the activity underneath on finish(), so the
-    // simplification was silently discarding a stack we CAN model. Measured
-    // consequence (Sgt Puzzles 1.49, 2026-07-29): its launcher builds
-    // [GameChooser, GamePlay] via addNextIntentWithParentStack and starts
-    // both; with only GamePlay started, GamePlay's own "no saved game" branch
-    // (NavUtils.navigateUpFromSameTask -> Activity.navigateUpTo -> finish())
-    // had nothing underneath to reveal, so the chooser never appeared.
-    //
-    // ActivityHost.startAll is called instead of looping startActivity()
-    // because under MACAPK_REAL_LOOPER the single-intent path enters
-    // Looper.loop() and never returns -- the whole stack has to be posted
-    // before the loop is entered. See its header.
-    public void startActivities(Intent[] intents) { startActivities(intents, null); }
+    public void startActivities(Intent[] intents) {
+        applicationForStarts().startActivities(newTask(intents));
+    }
     public void startActivities(Intent[] intents, android.os.Bundle options) {
-        if (intents == null || intents.length == 0) return;
-        com.macapk.loader.ActivityHost.startAll(intents);
+        applicationForStarts().startActivities(newTask(intents), options);
+    }
+    private Context applicationForStarts() {
+        Context app = com.macapk.loader.app.Apps.current();
+        if (app == null || app == this) {
+            throw new android.util.AndroidRuntimeException("startActivity from a context with no application");
+        }
+        return app;
+    }
+    private static Intent[] newTask(Intent[] intents) {
+        Intent[] out = new Intent[intents.length];
+        for (int i = 0; i < intents.length; i++) out[i] = new Intent(intents[i]);
+        if (out.length > 0) out[0].addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        return out;
     }
     // v1.0.426 Tier-2: a real process-wide dynamic-BroadcastReceiver registry.
     // Was all no-ops -> androidx ProcessLifecycle-adjacent code, Connectivity

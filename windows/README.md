@@ -1074,7 +1074,14 @@ resources and views shadow: `<build>/java/android-framework.jar`) runs AOSP's
 `ActivityThread` through an
 application and two activities' whole lifecycle in Android's order (the
 graphics bound by the host's own redirect, `host/aosp_gfx_redirect.cpp`, built
-into the test's library); CI runs it on Ubuntu (informational).
+into the test's library); CI runs it on Ubuntu (informational). Win.apk's own
+`Activity`, `Application`, `ActivityThread`, `Instrumentation`, `LoadedApk`
+and framework `Fragment` classes are deleted: `build_java.sh` compiles the
+framework against android-all's (`scripts/aosp_app_take.sh`, the one list both
+scripts read), and the framework asks the process's Application through
+`com.macapk.loader.app.Apps`. A JVM with Win.apk's framework but not
+`aosp-app.jar` has no `android.app.Activity` or `Application` at all, so a
+test of the framework that reaches them puts the jar on its class path.
 
 Two rules for every AOSP layer, this one and those after it (resources,
 views...), so that moving onto AOSP's code does not make Win.apk heavy:
@@ -1641,6 +1648,35 @@ one returns 0 / null) or a guard in the Java that catches its absence.
 Files in `runtime/` are changed only where a Windows hook is unavoidable, and
 every such change is listed here:
 
+- Win.apk's own app layer, deleted: upstream's `android/app/Activity.java`,
+  `Application.java`, `ActivityThread.java`, `Instrumentation.java`,
+  `LoadedApk.java`, `ActionBar.java`, `ActivityOptions.java`,
+  `DirectAction.java`, `Fragment.java`, `FragmentManager.java`,
+  `FragmentManagerImpl.java`, `FragmentTransaction.java`,
+  `FragmentBreadCrumbs.java`, `DialogFragment.java`, `ListFragment.java`,
+  `ListActivity.java`, `LoaderManager.java`, `PictureInPictureParams.java`,
+  `PictureInPictureUiState.java`, `SharedElementCallback.java`,
+  `TaskStackBuilder.java` and `VoiceInteractor.java` (AOSP 14's, from
+  `lib/aosp-app.jar`, which `build_java.sh` compiles the framework against:
+  `windows/scripts/aosp_app_take.sh`), with `MacApkToolbarActionBar.java`,
+  `com/macapk/loader/FragmentInflaterFactory.java`, `FragmentLifecycle.java`
+  and `AutoRefresh.java`. `com/macapk/loader/ActivityHost.java` keeps only the
+  host's side (the hand-offs to Windows, the cover a host window puts over the
+  task, the window's close, minimize and restore, starts from outside), all
+  through `com.macapk.loader.app.AppHost`; `Boot.java` starts every app through
+  it and lost its own start; `DisplayConfig.java` hands every change to it;
+  `com/macapk/loader/app/Apps.java` (new) answers the process's Application
+  and target SDK from AOSP's `ActivityThread` for the framework's 118 sites
+  that asked Win.apk's `Application`; `android/content/Context.java`'s
+  `startActivity` hands a start to the application's context (AOSP's
+  `ContextImpl`); `LocaleManager.java` and the system appearance flip are
+  configuration changes through the task manager; `SurfaceView.java` and
+  `ViewCanvasDriver.java` lost what asked Win.apk's activity stack;
+  `NativeActivity.java` checks the window's content view itself;
+  `StatusBarDriver.java` holds the navigation bar colour rule it took from
+  `Activity.java`. Entries below that name these files describe what Win.apk
+  changed in them before (docs/research/aosp-app.md).
+
 - Win.apk's Java2D graphics, deleted: upstream's `android.graphics` and the
   `android.text` classes AOSP's jar replaces (Canvas, Paint, Bitmap,
   Typeface, the drawables, Layout, StaticLayout, BoringLayout, DynamicLayout,
@@ -1925,11 +1961,6 @@ every such change is listed here:
   directory, and loads through an on-demand stub bound to that loader (Play
   services' `CronetDynamite.apk` in a client app). Upstream drops the path.
   `windows/test/java/LibrarySearchPathTest.java` runs on any JVM.
-- `runtime/java/android/app/Activity.java`: `Window.setContentView(View)` puts
-  the view into the decor's content frame and keeps the decor as the root, as
-  AOSP's `PhoneWindow` does (a view added to the decor floats over the content),
-  and `findViewById(android.R.id.content)` finds the sub-decor's frame in that
-  tree before upstream's frame-root unwrap.
 - `runtime/java/android/bluetooth/` (`BluetoothAdapter`, `BluetoothDevice`,
   `BluetoothGatt`, `BluetoothManager`, `le/BluetoothLeScanner`,
   `le/ScanRecord`): Win.apk's `HostBluetooth` versions (below); the pre-API-21
@@ -1994,12 +2025,6 @@ every such change is listed here:
   reads `stretchColumns`, `shrinkColumns` and `collapseColumns` from XML.
   Vanilla Music's permission banner lay under its bottom bar with its button
   off the screen. Not Windows-specific.
-- `runtime/java/com/macapk/loader/ActivityHost.java`: an activity that calls
-  `finish()` in its own `onCreate` is torn down after `onCreate` returns, as on
-  AOSP, not in the middle of it; one that calls it in `onResume` after
-  `onPostResume` (AOSP destroys it in a later transaction; tearing it down
-  inside `onResume` nulled the FragmentManager's host under `onPostResume`,
-  "No activity" in sgtpuzzles). Not Windows-specific.
 - `runtime/java/com/macapk/loader/TouchDispatcher.java`: the entries the
   Windows window calls for what a Mac reports differently or not at all
   (`windows/host/win32_window.h`, `WindowInput`): `dispatchHostTouch` (a
@@ -2027,26 +2052,9 @@ every such change is listed here:
   field again after a hide (the hide unbinds it here, where on a device the
   editor stays served) and shows the touch keyboard, as `Editor.onTouchUpEvent`'s
   `showSoftInput` does.
-- `runtime/java/com/macapk/loader/ActivityHost.java`: `macapkHostMinimized`,
-  which the window calls when the user minimizes it: the resumed activity is
-  paused and stopped, as a task moved to the back (the transitions of
-  `macapkMoveTaskToBack`, without hiding the window), and `macapkTaskToFront`
-  brings it back on restore. Closing the window needs no change there: the
-  host now calls upstream's `macapkTerminate`.
-- `runtime/java/com/macapk/loader/ActivityHost.java` and
-  `android/app/Activity.java`: an activity that finishes before its first
-  `onResume` is driven down only from where it is, as AOSP's
-  `performDestroyActivity` does: `onDestroy` alone after `onCreate`, `onStop`
-  and `onDestroy` after `onStart` (it got `onPause` and `onStop` too, which
-  made androidx start the fragments of an activity on its way out), with the
-  androidx lifecycle taken to CREATED first; and `isDestroyed()` turns true
-  right before `onDestroy`, not at `finish()`. Not Windows-specific.
 - `runtime/java/android/provider/SettingsStore.java`: `Secure.DEFAULT_INPUT_METHOD`
   is seeded with the host keyboard's component, as a device always has a
   current IME (Key Mapper read it without a null check). Not Windows-specific.
-- `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a fragment in
-  a layout is hosted by the activity the inflater belongs to, which also works
-  during the first activity's `onCreate`. Not Windows-specific.
 - `runtime/java/com/macapk/loader/DomXmlResourceParser.java` and
   `BinaryXmlParser.java`: the resource parser's `next()` skips whitespace-only
   text and comments, as the device's parser over aapt-compiled XML never sees
@@ -2086,11 +2094,6 @@ every such change is listed here:
   (the raw String the base twin returned broke DroidFish's
   ColorPickerPreference, which casts the default to Integer, with a
   ClassCastException). Not Windows-specific.
-- `runtime/java/com/macapk/loader/FragmentInflaterFactory.java`: a
-  `FragmentContainerView[android:name]` whose app FragmentManager cannot be
-  found by name (R8 renamed it) goes through the activity's own
-  `onCreateView` override, AOSP's route, instead of the view's 2-arg
-  constructor, which throws (Auxio, Tremotesf). Not Windows-specific.
 - `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
   hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
   `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's
@@ -2272,10 +2275,6 @@ every such change is listed here:
   a class whose methods cannot be resolved is skipped in favour of the
   superclass declaration, which still dispatches to the override
   (`MACAPK_LIFECYCLE_SKIP_UNLINKABLE=0` turns that off). Not Windows-specific.
-- `runtime/java/android/app/Application.java` (`AppBaseContext`): has the
-  `mClassLoader` field of AOSP `ContextImpl`, and `getClassLoader` returns it
-  when set; Chromium sets it reflectively for isolated splits
-  (`MACAPK_CONTEXT_MCLASSLOADER=0` ignores it). Not Windows-specific.
 - `runtime/java/android/app/Application.java`, `Activity.java` and
   `com/macapk/loader/ActivityHost.java`: `onActivityPreCreated` goes out before
   `onCreate`, `onActivityCreated` from `Activity.onCreate` (or after it when
@@ -2357,18 +2356,6 @@ every such change is listed here:
   as AOSP has it, so a built notification's extras carry `BigTextStyle`'s
   text, `InboxStyle`'s lines and `MessagingStyle`'s messages (as lines) under
   the `EXTRA_*` keys; the styles kept nothing before. Not Windows-specific.
-- `runtime/java/com/macapk/loader/ActivityHost.java`: without the AOSP window
-  policy (Windows), an activity that owns the window box asks the host for its
-  manifest's `screenOrientation` at launch (`NativeCocoa.applyWindowOrientation`,
-  the same native the policy's branch uses), so a portrait-only app opens
-  portrait although the library opens apps landscape. A host without the
-  native keeps the old behaviour. When that activity finishes, the one it
-  reveals turns the phone back (`windowOrientationOnRevealed`): its own fixed
-  orientation (the manifest's, or its `setRequestedOrientation`), or, for a
-  free one, the user rotation when the finished activity had fixed a side.
-  Before, a landscape-only activity (Mercantile's cheque scanner) left its
-  portrait app landscape.
-
 - `runtime/java/com/macapk/loader/HostVideo.java` (new): MediaPlayer's video
   player on the host (`windows/host/native_media_video.cpp`): a thread pulls
   each picture when the host says it is due and shows it where the app's
@@ -2870,18 +2857,6 @@ every such change is listed here:
   `openNonAssetFd` throw `FileNotFoundException` for a name the APK does not
   have, as AOSP does; they threw a plain `IOException`, which a
   `catch (FileNotFoundException)` fallback misses. Not Windows-specific.
-- `runtime/java/android/app/Activity.java` and `MacApkToolbarActionBar.java`
-  (new): a window whose theme asks for the platform action bar
-  (`windowActionBar`, as Holo, Material and DeviceDefault do; not AppCompat)
-  gets AOSP's `screen_action_bar` decor: a real `android.widget.Toolbar`
-  with the id `@android:id/action_bar` in `action_bar_container` above the
-  content, styled from `?android:actionBarStyle`. `getActionBar()` drives it
-  (title, subtitle, display options, Up, show and hide, custom view), and the
-  options menu fills its menu, with item clicks and Up (`android.R.id.home`)
-  going to `onMenuItemSelected`. Before, there was no bar, and apps that look
-  the Toolbar up by id got null (Currency's `setNavigationIcon` NPE).
-  `MACAPK_PLATFORM_ACTION_BAR=0` restores the old decor. Not
-  Windows-specific.
 - `runtime/java/android/content/res/Resources.java` (`openRawResourceFd`)
   and `ContentResolver.java` (a comment): the raw resource's file as the
   apk's own descriptor at the entry's offset, through `openNonAssetFd`, as
@@ -2901,14 +2876,6 @@ every such change is listed here:
   what Android's parser does. OpenTasks reads its tab list
   (`<tabconfig xmlns="http://schema.dmfs.org/tasks">`) by qualified name and
   found nothing (`Broken fragile delegate`, an NPE in `TabConfig.load`). Not
-  Windows-specific.
-- `runtime/java/android/app/Activity.java`: the window's generateLayout
-  reads the framework's window attributes (`android:windowNoTitle`,
-  `android:windowActionBar`, ...), as `R.styleable.Window` does. Read by bare
-  name, AppCompat's own `windowNoTitle` (false) and `windowActionBar` (true)
-  won, so every DarkActionBar AppCompat activity got the platform action bar
-  and its options menu as a platform `Menu` (NetGuard's SearchView and
-  SMSSecure's NPEs in `onCreateOptionsMenu`/`onPrepareOptionsMenu`). Not
   Windows-specific.
 - `runtime/java/android/widget/ActionMenuView.java`: the Toolbar menu's
   `addSubMenu` is MenuBuilder's, a submenu tied to its item, so `findItem`

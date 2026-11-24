@@ -164,14 +164,11 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         macapkBehindTopNoActivity = true;
         return null;
     }
-    /** Is this view's Activity STOPPED under another one (ActivityHost)? */
+    /** Is this view's Activity stopped under another one? Win.apk's own activity stack answered;
+     *  on AOSP's app layer a covered activity's window is hidden by the window manager instead, so
+     *  this view never draws over the top one from here. */
     public final boolean macapkOwnerStoppedUnderTop() {
-        try {
-            android.app.Activity a = macapkOwnerActivity();
-            return a != null && com.macapk.loader.ActivityHost.macapkIsStoppedUnderTop(a);
-        } catch (Throwable t) {
-            return false;
-        }
+        return false;
     }
     public final void macapkDetectDrawBehindTop(Object renderer) {
         if (macapkBehindTopSaid) return;
@@ -301,9 +298,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 // ON: THIS view's activity window has been added (AOSP
                 // mWindowAdded, latched at its first visible resume and kept
                 // across a later pause), not "the top activity is resumed now".
-                resumed = sAospSurfaceOrder
-                    ? com.macapk.loader.ActivityHost.macapkWindowAdded(getContext())
-                    : com.macapk.loader.ActivityHost.macapkIsCurrentActivityResumed();
+                // Win.apk's own activity stack's "window added" / "top resumed" latches, which
+                // AOSP's app layer does not set: the holder's callbacks decide.
+                resumed = false;
                 res = resumed;
             } catch (Throwable t) {
                 resumed = false; res = true;   // harness/embedded runs without ActivityHost
@@ -365,31 +362,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             }
             return;
         }
-        try {
-            if (!com.macapk.loader.ActivityHost.macapkIsCurrentActivityResumed()) {
-                // Stays armed on purpose: a later traversal retries. Logged
-                // because "armed but never resumed" and "delivered" used to be
-                // indistinguishable in the log, which is how a dropped
-                // surface-ready focus went unnoticed.
-                if (macapkLogNth(++focusDeferredLogCount)) {
-                    NativeLog.i(TAG, "focus-gate: DEFERRED, activity not resumed"
-                        + " yet x" + focusDeferredLogCount);
-                }
-                return;
-            }
-        } catch (Throwable t) { /* harness: treat as resumed */ }
+        // Window focus is the window manager's to give (AOSP's ViewRootImpl gets it with the
+        // window); Win.apk's own delivery through its activity stack is gone.
         pendingFocusDelivery = false;
-        try {
-            // ForSurface, not the plain call: ViewCanvasDriver may already have
-            // delivered focus for a GL-less-LOOKING tree (our SurfaceView had
-            // not been added yet), which would make the plain call a no-op via
-            // its once-per-activity guard. This is the delivery that actually
-            // has a surface behind it, so it must not be the one that gets
-            // dropped. See ActivityHost.macapkDeliverWindowFocusForSurface.
-            com.macapk.loader.ActivityHost.macapkDeliverWindowFocusForSurface();
-        } catch (Throwable t) {
-            NativeLog.e(TAG, "deliverWindowFocus threw: " + t);
-        }
     }
 
     /** Converge the DEFERRED surfaceCreated dispatch and the window-focus
@@ -1099,42 +1074,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 "window content root: nothing above it lays it out (ViewRootImpl's job)");
             if (macapkHaveFrame) return true;   // it ran inline
         }
-        boolean resumed = true;
-        try { resumed = com.macapk.loader.ActivityHost.macapkIsCurrentActivityResumed(); }
-        catch (Throwable t) { /* harness: treat as resumed */ }
-        if (!resumed) return false;
-        int v = ++macapkFrameValveTicks;
-        long now = System.nanoTime();
-        if (!macapkFrameValveStarted) {
-            macapkFrameValveStarted = true;
-            macapkFrameValveStartNs = now;
-        }
-        long ms = (now - macapkFrameValveStartNs) / 1_000_000L;
-        if (!macapkFrameValveFired && ms >= FRAME_VALVE_MS) {
-            macapkFrameValveFired = true;
-            NativeLog.w(TAG, "[frame-gate] VALVE: " + getClass().getName() + " still has no"
-                + " frame after " + ms + " ms / " + v + " resumed ticks (view " + getWidth() + "x"
-                + getHeight() + ", attached=" + macapkAttached + ") -- nothing laid it out");
-            if (getWidth() > 0 && getHeight() > 0) {
-                // Sized by a pass that is not a tree frame (the content-rect
-                // kick in macapkTryFireHolderCreated): the app's own
-                // onSizeChanged has run with that size. Start now.
-                macapkFrameValveOpen = true;
-                return true;
-            }
-            if (!macapkOwnLayoutRequested) macapkRequestOwnLayout(displayW, displayH, false, "valve");
-            if (macapkHaveFrame) return true;   // it ran inline
-        }
-        if (ms >= FRAME_VALVE_HARD_MS) {
-            macapkFrameValveOpen = true;
-            NativeLog.w(TAG, "[frame-gate] VALVE OPEN: " + getClass().getName() + " still has no"
-                + " frame after " + ms + " ms / " + v + " resumed ticks (the owner never ran its own"
-                + " layout) -- renderer starts WITHOUT a frame: "
-                + (getWidth() > 0 && getHeight() > 0
-                    ? "the view has only a non-tree size " + getWidth() + "x" + getHeight()
-                    : "engines that size from onSizeChanged (cocos2d-x/axmol) get nativeInit 0x0"));
-            return true;
-        }
+        // The valve (a renderer started without a frame after a while) counted ticks of a resumed
+        // top in Win.apk's own activity stack, which AOSP's app layer does not keep: it never opens.
         return false;
     }
 
@@ -2302,7 +2243,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         // -> the handshake returns. Gated on the handshake flag so there is never
         // a double-drain with macapk-activity's own Looper.loop. No-op unless
         // MACAPK_REAL_LOOPER. See ActivityHost.macapkLifecycleHandshakeActive.
-        if (com.macapk.loader.ActivityHost.macapkLifecycleHandshakeActive) {
+        if (false) {   // Win.apk's own lifecycle handshake, gone with its activity stack
             try {
                 android.os.Looper.macapkDrainMainDue();
             } catch (Throwable t) {

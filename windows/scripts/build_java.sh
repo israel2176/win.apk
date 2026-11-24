@@ -89,6 +89,18 @@ aosp_gfx_take "$WORK/all.txt" > "$WORK/gfx-take.txt"
 "$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$GFX_API")" \
     com/winapk/aospgfx/Api35 com/winapk/aospgfx/FrameworkMembers > /dev/null
 
+# AOSP's app layer, to compile against only, likewise: it ships in aosp-app.jar (build_aosp_app.sh);
+# the framework has no Activity, Application, Instrumentation, LoadedApk, ActivityThread or framework
+# Fragment of its own.
+echo "[build_java] AOSP's app layer classes to compile against (android-all 14)..."
+APP_API="$WORK/aosp-app-api"
+rm -rf "$APP_API"
+mkdir -p "$APP_API"
+# shellcheck source=aosp_app_take.sh
+source "$HERE/aosp_app_take.sh"
+aosp_app_take "$WORK/all.txt" > "$WORK/app-take.txt"
+( cd "$APP_API" && xargs -d '\n' unzip -qo "$ALL" < "$WORK/app-take.txt" )
+
 echo "[build_java] compiling runtime/java..."
 LIST="$WORK/java.list"
 # Paths go into an @file, which splits on spaces; upstream skips Finder
@@ -107,7 +119,7 @@ APACHE_LEGACY="$RT/../thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.j
 APKSIG="$RT/../thirdparty/apksig/apksig-9.5.1.jar"
 CP_SEP=":"
 command -v cygpath > /dev/null 2>&1 && CP_SEP=";"  # javac on Windows splits on ';'
-CP="$(native_path "$APKSIG")$CP_SEP$(native_path "$GFX_API")"
+CP="$(native_path "$APKSIG")$CP_SEP$(native_path "$GFX_API")$CP_SEP$(native_path "$APP_API")"
 [[ -f "$APACHE_LEGACY" ]] && CP="$CP$CP_SEP$(native_path "$APACHE_LEGACY")"
 if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options -cp "$CP" @"$LIST" \
         > "$WORK/javac.log" 2>&1; then
@@ -212,7 +224,7 @@ mkdir -p "$TOOLS"
 find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' -not -path '*/aosp_gfx/*' \
     -not -path '*/aosp_res/*' -not -path '*/aosp_views/*' -not -path '*/aosp_app/*' | sort | native_paths > "$WORK/tools.list"
 # AppMeta calls into the framework and the loader, compiled into $TMP above, and the graphics.
-"$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")$CP_SEP$(native_path "$GFX_API")" @"$WORK/tools.list"
+"$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")$CP_SEP$(native_path "$GFX_API")$CP_SEP$(native_path "$APP_API")" @"$WORK/tools.list"
 ( cd "$TOOLS" && "$JAR" --create --file "$LIB/winapk-tools.jar" . )
 
 # The class list of the framework archive (host/cds.h), made from the smoke

@@ -748,7 +748,6 @@ public final class HostUrlIntake {
         List<Intent> arrivals = takeResolved();
         if (arrivals.isEmpty()) return null;
         Intent first = arrivals.remove(0);
-        ActivityHost.macapkNoteReferrer(first, SENDER);
         NativeLog.i(TAG, "[URL] recv " + redact(first.getDataString()) + " -> "
                 + first.getComponent().getClassName() + " ROOT (cold)");
         for (final Intent e : arrivals) {
@@ -777,7 +776,6 @@ public final class HostUrlIntake {
     }
 
     private static void deliverNow(Intent e) {
-        ActivityHost.macapkNoteReferrer(e, SENDER);
         NativeLog.i(TAG, "[URL] recv " + redact(e.getDataString()) + " -> "
                 + e.getComponent().getClassName());
         try {

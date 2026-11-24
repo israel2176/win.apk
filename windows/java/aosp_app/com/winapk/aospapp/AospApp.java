@@ -62,6 +62,8 @@ public final class AospApp {
     private final Runnable onTaskEmpty;
     private Runnable onMoveToBack;
     java.util.function.Predicate<Intent> hostStart;
+    java.util.function.IntConsumer orientation;
+    Runnable userOrientation;
     java.util.function.BiConsumer<String[], com.macapk.loader.SpecialAccessHandler.PermissionSink> hostPermissions;
 
     private AospApp(ApplicationInfo info, Configuration config, Resolver resolver, ClassLoader cl,
@@ -106,6 +108,8 @@ public final class AospApp {
         AospApp app = new AospApp(s.info, s.config, null, s.classLoader, s.packageManager, s.launch,
                 s.beforeApplicationOnCreate, s.taskEmpty);
         app.onMoveToBack = s.moveToBack;
+        app.orientation = s.orientation;
+        app.userOrientation = s.userOrientation;
         app.first = s.first;
         app.firstSender = s.firstSender;
         app.hostStart = s.hostStart;

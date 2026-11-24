@@ -10,6 +10,11 @@
 package android.view.contentcapture;
 
 public final class ContentCaptureManager {
+    /** @hide AOSP's: what AOSP's Activity implements (aosp-views.jar has the class itself). */
+    public interface ContentCaptureClient {
+        android.content.ComponentName contentCaptureClientGetComponentName();
+    }
+
     public static final int DATA_SHARE_ERROR_UNKNOWN = 1;
     public static final int DATA_SHARE_ERROR_CONCURRENT_REQUEST = 2;
     public static final int DATA_SHARE_ERROR_TIMEOUT_INTERRUPTED = 3;

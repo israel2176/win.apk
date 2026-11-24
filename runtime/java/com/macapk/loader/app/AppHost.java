@@ -50,6 +50,12 @@ public interface AppHost {
          *  device): asks the user for the permissions, the answer to the sink. */
         public java.util.function.BiConsumer<String[], com.macapk.loader.SpecialAccessHandler.PermissionSink>
                 hostPermissions;
+        /** The host window turned for an orientation that fixes a side (ActivityInfo's
+         *  screenOrientation values; any other frees the window), as the display follows the
+         *  activity whose box it shows. */
+        public java.util.function.IntConsumer orientation;
+        /** The window back to the user's rotation (the one the app was started in), freed. */
+        public Runnable userOrientation;
     }
 
     /** ActivityThread.main's work on the calling thread, the main looper's: the system services
@@ -64,9 +70,11 @@ public interface AppHost {
     /** Whether start ran (the app's process is AOSP's). */
     boolean started();
 
-    /** The window was closed: every activity of the task paused, stopped and destroyed from the
-     *  top down, as when the task is removed; true when that finished within `timeoutMs`. */
-    boolean terminate(long timeoutMs);
+    /** The window was closed: the task removed, as ActivityRecord.finishIfPossible and
+     *  Task.removeActivities do: the resumed top paused first (`topPaused` runs once it has, or at
+     *  once when nothing is resumed), then every activity stopped and destroyed from the top down.
+     *  The latch counts down once the task is empty. */
+    java.util.concurrent.CountDownLatch terminate(Runnable topPaused);
 
     /** The window was minimized: the task goes to the back (the resumed activity paused and
      *  stopped). */
@@ -74,6 +82,15 @@ public interface AppHost {
 
     /** The window came back: the task comes to the front (restarted, started, resumed). */
     void taskToFront();
+
+    /** A process of the app's other than the default one left (System.exit from a component
+     *  declared android:process): its activities, by class name, finish, as the system removes a
+     *  dead process's activities. */
+    void finishActivities(java.util.Set<String> classNames);
+
+    /** The starts the task manager has not launched yet (one waiting for the top to pause): what
+     *  a process that leaves now still owes, which the next process starts. */
+    java.util.List<Intent> pendingStarts();
 
     /** Another app's start of one of this app's activities, or a URL the host hands over, while the
      *  process runs: started as ActivityStarter starts an intent from outside the task. */

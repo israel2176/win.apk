@@ -851,8 +851,8 @@ public final class StatusBarDriver {
             // MACAPK_WINDOW_BAR_COLORS=0 restores the verbatim theme colour.
             if (!statusBar && declared != MACAPK_UNSET_COLOR && MACAPK_WINDOW_BAR_COLORS
                     && root != null) {
-                int[] t = android.app.Activity.macapkNavigationBarTable(root.getContext());
-                declared = android.app.Activity.macapkResolveNavigationBarColor(declared,
+                int[] t = navigationBarTable(root.getContext());
+                declared = resolveNavigationBarColor(declared,
                         t[0] != 0, t[1], t[2], t[3] != 0, false);
             }
         }
@@ -1390,5 +1390,43 @@ public final class StatusBarDriver {
         }
         sCachedBatteryPct = pct;
         return pct;
+    }
+
+    // From Win.apk's Activity (PhoneWindow's navigation bar colour rule), its one user now.
+    /** The navigation-bar colour PhoneWindow.generateLayout stores, from the
+     *  theme's value (android14 :2516-2527; android15 :2616-2627 adds the
+     *  `!mEdgeToEdgeEnforced` term). `sentinelKnown` is false on a table that
+     *  has no navigation_bar_default (API <= 33), where the theme value is
+     *  taken as-is -- as android11's `a.getColor(..., 0xFF000000)` did. */
+    static int resolveNavigationBarColor(int themeNav, boolean sentinelKnown,
+            int navDefault, int navCompatible, boolean navDefaultTransparent,
+            boolean edgeToEdgeEnforced) {
+        if (!sentinelKnown) return themeNav;
+        final boolean specified = themeNav != navDefault;
+        return (!specified && !edgeToEdgeEnforced && !navDefaultTransparent)
+                ? navCompatible : themeNav;
+    }
+
+    /** {known, navigation_bar_default, navigation_bar_compatible,
+     *  config_navBarDefaultTransparent} resolved BY NAME from the loaded
+     *  platform table through `ctx` (context.getColor / getResources()
+     *  .getBoolean, as generateLayout reads them). known=0 when either colour
+     *  is absent, i.e. the table predates the sentinel; no constant stands in
+     *  for a value the table does not carry. */
+    static int[] navigationBarTable(android.content.Context ctx) {
+        try {
+            android.content.res.Resources r = ctx == null ? null : ctx.getResources();
+            if (r == null) return new int[] { 0, 0, 0xFF000000, 0 };
+            final int idDefault = r.getIdentifier("navigation_bar_default", "color", "android");
+            final int idCompat = r.getIdentifier("navigation_bar_compatible", "color", "android");
+            if ((idDefault >>> 24) != 0x01 || (idCompat >>> 24) != 0x01) {
+                return new int[] { 0, 0, 0xFF000000, 0 };
+            }
+            final int idTransparent = r.getIdentifier("config_navBarDefaultTransparent", "bool", "android");
+            final boolean transparent = (idTransparent >>> 24) == 0x01 && r.getBoolean(idTransparent);
+            return new int[] { 1, ctx.getColor(idDefault), ctx.getColor(idCompat), transparent ? 1 : 0 };
+        } catch (Throwable t) {
+            return new int[] { 0, 0, 0xFF000000, 0 };
+        }
     }
 }
