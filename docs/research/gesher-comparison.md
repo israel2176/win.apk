@@ -75,8 +75,10 @@ launcher in use; the other runtime's CI claims (taken from its docs).
   extensions), encoders are MF's, own MP4 writer.
 - **Update check:** Win.apk does verify size and sha256 digest (earlier claim wrong); missing vs the other runtime: no
   digest -> size only, no product-version check, pre-releases not skipped, a cached copy re-run on size only.
-- **GL extensions:** Win.apk lists only callable extensions (safer; hides ANGLE_/CHROMIUM_); the other runtime exports
-  all, and a declared function ANGLE lacks aborts on call.
+- **GL extensions:** Win.apk listed only callable extensions (safer; hid ANGLE_/CHROMIUM_); the other runtime exports
+  all, and a declared function ANGLE lacks aborts on call. Taken (November 2026): Win.apk now forwards
+  `gl2ext_angle.h`'s functions as the other runtime does and lists an extension only when every function resolves in
+  the ANGLE loaded (`host/gl/guest_gl_extensions.cpp`).
 - **Tests:** the other runtime e2e 10 apps incl. TIC-80 (SDL2); no Compose/Flutter/RN/libGDX/WebView-shell; no size
   budget; no view-tree oracle. Win.apk 92 apps, smoke 10 per PR, footprint and UI gate in CI.
 - **Hebrew:** both full (the other runtime 231 keys, Win.apk 431).

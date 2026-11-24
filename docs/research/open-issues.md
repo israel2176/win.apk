@@ -352,9 +352,19 @@ Masad's update/dark screen. Two showed only a black window:
   GrGLInterface asks for every function of each extension GL_EXTENSIONS lists
   and refuses the context when one is missing, and a guest saw ANGLE's whole
   list, ANGLE's and Chromium's own extensions included (more of them on a real
-  GPU than under Wine). A guest is now told only the Khronos-declared
-  extensions whose functions it can get (gl2ext.h, GLES/glext.h, eglext.h;
-  `gen_gl_stubs.py`). Additionally, `net_spi` classes compiled by JDK 23 (class
+  GPU than under Wine). A guest is now told only the extensions whose
+  functions it can call: declared by the Khronos headers or ANGLE's
+  `gl2ext_angle.h` (whose `GL_ANGLE_*`/`GL_CHROMIUM_*` functions are forwarded
+  too, as the other runtime does: Skia's `glBindUniformLocationCHROMIUM`, WebRender's
+  `glProvokingVertexANGLE`), and every function resolving in the ANGLE loaded
+  (`gen_gl_stubs.py`, `host/gl/guest_gl_extensions.cpp`; `winapk-gl-test`
+  checks it: under Wine 120 of ANGLE's 124 pass, 30 of them ANGLE's or
+  Chromium's). To check on a real GPU: Meitav, and a Flutter app whose Skia
+  takes `GL_CHROMIUM_bind_uniform_location`. Still held back, no header
+  declares them: `GL_ANGLE_shader_pixel_local_storage`,
+  `GL_CHROMIUM_copy_compressed_texture` (both have functions),
+  `GL_ANGLE_multiview_multisample`, `GL_ANGLE_get_serialized_context_string`;
+  ANGLE's `eglext_angle.h` (`EGL_ANGLE_*`) is not imported. Additionally, `net_spi` classes compiled by JDK 23 (class
   version 67) caused a `ServiceLoader` failure during Flutter plugin registration
   that detached `FlutterFragment` before rendering started; fixed by compiling
   net_spi with `--source 21 --target 21`. Both fixes together: `first frame

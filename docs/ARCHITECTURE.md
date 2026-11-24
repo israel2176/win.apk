@@ -458,8 +458,12 @@ checked against its SHA-256.
   forwarders (`gl_stubs.inc`, generated from the Khronos headers) that look
   ANGLE up on first use, so the runtime starts without it.
 - **From native code** (`host/gl/guest_gl.cpp`): every GLES 1.1 to 3.2 and
-  EGL 1.5 function wrapped for the System V convention, plus the EGL calls
-  that need a window. An app's `ANativeWindow` (`host/native_window.cpp`) is
+  EGL 1.5 function wrapped for the System V convention, the Khronos and
+  ANGLE/Chromium extensions' functions too (`third_party/angle/`'s
+  `gl2ext_angle.h`), plus the EGL calls that need a window. `GL_EXTENSIONS`
+  and `EGL_EXTENSIONS` name only the extensions whose every function the app
+  can call and the ANGLE loaded resolves (`host/gl/guest_gl_extensions.cpp`):
+  Skia and Flutter give up on GL when a listed one's function is missing. An app's `ANativeWindow` (`host/native_window.cpp`) is
   a size and a format; a window surface on it is a pbuffer that grows with
   the window, and `eglSwapBuffers` reads it back and presents it.
 

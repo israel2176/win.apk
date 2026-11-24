@@ -342,7 +342,8 @@ if(WINAPK_JNI_INCLUDE)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_gl_bridges.cmake
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
-                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
+                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp
+                 host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
@@ -362,7 +363,8 @@ if(WINAPK_JNI_INCLUDE)
 
   # The runtime's GL on ANGLE (test/gl_test.cpp), on whatever backend the
   # machine has.
-  add_executable(winapk-gl-test test/gl_test.cpp host/gl/gl_surface.cpp host/gl/gl_loader.cpp host/gl/gl_stubs.cpp)
+  add_executable(winapk-gl-test test/gl_test.cpp host/gl/gl_surface.cpp host/gl/gl_loader.cpp host/gl/gl_stubs.cpp
+                 host/gl/guest_gl_extensions.cpp)
   target_include_directories(winapk-gl-test PRIVATE host third_party/khronos)
   target_compile_definitions(winapk-gl-test PRIVATE KHRONOS_STATIC)
   target_link_options(winapk-gl-test PRIVATE -static)
