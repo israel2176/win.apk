@@ -139,7 +139,7 @@ page's Permissions rows, which stop a running app on revoke), single instance
 - Toolchain: **clang only** (MSVC cannot emit System V calls). CI builds on
   `windows-latest` with MSYS2 CLANG64.
 - Quick launcher-only compile check on Linux (no full CMake needed):
-  `apt-get install g++-mingw-w64-x86-64-posix`, then
+  `apt-get install g++-mingw-w64-x86-64-posix libz-mingw-w64-dev`, then
   `x86_64-w64-mingw32-windres windows/launcher/launcher.rc -O coff -o l.res` and
   `x86_64-w64-mingw32-g++-posix -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -municode -mwindows -static windows/launcher/launcher_main.cpp l.res -o Win.apk.exe -lcomctl32 -lshell32 -lole32 -luuid -lgdiplus -ldwmapi -luxtheme -lgdi32 -lwinhttp -lbcrypt -lcrypt32 -lwintrust -lversion -lz`.
 - Looking at the UI: `apt-get install wine64 xvfb xdotool`; Wine is in
