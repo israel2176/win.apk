@@ -165,7 +165,6 @@ jmethodID g_dispatch_mid = nullptr, g_key_mid = nullptr;
 jmethodID g_host_key_mid = nullptr, g_touch_mid = nullptr, g_wheel_mid = nullptr, g_pinch_mid = nullptr;
 jmethodID g_mouse_mid = nullptr, g_mouse_exit_mid = nullptr, g_text_mid = nullptr, g_composing_mid = nullptr;
 jmethodID g_ime_inline_mid = nullptr, g_ime_anchor_mid = nullptr;
-jmethodID g_ime_edit_mid = nullptr, g_ime_sync_mid = nullptr;  // TouchDispatcher.hostImeEdit, hostImeSync
 
 JNIEnv* ui_thread_env() {
     thread_local JNIEnv* env = nullptr;
@@ -464,21 +463,6 @@ public:
         *y = static_cast<float>(static_cast<int32_t>(packed & 0xffffffff)) * view_h / sh;
         return true;
     }
-    // TouchDispatcher.hostImeEdit: a TSF text service's edit, for the focused editor.
-    void text_edit(int kind, const std::u16string& text, int start, int end, int epoch, int revision) override {
-        JNIEnv* env = ui_thread_env();
-        if (!env || !g_dispatcher || !g_ime_edit_mid) return;
-        jstring s = env->NewString(reinterpret_cast<const jchar*>(text.data()), static_cast<jsize>(text.size()));
-        if (s) env->CallVoidMethod(g_dispatcher, g_ime_edit_mid, kind, s, start, end, epoch, revision);
-        report_input_exception(env);
-        if (s) env->DeleteLocalRef(s);
-    }
-    void text_sync() override {
-        JNIEnv* env = ui_thread_env();
-        if (!env || !g_dispatcher || !g_ime_sync_mid) return;
-        env->CallVoidMethod(g_dispatcher, g_ime_sync_mid);
-        report_input_exception(env);
-    }
     // The user closed the window (its X, Alt+F4, the taskbar; the end of the
     // Windows session too). See close_thread.
     void close_requested() override {
@@ -539,8 +523,6 @@ void JNICALL Cocoa_registerTouchDispatcher(JNIEnv* env, jclass, jobject dispatch
     g_composing_mid = method("dispatchHostComposingText", "(Ljava/lang/String;)V");
     g_ime_inline_mid = method("hostImeInline", "()Z");
     g_ime_anchor_mid = method("hostImeAnchor", "()J");
-    g_ime_edit_mid = method("hostImeEdit", "(ILjava/lang/String;IIII)V");
-    g_ime_sync_mid = method("hostImeSync", "()V");
     env->DeleteLocalRef(cls);
 }
 
@@ -1657,67 +1639,11 @@ void JNICALL FrameTimes_record(JNIEnv*, jclass, jlong layout, jlong draw, jlong 
     g_frame_times.add(layout, draw, pixels, present, total, warmup == JNI_TRUE, now);
 }
 
-// com.macapk.loader.HostTextInput: the focused editor for the window's TSF document and the
-// touch keyboard (win32_window.h, "text input"). Positions from the editor side are surface
-// pixels; the window takes them as fractions of the app's box.
-jboolean JNICALL TextInput_focus(JNIEnv*, jclass, jboolean active, jboolean ime, jint epoch) {
-    window_text_input(active == JNI_TRUE, ime == JNI_TRUE, epoch);
-    return window_handle() ? JNI_TRUE : JNI_FALSE;
-}
-
-void JNICALL TextInput_document(JNIEnv* env, jclass, jstring text, jint start, jint end, jint offset, jint epoch,
-                                jint applied, jboolean available, jboolean reversed, jfloatArray caret,
-                                jint geometry_start, jfloatArray geometry) {
-    WindowTextDocument d;
-    if (text) {
-        const jsize n = env->GetStringLength(text);
-        d.text.resize(static_cast<size_t>(n));
-        if (n > 0) env->GetStringRegion(text, 0, n, reinterpret_cast<jchar*>(&d.text[0]));
-    }
-    d.start = start;
-    d.end = end;
-    d.offset = offset;
-    d.epoch = epoch;
-    d.applied_revision = applied;
-    d.available = available == JNI_TRUE;
-    d.reversed = reversed == JNI_TRUE;
-    const float sw = static_cast<float>(g_surface_w.load()), sh = static_cast<float>(g_surface_h.load());
-    if (sw > 0 && sh > 0) {
-        auto fractions = [&](const float* px, float* out) {
-            out[0] = px[0] / sw;
-            out[1] = px[1] / sh;
-            out[2] = px[2] / sw;
-            out[3] = px[3] / sh;
-        };
-        if (caret && env->GetArrayLength(caret) == 4) {
-            float px[4];
-            env->GetFloatArrayRegion(caret, 0, 4, px);
-            fractions(px, d.caret);
-            d.has_caret = true;
-        }
-        const jsize g = geometry ? env->GetArrayLength(geometry) : 0;
-        if (g > 0 && g % 4 == 0) {
-            std::vector<float> px(static_cast<size_t>(g));
-            env->GetFloatArrayRegion(geometry, 0, g, px.data());
-            d.geometry.resize(px.size());
-            for (size_t i = 0; i < px.size(); i += 4) fractions(&px[i], &d.geometry[i]);
-            d.geometry_start = geometry_start;
-        }
-    }
-    window_text_document(std::move(d));
-}
-
-void JNICALL TextInput_softInput(JNIEnv*, jclass, jboolean show) { window_soft_input(show == JNI_TRUE); }
-
 constexpr const char* kCls = "com.macapk.loader.NativeCocoa";
-constexpr const char* kTextInputCls = "com.macapk.loader.HostTextInput";
 
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "init", "()Z", Cocoa_init),
     WINAPK_HOST_NATIVE("com.macapk.loader.FrameTimes", "nativeRecord", "(JJJJJZ)V", FrameTimes_record),
-    WINAPK_HOST_NATIVE(kTextInputCls, "nativeFocus", "(ZZI)Z", TextInput_focus),
-    WINAPK_HOST_NATIVE(kTextInputCls, "nativeDocument", "(Ljava/lang/String;IIIIIZZ[FI[F)V", TextInput_document),
-    WINAPK_HOST_NATIVE(kTextInputCls, "nativeSoftInput", "(Z)V", TextInput_softInput),
     WINAPK_HOST_NATIVE(kCls, "setPhoneSize", "(II)V", Cocoa_setPhoneSize),
     WINAPK_HOST_NATIVE(kCls, "phoneWidth", "()I", Cocoa_phoneWidth),
     WINAPK_HOST_NATIVE(kCls, "phoneHeight", "()I", Cocoa_phoneHeight),

@@ -3197,21 +3197,10 @@ public class TouchDispatcher {
         if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
     }
 
-    // ---- Windows' text services and touch keyboard (Win.apk; HostTextInput) -----------------
+    // ---- the focused editor, for Windows' text services (Win.apk; WindowsTextInput) ----------
     // AospInput answers these for AOSP's views.
 
-    /** The window: a TSF text service edited the focused editor's document. */
-    public void hostImeEdit(int kind, String text, int start, int end, int epoch, int revision) {
-        HostTextInput.edit(this, kind, text, start, end, epoch, revision);
-    }
-
-    /** The window: a key, a character or a touch went to the app; the editor may have changed. */
-    public void hostImeSync() { HostTextInput.requestSync(this); }
-
-    /** The focused editor's InputConnection an input method works on, or null. A TextView the
-     *  app showed the soft input for (the soft-key route) has one too: the keyboard's keys go
-     *  to it as keys, a text service's edits through the connection, as on a device. On the
-     *  editor's thread. */
+    /** The InputConnection of the editor an input method is bound to, or null. Editor's thread. */
     public android.view.inputmethod.InputConnection hostImeConnection() {
         try {
             return ViewHost.get().imeActiveConnection();
@@ -3220,7 +3209,7 @@ public class TouchDispatcher {
         }
     }
 
-    /** The EditorInfo of the editor hostImeConnection answers for. */
+    /** That editor's EditorInfo. */
     public android.view.inputmethod.EditorInfo hostImeEditorInfo() {
         try {
             return android.view.inputmethod.InputMethodManager.macapkCurrentEditorInfo();
@@ -3229,9 +3218,8 @@ public class TouchDispatcher {
         }
     }
 
-    /** The editor as a TextView, for its Layout (the caret, the characters' boxes); null when
-     *  it is none (a Compose field). */
-    public android.widget.TextView hostImeTextView() {
+    /** That editor's view (a TextView has a Layout to measure), or null. */
+    public android.view.View hostImeView() {
         try {
             return ViewHost.get().imeShowTarget();
         } catch (Throwable t) {
@@ -3239,11 +3227,10 @@ public class TouchDispatcher {
         }
     }
 
-    /** Where the editor's window starts on the surface: view coordinates are the content's,
-     *  and the surface has the status bar above (hostImeAnchor). */
+    /** Where view coordinates start on the surface: the status bar is above the content. */
     public float hostImeSurfaceTop() { return StatusBarDriver.heightPx(null); }
 
-    /** Runs `r` on the thread the editor's input runs on, as dispatchHostText does. */
+    /** Runs `r` on the editor's thread, after what is queued there (as dispatchHostText). */
     public void hostImePost(Runnable r) {
         if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
     }

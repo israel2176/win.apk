@@ -2,8 +2,8 @@
 
 #include "win32_window.h"
 
-#include "touch_keyboard.h"
-#include "tsf_text_service.h"
+#include "input_pane.h"
+#include "tsf_session.h"
 #include "uia_provider.h"
 #include "window_fit.h"
 
@@ -1177,228 +1177,173 @@ void place_ime(HWND hwnd) {
 
 // ---- text services: the focused editor as a TSF document --------------------------------
 //
-// Windows' input methods today are TSF text services. They read the text around the caret
-// and write into it (a composition, a reconversion of text already typed, a correction, a
-// handwriting or dictation result) through the focused window's TSF document. While an
-// editor that takes compositions has the focus, the window's document is a copy of it
-// (tsf_text_store.h), sent by the app's editor side (window_text_document) whenever it may
-// have changed; a text service's edits go to the editor's InputConnection as an Android input
-// method's calls (WindowInput::text_edit). Keys reach the text services before the app (the
-// message loop below), as they reach an Android input method before the view. An input
-// method that is no text service (an IMM32 IME), and every input method when TSF cannot be
-// set up (Wine's TSF is partial) or WINAPK_TSF=0, still goes through "input methods" above.
-// Positions are UTF-16 units on both sides, so Hebrew, Arabic and surrogate pairs need
-// nothing of their own; right-to-left layout is the editor's, and its character boxes arrive
-// in the app's box and are turned into this window's (mirrored when it is) client pixels.
+// Windows' input methods today are TSF text services: the Japanese, Chinese and Korean IMEs,
+// handwriting, dictation, the touch keyboard's suggestions. While an editor has the focus they
+// work on a TSF document over it (tsf_session.h, tsf_store.h): they read the text around the
+// caret, compose in it, reconvert what was typed, put their candidate window under the
+// characters the editor drew. The editor side sends what it is through window_text_* (any
+// thread); the window's thread takes those from g_text_queue on kMsgText, in order. TSF is set
+// up when the first editor takes the focus; where it cannot be (Wine's TSF is partial, a
+// Windows without it), input methods compose through IMM32 above, as Windows makes them for a
+// window with no TSF document.
 
-constexpr UINT kMsgText = WM_APP + 5;  // wParam: a kText* operation
-enum : WPARAM { kTextApply = 0, kTextPump = 1, kTextShowKeyboard = 2, kTextHideKeyboard = 3 };
+constexpr UINT kMsgText = WM_APP + 5;  // the editor side queued something (g_text_queue)
 
-struct TextFocus {
-    bool active = false, ime = false;
-    int epoch = -1;
+struct TextCommand {
+    enum Kind { kFocus, kBlur, kSnapshot, kLayout, kSoftInput } kind = kFocus;
+    WindowTextField field;
+    textinput::Snapshot snapshot;
+    textinput::Layout layout;
+    bool show = false;
 };
-std::mutex g_text_lock;  // guards the two below: the editor side writes them from its thread
-TextFocus g_text_focus;
-std::unique_ptr<WindowTextDocument> g_text_document;  // the newest copy, until applied
+
+std::mutex g_text_lock;
+std::vector<TextCommand> g_text_queue;  // under g_text_lock
+std::atomic<TextInputClient*> g_text_client{nullptr};
+
 // The window's thread only.
-std::shared_ptr<tsf::TextService> g_tsf;
-int g_tsf_epoch = -1;
-bool g_tsf_off = false;          // TSF could not be set up (or WINAPK_TSF=0): IMM32 only
-bool g_text_applying = false, g_text_deferred = false;
-bool g_text_active = false;      // an editor has the focus (for text_sync); window thread's copy
-bool g_touch_keyboard_shown = false;
+std::unique_ptr<tsf::Session> g_tsf;
+bool g_tsf_failed = false;  // TSF could not be set up: IMM32 only, for this run
+bool g_com_started = false;
+bool g_field_active = false;  // an editor has the focus
+WindowTextField g_field;
+bool g_keyboard_shown = false;  // the touch keyboard, shown for the focused editor
 
-bool tsf_enabled() {
-    static const bool on = [] {
-        const char* e = std::getenv("WINAPK_TSF");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
+bool frame_to_screen(const RECT& f, RECT* out);  // below, with the screen readers'
+bool screen_to_frame(POINT p, POINT* out);
 
-// A rectangle in fractions of the app's box as this window's client pixels: mirrored, as the
-// window's own client coordinates are, in a right-to-left window.
-RECT box_to_client(HWND hwnd, const float* r) {
-    RECT client{};
-    GetClientRect(hwnd, &client);
-    const RECT box = app_rect(client);
-    const float w = static_cast<float>(box.right - box.left), h = static_cast<float>(box.bottom - box.top);
-    LONG l = box.left + std::lround(r[0] * w), t = box.top + std::lround(r[1] * h);
-    LONG rr = box.left + std::lround(r[2] * w), b = box.top + std::lround(r[3] * h);
-    if (rr <= l) rr = l + 1;  // a caret has no width
-    if (b <= t) b = t + 1;
-    if (g_rtl_window) {
-        const LONG ml = client.right - rr, mr = client.right - l;
-        l = ml;
-        rr = mr;
-    }
-    return RECT{l, t, rr, b};
-}
-
-void retire_tsf() {
-    auto service = std::move(g_tsf);
-    g_tsf_epoch = -1;
-    // A COM notification can still hold the old service; give the window its earlier
-    // document manager back now, before another editor's is attached.
-    if (service) service->Retire();
-}
-
-// Gives the caret and the laid-out characters of `d` to the document.
-void tsf_layout(HWND hwnd, const WindowTextDocument& d) {
-    if (!g_tsf) return;
-    RECT caret{};
-    if (d.has_caret) {
-        caret = box_to_client(hwnd, d.caret);
-    } else {
-        // A field the app draws itself (Compose) has no Layout to ask: the candidate window
-        // goes where the user last pointed, as with IMM32 (place_ime).
-        RECT client{};
-        GetClientRect(hwnd, &client);
-        const RECT box = app_rect(client);
-        const float w = static_cast<float>(box.right - box.left), h = static_cast<float>(box.bottom - box.top);
-        if (w > 0 && h > 0) {
-            const float x = g_mouse_at.x >= 0 ? static_cast<float>(g_mouse_at.x) : 0.0f;
-            const float y = g_mouse_at.x >= 0 ? static_cast<float>(g_mouse_at.y) : h * 0.75f;
-            const float r[4] = {x / w, y / h, x / w, y / h};
-            caret = box_to_client(hwnd, r);
-        }
-    }
-    if (caret.bottom > caret.top) MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&caret), 2);
-    g_tsf->Caret(caret);
-    tsf::TextGeometry g;
-    g.epoch = d.epoch;
-    g.start = d.geometry_start;
-    const size_t n = d.geometry.size() / 4;
-    const size_t first = d.geometry_start >= d.offset ? static_cast<size_t>(d.geometry_start - d.offset) : SIZE_MAX;
-    if (n == 0 || first > d.text.size() || n > d.text.size() - first) return;
-    g.text = d.text.substr(first, n);
-    for (size_t i = 0; i < n; ++i) {
-        const RECT r = box_to_client(hwnd, &d.geometry[i * 4]);
-        g.characters.push_back(tsf::TextCharacterBounds{d.geometry_start + static_cast<int32_t>(i), r.left, r.top,
-                                                        r.right, r.bottom, false});
-    }
-    g_tsf->Geometry(std::move(g));
-}
-
-// The editor side's newest state, applied on the window's thread.
-void apply_text(HWND hwnd) {
-    if (g_text_applying) {  // a COM notification pumped messages inside an update
-        g_text_deferred = true;
-        return;
-    }
-    g_text_applying = true;
-    TextFocus f;
-    std::unique_ptr<WindowTextDocument> d;
+void post_text(TextCommand c) {
+    if (!g_hwnd) return;
+    bool first = false;
     {
-        std::lock_guard<std::mutex> lock(g_text_lock);
-        f = g_text_focus;
-        if (g_text_document && g_text_document->epoch == f.epoch) d = std::move(g_text_document);
+        std::lock_guard<std::mutex> hold(g_text_lock);
+        first = g_text_queue.empty();
+        g_text_queue.push_back(std::move(c));
     }
-    g_text_active = f.active;
-    if (!f.active && g_touch_keyboard_shown) {
-        // The editor went (its window closed, the focus left it): Android's input method hides.
-        g_touch_keyboard_shown = false;
-        show_touch_keyboard(hwnd, false);
-    }
-    if (!f.active || !f.ime || g_tsf_off || !tsf_enabled()) {
-        retire_tsf();
-    } else {
-        if (g_tsf && g_tsf_epoch != f.epoch) retire_tsf();
-        if (d && !d->available) {
-            retire_tsf();
-        } else if (d) {
-            tsf::TextDocument doc;
-            doc.text = d->text;
-            doc.start = d->start;
-            doc.end = d->end;
-            doc.offset = d->offset;
-            doc.epoch = d->epoch;
-            doc.applied_revision = d->applied_revision;
-            doc.available = true;
-            doc.reversed = d->reversed;
-            if (g_tsf) {
-                auto service = g_tsf;  // kept while a notification it sends runs
-                service->Update(std::move(doc));
-            } else {
-                // TSF wants a single-threaded apartment on the window's thread. A thread
-                // already in the multithreaded one cannot have TSF: IMM32 stays.
-                const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-                HRESULT hr = co;
-                if (SUCCEEDED(co)) {
-                    g_tsf = tsf::TextService::Attach(
-                        hwnd, std::move(doc),
-                        [](tsf::DocumentEdit e) {
-                            if (g_input) g_input->text_edit(static_cast<int>(e.kind), e.text, e.start, e.end, e.epoch,
-                                                            e.revision);
-                        },
-                        [hwnd] { PostMessageW(hwnd, kMsgText, kTextPump, 0); }, &hr);
-                }
-                if (g_tsf) {
-                    g_tsf_epoch = f.epoch;
-                    g_tsf->Focus(GetFocus() == hwnd);
-                    std::fprintf(stderr, "[win.apk] text input: the focused editor is a TSF document\n");
-                } else {
-                    g_tsf_off = true;
-                    std::fprintf(stderr, "[win.apk] text input: no TSF (0x%08lx); input methods go through IMM32\n",
-                                 static_cast<unsigned long>(hr));
-                }
-            }
-            tsf_layout(hwnd, *d);
-        }
-    }
-    g_text_applying = false;
-    if (g_text_deferred) {
-        g_text_deferred = false;
-        PostMessageW(hwnd, kMsgText, kTextApply, 0);
-    }
+    if (first) PostMessageW(g_hwnd, kMsgText, 0, 0);
 }
 
-// InputMethodManager.showSoftInput / hideSoftInput (window_soft_input).
-void soft_input(HWND hwnd, bool show) {
-    if (show) {
-        // Windows opens its touch keyboard for a field touched with a finger or a pen, not
-        // for one clicked or tabbed to; Android's input method shows on a device that has no
-        // keyboard, and TryShow lets Windows' own policy (a keyboard attached, the user's
-        // "Show the touch keyboard" setting) decide that part.
-        if (!g_last_press_touch || !touch_keyboard_device()) return;
-        const int32_t r = show_touch_keyboard(hwnd, true);
-        g_touch_keyboard_shown = r == 1;
-        std::fprintf(stderr, "[win.apk] touch keyboard: %s (0x%08lx)\n",
-                     r == 1 ? "shown" : r == 0 ? "Windows declined" : "not available", static_cast<unsigned long>(r));
-    } else if (g_touch_keyboard_shown) {
-        g_touch_keyboard_shown = false;
-        show_touch_keyboard(hwnd, false);
+// TSF and WinRT's input pane want the window's thread in a single-threaded apartment.
+bool com_ready() {
+    if (!g_com_started) {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (FAILED(co)) return false;
+        g_com_started = true;
     }
+    return true;
 }
 
-// The message loop gives keys to the text services before they are translated: a key an
-// input method takes (to compose, to pick a candidate) is not the app's. Its release goes
-// the same way as its press.
-bool tsf_takes_key(const MSG& m) {
-    static bool held[256];
-    if (m.message != WM_KEYDOWN && m.message != WM_KEYUP && m.message != WM_SYSKEYDOWN && m.message != WM_SYSKEYUP) {
+bool start_tsf(HWND hwnd) {
+    if (g_tsf) return true;
+    if (g_tsf_failed) return false;
+    HRESULT why = RPC_E_CHANGED_MODE;
+    if (com_ready()) {
+        tsf::SessionHost host;
+        host.edit = [](const textinput::Edit& e) {
+            if (TextInputClient* c = g_text_client.load()) c->edit(e);
+        };
+        host.to_screen = [](const textinput::Box& b, RECT* out) {
+            const RECT f{std::lround(b.left), std::lround(b.top), std::lround(b.right), std::lround(b.bottom)};
+            return frame_to_screen(f, out);
+        };
+        host.from_screen = [](POINT p, float* x, float* y) {
+            POINT f{};
+            if (!screen_to_frame(p, &f)) return false;
+            *x = static_cast<float>(f.x) + 0.5f;
+            *y = static_cast<float>(f.y) + 0.5f;
+            return true;
+        };
+        g_tsf = tsf::Session::Create(hwnd, std::move(host), &why);
+    }
+    if (!g_tsf) {
+        g_tsf_failed = true;
+        std::fprintf(stderr, "[win.apk] text input: no TSF (0x%08lx): input methods compose through IMM32\n",
+                     static_cast<unsigned long>(why));
         return false;
     }
-    const bool up = m.message == WM_KEYUP || m.message == WM_SYSKEYUP;
-    const size_t vk = m.wParam & 0xff;
-    const bool paired = up && held[vk];
-    if (up) held[vk] = false;
-    auto service = g_tsf;
-    if (!service || m.hwnd != g_hwnd) return paired;
-    const bool eaten = service->Key(m.message, m.wParam, m.lParam);
-    if (!up && eaten) held[vk] = true;
-    return eaten || paired;
+    std::fprintf(stderr, "[win.apk] text input: Windows' text services work on the focused editor (TSF)\n");
+    return true;
 }
 
-// Whether a message may have changed the focused editor: while one has the focus, a key or a
-// character; always, a press let go or a key released (the focus may have moved to an editor).
+void hide_keyboard(HWND hwnd) {
+    if (!g_keyboard_shown) return;
+    g_keyboard_shown = false;
+    input_pane::show(hwnd, false, nullptr);
+}
+
+void focus_editor(HWND hwnd, const TextCommand& c) {
+    g_field = c.field;
+    g_field_active = true;
+    const textinput::FieldPolicy policy = textinput::field_policy(c.field.input_type, c.field.ime_options);
+    if (!policy.document) {
+        if (g_tsf) g_tsf->Blur();  // keys only (TYPE_NULL): no document, as Android binds no input method
+        return;
+    }
+    if (start_tsf(hwnd)) g_tsf->Focus(policy, c.snapshot);
+}
+
+void blur_editor(HWND hwnd) {
+    g_field_active = false;
+    if (g_tsf) g_tsf->Blur();
+    hide_keyboard(hwnd);
+}
+
+void soft_keyboard(HWND hwnd, bool show) {
+    if (!show) {
+        hide_keyboard(hwnd);
+        return;
+    }
+    // As Windows does for its own fields: for a touch or a pen, on a PC with a touchscreen.
+    if (!g_field_active || !g_last_press_touch || !input_pane::touch_screen() || !com_ready()) return;
+    HRESULT why = S_OK;
+    const input_pane::Answer a = input_pane::show(hwnd, true, &why);
+    g_keyboard_shown = a == input_pane::Answer::kShown;
+    static int last = -1;  // each answer logged once
+    if (static_cast<int>(a) != last) {
+        last = static_cast<int>(a);
+        if (a == input_pane::Answer::kShown) {
+            std::fprintf(stderr, "[win.apk] touch keyboard: shown\n");
+        } else if (a == input_pane::Answer::kDeclined) {
+            std::fprintf(stderr, "[win.apk] touch keyboard: Windows declined (a keyboard is attached, or the "
+                                 "user's setting)\n");
+        } else {
+            std::fprintf(stderr, "[win.apk] touch keyboard: not available (0x%08lx)\n",
+                         static_cast<unsigned long>(why));
+        }
+    }
+}
+
+void run_text(HWND hwnd) {
+    std::vector<TextCommand> batch;
+    {
+        std::lock_guard<std::mutex> hold(g_text_lock);
+        batch.swap(g_text_queue);
+    }
+    for (TextCommand& c : batch) {
+        switch (c.kind) {
+            case TextCommand::kFocus: focus_editor(hwnd, c); break;
+            case TextCommand::kBlur:
+                if (g_field_active && c.field.epoch == g_field.epoch) blur_editor(hwnd);
+                break;
+            case TextCommand::kSnapshot:
+                if (g_tsf) g_tsf->Update(c.snapshot);
+                break;
+            case TextCommand::kLayout:
+                if (g_tsf) g_tsf->Relayout(std::move(c.layout));
+                break;
+            case TextCommand::kSoftInput: soft_keyboard(hwnd, c.show); break;
+        }
+    }
+}
+
+// Whether a message that went to the app may have changed the focused editor's text or
+// selection (a key, a character, a press let go): asked of an editor whose changes the editor
+// side cannot watch (WindowTextField::watched).
 bool may_change_editor(UINT msg) {
     switch (msg) {
-        case WM_LBUTTONUP: case WM_POINTERUP: case WM_KEYUP:
+        case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_CHAR: case WM_UNICHAR:
+        case WM_LBUTTONUP: case WM_POINTERUP: case WM_IME_COMPOSITION: case WM_IME_ENDCOMPOSITION:
             return true;
-        case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_CHAR: case WM_UNICHAR: case WM_IME_ENDCOMPOSITION:
-            return g_text_active;
         default:
             return false;
     }
@@ -1644,16 +1589,9 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_KILLFOCUS:
             end_pinch(hwnd);
             release_keys();
-            if (auto service = g_tsf) service->Focus(false);
-            break;
-        case WM_SETFOCUS:
-            if (auto service = g_tsf) service->Focus(true);
             break;
         case kMsgText:
-            if (wp == kTextApply) apply_text(hwnd);
-            else if (wp == kTextPump) {
-                if (auto service = g_tsf) service->Pump();
-            } else soft_input(hwnd, wp == kTextShowKeyboard);
+            run_text(hwnd);
             return 0;
         // An input method composes (see "input methods" above).
         case WM_IME_STARTCOMPOSITION:
@@ -1721,6 +1659,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // Moved to another monitor without a drag (Win+Shift+Arrow, a
         // program): fitted for that monitor's work area.
         case WM_WINDOWPOSCHANGED:
+            if (g_tsf) g_tsf->Moved();  // every character is somewhere else on the screen
             if (!g_in_size_move && g_fit_monitor && IsWindowVisible(hwnd) &&
                 MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) != g_fit_monitor) {
                 refit(hwnd);
@@ -1953,12 +1892,15 @@ DWORD WINAPI ui_thread(void* param) {
     if (!g_hwnd) return 1;
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
-        if (tsf_takes_key(msg)) continue;  // an input method's key (see "text services")
+        if (g_tsf && g_tsf->Key(msg)) continue;  // an input method's key (see "text services")
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
-        if (g_input && msg.hwnd == g_hwnd && may_change_editor(msg.message)) g_input->text_sync();
+        if (g_field_active && !g_field.watched && msg.hwnd == g_hwnd && may_change_editor(msg.message)) {
+            if (TextInputClient* c = g_text_client.load()) c->sync(g_field.epoch);
+        }
     }
-    retire_tsf();
+    g_tsf.reset();
+    if (g_com_started) CoUninitialize();
     return 0;
 }
 
@@ -2328,26 +2270,42 @@ void window_set_phone_size(int phone_w, int phone_h) {
 
 void window_set_orientation_lock(int lock) { g_orientation_lock = lock; }
 
-void window_text_input(bool active, bool ime, int epoch) {
-    if (!g_hwnd) return;
-    {
-        std::lock_guard<std::mutex> lock(g_text_lock);
-        g_text_focus = TextFocus{active, ime, epoch};
-    }
-    PostMessageW(g_hwnd, kMsgText, kTextApply, 0);
+void window_text_client(TextInputClient* client) { g_text_client.store(client); }
+
+void window_text_focus(const WindowTextField& field, const textinput::Snapshot& snapshot) {
+    TextCommand c;
+    c.kind = TextCommand::kFocus;
+    c.field = field;
+    c.snapshot = snapshot;
+    post_text(std::move(c));
 }
 
-void window_text_document(WindowTextDocument document) {
-    if (!g_hwnd || !tsf_enabled()) return;
-    {
-        std::lock_guard<std::mutex> lock(g_text_lock);
-        g_text_document = std::make_unique<WindowTextDocument>(std::move(document));
-    }
-    PostMessageW(g_hwnd, kMsgText, kTextApply, 0);
+void window_text_blur(int epoch) {
+    TextCommand c;
+    c.kind = TextCommand::kBlur;
+    c.field.epoch = epoch;
+    post_text(std::move(c));
+}
+
+void window_text_snapshot(const textinput::Snapshot& snapshot) {
+    TextCommand c;
+    c.kind = TextCommand::kSnapshot;
+    c.snapshot = snapshot;
+    post_text(std::move(c));
+}
+
+void window_text_layout(const textinput::Layout& layout) {
+    TextCommand c;
+    c.kind = TextCommand::kLayout;
+    c.layout = layout;
+    post_text(std::move(c));
 }
 
 void window_soft_input(bool show) {
-    if (g_hwnd) PostMessageW(g_hwnd, kMsgText, show ? kTextShowKeyboard : kTextHideKeyboard, 0);
+    TextCommand c;
+    c.kind = TextCommand::kSoftInput;
+    c.show = show;
+    post_text(std::move(c));
 }
 
 void* window_handle() { return g_hwnd; }

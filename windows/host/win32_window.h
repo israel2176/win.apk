@@ -33,6 +33,7 @@
 #include <vector>
 
 #include "pointer_input.h"
+#include "text_input_model.h"
 
 namespace winapk::host {
 
@@ -77,15 +78,6 @@ public:
     // Where the focused field's caret is, under its line, for the input
     // method's candidate window. False when the app has no such field.
     virtual bool caret(float* /*x*/, float* /*y*/, float /*view_w*/, float /*view_h*/) { return false; }
-    // An edit a TSF text service made in the focused editor's document
-    // (tsf_text_store.h DocumentEdit: its kind, text, range in the editor, the
-    // editor's epoch and the edit's revision), for the editor's InputConnection.
-    virtual void text_edit(int /*kind*/, const std::u16string& /*text*/, int /*start*/, int /*end*/, int /*epoch*/,
-                           int /*revision*/) {}
-    // A key, a character or a touch went to the app while an editor has the
-    // focus: the editor may have changed, and the editor side sends a fresh
-    // copy of it (window_text_document).
-    virtual void text_sync() {}
     // The user closed the window, which is hidden already, or the Windows
     // session is ending: the app is taken through its lifecycle and the
     // process ends, within a bounded time; a second call ends it at once.
@@ -221,34 +213,44 @@ void window_set_secure(bool secure);
 void take_launcher_ready_event();
 void signal_launcher_ready();
 
-// ---- text input: the focused editor as a TSF document, and the touch keyboard ----
+// ---- text input: the focused editor for Windows' text services, and the touch keyboard ----
 //
-// The app's editor side (HostTextInput.java, on the editor's thread) tells the
-// window which editor has the focus and sends a copy of it whenever it may have
-// changed; the window's thread keeps a TSF document over that copy for
-// Windows' input methods (tsf_text_store.h), whose edits go back through
-// WindowInput::text_edit. Any thread; nothing happens without a window.
-//
-// active: an editor with an InputConnection has the focus; ime: it takes
-// compositions (a text field that is not a password); epoch: changes with the
-// editor. Without TSF (it failed, WINAPK_TSF=0) IMM32 composes as before.
-void window_text_input(bool active, bool ime, int epoch);
-struct WindowTextDocument {
-    std::u16string text;  // the editor's text from `offset` on
-    int start = 0, end = 0, offset = 0, epoch = 0, applied_revision = 0;
-    bool available = false, reversed = false;
-    // The caret, and the characters from geometry_start on, as fractions of
-    // the app's box (left, top, right, bottom); none when unknown.
-    bool has_caret = false;
-    float caret[4] = {0, 0, 0, 0};
-    int geometry_start = 0;
-    std::vector<float> geometry;  // four per character
+// The editor side (WindowsTextInput.java, on the editor's thread) tells the window which
+// editor has the focus and sends a copy of it (text_input_model.h's Snapshot) and where it drew
+// its characters (Layout) whenever they changed; the window's thread keeps a TSF document over
+// it for Windows' input methods (tsf_session.h), whose edits go back to the editor through the
+// TextInputClient, one per TSF lock. Nothing of TSF exists before the first editor takes the
+// focus. Where TSF cannot be set up, input methods compose through IMM32 ("input methods" in
+// win32_window.cpp). Any thread; nothing happens without a window.
+
+struct WindowTextField {
+    int epoch = 0;        // the editor: a new one, a new epoch
+    int input_type = 0;   // EditorInfo.inputType
+    int ime_options = 0;  // EditorInfo.imeOptions
+    // The editor side hears of every change itself (an Editable it watches): no need to ask it
+    // after each key and touch (TextInputClient::sync).
+    bool watched = false;
 };
-void window_text_document(WindowTextDocument document);
-// InputMethodManager.showSoftInput / hideSoftInput: Windows' touch keyboard,
-// shown only on a PC with a touchscreen and for an editor the user touched (as
-// Windows does for its own fields), and then only if Windows' own policy (a
-// hardware keyboard attached, the user's setting) lets it.
+
+// Called on the window's thread.
+class TextInputClient {
+public:
+    virtual ~TextInputClient() = default;
+    // What a text service did in one lock, for the editor.
+    virtual void edit(const textinput::Edit& e) = 0;
+    // A key, a character or a touch went to an editor whose changes the editor side does not
+    // watch: it sends a fresh copy.
+    virtual void sync(int epoch) = 0;
+};
+void window_text_client(TextInputClient* client);
+
+void window_text_focus(const WindowTextField& field, const textinput::Snapshot& snapshot);
+void window_text_blur(int epoch);
+void window_text_snapshot(const textinput::Snapshot& snapshot);
+void window_text_layout(const textinput::Layout& layout);
+// InputMethodManager.showSoftInput / hideSoftInput: Windows' touch keyboard (input_pane.h),
+// shown only for the focused editor, after a touch or a pen on the app, on a PC with a
+// touchscreen, and then only if Windows' own policy lets it.
 void window_soft_input(bool show);
 
 // Translates a Windows virtual key to an Android KEYCODE_* (0 if none), as

@@ -404,7 +404,7 @@ void Store::Flush() {
 
 HRESULT Store::GetStatus(TS_STATUS* status) {
     if (!status) return E_INVALIDARG;
-    // The app shows and hides the touch keyboard itself (showSoftInput, touch_keyboard.h), as
+    // The app shows and hides the touch keyboard itself (showSoftInput, input_pane.h), as
     // TS_SD_INPUTPANEMANUALDISPLAYENABLE tells Windows; the touch keyboard's suggestions and
     // corrections follow the field.
     status->dwDynamicFlags = TS_SD_INPUTPANEMANUALDISPLAYENABLE | (read_only() ? TS_SD_READONLY : 0);
