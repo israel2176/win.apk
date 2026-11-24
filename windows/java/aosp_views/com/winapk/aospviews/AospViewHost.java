@@ -194,9 +194,18 @@ public final class AospViewHost implements ViewHost {
         activity.getWindowManager().addView(decor, l);
         mAdded.put(activity, decor);
         // A SurfaceView added or removed changes what the host shows under the window.
+        followSurfaces(decor);
+    }
+
+    /** An activity window's decor, however it was added (AOSP's handleResumeActivity, through the
+     *  window session): the first SurfaceView shown in it puts its GL frames under the windows. */
+    void followSurfaces(View decor) {
+        if (!mFollowed.add(decor)) return;
         decor.getViewTreeObserver().addOnGlobalLayoutListener(() -> surfacesChanged(decor));
         surfacesChanged(decor);
     }
+
+    private final Set<View> mFollowed = Collections.newSetFromMap(new WeakHashMap<>());
 
     /** After a layout of an activity window: the native GL view of the first SurfaceView shown
      *  in it goes under the window's frames (AospWindows.showSurfaceBelow). */

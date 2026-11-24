@@ -45,6 +45,8 @@ import android.view.InsetsState;
 import android.view.SurfaceControl;
 import android.view.WindowLayout;
 import android.view.WindowManager;
+import android.os.IBinder;
+import android.view.View;
 import android.view.WindowManagerGlobal;
 import android.window.ClientWindowFrames;
 
@@ -283,6 +285,22 @@ public final class AospWindows {
             sWindows.put(window.asBinder(), w);
             System.err.println(TAG + "window added: " + w.attrs.getTitle() + " type=" + w.attrs.type
                     + " " + w.attrs.width + "x" + w.attrs.height);
+            // An application window is the first thing the host window shows (the activity's, as
+            // ActivityThread.handleResumeActivity adds it): the host's surface exists from then on.
+            if (w.attrs.type >= WindowManager.LayoutParams.FIRST_APPLICATION_WINDOW
+                    && w.attrs.type <= WindowManager.LayoutParams.LAST_APPLICATION_WINDOW) {
+                ensureHostSurface(appLabel(w.attrs));
+            }
+            // An activity's window (ActivityThread.handleResumeActivity adds it): its SurfaceViews'
+            // GL frames go under the windows, followed after each layout. Once setView returns, the
+            // window's views have its token.
+            if (w.attrs.type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION) {
+                final IBinder token = window.asBinder();
+                new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+                    View decor = WindowManagerGlobal.getInstance().getWindowView(token);
+                    if (decor != null) AospViewHost.INSTANCE.followSurfaces(decor);
+                });
+            }
             insetsChanged();
             fillInsets(outInsetsState);
             if (outAttachedFrame != null) outAttachedFrame.set(0, 0, -1, -1);  // not valid: no parent frame
@@ -481,6 +499,18 @@ public final class AospWindows {
     /** The activity windows' host surface: the window the launcher showed and a render view in it
      *  whose loop reports its size and ticks (Activity.macapkInstallContentDirect's wiring for a
      *  plain-View app). Idempotent. */
+    /** The application's label, the host window's title (as the task's label is a window's in
+     *  recents); the window's own title when there is no application yet. */
+    private static String appLabel(WindowManager.LayoutParams attrs) {
+        try {
+            android.app.Application app = android.app.ActivityThread.currentApplication();
+            if (app != null) return String.valueOf(app.getApplicationInfo().loadLabel(app.getPackageManager()));
+        } catch (RuntimeException e) {
+            // the title below
+        }
+        return String.valueOf(attrs.getTitle());
+    }
+
     static synchronized void ensureHostSurface(String title) {
         if (sHostView != 0) return;
         try {
