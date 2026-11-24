@@ -146,6 +146,7 @@ public final class Tasks {
     void toBack() {
         if (inBackground || terminating) return;
         inBackground = true;
+        System.err.println("[aosp-app] the task behind (the host's window minimized or the task moved back)");
         Record r = top();
         if (r == null || r.state != State.RESUMED) return;
         r.state = State.STOPPING;
@@ -159,6 +160,7 @@ public final class Tasks {
     void toFront() {
         if (!inBackground || terminating) return;
         inBackground = false;
+        System.err.println("[aosp-app] the task in front again");
         Record r = top();
         if (r == null) {
             if (owner.launch != null) startLaunch(owner.launch);
