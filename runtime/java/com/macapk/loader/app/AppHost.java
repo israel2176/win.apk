@@ -26,8 +26,13 @@ public interface AppHost {
         public PackageManager packageManager;
         /** The app's class loader (over its converted DEX). */
         public ClassLoader classLoader;
-        /** The first activity's intent; null for a process started for a service (no activity). */
+        /** The launcher activity's intent, which also starts again on an empty task brought back;
+         *  null for a process started for a service (no activity). */
         public Intent launch;
+        /** The intent the process starts with when another app's start or a URL opened it (its
+         *  sender in `firstSender`); null: `launch`. */
+        public Intent first;
+        public String firstSender;
         /** Runs on the main thread after the Application is made and attached, right before its
          *  onCreate, where ActivityThread.handleBindApplication installs the app's providers. */
         public Consumer<Application> beforeApplicationOnCreate;
@@ -69,6 +74,10 @@ public interface AppHost {
 
     /** The window came back: the task comes to the front (restarted, started, resumed). */
     void taskToFront();
+
+    /** Another app's start of one of this app's activities, or a URL the host hands over, while the
+     *  process runs: started as ActivityStarter starts an intent from outside the task. */
+    void deliver(Intent intent, String sender);
 
     /** The cover a host window puts over the app (a prompt, a picker): the top activity paused,
      *  and stopped too when the window hides it, until the host brings it back, with a result. */

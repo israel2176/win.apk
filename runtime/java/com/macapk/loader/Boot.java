@@ -2093,40 +2093,7 @@ public final class Boot {
                     NativeLog.i(TAG, "launch: ActivityThread pipeline OFF"
                               + (CLINIT_PAD > 0 ? " (clinitPad=" + CLINIT_PAD + ")" : ""));
                     Class<?> appClass = Application.class;
-                    // MACAPK_PAIRIP_GATE_EMU (default OFF): the app's Application <clinit> (run by
-                    // Class.forName(..., true) below) calls com.pairip.StartupLauncher.launch() ->
-                    // VMRunner.executeVM, whose pairip integrity VM FALSELY detonates on Mac.apk's
-                    // HotSpot-on-macOS process structure (not tampering -- we don't patch .text,
-                    // forge signatures, or attach a debugger). RE-confirmed SEPARABLE gate. So BEFORE
-                    // that <clinit> runs, force-init com.pairip.VMRunner (whose own <clinit> is just
-                    // System.loadLibrary("pairipcore"), registering executeVM) and rebind executeVM to
-                    // Mac.apk's in-layer integrity gate. Detection preserved: the gate re-checks
-                    // P_TRACED, and the app's own SignatureCheck.verifyIntegrity still runs in
-                    // attachBaseContext. NOT a .text patch (pairip's bytes stay pristine, self-hash
-                    // still passes). docs/pairip-frontier-301578-refutations_2026-09-17.md.
-                    // Default-ON (v1.0.1573): self-gating -- Class.forName below throws for a
-                    // non-pairip app (no com.pairip.VMRunner), so this is a no-op there. Kill
-                    // switch: MACAPK_PAIRIP_GATE_OFF=1.
-                    if (System.getenv("MACAPK_PAIRIP_GATE_OFF") == null) {
-                        try {
-                            Class<?> vmr = Class.forName("com.pairip.VMRunner", true, appCl);
-                            boolean ok = NativeLog.nativeRegisterPairipGate(vmr);
-                            NativeLog.i(TAG, "pairip gate-emu: executeVM rebind "
-                                      + (ok ? "OK" : "FAILED") + " (before Application <clinit>)");
-                        } catch (Throwable t) {
-                            NativeLog.i(TAG, "pairip gate-emu: com.pairip.VMRunner not present (" + t + ")");
-                        }
-                    }
-                    // MACAPK_PAIRIP_POOLDUMP=<outfile> (owner idea 2026-10-09, best with GATE_OFF):
-                    // the GENUINE pairip startup VM decodes the per-build string pool into the app's
-                    // static String fields during Application.<clinit>. A concurrent daemon polls
-                    // those fields (class/field list from MACAPK_PAIRIP_POOLDUMP_LIST) and writes the
-                    // most-populated snapshot as JSONL, so we capture the pool WITHOUT the emulator =
-                    // the last per-build piece, zero-touch. The VM may still crash later (0x50eac); the
-                    // daemon runs on its own thread and writes before that if the decode completed.
-                    if (System.getenv("MACAPK_PAIRIP_POOLDUMP") != null) {
-                        macapkStartPoolDump(appCl);
-                    }
+                    pairipBeforeApplicationClass(appCl);
                     if (manifest.applicationClass != null && !manifest.applicationClass.isEmpty()) {
                         try {
                             appClass = CLINIT_PAD > 0
@@ -2478,62 +2445,7 @@ public final class Boot {
                         NativeLog.w(TAG, "preference defaults pre-population skipped: " + t);
                     }
                 }
-                // FCM push receive channel (v1.0.1175, gated on
-                // PlayServices.pushBackendEnabled(), default OFF). Start the MCS
-                // socket and point its dispatcher at an ordered broadcast of the
-                // com.google.android.c2dm.intent.RECEIVE intent to the app -- the
-                // exact path an app's own FirebaseInstanceIdReceiver consumes.
-                try {
-                    // With the REAL Google Play services running (Settings > Use
-                    // Google GMS), it owns the push connection, as on a device;
-                    // Mac.apk's own MCS stand-in steps aside in every app.
-                    if (com.macapk.loader.PlayServices.pushBackendEnabled()
-                            && !SystemClient.enabled()) {
-                        final android.app.Application fapp = application;
-                        final com.macapk.gms.McsClient.Dispatcher deliver = (pkg, extras) -> {
-                            try {
-                                android.content.Intent intent = new android.content.Intent(
-                                        "com.google.android.c2dm.intent.RECEIVE");
-                                intent.setPackage(pkg);
-                                for (java.util.Map.Entry<String, String> e : extras.entrySet()) {
-                                    intent.putExtra(e.getKey(), e.getValue());
-                                }
-                                fapp.sendOrderedBroadcast(intent,
-                                        "com.google.android.c2dm.permission.SEND");
-                            } catch (Throwable bt) {
-                                NativeLog.w(TAG, "FCM deliver failed: " + bt);
-                            }
-                        };
-                        com.macapk.gms.McsClient.setDispatcher(deliver);
-                        // LAZY START (v1.0.1179). Mac.apk runs ONE PROCESS PER APP,
-                        // so unlike a real device -- where a single GMS process holds
-                        // one MCS socket for everything -- starting the channel here
-                        // unconditionally means every launched app opens its own
-                        // authenticated connection to Google, including games that
-                        // never touch Firebase. So start it only for a package that
-                        // actually has push: one that registers this run (see
-                        // PushRegisterService) or registered on a previous one.
-                        // GmsStore.hasEverRegistered is what makes the second case
-                        // work -- an app caches its token and never re-registers, so
-                        // "start on registration" ALONE would silently stop
-                        // delivering to every app that already has a token.
-                        String pkgName = application.getPackageName();
-                        String why = declaresPush(manifest) ? "declares FCM in its manifest"
-                                   : com.macapk.gms.GmsStore.hasEverRegistered(pkgName)
-                                     ? "has registered before" : null;
-                        if (why != null) {
-                            com.macapk.gms.McsClient.start();
-                            NativeLog.i(TAG, "FCM: MCS receive channel started ("
-                                    + pkgName + " " + why + ")");
-                        } else {
-                            NativeLog.i(TAG, "FCM: dispatcher armed; MCS channel deferred"
-                                    + " (" + pkgName + " declares no push receiver)");
-                        }
-                        maybeInjectTestPush(deliver, pkgName);
-                    }
-                } catch (Throwable t) {
-                    NativeLog.w(TAG, "FCM receive channel not started: " + t);
-                }
+                startPushChannel(application, manifest);
                 // Attach to the system broker before onCreate, where a device's
                 // ActivityThread.attach -> AMS.attachApplication sits, so binds
                 // into and out of this app work from onCreate on. No-op unless
@@ -2856,6 +2768,105 @@ public final class Boot {
      *  override, or what another app or a URL handed over), then AppHost.start and the main looper
      *  on the app's main thread. The app's providers are installed as handleBindApplication installs
      *  them, right before Application.onCreate. */
+    /** What must run before the Application's class initializes, on the main thread: pairip's
+     *  integrity gate (below) and its pool dump. */
+    private static void pairipBeforeApplicationClass(ClassLoader appCl) {
+        // MACAPK_PAIRIP_GATE_EMU (default OFF): the app's Application <clinit> (run by
+        // Class.forName(..., true) below) calls com.pairip.StartupLauncher.launch() ->
+        // VMRunner.executeVM, whose pairip integrity VM FALSELY detonates on Mac.apk's
+        // HotSpot-on-macOS process structure (not tampering -- we don't patch .text,
+        // forge signatures, or attach a debugger). RE-confirmed SEPARABLE gate. So BEFORE
+        // that <clinit> runs, force-init com.pairip.VMRunner (whose own <clinit> is just
+        // System.loadLibrary("pairipcore"), registering executeVM) and rebind executeVM to
+        // Mac.apk's in-layer integrity gate. Detection preserved: the gate re-checks
+        // P_TRACED, and the app's own SignatureCheck.verifyIntegrity still runs in
+        // attachBaseContext. NOT a .text patch (pairip's bytes stay pristine, self-hash
+        // still passes). docs/pairip-frontier-301578-refutations_2026-09-17.md.
+        // Default-ON (v1.0.1573): self-gating -- Class.forName below throws for a
+        // non-pairip app (no com.pairip.VMRunner), so this is a no-op there. Kill
+        // switch: MACAPK_PAIRIP_GATE_OFF=1.
+        if (System.getenv("MACAPK_PAIRIP_GATE_OFF") == null) {
+            try {
+                Class<?> vmr = Class.forName("com.pairip.VMRunner", true, appCl);
+                boolean ok = NativeLog.nativeRegisterPairipGate(vmr);
+                NativeLog.i(TAG, "pairip gate-emu: executeVM rebind "
+                          + (ok ? "OK" : "FAILED") + " (before Application <clinit>)");
+            } catch (Throwable t) {
+                NativeLog.i(TAG, "pairip gate-emu: com.pairip.VMRunner not present (" + t + ")");
+            }
+        }
+        // MACAPK_PAIRIP_POOLDUMP=<outfile> (owner idea 2026-10-09, best with GATE_OFF):
+        // the GENUINE pairip startup VM decodes the per-build string pool into the app's
+        // static String fields during Application.<clinit>. A concurrent daemon polls
+        // those fields (class/field list from MACAPK_PAIRIP_POOLDUMP_LIST) and writes the
+        // most-populated snapshot as JSONL, so we capture the pool WITHOUT the emulator =
+        // the last per-build piece, zero-touch. The VM may still crash later (0x50eac); the
+        // daemon runs on its own thread and writes before that if the decode completed.
+        if (System.getenv("MACAPK_PAIRIP_POOLDUMP") != null) {
+            macapkStartPoolDump(appCl);
+        }
+    }
+
+    /** Before Application.onCreate: the FCM receive channel when Win.apk's own push backend is on. */
+    private static void startPushChannel(Application application, Manifest manifest) {
+        // FCM push receive channel (v1.0.1175, gated on
+        // PlayServices.pushBackendEnabled(), default OFF). Start the MCS
+        // socket and point its dispatcher at an ordered broadcast of the
+        // com.google.android.c2dm.intent.RECEIVE intent to the app -- the
+        // exact path an app's own FirebaseInstanceIdReceiver consumes.
+        try {
+            // With the REAL Google Play services running (Settings > Use
+            // Google GMS), it owns the push connection, as on a device;
+            // Mac.apk's own MCS stand-in steps aside in every app.
+            if (com.macapk.loader.PlayServices.pushBackendEnabled()
+                    && !SystemClient.enabled()) {
+                final android.app.Application fapp = application;
+                final com.macapk.gms.McsClient.Dispatcher deliver = (pkg, extras) -> {
+                    try {
+                        android.content.Intent intent = new android.content.Intent(
+                                "com.google.android.c2dm.intent.RECEIVE");
+                        intent.setPackage(pkg);
+                        for (java.util.Map.Entry<String, String> e : extras.entrySet()) {
+                            intent.putExtra(e.getKey(), e.getValue());
+                        }
+                        fapp.sendOrderedBroadcast(intent,
+                                "com.google.android.c2dm.permission.SEND");
+                    } catch (Throwable bt) {
+                        NativeLog.w(TAG, "FCM deliver failed: " + bt);
+                    }
+                };
+                com.macapk.gms.McsClient.setDispatcher(deliver);
+                // LAZY START (v1.0.1179). Mac.apk runs ONE PROCESS PER APP,
+                // so unlike a real device -- where a single GMS process holds
+                // one MCS socket for everything -- starting the channel here
+                // unconditionally means every launched app opens its own
+                // authenticated connection to Google, including games that
+                // never touch Firebase. So start it only for a package that
+                // actually has push: one that registers this run (see
+                // PushRegisterService) or registered on a previous one.
+                // GmsStore.hasEverRegistered is what makes the second case
+                // work -- an app caches its token and never re-registers, so
+                // "start on registration" ALONE would silently stop
+                // delivering to every app that already has a token.
+                String pkgName = application.getPackageName();
+                String why = declaresPush(manifest) ? "declares FCM in its manifest"
+                           : com.macapk.gms.GmsStore.hasEverRegistered(pkgName)
+                             ? "has registered before" : null;
+                if (why != null) {
+                    com.macapk.gms.McsClient.start();
+                    NativeLog.i(TAG, "FCM: MCS receive channel started ("
+                            + pkgName + " " + why + ")");
+                } else {
+                    NativeLog.i(TAG, "FCM: dispatcher armed; MCS channel deferred"
+                            + " (" + pkgName + " declares no push receiver)");
+                }
+                maybeInjectTestPush(deliver, pkgName);
+            }
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "FCM receive channel not started: " + t);
+        }
+    }
+
     private static void startOnAospActivityThread(com.macapk.loader.app.AppHost appHost, Manifest manifest,
             ClassLoader appCl, String apkPath, String appDir, File appDataDir, Resources resources,
             java.util.concurrent.SynchronousQueue<Runnable> activityTask) {
@@ -2911,13 +2922,28 @@ public final class Boot {
             if (data != null && !data.isEmpty()) launch.setData(android.net.Uri.parse(data));
             NativeLog.i(TAG, "launch override -> " + cls);
         }
-        Intent first = launch;
+        // Another app's start waiting in the inbox, else a URL that opened the app, is the first
+        // intent; the launcher's stays the one an empty task brought back starts. HostUrlIntake's
+        // is always taken (that marks the intake ready, so a later URL arrives warm); with both, the
+        // URL follows the inbox's start.
+        Intent first = null;
+        String firstSender = null;
+        Intent laterUrl = null;
         try {
-            Intent arrival = IntentInbox.bootTakeRoot(manifest.packageName, pm);
-            if (arrival == null) arrival = HostUrlIntake.bootTakeRoot(manifest.packageName, pm);
-            if (arrival != null) first = arrival;
+            first = IntentInbox.bootTakeRoot(manifest.packageName, pm);
         } catch (Throwable t) {
-            NativeLog.w(TAG, "an intent handed over at start was unreadable (" + t + "); launching normally");
+            NativeLog.w(TAG, "another app's start waiting at start was unreadable (" + t + "); launching normally");
+        }
+        try {
+            Intent url = HostUrlIntake.bootTakeRoot(manifest.packageName, pm);
+            if (first == null && url != null) {
+                first = url;
+                firstSender = HostUrlIntake.SENDER;
+            } else {
+                laterUrl = url;
+            }
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "the URL handed over at start was unreadable (" + t + "); launching normally");
         }
         HostUrlIntake.registerAsync(manifest.packageName, manifest);
         AppLinks.init(manifest.packageName, manifest, pm);
@@ -2928,11 +2954,26 @@ public final class Boot {
         start.config = resources.getConfiguration();
         start.packageManager = pm;
         start.classLoader = appCl;
-        start.launch = sweep || SystemClient.isServiceHost() ? null : first;
+        start.launch = sweep || SystemClient.isServiceHost() ? null : launch;
+        if (start.launch != null) {
+            start.first = first;
+            start.firstSender = firstSender;
+        }
+        final Intent laterUrlFinal = start.launch != null ? laterUrl : null;
         start.beforeApplicationOnCreate = application -> {
+            // A Meta app's SoLoader.init (in its attachBaseContext, just run) extracted its superpack:
+            // its libraries are exposed before a provider or onCreate loads one.
+            try {
+                if (appCl instanceof AppClassLoader acl) {
+                    acl.prepareDirectDlopenSuperpack(resolveNativeLibraryDir(apkPath, appDir));
+                }
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "post-attachBaseContext superpack exposure skipped: " + t);
+            }
             ActivityHost.init(application, appCl);
             installAutoInitProviders(application, manifest.providers, appCl);
             installSystemProviders(application);
+            startPushChannel(application, manifest);
             SystemClient.attach(application, manifest.packageName);
         };
         start.taskEmpty = () -> {
@@ -2953,8 +2994,15 @@ public final class Boot {
                     try { NativeLog.nativeBoostCurrentThreadQos(); } catch (Throwable ignored) {}
                 }
                 if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper();
+                // handleBindApplication's setupGraphicsSupport, before the Application's class
+                // initializes: TMPDIR for its native libraries; then pairip's gate.
+                File cache = new File(appDataDir, "cache");
+                cache.mkdirs();
+                macapkSetupGraphicsSupportTmpdir(manifest.packageName, cache);
+                pairipBeforeApplicationClass(appCl);
                 try {
                     appHost.start(start);
+                    if (laterUrlFinal != null) appHost.deliver(laterUrlFinal, HostUrlIntake.SENDER);
                     if (sweep) {
                         // After handleBindApplication (Application.onCreate), the next message.
                         new android.os.Handler(android.os.Looper.getMainLooper()).post(() ->

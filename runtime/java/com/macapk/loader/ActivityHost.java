@@ -1224,6 +1224,14 @@ public final class ActivityHost {
      *  CLEAR_TOP / CLEAR_TASK dispositions degrade to PUSH, exactly as an in-app
      *  start with those flags does today (MACAPK_ACTIVITY_CLEAR_TASK is off). */
     static void macapkDeliverCrossApp(Intent intent, String sender) {
+        com.macapk.loader.app.AppHost appHost = com.macapk.loader.app.AppHost.get();
+        if (appHost != null && appHost.started()) {
+            // AOSP's app layer: the task manager starts it (ActivityStarter's rules); a start from
+            // another app brings the task, the host's window, to the front.
+            try { NativeCocoa.moveTaskToFront(); } catch (Throwable ignored) {}
+            appHost.deliver(intent, sender);
+            return;
+        }
         final ComponentName cn = intent.getComponent();
         String cls = cn != null ? cn.getClassName() : null;
         if (START_ALIAS && cn != null) {

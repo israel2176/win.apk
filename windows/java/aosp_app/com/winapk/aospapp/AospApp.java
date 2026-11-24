@@ -57,6 +57,8 @@ public final class AospApp {
     final Tasks tasks;
     final IActivityClientController clientController;
     final Intent launch;
+    private Intent first;
+    private String firstSender;
     private final Runnable onTaskEmpty;
     private Runnable onMoveToBack;
     java.util.function.Predicate<Intent> hostStart;
@@ -104,6 +106,8 @@ public final class AospApp {
         AospApp app = new AospApp(s.info, s.config, null, s.classLoader, s.packageManager, s.launch,
                 s.beforeApplicationOnCreate, s.taskEmpty);
         app.onMoveToBack = s.moveToBack;
+        app.first = s.first;
+        app.firstSender = s.firstSender;
         app.hostStart = s.hostStart;
         app.hostPermissions = s.hostPermissions;
         return start(app);
@@ -146,7 +150,8 @@ public final class AospApp {
     void attached(IApplicationThread appThread) {
         tasks.handler.post(() -> {
             tasks.attach(this, appThread, clientController, config);
-            if (launch != null) tasks.startLaunch(launch);
+            if (first != null) tasks.arrive(first, firstSender);
+            else if (launch != null) tasks.startLaunch(launch);
         });
     }
 }
