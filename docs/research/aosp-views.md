@@ -680,8 +680,15 @@ it runs: `ViewHost`'s defaults keep Win.apk's `TouchDispatcher`.
   candidate window goes under the caret (`hostImeAnchor`).
 - **Accessibility.** `AccessibilityService` answers `IAccessibilityManager` as
   `AccessibilityManagerService` does with no service on: state 0, no services,
-  the focus highlight from the framework's resources. The host has no UI
-  Automation bridge yet, so `isEnabled()` is false, as with TalkBack off.
+  the focus highlight from the framework's resources, so `isEnabled()` is
+  false, as with TalkBack off. While a screen reader reads the app through UI
+  Automation (`com.macapk.loader.HostAccessibility`, `windows/host/uia_provider.h`),
+  it answers as with one service on: every client's state is
+  `ACCESSIBILITY_ENABLED` with every event type relevant, the enabled list holds
+  one spoken-feedback service, and the events the app sends reach the bridge (an
+  announcement is spoken). Touch exploration stays off. The bridge reads AOSP's
+  views' own `AccessibilityNodeInfo`s in process, in the compositor's window
+  order; ViewRootImpl's interaction connection is not kept.
 - **Text services.** `TextServicesService`: no spell checker (an `EditText`
   asks on focus; a null service threw).
 - **Input devices and the pointer.** `InputManagerService` answers
@@ -734,7 +741,8 @@ app). Left for V2: an on-screen keyboard (none: the host's keyboard is the
 input method), drag and drop, pointer capture and
 `PointerIcon` (the cursor stays Windows' own), `InputEventSender` (not used by
 apps), touch-mode changes reported to the window manager (`setInTouchMode` is
-answered empty), a UI Automation bridge for accessibility, spell checking.
+answered empty), spell checking. (The UI Automation bridge for accessibility
+came later, for both view layers: `HostAccessibility`.)
 Seen in Sudoku and not chased: its folder list stays empty after Save (its
 database upgrade fails at start, `duplicate column name: rating_level`, with
 the switch off too).
