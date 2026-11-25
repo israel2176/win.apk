@@ -75,12 +75,11 @@ public final class AospViewHost implements ViewHost {
         System.err.println("[win.apk] AOSP views: AOSP 14's android.view and android.widget, PhoneWindow and"
                 + " ViewRootImpl over the in-process window manager");
         AospWindows.ensureServices();
-        // Every window draws in software into its Surface (HWUI's own pipeline is step V3): an app
-        // window gets FLAG_HARDWARE_ACCELERATED from WindowManagerGlobal.addView when the
-        // application is hardware accelerated, and ViewRootImpl then makes a ThreadedRenderer
-        // unless the renderer is off for the process, as AOSP turns it off for a low-end
-        // persistent process (ThreadedRenderer.initForSystemProcess).
-        android.view.ThreadedRenderer.sRendererEnabled = false;
+        // An app window gets FLAG_HARDWARE_ACCELERATED from WindowManagerGlobal.addView when the
+        // application is hardware accelerated, and ViewRootImpl then draws it with a
+        // ThreadedRenderer: HWUI's render thread and GL pipeline (aosp-hwui.dll) into the window's
+        // layer, which the DLL's compositor shows (Compositor). One that is not draws in software
+        // into its Surface's bitmap, posted to the same layer.
     }
 
     private void moot(String what) {

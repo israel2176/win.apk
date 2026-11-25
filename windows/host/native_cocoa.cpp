@@ -42,6 +42,7 @@
 #include "host_url.h"
 #include "machine_load.h"
 #include "gl/gl_surface.h"
+#include "hwui_host.h"
 #include "native_window.h"
 #include "win32_window.h"
 #include "winapk/arm64_guest.h"
@@ -1497,6 +1498,13 @@ const std::wstring& headless_frame_path() {
 // A frame for the window (and for WINAPK_HEADLESS_FRAME): from the view tree,
 // or from the content GL view (gl_tick).
 void present_pixels(const uint32_t* argb, int w, int h) {
+    // The app's windows are composed on the GPU (hwui_host.h): a frame the host has as pixels (an
+    // app's native GL or video surface, a SurfaceView's canvas) is the layer under them, and the
+    // frame is counted when the composed one is shown (hwui_frame_presented).
+    if (hwui_active()) {
+        hwui_host_layer(argb, w, h);
+        return;
+    }
     const long frame = ++g_frames;
     if (frame == 1) {
         std::fprintf(stderr, "[win.apk] first frame presented (%dx%d)\n", w, h);
@@ -1515,6 +1523,37 @@ void present_pixels(const uint32_t* argb, int w, int h) {
 }
 
 }  // namespace
+
+// A frame the graphics DLL composed on the GPU was shown (hwui_host.cpp; on its render thread).
+// Times on one clock (systemTime's), in ns: the first window's frame start (its vsync), the
+// compose's start, the swap's start and end. As present_pixels counts a frame, and as
+// Compositor recorded a frame's times before (frame_times.h): "draw" the window's frame to the
+// compose (layout, record, sync and HWUI's GPU draw), "pixels" the compose, "present" the swap.
+void hwui_frame_presented(int w, int h, int64_t start_ns, int64_t compose_ns, int64_t swap_ns, int64_t end_ns) {
+    const long frame = ++g_frames;
+    if (frame == 1) {
+        std::fprintf(stderr, "[win.apk] first frame presented (%dx%d, composed on the GPU)\n", w, h);
+        std::fflush(stderr);
+        cds_first_frame();
+        machine_load::log_first_frame();
+    }
+    window_gpu_presented(frame == 1);
+    constexpr long kWarmupFrames = 90;  // as Win.apk's own views marked the first 90 vsyncs
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch()).count();
+    g_frame_times.add(0, compose_ns - start_ns, swap_ns - compose_ns, end_ns - swap_ns, end_ns - start_ns,
+                      frame <= kWarmupFrames, now);
+}
+
+bool hwui_wants_frame_pixels() { return !headless_frame_path().empty(); }
+
+void hwui_frame_pixels(const uint32_t* argb, int w, int h) {
+    const std::wstring& path = headless_frame_path();
+    if (path.empty()) return;
+    static std::mutex lock;
+    std::lock_guard<std::mutex> hold(lock);
+    write_bmp(path.c_str(), reinterpret_cast<const jint*>(argb), w, h);
+}
 
 bool content_pixel_size(int* w, int* h) {
     *w = g_content_w.load();

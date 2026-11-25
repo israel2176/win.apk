@@ -59,6 +59,7 @@
 // its arguments in the ANSI code page.
 
 #include "aosp_gfx.h"
+#include "hwui_host.h"
 #include "aot_guard.h"
 #include "cds.h"
 #include "crash_report.h"
@@ -2139,6 +2140,11 @@ DWORD WINAPI boot_thread(void* param) {
     // that those it keeps (SQLite's, Surface's) stay bound as they are. Without them nothing draws, so
     // the run stops here (aosp_gfx_load logged why) rather than show a window that stays empty.
     if (!winapk::host::aosp_gfx_load(vm, env)) return 1;
+    // Its compositor shows the app's windows (hwui_host.h): composed on the GPU into the window.
+    if (!winapk::host::hwui_attach()) {
+        std::fprintf(stderr, "[win.apk] error: AOSP graphics: the graphics DLL has no compositor\n");
+        return 1;
+    }
 
     auto jstr = [&](const fs::path& p) { return jstring_of(env, p.wstring()); };
 
