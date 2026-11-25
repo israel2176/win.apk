@@ -6,9 +6,9 @@
 // configuration and a SurfaceControl, and ViewRootImpl then draws into the Surface it copies from
 // that control. Here the "server" is in the process and the screen is the host window:
 //
-//   * the display is the host window's box (DisplayConfig's size, the resources' density), handed
-//     out as AOSP's DisplayInfo through an IDisplayManager, so DisplayManagerGlobal and Display are
-//     AOSP's own;
+//   * the display is the host window's box at its density (DisplayConfig's size and density, which
+//     change together when the window shows the phone at another scale), handed out as AOSP's
+//     DisplayInfo through an IDisplayManager, so DisplayManagerGlobal and Display are AOSP's own;
 //   * a window's frame is computed by AOSP's own WindowLayout.computeFrames over the display, as
 //     WindowManagerService does with no system bars (the status bar and IME insets come with V2);
 //   * its SurfaceControl is Win.apk's (android.view.SurfaceControl stays Win.apk's), sized to the
@@ -64,7 +64,7 @@ public final class AospWindows {
     // ---- the display -------------------------------------------------------------------------
 
     private static volatile Context sMetricsContext;
-    private static volatile int sWidthPx, sHeightPx;
+    private static volatile int sWidthPx, sHeightPx, sDensityDpi;
     private static volatile boolean sRegistered;
 
     /** The context whose resources give the density (the application's). */
@@ -118,7 +118,18 @@ public final class AospWindows {
         return m;
     }
 
-    /** The one display's DisplayInfo: the host window's box at the resources' density. */
+    /** The display's density now (DisplayConfig's: the launch density until the window shows the
+     *  phone at another scale), as DisplayInfo.logicalDensityDpi carries it. */
+    static int densityDpi() {
+        try {
+            return com.macapk.loader.DisplayConfig.densityDpi();
+        } catch (Throwable t) {
+            int d = metrics().densityDpi;
+            return d > 0 ? d : DisplayMetrics.DENSITY_DEFAULT;
+        }
+    }
+
+    /** The one display's DisplayInfo: the host window's box at its density. */
     static DisplayInfo displayInfo() {
         DisplayMetrics m = metrics();
         int w = widthPx(), h = heightPx();
@@ -143,7 +154,7 @@ public final class AospWindows {
         d.defaultModeId = 1;
         d.renderFrameRate = hz;
         d.supportedModes = new Display.Mode[] {new Display.Mode(1, w, h, hz)};
-        d.logicalDensityDpi = m.densityDpi > 0 ? m.densityDpi : DisplayMetrics.DENSITY_DEFAULT;
+        d.logicalDensityDpi = densityDpi();
         d.physicalXDpi = m.xdpi > 0 ? m.xdpi : d.logicalDensityDpi;
         d.physicalYDpi = m.ydpi > 0 ? m.ydpi : d.logicalDensityDpi;
         d.state = Display.STATE_ON;
@@ -213,8 +224,10 @@ public final class AospWindows {
         public int getDisplayUserRotation(int displayId) { return 0; }
         public void getInitialDisplaySize(int displayId, android.graphics.Point size) { size.set(widthPx(), heightPx()); }
         public void getBaseDisplaySize(int displayId, android.graphics.Point size) { size.set(widthPx(), heightPx()); }
-        public int getInitialDisplayDensity(int displayId) { return metrics().densityDpi; }
-        public int getBaseDisplayDensity(int displayId) { return metrics().densityDpi; }
+        // The launch density, as the panel's own density is the initial one on a device; the base
+        // density is the one in use (wm density).
+        public int getInitialDisplayDensity(int displayId) { return DisplayMetrics.DENSITY_DEVICE_STABLE; }
+        public int getBaseDisplayDensity(int displayId) { return densityDpi(); }
         public boolean isTaskSnapshotSupported() { return false; }
         public int getDockedStackSide() { return -1; }
     }
@@ -471,6 +484,11 @@ public final class AospWindows {
 
     private static Configuration makeGlobalConfiguration() {
         Configuration global = new Configuration(configuration());
+        // The display as last committed, which the resources may not have heard yet (the commit
+        // reaches the process through the task manager while the windows are resized): a window
+        // handed the older one would apply it to the resources over the new (ViewRootImpl's
+        // configuration callback), as a stale display change.
+        com.macapk.loader.DisplayConfig.overlayCommitted(global);
         Rect bounds = new Rect(0, 0, widthPx(), heightPx());
         global.windowConfiguration.setBounds(bounds);
         global.windowConfiguration.setAppBounds(Bars.appBounds());
@@ -594,11 +612,16 @@ public final class AospWindows {
 
     /** The display is now w x h px: every window whose frame changes gets it, as
      *  WindowManagerService's IWindow.resized does. Called with the host view's size and after
-     *  every display commit (DisplayConfig: a window resize or an app's requested orientation). */
+     *  every display commit (DisplayConfig: a window resize, a new density or an app's requested
+     *  orientation). A new density reaches every window, its frame changed or not, with the
+     *  configuration that carries it. */
     static void resize(int w, int h) {
-        if (w <= 0 || h <= 0 || (w == sWidthPx && h == sHeightPx)) return;
+        int dpi = densityDpi();
+        boolean newDensity = sDensityDpi != 0 && dpi != sDensityDpi;
+        if (w <= 0 || h <= 0 || (w == sWidthPx && h == sHeightPx && !newDensity)) return;
         sWidthPx = w;
         sHeightPx = h;
+        sDensityDpi = dpi;
         configurationChanged();
         for (Win win : sWindows.values()) {
             try {
@@ -610,7 +633,7 @@ public final class AospWindows {
                         android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN,
                         WindowLayout.UNSPECIFIED_LENGTH, WindowLayout.UNSPECIFIED_LENGTH,
                         win.requestedVisibleTypes, 1f, frames);
-                if (frames.frame.equals(win.frame)) continue;
+                if (frames.frame.equals(win.frame) && !newDensity) continue;
                 win.frame.set(frames.frame);
                 MergedConfiguration merged = new MergedConfiguration();
                 merged.setConfiguration(globalConfiguration(), new Configuration());

@@ -38,6 +38,18 @@
 // old portrait launch metrics exactly (418x906dp for an 808x1796 surface).
 // A change goes to AOSP's app layer (AppHost.configurationChanged), which relaunches an activity
 // whose android:configChanges does not cover it, as ActivityRecord.shouldRelaunchLocked does.
+//
+// THE DENSITY (Win.apk). The display's density is committed with its size: the host window shows
+// the phone at a scale in px per dp, and when that scale changes (the window maximized, which shows
+// the phone turned as large as the screen; restored; moved to a monitor of another scale) the
+// native side sends the density for the new scale with the new size (macapkNoteDisplay). As on an
+// Android display whose density changes (Settings > Display size, a desktop window moved to a
+// display of another density), it is a configuration change with a new densityDpi
+// (ActivityInfo.CONFIG_DENSITY): ResourcesImpl.updateConfiguration takes the DisplayMetrics'
+// density from it and flushes the density-dependent caches, ActivityThread updates
+// DisplayMetrics.DENSITY_DEVICE and Bitmap's default density, and an activity that does not declare
+// configChanges="density" is relaunched with its saved state. DENSITY_DEVICE_STABLE stays the
+// launch density, as it stays the device's on Android.
 package com.macapk.loader;
 
 import android.content.res.Configuration;
@@ -57,6 +69,31 @@ public final class DisplayConfig {
     // ---- the committed display ------------------------------------------------
 
     private static volatile int sRealW, sRealH;   // px; 0 until Boot seeds
+    /** The committed density in dpi; 0 until the first density change (the launch density). */
+    private static volatile int sDensityDpi;
+    /** The configuration of the last commit after Boot (null before one). */
+    private static volatile Configuration sCommitted;
+
+    /** The display's density now, in dpi: DENSITY_DEVICE_STABLE (the launch density) until the
+     *  host window shows the phone at another scale. */
+    public static int densityDpi() {
+        int d = RESIZE_ON ? sDensityDpi : 0;
+        return d > 0 ? d : android.util.DisplayMetrics.DENSITY_DEVICE_STABLE;
+    }
+
+    /** densityDpi() as px per dp. */
+    public static float density() {
+        return densityDpi() / (float) android.util.DisplayMetrics.DENSITY_DEFAULT;
+    }
+
+    /** Copies the committed display's fields (dp sizes, density, orientation, bounds) over `c`, a
+     *  configuration made from a Resources that may not have heard the newest commit yet (the
+     *  in-process window manager's, built while the commit is on its way to the process), so the
+     *  windows are never handed the display it replaced. Nothing before the first commit. */
+    public static void overlayCommitted(Configuration c) {
+        Configuration last = sCommitted;
+        if (last != null && c != null) adoptDisplayFields(last, c);
+    }
 
     /** The committed display width in px (decor included). Falls back to the
      *  native canvas before Boot has seeded, which is exactly the old answer. */
@@ -88,16 +125,18 @@ public final class DisplayConfig {
      *  has). With Stage 0 the canvas equals the render view's content size, so
      *  the first surfaceChanged commits nothing. */
     static void seedFromCanvas() {
-        sRealW = Math.round(NativeCocoa.phoneWidth() * pxPerPoint());
-        sRealH = Math.round(NativeCocoa.phoneHeight() * pxPerPoint());
+        // At the density now: a density change before Boot (the window maximized while the app
+        // started) is committed with no Resources to tell.
+        sRealW = Math.round(NativeCocoa.phoneWidth() * density());
+        sRealH = Math.round(NativeCocoa.phoneHeight() * density());
     }
 
     // ---- the pure derivation ---------------------------------------------------
 
     /** Fill `m` and the display-derived fields of `c` for a real display of
-     *  realW x realH px. Density fields of `m` are kept (the density is fixed
-     *  for the process, at the launch screen's). Reads the decor accessors, which read the COMMITTED display, so
-     *  the caller commits the size first.
+     *  realW x realH px at the committed density (densityDpi(): the launch
+     *  screen's until the window's scale changes). Reads the decor accessors, which read the
+     *  COMMITTED display, so the caller commits the size and density first.
      *
      *  AOSP (android14-release DisplayContent):
      *    computeScreenAppConfiguration :2385-2399
@@ -113,8 +152,13 @@ public final class DisplayConfig {
      *  effect; see those notes in Boot.run's history. */
     public static void compute(int realW, int realH, DisplayMetrics m, Configuration c,
                                boolean log) {
-        final float density = (m.density > 0f) ? m.density
-                : android.util.DisplayMetrics.macapkDeviceDensity();
+        // ResourcesImpl.updateConfiguration's: the metrics' density from the configuration's
+        // densityDpi, scaledDensity that times the font scale.
+        final int densityDpi = densityDpi();
+        final float density = densityDpi / (float) android.util.DisplayMetrics.DENSITY_DEFAULT;
+        m.densityDpi = densityDpi;
+        m.density = density;
+        m.scaledDensity = density * (c.fontScale != 0f ? c.fontScale : 1.0f);
         final int navW   = ViewHost.get().navDecorWidthPx();
         final int navH   = ViewHost.get().navDecorHeightPx();
         final int status = ViewHost.get().statusDecorPx();
@@ -144,8 +188,7 @@ public final class DisplayConfig {
                 }
             }
         }
-        c.densityDpi = (m.densityDpi > 0) ? m.densityDpi
-                : android.util.DisplayMetrics.DENSITY_DEVICE_STABLE;
+        c.densityDpi = densityDpi;
         c.screenWidthDp = (int) (m.widthPixels / density + 0.5f);
         // v1.0.939: the config height excludes BOTH decor bars (WMS's "config"
         // rung of the size ladder), getSize/getMetrics only the navigation bar.
@@ -175,7 +218,7 @@ public final class DisplayConfig {
     // ---- the resize signal -----------------------------------------------------
 
     private static final Object sLock = new Object();
-    private static int sPendingW, sPendingH;
+    private static int sPendingW, sPendingH, sPendingDpi;
     private static boolean sCommitPosted;
     private static boolean sApplying;
     private static android.os.Handler sOwnerHandler;
@@ -198,12 +241,19 @@ public final class DisplayConfig {
      *  The first-surface (boot) fire ignores the answer. Answers true when the
      *  display model is off, so nothing is ever held then. */
     public static boolean macapkNoteSurfaceSize(int w, int h) {
+        return macapkNoteDisplay(w, h, 0);
+    }
+
+    /** NATIVE ENTRY (native_cocoa.cpp's render thread), any thread: the display is now w x h px
+     *  at densityDpi (0: the density does not change). One display change, committed as one
+     *  configuration change; answers as macapkNoteSurfaceSize. */
+    public static boolean macapkNoteDisplay(int w, int h, int densityDpi) {
         if (!RESIZE_ON || w <= 0 || h <= 0) return true;
         if (!android.os.Looper.MACAPK_REAL_LOOPER) {
             // The legacy looper has no owner thread to serialize on; a post
             // there lands in GLOBAL_QUEUE, which a renderer-path frame never
             // drains, so the flag below could stick. Commit inline instead.
-            synchronized (sLock) { sPendingW = w; sPendingH = h; }
+            synchronized (sLock) { sPendingW = w; sPendingH = h; sPendingDpi = densityDpi; }
             commitPending();
             return true;
         }
@@ -211,10 +261,16 @@ public final class DisplayConfig {
         synchronized (sLock) {
             sPendingW = w;
             sPendingH = h;
-            if (!sCommitPosted && !sApplying && w == sRealW && h == sRealH) return true;
+            sPendingDpi = densityDpi;
+            boolean sameDensity = densityDpi <= 0 || densityDpi == densityDpi();
+            if (!sCommitPosted && !sApplying && w == sRealW && h == sRealH && sameDensity) return true;
             if (sCommitPosted) return false;   // the queued commit takes the newest size
             hd = ownerHandler();
-            if (hd == null) return true;       // no main Looper yet: Boot seeds from the canvas
+            if (hd == null) {
+                // No main Looper yet: Boot seeds from the canvas, at this density.
+                if (densityDpi > 0) sDensityDpi = densityDpi;
+                return true;
+            }
             sCommitPosted = true;
         }
         if (!hd.post(DisplayConfig::commitPending)) {
@@ -242,17 +298,18 @@ public final class DisplayConfig {
      *  committed one. Idempotent, so ViewCanvasDriver.doSurfaceChanged can call
      *  it unconditionally before it measures. */
     public static void commitPending() {
-        int w, h;
+        int w, h, dpi;
         synchronized (sLock) {
             sCommitPosted = false;
             w = sPendingW;
             h = sPendingH;
+            dpi = sPendingDpi > 0 ? sPendingDpi : densityDpi();
             sApplying = true;
         }
         try {
             if (!RESIZE_ON || w <= 0 || h <= 0) return;
-            if (w == sRealW && h == sRealH) return;
-            apply(w, h);
+            if (w == sRealW && h == sRealH && dpi == densityDpi()) return;
+            apply(w, h, dpi);
         } catch (Throwable t) {
             NativeLog.w(TAG, "display commit " + w + "x" + h + " threw: " + t);
         } finally {
@@ -262,8 +319,8 @@ public final class DisplayConfig {
 
     // ---- the commit ---------------------------------------------------------------
 
-    private static void apply(int w, int h) {
-        final int oldW = sRealW, oldH = sRealH;
+    private static void apply(int w, int h, int dpi) {
+        final int oldW = sRealW, oldH = sRealH, oldDpi = densityDpi();
         // A host window resize / rotate is not input, so not in a recording: note it
         // (a replay refuses at the next `window` line unless the size comes back).
         if (InputRecorder.ON && oldW > 0 && oldH > 0 && (oldW != w || oldH != h))
@@ -273,6 +330,7 @@ public final class DisplayConfig {
         // device before the configuration change is delivered.
         sRealW = w;
         sRealH = h;
+        sDensityDpi = dpi;
         final android.app.Application app = com.macapk.loader.app.Apps.current();
         final Resources res = (app != null) ? app.getResources() : null;
         final Configuration cur = (res != null) ? res.getConfiguration() : null;
@@ -285,6 +343,7 @@ public final class DisplayConfig {
         final DisplayMetrics m = new DisplayMetrics();
         m.setTo(res.getDisplayMetrics());
         compute(w, h, m, next, false);
+        sCommitted = new Configuration(next);
         final int diff = cur.diff(next);
         final boolean bounds = boundsDiffer(cur, next);
         final boolean metricsChanged = !m.equals(res.getDisplayMetrics());
@@ -292,6 +351,7 @@ public final class DisplayConfig {
             + cur.screenWidthDp + "x" + cur.screenHeightDp + "dp sw" + cur.smallestScreenWidthDp
             + " -> " + next.screenWidthDp + "x" + next.screenHeightDp + "dp sw"
             + next.smallestScreenWidthDp + " " + orientName(next.orientation)
+            + (dpi != oldDpi ? " density " + oldDpi + " -> " + dpi + " dpi" : "")
             + " diff=0x" + Integer.toHexString(diff) + (bounds ? " +bounds" : "")
             + " [owner=" + android.os.Looper.macapkIsActivityThread() + "]");
         if (diff == 0 && !bounds && !metricsChanged) return;
