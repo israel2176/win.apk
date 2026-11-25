@@ -67,6 +67,8 @@ public class AospAppLifecycleTest {
      *  an ordered broadcast whose result it sets for the result receiver. */
     static final String STATIC = PKG + ".STATIC";
     static final List<String> rcv = java.util.Collections.synchronizedList(new ArrayList<>());
+    static final String STICKY = PKG + ".STICKY";
+    static final List<String> sticky = java.util.Collections.synchronizedList(new ArrayList<>());
 
     public static class Static extends android.content.BroadcastReceiver {
         @Override public void onReceive(android.content.Context c, Intent i) {
@@ -116,6 +118,23 @@ public class AospAppLifecycleTest {
                     heard = i.getStringExtra("v");
                 }
             }, new android.content.IntentFilter(PING), RECEIVER_NOT_EXPORTED);
+            // A registered receiver of the ordered broadcast below the manifest's in priority: it
+            // hears it after the manifest receiver, with that one's result, and sets its own
+            // (broadcastIntentLocked merges the two lists by priority).
+            android.content.IntentFilter low = new android.content.IntentFilter(STATIC);
+            low.setPriority(-10);
+            registerReceiver(new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context c, Intent i) {
+                    rcv.add("Dyn " + getResultCode());
+                    setResultCode(8);
+                }
+            }, low, RECEIVER_NOT_EXPORTED);
+            // A sticky broadcast sent while registered is not an initial sticky one.
+            registerReceiver(new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context c, Intent i) {
+                    sticky.add("live initial=" + isInitialStickyBroadcast());
+                }
+            }, new android.content.IntentFilter(STICKY), RECEIVER_NOT_EXPORTED);
         }
     }
 
@@ -141,6 +160,13 @@ public class AospAppLifecycleTest {
                 started = true;
                 note("First: getApplication() is App: " + (getApplication() instanceof App));
                 sendBroadcast(new Intent(PING).setPackage(PKG).putExtra("v", "pong"));
+                sendStickyBroadcast(new Intent(STICKY).setPackage(PKG));
+                // Registered after it was sent: the sticky is replayed, as an initial one.
+                registerReceiver(new android.content.BroadcastReceiver() {
+                    @Override public void onReceive(android.content.Context c, Intent i) {
+                        sticky.add("replay initial=" + isInitialStickyBroadcast());
+                    }
+                }, new android.content.IntentFilter(STICKY), RECEIVER_NOT_EXPORTED);
                 try (android.database.Cursor c = getContentResolver().query(
                         android.net.Uri.parse("content://" + AUTHORITY + "/x"), null, null, null, null)) {
                     prov.add(c != null && c.moveToFirst() ? "query " + c.getString(0) : "query nothing");
@@ -395,9 +421,14 @@ public class AospAppLifecycleTest {
                     + " query hello x]");
             System.exit(1);
         }
-        if (!rcv.equals(List.of("Static m ordered=true", "result 7"))) {
-            System.out.println("FAILED: the manifest receiver and the result gave " + rcv
-                    + ", Android gives [Static m ordered=true, result 7]");
+        if (!rcv.equals(List.of("Static m ordered=true", "Dyn 7", "result 8"))) {
+            System.out.println("FAILED: the ordered broadcast's receivers and result gave " + rcv
+                    + ", Android gives [Static m ordered=true, Dyn 7, result 8]");
+            System.exit(1);
+        }
+        if (!new java.util.HashSet<>(sticky).equals(java.util.Set.of("live initial=false", "replay initial=true"))) {
+            System.out.println("FAILED: the sticky broadcast's receivers gave " + sticky
+                    + ", Android gives [live initial=false, replay initial=true]");
             System.exit(1);
         }
         System.out.println("ALL PASSED");

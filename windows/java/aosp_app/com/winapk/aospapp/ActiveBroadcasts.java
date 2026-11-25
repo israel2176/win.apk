@@ -53,7 +53,6 @@ final class ActiveBroadcasts {
     /** BroadcastRecord of an ordered broadcast: its targets in order and the result so far. */
     static final class Ordered {
         final Intent intent;
-        final boolean sticky;
         final List<Object> targets;   // Filter or ActivityInfo
         final IIntentReceiver resultTo;
         int next;
@@ -61,12 +60,16 @@ final class ActiveBroadcasts {
         String resultData;
         Bundle resultExtras;
         boolean aborted;
+        /** The finishReceiver caller waited for: the process's ApplicationThread, for a manifest
+         *  receiver and a registered one alike (AOSP 14's PendingResult token is the app thread's
+         *  binder in both, LoadedApk.ReceiverDispatcher.Args). */
         IBinder waitingFor;
+        /** The registered receiver it waits on, if it is one: its unregistering moves the broadcast on. */
+        IBinder waitingReceiver;
 
-        Ordered(Intent intent, boolean sticky, List<Object> targets, IIntentReceiver resultTo, int code, String data,
+        Ordered(Intent intent, List<Object> targets, IIntentReceiver resultTo, int code, String data,
                 Bundle extras) {
             this.intent = intent;
-            this.sticky = sticky;
             this.targets = targets;
             this.resultTo = resultTo;
             this.resultCode = code;
@@ -109,8 +112,9 @@ final class ActiveBroadcasts {
         registered.remove(receiver.asBinder());
         // An ordered broadcast waiting on it goes on (BroadcastQueue skips a receiver that left).
         Ordered o = ordered.peek();
-        if (o != null && o.waitingFor == receiver.asBinder()) {
+        if (o != null && o.waitingFor != null && o.waitingReceiver == receiver.asBinder()) {
             o.waitingFor = null;
+            o.waitingReceiver = null;
             deliverNext();
         }
     }
@@ -126,50 +130,57 @@ final class ActiveBroadcasts {
         } catch (LinkageError e) {
             // a JVM without the loader (the plain-JVM test)
         }
-        deliver(intent, false, resultTo, resultCode, resultData, resultExtras, serialized, sticky);
+        deliver(intent, false, resultTo, resultCode, resultData, resultExtras, serialized);
         return ActivityManager.BROADCAST_SUCCESS;
     }
 
     /** A broadcast another app (or the system broker) sent, to this process's receivers only. */
     synchronized void deliverFromOutside(Intent intent, boolean fromOtherApp) {
-        deliver(new Intent(intent), fromOtherApp, null, 0, null, null, false, false);
+        deliver(new Intent(intent), fromOtherApp, null, 0, null, null, false);
     }
 
     synchronized Intent removeSticky(Intent intent) {
         return intent.getAction() != null ? stickies.remove(intent.getAction()) : null;
     }
 
+    /** BroadcastRecord's delivery. A sticky broadcast sent now is not an initial sticky one: only
+     *  the stickies a registration replays are (BroadcastRecord.initialSticky, which
+     *  BroadcastReceiver.isInitialStickyBroadcast reports), so every delivery here says false. */
     private void deliver(Intent intent, boolean fromOtherApp, IIntentReceiver resultTo, int code, String data,
-            Bundle extras, boolean serialized, boolean sticky) {
+            Bundle extras, boolean serialized) {
         String target = intent.getComponent() != null ? intent.getComponent().getPackageName() : intent.getPackage();
         if (target != null && !target.equals(app.info.packageName)) {
             // Aimed at another app: the broker's alone; a result receiver still hears the result.
             if (resultTo != null) performReceive(resultTo, intent, code, data, extras, false, false);
             return;
         }
-        List<Object> targets = new ArrayList<>();
-        // Registered receivers first (a component broadcast goes to the manifest only).
+        // The registered receivers (a component broadcast goes to the manifest only), in the
+        // receiver resolver's order: by the filter's priority, highest first.
+        List<Filter> dynamic = new ArrayList<>();
         if (intent.getComponent() == null) {
             for (List<Filter> list : registered.values()) {
                 for (Filter f : list) {
                     if (fromOtherApp && (f.flags & Context.RECEIVER_NOT_EXPORTED) != 0) continue;
                     if (matches(f.filter, intent)) {
-                        targets.add(f);
+                        dynamic.add(f);
                         break;   // one delivery per receiver, as its ReceiverList has one
                     }
                 }
             }
+            dynamic.sort((a, b) -> Integer.compare(b.filter.getPriority(), a.filter.getPriority()));
         }
+        List<ResolveInfo> manifest = new ArrayList<>();
         if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) == 0) {
-            for (ActivityInfo ai : manifestReceivers(intent)) {
-                if (fromOtherApp && !ai.exported) continue;
-                targets.add(ai);
+            for (ResolveInfo ri : manifestReceivers(intent)) {
+                if (fromOtherApp && !ri.activityInfo.exported) continue;
+                manifest.add(ri);
             }
         }
+        List<Object> targets = merge(dynamic, manifest);
         if (!serialized) {
             for (Object t : targets) {
                 if (t instanceof Filter) {
-                    performReceive(((Filter) t).receiver, intent, code, data, extras, false, sticky);
+                    performReceive(((Filter) t).receiver, intent, code, data, extras, false, false);
                 } else {
                     scheduleReceiver((ActivityInfo) t, intent, code, data, extras, false);
                 }
@@ -177,8 +188,22 @@ final class ActiveBroadcasts {
             if (resultTo != null) performReceive(resultTo, intent, code, data, extras, false, false);
             return;
         }
-        ordered.add(new Ordered(intent, sticky, targets, resultTo, code, data, extras));
+        ordered.add(new Ordered(intent, targets, resultTo, code, data, extras));
         if (ordered.size() == 1) deliverNext();
+    }
+
+    /** ActivityManagerService.broadcastIntentLocked's merge of the two lists, each already in priority
+     *  order: a registered receiver goes before the manifest receivers whose priority is not above
+     *  its own, so at an equal priority the registered one is first. */
+    static List<Object> merge(List<Filter> dynamic, List<ResolveInfo> manifest) {
+        List<Object> out = new ArrayList<>(dynamic.size() + manifest.size());
+        int d = 0;
+        for (ResolveInfo ri : manifest) {
+            while (d < dynamic.size() && dynamic.get(d).filter.getPriority() >= ri.priority) out.add(dynamic.get(d++));
+            out.add(ri.activityInfo);
+        }
+        while (d < dynamic.size()) out.add(dynamic.get(d++));
+        return out;
     }
 
     /** BroadcastQueue.processNextBroadcast for the ordered one at the head: its next receiver, or,
@@ -192,8 +217,9 @@ final class ActiveBroadcasts {
                 if (t instanceof Filter) {
                     Filter f = (Filter) t;
                     if (!registered.containsKey(f.receiver.asBinder())) continue;   // unregistered since
-                    o.waitingFor = f.receiver.asBinder();
-                    performReceive(f.receiver, o.intent, o.resultCode, o.resultData, o.resultExtras, true, o.sticky);
+                    o.waitingFor = thread().asBinder();
+                    o.waitingReceiver = f.receiver.asBinder();
+                    performReceive(f.receiver, o.intent, o.resultCode, o.resultData, o.resultExtras, true, false);
                 } else {
                     o.waitingFor = thread().asBinder();
                     scheduleReceiver((ActivityInfo) t, o.intent, o.resultCode, o.resultData, o.resultExtras, true);
@@ -215,6 +241,7 @@ final class ActiveBroadcasts {
         Ordered o = ordered.peek();
         if (o == null || o.waitingFor == null || o.waitingFor != who) return;
         o.waitingFor = null;
+        o.waitingReceiver = null;
         o.resultCode = resultCode;
         o.resultData = resultData;
         o.resultExtras = resultExtras;
@@ -247,15 +274,18 @@ final class ActiveBroadcasts {
         }
     }
 
-    /** The app's manifest receivers for the intent, PackageManager's resolution. ACTION_PACKAGE_ADDED
-     *  and its kin are not delivered to the package they name (the broker's rule for its events). */
-    private List<ActivityInfo> manifestReceivers(Intent intent) {
-        List<ActivityInfo> out = new ArrayList<>();
+    /** The app's manifest receivers for the intent, PackageManager's resolution (in its priority
+     *  order, each with its filter's priority). ACTION_PACKAGE_ADDED and its kin are not delivered to
+     *  the package they name (the broker's rule for its events). */
+    private List<ResolveInfo> manifestReceivers(Intent intent) {
+        List<ResolveInfo> out = new ArrayList<>();
         PackageManager pm = app.packageManager;
         try {
             if (intent.getComponent() != null) {
                 if (!app.info.packageName.equals(intent.getComponent().getPackageName())) return out;
-                out.add(pm.getReceiverInfo(intent.getComponent(), PackageManager.GET_META_DATA));
+                ResolveInfo ri = new ResolveInfo();
+                ri.activityInfo = pm.getReceiverInfo(intent.getComponent(), PackageManager.GET_META_DATA);
+                out.add(ri);
                 return out;
             }
             List<ResolveInfo> hits = pm.queryBroadcastReceivers(intent, 0);
@@ -270,7 +300,7 @@ final class ActiveBroadcasts {
                 if (ri == null || ri.activityInfo == null) continue;
                 if (skip != null && skip.equals(ri.activityInfo.packageName)) continue;
                 if (!app.info.packageName.equals(ri.activityInfo.packageName)) continue;
-                out.add(ri.activityInfo);
+                out.add(ri);
             }
         } catch (PackageManager.NameNotFoundException | RuntimeException e) {
             // nothing declared: as a device with no receiver
@@ -323,7 +353,7 @@ final class ActiveBroadcasts {
         tick[0] = () -> {
             Intent t = new Intent(Intent.ACTION_TIME_TICK).addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
             synchronized (this) {
-                deliver(t, false, null, 0, null, null, false, false);
+                deliver(t, false, null, 0, null, null, false);
             }
             h.postDelayed(tick[0], toNextMinute());
         };
