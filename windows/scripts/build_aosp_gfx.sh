@@ -12,9 +12,10 @@
 #                                           framework lacks, and windows/java/aosp_gfx (the stand-ins
 #                                           for ART and Robolectric the native runtime calls, and
 #                                           the API 35 methods added to AOSP 14's classes)
-#   <out>/bin/robolectric-nativeruntime.dll Robolectric's native runtime (Skia, minikin, HarfBuzz...),
-#                                           its COFF symbol table stripped (nothing reads it)
-#   <out>/bin/aosp/icu/icudt68l.dat         its ICU data, without the trees it cannot open
+#   <out>/bin/aosp-hwui.dll                 the graphics DLL: AOSP 14's HWUI (its render thread and GL
+#                                           pipeline), Skia, minikin, HarfBuzz, FreeType, ICU, built
+#                                           from source by windows/hwui_build/build.sh
+#   <out>/bin/aosp/icu/icudt72l.dat         its ICU data (ICU 72's), without the trees it cannot open
 #   <out>/bin/aosp/fonts/                   Android's fonts.xml and the fonts it names, but Noto CJK
 #                                           (Windows' own CJK fonts stand in, HostCjkFonts)
 #   <out>/bin/aosp/hyphen-data/             the hyphenation patterns
@@ -26,6 +27,9 @@
 # classes go in). The deps dir (default thirdparty/aosp-gfx, CI caches it) holds android-all
 # 14-robolectric-10818077 and nativeruntime-dist-compat 1.0.18, fetched from Maven Central's
 # Google mirror and checked against their SHA-256 by windows/test/aospgfx/fetch.sh.
+# The graphics DLL and ICU's data come from windows/hwui_build/build.sh's output folder:
+# WINAPK_HWUI_DIR (default thirdparty/aosp-hwui/b, where CI builds it); Robolectric's distribution
+# gives the fonts and the hyphenation patterns only.
 # Needs a JDK (JAVA_HOME: javac, jar, jdeps), curl and unzip. The jar is first on the class path of every
 # JVM with the framework, which cannot start without these files (host/aosp_gfx.h); stage_runtime.sh runs
 # this always.
@@ -179,21 +183,26 @@ mkdir -p "$OUT/bin/aosp/icu" "$OUT/bin/licenses/aosp-graphics"
 # The DLL carries its COFF symbol table (3.3 MB): read by no loader and by nothing in Win.apk (its
 # exports, which the JVM binds by, stay). Only LLVM's strip (CLANG64's strip is LLVM's): it leaves
 # the sections as lld wrote them, where GNU strip writes the PE file anew.
-DLL="$OUT/bin/robolectric-nativeruntime.dll"
+HWUI="${WINAPK_HWUI_DIR:-$HERE/../../thirdparty/aosp-hwui/b}"
+for f in aosp-hwui.dll icudt72l.dat; do
+    [[ -f "$HWUI/$f" ]] || { echo "[aosp-gfx] no $HWUI/$f: build it with windows/hwui_build/build.sh" >&2; exit 1; }
+done
+rm -f "$OUT/bin/robolectric-nativeruntime.dll" "$OUT/bin/aosp/icu/icudt68l.dat"
+DLL="$OUT/bin/aosp-hwui.dll"
 STRIP=$(command -v llvm-strip || true)
 if [[ -z "$STRIP" ]] && command -v strip > /dev/null && strip --version 2>&1 | grep -q LLVM; then STRIP=strip; fi
-if [[ -z "$STRIP" ]] || ! "$STRIP" -o "$DLL" "$NR/native/windows/x86_64/robolectric-nativeruntime.dll"; then
+if [[ -z "$STRIP" ]] || ! "$STRIP" -o "$DLL" "$HWUI/aosp-hwui.dll"; then
     echo "[aosp-gfx]   no LLVM strip: the native runtime staged with its symbol table" >&2
-    cp -f "$NR/native/windows/x86_64/robolectric-nativeruntime.dll" "$DLL"
+    cp -f "$HWUI/aosp-hwui.dll" "$DLL"
 fi
 # ICU's data without the trees no code in the DLL can open (its ICU is linked in, so what it can
 # open is fixed): it has no time zone names, units, spelled-out numbers or transliterators (no
-# "icudt68l-zone", "-unit", "-rbnf" or "-translit" in it), no charset converters (ucnv_open and
+# "icudt72l-zone", "-unit", "-rbnf" or "-translit" in it), no charset converters (ucnv_open and
 # "cnvalias" are not linked), no StringPrep or spoof checks (usprep, uspoof). Kept: the break
 # iterators, collation, the locale, language, region and currency names, the root bundles (the
 # time zone rules among them) and the Unicode properties. 25.8 MB -> 16.4 MB.
-"$JAVA" "$(native_path "$HERE/TrimIcuData.java")" "$(native_path "$NR/icu/icudt68l.dat")" \
-    "$(native_path "$OUT/bin/aosp/icu/icudt68l.dat")" \
+"$JAVA" "$(native_path "$HERE/TrimIcuData.java")" "$(native_path "$HWUI/icudt72l.dat")" \
+    "$(native_path "$OUT/bin/aosp/icu/icudt72l.dat")" \
     zone/ unit/ rbnf/ translit/ '*.cnv' cnvalias.icu '*.spp' '*.cfu'
 rm -rf "$OUT/bin/aosp/fonts" "$OUT/bin/aosp/hyphen-data"
 # Only the fonts fonts.xml names: SystemFonts opens nothing else, and a device has nothing else in
@@ -213,4 +222,4 @@ grep -oE '[A-Za-z0-9_.-]+[.](ttf|ttc|otf)' "$NR/fonts/fonts.xml" | sort -u | gre
 cp -RL "$NR/hyphen-data" "$OUT/bin/aosp/hyphen-data"
 cp -f "$HERE/../third_party/aosp_gfx_licenses/"*.txt "$OUT/bin/licenses/aosp-graphics/"
 rm -rf "$WORK"
-du -sh "$OUT/lib/aosp-graphics.jar" "$OUT/bin/robolectric-nativeruntime.dll" "$OUT/bin/aosp" | sed 's/^/[aosp-gfx] /'
+du -sh "$OUT/lib/aosp-graphics.jar" "$OUT/bin/aosp-hwui.dll" "$OUT/bin/aosp" | sed 's/^/[aosp-gfx] /'

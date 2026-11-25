@@ -39,6 +39,17 @@ jobs:
             ninja:p
             nasm:p
             boost:p
+            python:p
+      # The graphics DLL from AOSP 14's sources (as in ci.yml).
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-hwui/src
+          key: aosp-hwui-src-${{ hashFiles('windows/hwui_build/fetch.sh') }}
+      - name: Build the graphics DLL
+        run: |
+          windows/hwui_build/fetch.sh "$PWD/thirdparty/aosp-hwui"
+          windows/hwui_build/build.sh "$PWD/thirdparty/aosp-hwui" release \
+            || { tail -n 100 thirdparty/aosp-hwui/b/release.log; exit 1; }
       - name: Build
         run: |
           cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
@@ -49,7 +60,7 @@ jobs:
         with:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
-      # android-all 14 and Robolectric's native runtime, for AOSP's graphics' files (as in ci.yml).
+      # android-all 14 and Robolectric's distribution (its fonts and hyphenation data), for AOSP's graphics' files.
       - uses: actions/cache@v4
         with:
           path: thirdparty/aosp-gfx
@@ -60,7 +71,7 @@ jobs:
           # With AOSP's graphics', resources' and views' files (build_aosp_{gfx,res,views}.sh): the
           # only ones the framework has.
           windows/scripts/stage_runtime.sh build Win.apk
-          test -f Win.apk/lib/aosp-graphics.jar && test -f Win.apk/bin/robolectric-nativeruntime.dll
+          test -f Win.apk/lib/aosp-graphics.jar && test -f Win.apk/bin/aosp-hwui.dll
           test -f Win.apk/lib/aosp-resources.jar && test -f Win.apk/lib/aosp-views.jar
           test -f Win.apk/bin/aosp/framework-res-34.apk
           # The Java runtime: Temurin 21's modules with Win.apk's patch classes

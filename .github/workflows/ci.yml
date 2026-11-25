@@ -207,7 +207,7 @@ jobs:
       CCACHE_DIR: ${{ github.workspace }}\.ccache
       CCACHE_BASEDIR: ${{ github.workspace }}
       CCACHE_COMPILERCHECK: content
-      CCACHE_MAXSIZE: 2G
+      CCACHE_MAXSIZE: 3G
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -225,6 +225,7 @@ jobs:
             nasm:p
             boost:p
             ccache:p
+            python:p
       # Every run saves its own entry and starts from the newest one: main's
       # for a pull request's first run, then the pull request's own.
       - uses: actions/cache@v4
@@ -242,6 +243,20 @@ jobs:
         with:
           path: thirdparty/aosp-gfx
           key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
+      # AOSP 14's sources of the graphics DLL (windows/hwui_build/fetch.sh, ~700 MB unpacked).
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-hwui/src
+          key: aosp-hwui-src-${{ hashFiles('windows/hwui_build/fetch.sh') }}
+      - name: Build the graphics DLL (AOSP 14's HWUI, Skia with Ganesh GL; windows/hwui_build)
+        run: |
+          ccache -z
+          windows/hwui_build/fetch.sh "$PWD/thirdparty/aosp-hwui"
+          HWUI_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" \
+            windows/hwui_build/build.sh "$PWD/thirdparty/aosp-hwui" ci \
+            || { tail -n 100 thirdparty/aosp-hwui/b/ci.log; exit 1; }
+          ls -l thirdparty/aosp-hwui/b/aosp-hwui.dll
+          ccache -s
       - name: Build (loader, thunks, JNI wrapper, runtime, launcher, tests)
         run: |
           ccache -z
@@ -739,7 +754,8 @@ jobs:
           # AOSP's graphics, resources and views: the stage carries their files.
           grep -F "AOSP graphics: on" boot.log
           grep -F "AOSP views: on" boot.log
-          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" boot.log
+          grep -E "AOSP graphics: aosp-hwui.dll loaded" boot.log
+          grep -F "composed on the GPU" boot.log
       - name: Install an APK (the launcher's icon render)
         run: |
           # winapk-runtime --install-only, what the launcher's install runs: the app's icon and name
@@ -749,7 +765,7 @@ jobs:
             --data "$(cygpath -w "$PWD/installdata")" --install-only > install.log 2>&1 \
             || { tail -n 200 install.log; exit 1; }
           grep -F "AOSP graphics: on" install.log
-          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" install.log
+          grep -E "AOSP graphics: aosp-hwui.dll loaded" install.log
           grep -F "launcher icon rendered" install.log
           test -s installdata/apps/sudoku/icon.png
           # The app's name, resolved from its resources: not its package (AppMeta.resolve, through ResBackend).
@@ -804,14 +820,14 @@ jobs:
         run: |
           # The framework has no other graphics: a file missing ends the process before its JVM, with
           # the line the launcher's Show log shows (host/aosp_gfx.h), instead of an empty window.
-          mv stage/bin/aosp/icu/icudt68l.dat icudt68l.dat.aside
+          mv stage/bin/aosp/icu/icudt72l.dat icudt72l.dat.aside
           rc=0
           timeout 300 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$(cygpath -w "$PWD/nogfxdata")" \
             > nogfx.log 2>&1 || rc=$?
-          mv icudt68l.dat.aside stage/bin/aosp/icu/icudt68l.dat
+          mv icudt72l.dat.aside stage/bin/aosp/icu/icudt72l.dat
           cat nogfx.log
           [[ $rc == 1 ]]
-          grep -F "error: AOSP graphics:" nogfx.log | grep -F "icudt68l.dat is missing"
+          grep -F "error: AOSP graphics:" nogfx.log | grep -F "icudt72l.dat is missing"
           grep -F "cannot start: AOSP's graphics are not usable" nogfx.log
       - name: Start an app the broker runs as a service host
         run: |
@@ -846,7 +862,7 @@ jobs:
           grep -F "gms dir        : $data\\gms" gms-status.log
           # The JVMs with no app take AOSP's graphics as an app's run does (host/aosp_gfx.h).
           grep -F "AOSP graphics: on" gms-err.log
-          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" gms-err.log
+          grep -E "AOSP graphics: aosp-hwui.dll loaded" gms-err.log
       - name: Start the system broker
         run: |
           # winapk-runtime --system (com.macapk.loader.SystemServer), what Settings > Google account >
@@ -859,7 +875,7 @@ jobs:
           wait || true
           grep -F "[system] serving" system.log || { tail -n 100 system.log; exit 1; }
           grep -F "AOSP graphics: on" system.log
-          grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" system.log
+          grep -E "AOSP graphics: aosp-hwui.dll loaded" system.log
       - name: Run the APK check verb
         run: |
           # winapk-runtime --verify-apk (com.winapk.tools.ApkCheck), what the

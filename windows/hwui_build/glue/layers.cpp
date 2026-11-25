@@ -40,6 +40,7 @@ using android::uirenderer::renderthread::RenderThread;
 
 namespace winapk::hwui {
 void set_refresh_rate(double hz);  // choreographer.cpp
+void attach_blob_cache(EGLDisplay display);  // blob_cache.cpp
 }
 
 namespace {
@@ -573,7 +574,20 @@ void compose_now() {
     if (g_host && g_host->presented) g_host->presented(dw, dh, start, compose_start, swap_start, end);
     // Once, a few seconds in: what Skia's GPU caches hold against their limit (HWUI's CacheManager).
     static int composed = 0;
-    if (++composed == 600) {
+    ++composed;
+    // The first frames are drawn: what only they needed goes. The shader compiler (ANGLE's
+    // translator, d3dcompiler_47's state) until a new program needs it, Skia's scratch resources,
+    // and the heaps' free blocks given back to Windows (the compiles' scratch is freed by then).
+    if (composed == 240) {
+        log_memory_now("before the trim");
+        glReleaseShaderCompiler();
+        if (GrDirectContext* gr = rt.getGrContext()) gr->purgeUnlockedResources(/*scratchResourcesOnly=*/true);
+        HANDLE heaps[64];
+        const DWORD n = GetProcessHeaps(64, heaps);
+        for (DWORD i = 0; i < n && i < 64; i++) HeapCompact(heaps[i], 0);
+        log_memory_now("after the trim");
+    }
+    if (composed == 600) {
         log_memory_now("600 frames");
         if (GrDirectContext* gr = rt.getGrContext()) {
             int count = 0;
@@ -611,6 +625,7 @@ EGLDisplay eglDisplay() {
         EGLint major = 0, minor = 0;
         if (d != EGL_NO_DISPLAY && eglInitialize(d, &major, &minor)) {
             g_display = d;
+            attach_blob_cache(d);
             log_memory_now("EGL display up (ANGLE, Direct3D 11)");
             return d;
         }
