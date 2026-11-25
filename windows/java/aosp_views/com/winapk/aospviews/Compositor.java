@@ -1,11 +1,13 @@
-// The in-process window manager's compositor (docs/research/aosp-views.md, "V1 as built"): what
-// SurfaceFlinger does with the windows' layers, in software, into the one frame the host window
-// presents. Each window's Surface (Win.apk's, copied by ViewRootImpl from the SurfaceControl the
-// session's relayout made) hands its posted bitmap here (SurfaceControl.macapkSetLayerPost); the
-// frame is then the windows bottom to top, each at its frame less its surface insets, with
-// WindowManagerService's dim layer (black at the window's dimAmount, over the whole display)
-// under a FLAG_DIM_BEHIND window, and the bars' glyphs (Bars) on top. On the main thread only, as
-// every ViewRootImpl draws there.
+// The in-process window manager's compositor (docs/research/aosp-views.md, "V3"): what
+// SurfaceFlinger does with the windows' layers, on the GPU. Each window's SurfaceControl has a
+// layer in the graphics DLL (HwuiLayers), which the window's ThreadedRenderer draws into through
+// HWUI (ViewRootImpl's Surface, copied from the SurfaceControl, carries the layer post the DLL finds
+// the layer by); a window drawn in software (hardwareAccelerated="false") posts its bitmap to the
+// layer instead. This class says which layers are shown, bottom to top, where in the display, and
+// the dim layer under a FLAG_DIM_BEHIND window (black at the window's dimAmount over the whole
+// display), as WindowManagerService's surface placement does; the DLL's compositor draws them into
+// the host window on HWUI's render thread whenever a window posts a frame or the scene changes.
+// Main thread only, as every ViewRootImpl lays out there.
 //
 // Order: the activity's main window (TYPE_BASE_APPLICATION, which its WindowToken keeps at the
 // bottom of its windows), then the other application windows and sub-windows (dialogs, panels,
@@ -14,15 +16,7 @@
 // z-order; with one task and no system windows of its own, that is this order.
 package com.winapk.aospviews;
 
-import android.graphics.Bitmap;
-import android.graphics.Canvas;
-import android.graphics.Color;
-import android.graphics.PorterDuff;
 import android.view.WindowManager;
-
-import com.macapk.loader.FrameTimes;
-import com.macapk.loader.NativeCocoa;
-import com.macapk.loader.gfx.GfxBackend;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -31,14 +25,12 @@ import java.util.List;
 final class Compositor {
     private Compositor() {}
 
-    private static Bitmap sFrame;
-    private static Canvas sCanvas;
-
     private static java.lang.reflect.Method sSetLayerPost;
     private static Class<?> sLayerPost;
 
-    /** The window's layer hands its frames here: Win.apk's SurfaceControl.macapkSetLayerPost
-     *  (Win.apk-only members, which this jar is compiled without, so through reflection). */
+    /** The window's SurfaceControl gets a layer: the DLL's, of the control's size, and the layer post
+     *  its Surface takes (Win.apk's SurfaceControl.macapkSetLayerPost; Win.apk-only members, which
+     *  this jar is compiled without, so through reflection) for a software frame. */
     static void attach(android.view.SurfaceControl control, AospWindows.Win w) {
         try {
             if (sSetLayerPost == null) {
@@ -54,40 +46,45 @@ final class Compositor {
                                 default -> "layer of " + w.attrs.getTitle();
                             };
                         }
-                        post(w, (Bitmap) args[1]);
+                        post(w, (android.graphics.Bitmap) args[1]);
                         return null;
                     });
+            w.post = post;
+            w.layer = HwuiLayers.create(post, control.getWidth(), control.getHeight());
+            w.drew = false;
             sSetLayerPost.invoke(control, post);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Win.apk's SurfaceControl.macapkSetLayerPost", e);
         }
     }
 
-    /** A window's Surface posted a frame. */
-    private static String sLastOrder;
-    private static boolean sDumpNext;
-    /** WINAPK_AOSP_VIEWS_TRACE=1: each relayout, each window's first frame and each new window
-     *  order in the log; with WINAPK_AOSP_VIEWS_TRACE_DIR also those frames as PNGs there. */
-    static final boolean TRACE = "1".equals(System.getenv("WINAPK_AOSP_VIEWS_TRACE"));
+    /** The window's SurfaceControl goes: its layer goes with the last reference to it (HWUI may still
+     *  hold the window's ANativeWindow until its next frame). */
+    static void detach(AospWindows.Win w) {
+        if (w.post != null) HwuiLayers.release(w.post);
+        w.post = null;
+        w.layer = 0;
+        w.drew = false;
+    }
 
-    static void post(AospWindows.Win w, Bitmap frame) {
-        if (TRACE && w.content == null) {
-            System.err.println(AospWindows.TAG + "first frame of " + w.attrs.getTitle() + " type=" + w.attrs.type
-                    + " frame=" + w.frame + " surface=" + frame.getWidth() + "x" + frame.getHeight()
-                    + " flags=0x" + Integer.toHexString(w.attrs.flags) + " dim=" + w.attrs.dimAmount
-                    + " insets=" + w.attrs.surfaceInsets);
-            String dir = System.getenv("WINAPK_AOSP_VIEWS_TRACE_DIR");
-            if (dir != null) {
-                try (java.io.FileOutputStream out = new java.io.FileOutputStream(
-                        new java.io.File(dir, "layer-" + w.added + ".png"))) {
-                    frame.compress(Bitmap.CompressFormat.PNG, 100, out);
-                } catch (Exception e) {
-                    System.err.println(AospWindows.TAG + "layer dump: " + e);
-                }
-            }
+    /** WINAPK_AOSP_VIEWS_TRACE=1: each relayout, each window's first frame and each new window order
+     *  in the log. */
+    static final boolean TRACE = "1".equals(System.getenv("WINAPK_AOSP_VIEWS_TRACE"));
+    private static String sLastOrder;
+
+    /** A window drawn in software posted a frame (its Surface's bitmap), on the drawing thread. */
+    static void post(AospWindows.Win w, android.graphics.Bitmap frame) {
+        if (TRACE && !w.drew) {
+            System.err.println(AospWindows.TAG + "first software frame of " + w.attrs.getTitle() + " type="
+                    + w.attrs.type + " frame=" + w.frame + " surface=" + frame.getWidth() + "x" + frame.getHeight());
         }
-        w.content = frame;
-        compose();
+        long layer = w.layer;
+        if (layer == 0) return;
+        HwuiLayers.postBitmap(layer, frame);
+        if (!w.drew) {
+            w.drew = true;
+            compose();
+        }
     }
 
     static int band(int type) {
@@ -97,33 +94,14 @@ final class Compositor {
         return type == WindowManager.LayoutParams.TYPE_BASE_APPLICATION ? 0 : 1;
     }
 
-    // The frame-time record (com.macapk.loader.FrameTimes, host/frame_times.h): every composed frame
-    // that reaches the present. AOSP's ViewRootImpl does the layout and the draw inside the
-    // Choreographer frame, before its Surface hands the layer here, so "draw" is the frame's start
-    // (the vsync time Choreographer gives it) to the compose, layout included, and "layout" is 0;
-    // "pixels" the frame read out of its bitmap, "present" the host's copy. The first
-    // kWarmupFrames composes are warm-up, as Win.apk's own views marked the first 90 vsyncs.
-    private static final int kWarmupFrames = 90;
-    private static int sComposed;
-
-    private static long frameStartNs(long now) {
-        try {
-            long t = android.view.Choreographer.getInstance().getFrameTimeNanos();
-            return t > 0 && t <= now ? t : now;
-        } catch (RuntimeException e) {
-            return now;  // not inside a frame callback (an insets change, a layer posted off a frame)
-        }
-    }
-
+    /** The scene changed (a window shown, hidden, moved, added or removed, its dim): the DLL composes
+     *  with it at once, and at every frame a window posts. */
     static void compose() {
-        final long composeNs = System.nanoTime();
-        final long startNs = frameStartNs(composeNs);
         List<AospWindows.Win> order = new ArrayList<>();
         for (AospWindows.Win w : AospWindows.sWindows.values()) {
-            if (w.visible && w.content != null && w.attrs != null) order.add(w);
+            if (w.visible && w.layer != 0 && w.attrs != null) order.add(w);
         }
         InputRouter.windowsChanged();  // the focus follows the windows shown (step V2)
-        if (order.isEmpty()) return;
         order.sort(Comparator.comparingInt((AospWindows.Win w) -> band(w.attrs.type))
                 .thenComparingLong(w -> w.added));
         if (TRACE) {
@@ -132,72 +110,27 @@ final class Compositor {
             String now = sb.toString();
             if (!now.equals(sLastOrder)) {
                 sLastOrder = now;
-                sDumpNext = true;
                 System.err.println(AospWindows.TAG + "compose " + now);
             }
         }
-        int width = AospWindows.widthPx(), height = AospWindows.heightPx();
-        if (order.size() == 1 && !Bars.paintsAny()) {
-            AospWindows.Win w = order.get(0);
-            Bitmap b = w.content;
-            if (w.frame.left == 0 && w.frame.top == 0 && b.getWidth() == width && b.getHeight() == height
-                    && w.attrs.surfaceInsets.left == 0 && w.attrs.surfaceInsets.top == 0) {
-                present(b, startNs, composeNs);  // one window filling the display: its own frame, as before
-                return;
-            }
-        }
-        if (sFrame == null || sFrame.getWidth() != width || sFrame.getHeight() != height) {
-            sFrame = GfxBackend.get().createFrameBitmap(width, height);
-            sCanvas = new Canvas(sFrame);
-            // Layers are composed pixel for pixel, as SurfaceFlinger composes buffers: no density
-            // scaling between a window's bitmap and the frame. Each bitmap takes the default
-            // density when it is made, which a density change moves (ActivityThread
-            // .updateDefaultDensity), and a canvas at another one would draw it scaled by the ratio.
-            sCanvas.setDensity(Bitmap.DENSITY_NONE);
-        }
-        Canvas c = sCanvas;
-        // Nothing under the windows is black, as SurfaceFlinger's empty display; but while a
-        // SurfaceView's GL view is under them (AospWindows.showSurfaceBelow) the frame starts
-        // clear, so the host shows that layer through the SurfaceView's hole.
-        if (AospWindows.surfaceBelow()) c.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR);
-        else c.drawColor(Color.BLACK, PorterDuff.Mode.SRC);
-        for (AospWindows.Win w : order) {
+        long[] layers = new long[order.size()];
+        int[] xy = new int[2 * order.size()];
+        int[] dim = new int[order.size()];
+        for (int i = 0; i < layers.length; i++) {
+            AospWindows.Win w = order.get(i);
             WindowManager.LayoutParams a = w.attrs;
+            layers[i] = w.layer;
+            // Each at its frame less its surface insets (a floating window's room for its shadow).
+            xy[2 * i] = w.frame.left - a.surfaceInsets.left;
+            xy[2 * i + 1] = w.frame.top - a.surfaceInsets.top;
             if ((a.flags & WindowManager.LayoutParams.FLAG_DIM_BEHIND) != 0 && a.dimAmount > 0f) {
-                int alpha = Math.round(Math.min(1f, a.dimAmount) * 255f);
-                c.drawColor(Color.argb(alpha, 0, 0, 0));
-            }
-            c.drawBitmap(w.content, w.frame.left - a.surfaceInsets.left, w.frame.top - a.surfaceInsets.top, null);
-        }
-        Bars.paintGlyphs(c, AospWindows.metrics().density);
-        if (TRACE && sDumpNext) {
-            sDumpNext = false;
-            String dir = System.getenv("WINAPK_AOSP_VIEWS_TRACE_DIR");
-            if (dir != null) {
-                try (java.io.FileOutputStream out = new java.io.FileOutputStream(new java.io.File(dir, "frame.png"))) {
-                    sFrame.compress(Bitmap.CompressFormat.PNG, 100, out);
-                } catch (Exception e) {
-                    System.err.println(AospWindows.TAG + "frame dump: " + e);
-                }
+                dim[i] = Math.round(Math.min(1f, a.dimAmount) * 255f);
             }
         }
-        present(sFrame, startNs, composeNs);
-    }
-
-    /** The frame to the host window, as Win.apk's Surface presents one, and its times recorded. */
-    private static void present(Bitmap b, long startNs, long composeNs) {
-        final long pixelsStart = System.nanoTime();
-        int[] pixels = GfxBackend.get().liveArgbOrNull(b);
-        if (pixels == null) pixels = GfxBackend.get().argbBuffer(b);
-        if (pixels == null) return;
-        final long pixelsEnd = System.nanoTime();
-        try {
-            NativeCocoa.presentBitmap(pixels, b.getWidth(), b.getHeight());
-        } catch (UnsatisfiedLinkError e) {
-            return;  // A plain JVM (no host): nothing to show it on, nothing to time.
-        }
-        final long end = System.nanoTime();
-        FrameTimes.record(0, composeNs - startNs, pixelsEnd - pixelsStart, end - pixelsEnd, end - startNs,
-                          ++sComposed <= kWarmupFrames);
+        // Nothing under the windows is black, as SurfaceFlinger's empty display; but while a
+        // SurfaceView's GL view is under them (AospWindows.showSurfaceBelow) the display starts
+        // clear, so the host's layer shows through the SurfaceView's hole.
+        HwuiLayers.setScene(layers, xy, dim, AospWindows.widthPx(), AospWindows.heightPx(),
+                AospWindows.surfaceBelow());
     }
 }

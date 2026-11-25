@@ -245,8 +245,11 @@ public final class AospWindows {
         int requestedVisibleTypes = android.view.WindowInsets.Type.defaultVisible();
         /** The channel addToDisplay handed out: its receiver is the window's input (InputRouter). */
         InputChannel inputChannel;
-        /** The last frame its Surface posted (the Surface's own bitmap), for the compositor. */
-        android.graphics.Bitmap content;
+        /** Its layer in the graphics DLL (HwuiLayers) and the layer post its Surface carries to it;
+         *  whether the window has drawn into it yet. */
+        long layer;
+        Object post;
+        boolean drew;
 
         Win(IWindow window) {
             this.window = window;
@@ -359,7 +362,7 @@ public final class AospWindows {
             Win w = sWindows.remove(window.asBinder());
             if (w == null) return;
             System.err.println(TAG + "window removed: " + w.attrs.getTitle());
-            if (w.surface != null) w.surface.release();
+            if (w.surface != null) { Compositor.detach(w); w.surface.release(); }
             secureChanged();
             // What was under it shows again.
             main().post(() -> { insetsChanged(); Compositor.compose(); });
@@ -409,7 +412,7 @@ public final class AospWindows {
                         false, size);
                 int fw = Math.max(1, size.x), fh = Math.max(1, size.y);
                 if (w.surface == null || w.surface.getWidth() != fw || w.surface.getHeight() != fh) {
-                    if (w.surface != null) w.surface.release();
+                    if (w.surface != null) { Compositor.detach(w); w.surface.release(); }
                     final Win win = w;
                     w.surface = new SurfaceControl.Builder().setName(w.attrs.getTitle() + "")
                             .setBufferSize(fw, fh).build();
@@ -417,10 +420,12 @@ public final class AospWindows {
                     result |= WindowManagerGlobal.RELAYOUT_RES_SURFACE_CHANGED;
                 }
                 outSurfaceControl.copyFrom(w.surface, "relayout");
+                // Its layer, place or size may be new: the compositor's scene follows.
+                main().post(Compositor::compose);
             } else if (!w.visible) {
-                if (w.surface != null) w.surface.release();
+                if (w.surface != null) { Compositor.detach(w); w.surface.release(); }
                 w.surface = null;
-                w.content = null;
+                w.drew = false;
                 if (wasVisible) main().post(Compositor::compose);
             }
             return result;

@@ -9,7 +9,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_EXTENSIONS ON)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_EXTENSIONS ON)
-add_compile_definitions(USE_MINGW WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601 WINVER=0x0601 __USE_MINGW_ANSI_STDIO=1
+# SK_R32_SHIFT=0: Skia's N32 is RGBA, as on Android (BGRA is its Windows default), the order
+# HWUI gives a window's GL framebuffer (GL_RGBA8) and the NDK's bitmaps have.
+add_compile_definitions(SK_R32_SHIFT=0 USE_MINGW WIN32_LEAN_AND_MEAN _WIN32_WINNT=0x0601 WINVER=0x0601 __USE_MINGW_ANSI_STDIO=1
                         _FILE_OFFSET_BITS=64 NOMINMAX)
 # -mno-ms-bitfields: Itanium bitfield layout everywhere (HWUI's DisplayListOp packs its header in
 # bitfields; MinGW defaults to MSVC's layout), the same in every library that shares a struct.
@@ -76,4 +78,4 @@ set(HWUI_ARCHIVES aosp_libhwui aosp_libskia aosp_libminikin aosp_libharfbuzz_ng 
 target_link_libraries(aosp_hwui PRIVATE -Wl,--start-group ${HWUI_ARCHIVES} -Wl,--end-group ${ANGLE_IMPORTS}
     -static -lstdc++ -latomic -lws2_32 -lbcrypt -lwindowscodecs -lole32 -loleaut32 -luuid -lgdi32 -luser32
     -lwinpthread -Wl,--gc-sections -s)
-target_link_options(aosp_hwui PRIVATE -fuse-ld=lld)
+target_link_options(aosp_hwui PRIVATE -fuse-ld=lld "-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/aosp-hwui.map")

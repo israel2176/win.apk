@@ -262,11 +262,6 @@ public final class Compat {
      *  and the cache queries the service every time, as before system_server sets one. */
     public static android.os.SystemProperties.Handle find(String name) { return null; }
 
-    /** HardwareRenderer.setFPSDivisor (Choreographer's constructor): it turns HWUI's render-thread
-     *  animations on or off. The windows draw in software (no render thread; V3 is HWUI), and the
-     *  native runtime has no such native. */
-    public static void setFPSDivisor(int divisor) {}
-
     /** TextUtils.toUpperCase(Locale, CharSequence, boolean copySpans) (AllCapsTransformationMethod):
      *  the text upper-cased in the locale, the source itself when nothing changes, and its spans
      *  carried over to where their characters went (one character can become several: ß, ŉ). AOSP
@@ -295,15 +290,6 @@ public final class Compat {
         return result;
     }
 
-    /** RenderNode.add/removePositionUpdateListener: HWUI's render thread reports a node's position
-     *  on screen each frame it draws it (View's handwriting area, SurfaceView). The windows draw in
-     *  software, where there are no such reports (and the native runtime's binding has the API 33
-     *  signature): nothing to listen to. */
-    public static void addPositionUpdateListener(android.graphics.RenderNode node,
-            android.graphics.RenderNode.PositionUpdateListener listener) {}
-    public static void removePositionUpdateListener(android.graphics.RenderNode node,
-            android.graphics.RenderNode.PositionUpdateListener listener) {}
-
     /** Activity.getActivityInfo (hidden), for WindowOnBackInvokedDispatcher's check of the
      *  activity's android:enableOnBackInvokedCallback: none here, so the check falls back to the
      *  application's. Predictive back (OnBackInvokedCallback dispatch) is V2's: the application's
@@ -313,9 +299,4 @@ public final class Compat {
     public static boolean hasOnBackInvokedCallbackEnabled(android.content.pm.ActivityInfo info) { return false; }
     public static boolean isOnBackInvokedCallbackEnabled(android.content.pm.ActivityInfo info) { return false; }
     public static boolean isOnBackInvokedCallbackEnabled(android.content.pm.ApplicationInfo info) { return false; }
-
-    /** HardwareRenderer.isDrawingEnabled (ViewRootImpl.relayoutWindow): whether windows draw at all,
-     *  false only in a process that turned drawing off (HardwareRenderer.setDrawingEnabled). The
-     *  native runtime has no such native; drawing is on. */
-    public static boolean isDrawingEnabled() { return true; }
 }

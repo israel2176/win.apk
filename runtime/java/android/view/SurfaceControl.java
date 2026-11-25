@@ -23,6 +23,10 @@ public final class SurfaceControl implements Parcelable {
     private int mWidth;
     private int mHeight;
     private boolean mValid = true;
+    /** AOSP's native ASurfaceControl, which HardwareRenderer.setSurfaceControl reads (to give HWUI
+     *  a window's SurfaceControl, BLAST's): none here, the window's layer is its Surface's
+     *  (Win.apk's windows/hwui_build compositor), so HWUI is given none. */
+    public final long mNativeObject = 0;
 
     SurfaceControl(String name, int width, int height) {
         mName = name;

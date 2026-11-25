@@ -336,7 +336,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_accessibility.cpp host/uia_provider.cpp host/uia_tree.cpp
                               host/binder_win.cpp host/native_data_protection.cpp
                               host/user_folders.cpp host/unix_socket_dir.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
-                              host/debug_agent.cpp host/aosp_gfx.cpp host/aosp_gfx_redirect.cpp
+                              host/debug_agent.cpp host/aosp_gfx.cpp host/aosp_gfx_redirect.cpp host/hwui_host.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 oleaut32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi

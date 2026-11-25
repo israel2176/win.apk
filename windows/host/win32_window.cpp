@@ -6,6 +6,8 @@
 #include "tsf_session.h"
 #include "uia_provider.h"
 #include "window_fit.h"
+#include "hwui_host.h"
+#include "../hwui_build/glue/hwui_host_api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -551,6 +553,13 @@ void blit_frame(HDC dc, int x, int y, int w, int h, const uint32_t* px) {
 // window) where it does not reach. Every pixel is drawn once, so nothing
 // flickers: the frame first, then the rest with the frame clipped out.
 void paint(HWND hwnd) {
+    // The graphics DLL's compositor draws the whole client area on the GPU (window_gpu_layout):
+    // an exposed or resized window is composed again, nothing drawn here.
+    if (hwui_active()) {
+        ValidateRect(hwnd, nullptr);
+        hwui_recompose();
+        return;
+    }
     PAINTSTRUCT ps;
     HDC dc = BeginPaint(hwnd, &ps);
     if (g_rtl_window) SetLayout(dc, 0);  // the app's frame as it is, not mirrored
@@ -2369,6 +2378,66 @@ void window_restore() {
 void window_set_background(uint32_t argb) {
     g_background = RGB((argb >> 16) & 0xff, (argb >> 8) & 0xff, argb & 0xff);
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+}
+
+// The graphics DLL's compositor asks where a display of frame_w x frame_h px goes, on its render
+// thread before each composed frame: paint()'s placement (window_frame_present) of the box,
+// exact, scaled while the app catches up with a resize, or at the old density's ratio. 0 while
+// the window is minimized.
+int window_gpu_layout(int frame_w, int frame_h, WinApkHwuiLayout* out) {
+    HWND hwnd = g_hwnd;
+    if (!hwnd || IsIconic(hwnd) || frame_w <= 0 || frame_h <= 0) return 0;
+    RECT client{};
+    GetClientRect(hwnd, &client);
+    if (client.right <= 0 || client.bottom <= 0) return 0;
+    const RECT box = app_rect(client);
+    const int bw = box.right - box.left, bh = box.bottom - box.top;
+    std::lock_guard<std::mutex> hold(g_frame_lock);
+    g_frame_w = frame_w;
+    g_frame_h = frame_h;
+    const FramePresent how = window_frame_present(frame_w, frame_h, bw, bh, g_surface.cx, g_surface.cy,
+                                                  g_before_density.cx, g_before_density.cy);
+    if (frame_w == g_surface.cx && frame_h == g_surface.cy) g_before_density = SIZE{};
+    out->client_w = client.right;
+    out->client_h = client.bottom;
+    out->background = static_cast<uint32_t>(GetRValue(g_background)) << 16 |
+                      static_cast<uint32_t>(GetGValue(g_background)) << 8 | GetBValue(g_background);
+    if (how == FramePresent::kRescaled && g_before_dpi > 0) {
+        const double r = static_cast<double>(g_density_dpi) / static_cast<double>(g_before_dpi);
+        *out = WinApkHwuiLayout{out->client_w, out->client_h, box.left, box.top,
+                                static_cast<int>(std::lround(frame_w * r)), static_cast<int>(std::lround(frame_h * r)),
+                                out->background};
+        g_shown = Shown{box.left, box.top, r, r, true};
+    } else if (how == FramePresent::kScaled) {
+        *out = WinApkHwuiLayout{out->client_w, out->client_h, box.left, box.top, bw, bh, out->background};
+        g_shown = Shown{box.left, box.top, static_cast<double>(bw) / frame_w, static_cast<double>(bh) / frame_h, true};
+    } else {
+        const int x = how == FramePresent::kExact ? box.left + (bw - frame_w) / 2 : box.left;
+        const int y = how == FramePresent::kExact ? box.top + (bh - frame_h) / 2 : box.top;
+        *out = WinApkHwuiLayout{out->client_w, out->client_h, x, y, frame_w, frame_h, out->background};
+        g_shown = Shown{x, y, 1.0, 1.0, true};
+    }
+    const bool at_surface = std::abs(frame_w - g_surface.cx) <= 2 && std::abs(frame_h - g_surface.cy) <= 2;
+    if (how != FramePresent::kStale && at_surface && g_followed_at != 0) {
+        const ULONGLONG took = GetTickCount64() - g_followed_at;
+        g_followed_at = 0;
+        if (!g_in_size_move) {
+            std::fprintf(stderr, "[win.apk] resize: the app drew at %dx%d px %llu ms after the window%s\n", frame_w,
+                         frame_h, took, how == FramePresent::kScaled ? " (resampled)" : "");
+        }
+    }
+    return 1;
+}
+
+// A frame the graphics DLL composed reached the window: as window_present's and paint's ends.
+void window_gpu_presented(bool first) {
+    HWND hwnd = g_hwnd;
+    if (!hwnd) return;
+    uia::note_frame();
+    if (IsWindowVisible(hwnd)) signal_launcher_ready();
+    if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
+        PostMessageW(hwnd, kMsgTestResize, 0, 0);
+    }
 }
 
 void window_present(const uint32_t* argb, int w, int h) {

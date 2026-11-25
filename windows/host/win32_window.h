@@ -196,6 +196,8 @@ void window_set_snapshot_dir(const std::wstring& dir, const std::wstring& app);
 // Copies the frame; it is painted on the UI thread. A frame at the size the
 // app was asked to draw is shown pixel for pixel (window_frame_present).
 void window_present(const uint32_t* argb, int w, int h);
+// A frame the graphics DLL composed on the GPU reached the window (hwui_host.h).
+void window_gpu_presented(bool first);
 // A frame that differs from the one window_present last copied only inside
 // [l, r) x [t, b): `rows` holds that rectangle's pixels, row after row. Only
 // that part is copied, and repainted. False, with nothing done, when no frame

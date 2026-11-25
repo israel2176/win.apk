@@ -140,6 +140,37 @@ EDITS = [
     ('hwui/apex/jni_runtime.cpp',
      '        vkEnumerateInstanceVersion(&apiVersion);\n',
      '        apiVersion = 0;  // Win.apk: no Vulkan\n'),
+    # libandroid's ASurfaceControl (a window's SurfaceControl given to HWUI: BLAST, WebView's
+    # overlays): Win.apk's windows have none (useBLAST is false); the functions stay null, as the
+    # render thread never calls them without a SurfaceControl.
+    ('hwui/renderthread/RenderThread.cpp',
+     'ASurfaceControlFunctions::ASurfaceControlFunctions() {\n'
+     '    void* handle_ = dlopen("libandroid.so", RTLD_NOW | RTLD_NODELETE);\n',
+     'ASurfaceControlFunctions::ASurfaceControlFunctions() {\n'
+     '    std::memset(this, 0, sizeof *this);  // Win.apk: no ASurfaceControl\n'
+     '    if ((true)) return;\n'
+     '    void* handle_ = dlopen("libandroid.so", RTLD_NOW | RTLD_NODELETE);\n'),
+    # The render thread makes no Vulkan manager (only the Vulkan pipeline asks for one).
+    ('hwui/renderthread/RenderThread.cpp',
+     '    mRenderState = new RenderState(*this);\n    mVkManager = VulkanManager::getInstance();\n',
+     '    mRenderState = new RenderState(*this);\n    mVkManager = nullptr;  // Win.apk: no Vulkan\n'),
+    # A window's surface is a pbuffer the compositor samples (glue/layers.cpp): its swap is only
+    # the end of the frame, with no damage to pass on and no buffer to post; ANGLE need not have
+    # EGL_KHR_swap_buffers_with_damage.
+    ('hwui/renderthread/EglManager.cpp',
+     '    LOG_ALWAYS_FATAL_IF(!extensions.has("EGL_KHR_swap_buffers_with_damage"),\n'
+     '                        "Missing required extension EGL_KHR_swap_buffers_with_damage");\n',
+     '    // (EGL_KHR_swap_buffers_with_damage: not needed, Win.apk\'s windows are pbuffers)\n'),
+    ('hwui/renderthread/EglManager.cpp',
+     '    eglSwapBuffersWithDamageKHR(mEglDisplay, frame.mSurface, rects, screenDirty.isEmpty() ? 0 : 1);\n',
+     '    eglSwapBuffers(mEglDisplay, frame.mSurface);  // Win.apk: a pbuffer, composed by the glue\n'),
+    # Skia: a format GL says has no multisample counts (GL_NUM_SAMPLE_COUNTS 0, as Direct3D's WARP
+    # through ANGLE answers) is still renderable with one sample; Skia left it with no sample
+    # counts at all, so not renderable, and HWUI then had no surface for a window.
+    ('skia14/src/gpu/ganesh/gl/GrGLCaps.cpp',
+     '                if (count) {\n                    std::unique_ptr<int[]> temp(new int[count]);\n',
+     '                if (!count) fFormatTable[i].fColorSampleCounts.push_back(1);  // Win.apk: no MSAA\n'
+     '                if (count) {\n                    std::unique_ptr<int[]> temp(new int[count]);\n'),
     # libutils' Looper on hwui_glue's emulated eventfd and epoll: sys/eventfd.h (its read, write
     # and close) before anything that closes a descriptor (unique_fd).
     ('system_core/libutils/Looper.cpp',
