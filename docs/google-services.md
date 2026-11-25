@@ -54,6 +54,21 @@ data protection, DPAPI).
   for example `UNREGISTERED_ON_API_CONSOLE` for a copy of the app that is not
   signed by its developer.
 
+### How the built-in stand-ins present themselves
+
+- To apps, the built-in Play services and Play Store report Google's public
+  signing certificate: the one every app's own Google library compares them
+  with before it uses Play services at all. Only the certificate is shown; no
+  Google key is used and nothing is signed with it.
+- For a Play licence check, Win.apk asks Google for the licensing token in the
+  Play Store's name (its package name and its public certificate fingerprint),
+  because Google issues that token to no other client; microG and Aurora Store
+  do the same. The answer the app gets is Google's own signed response for
+  your account, and the app checks it itself: an app your account does not
+  own is told so.
+- Neither is a device certification: Play Integrity and SafetyNet are not
+  answered, and the device is not Play Protect certified (below).
+
 ## Google services (experimental)
 
 **Settings > Google account > Use Google services (experimental)** (off by

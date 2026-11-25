@@ -131,7 +131,10 @@ the English. Every claim in the documents must match the code.
 
 Pull requests that defeat license checks or copy protection, forge Play
 Integrity or other attestation tokens, bypass account or payment security, or
-help obtain apps you do not have the right to use will be closed.
+help obtain apps you do not have the right to use will be closed. (The
+built-in Google layer asks Google for real licence answers for the signed-in
+account; [docs/google-services.md](docs/google-services.md#how-the-built-in-stand-ins-present-themselves)
+says what it presents to do so.)
 
 ## Security problems
 
