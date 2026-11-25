@@ -97,6 +97,26 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   sensor manager (`native_sensor.cpp`) agrees. A sensor comes back only when a
   real Windows sensor backs it (`CameraOrientationTest` checks).
 
+## Decisions for the owner
+
+Choices in the code that only the owner can make: each says what the code does
+now, how Android differs, and the options. Found by the QA sweep for unclear
+decision points (November 2026); once decided, move the answer up to "The
+owner's decisions" and delete the item.
+
+- **Jobs of apps that are not open.** The system broker starts a process for a
+  due background job only for Google's three apps (Play Store, Play services,
+  Services Framework; `SystemServer.mayStartForJob`, by `platformSystemApk`,
+  not by name); any other app's job waits until the user opens that app.
+  Android starts the app's process for a due job, limited by its standby
+  bucket (a rarely used app gets a job window about once a day). The opt-in
+  switch that started every app (`WINAPK_JOBS_START_APPS=1`) is removed.
+  Options: (a) keep as now (light: no JVM starts behind the user's back);
+  (b) as Android: start any app for its due job, within Android's standby
+  limits (more memory and processor in the background, apps' sync and
+  reminders work); (c) (b) only during the 4-hourly maintenance window the
+  launcher already opens.
+
 ## Check again after each AOSP layer lands
 
 Each of these differs from Android today and should disappear when the layer
@@ -760,8 +780,8 @@ New bugs found with AOSP views:
     and starts Play, Play services or GSF headless when one is due and its
     constraints hold (network, unmetered from Windows' connection cost,
     charging from `GetSystemPowerStatus`, idle = no app open). Other apps'
-    held jobs run only when the app runs (`WINAPK_JOBS_START_APPS=1` lifts
-    that): each process is a JVM.
+    held jobs run only when the app runs: each process is a JVM (for the
+    owner: "Decisions for the owner", below).
   - *Nothing runs while no app is open*: the owner's earlier rule (Google
     services only while an app is open) is kept for the broker itself, but
     Settings > Google account > "Update apps in the background" (on by
