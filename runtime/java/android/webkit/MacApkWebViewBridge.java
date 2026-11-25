@@ -51,6 +51,10 @@ final class MacApkWebViewBridge {
      *  c=ConsoleMessage.MessageLevel ordinal i=line (webview_bridge.mm
      *  kWvConsoleHookJS). */
     static final int EV_CONSOLE = 19;
+    /** A download the engine was about to save, cancelled there: a=url, b=Content-Disposition,
+     *  c="<length or -1>\n<mime type>". It goes to DownloadListener.onDownloadStart, as on a
+     *  device, where a WebView saves nothing itself. */
+    static final int EV_DOWNLOAD = 20;
     /** MACAPK_WEBVIEW_HOST_FOLLOW, the native gate's Java half: =0 ignores
      *  EV_HOST_LOST (native does not post it then either). */
     static final boolean HOST_FOLLOW = !"0".equals(System.getenv("MACAPK_WEBVIEW_HOST_FOLLOW"));

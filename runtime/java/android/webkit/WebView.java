@@ -1656,6 +1656,22 @@ public class WebView extends android.widget.AbsoluteLayout
                             new WebResourceResponse("text/html", "UTF-8", null));
                 }
                 break;
+            case MacApkWebViewBridge.EV_DOWNLOAD:
+                // AwContentsClientBridge: the download goes to the app's DownloadListener,
+                // with the view's user agent; with none, nothing happens.
+                if (downloadListener != null) {
+                    String meta = c != null ? c : "";
+                    int nl = meta.indexOf('\n');
+                    long length = -1;
+                    try {
+                        length = Long.parseLong(nl >= 0 ? meta.substring(0, nl) : meta);
+                    } catch (NumberFormatException ignored) {
+                    }
+                    String mime = nl >= 0 ? meta.substring(nl + 1) : "";
+                    downloadListener.onDownloadStart(a, getSettings().getUserAgentString(),
+                            b, mime, length);
+                }
+                break;
             default:
                 break;
         }

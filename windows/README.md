@@ -2273,7 +2273,10 @@ every such change is listed here:
   uses, is unchanged. A JS bridge call is matched against the annotated
   methods themselves (`macapkBridgeExposes`), not their names, so an
   unannotated overload of an annotated method stays out of a page's reach, as
-  in Chromium's `GinJavaBoundObject`.
+  in Chromium's `GinJavaBoundObject`. `EV_DOWNLOAD` (with
+  `MacApkWebViewBridge.java`): a download WebView2 was about to save is
+  cancelled there and handed to the app's `DownloadListener.onDownloadStart`,
+  as an Android WebView does; with no listener nothing is saved.
 - `runtime/java/android/widget/TextView.java`: the protected `onTextChanged`
   hook is called on every text change (constructor, `setText`, typing,
   `append`, in-place edits), with or without `TextWatcher`s, as AOSP does. It

@@ -96,6 +96,7 @@ enum {
     EV_RENDER_GONE = 14,
     EV_HTTP_ERROR = 15,
     EV_CLOSE_WINDOW = 16,
+    EV_DOWNLOAD = 20,
 };
 
 constexpr wchar_t kHostClass[] = L"WinApkWebViewHost";
@@ -1066,6 +1067,34 @@ void hook(View* v) {
                 IID_ICoreWebView2LaunchingExternalUriSchemeEventHandler,
                 [](ICoreWebView2*, ICoreWebView2LaunchingExternalUriSchemeEventArgs* a) -> HRESULT {
                     a->put_Cancel(TRUE);
+                    return S_OK;
+                })
+                .get(),
+            &tok);
+    }
+    // A download is the app's, never the engine's: an Android WebView saves nothing itself and hands the
+    // download to DownloadListener.onDownloadStart (none set: nothing happens), where WebView2 would save the
+    // page's file into the user's Downloads folder and offer to open it.
+    if (auto v4 = v->wv.query<ICoreWebView2_4>(IID_ICoreWebView2_4)) {
+        v4->add_DownloadStarting(
+            wv2::handler<ICoreWebView2DownloadStartingEventHandler>(
+                IID_ICoreWebView2DownloadStartingEventHandler,
+                [id](ICoreWebView2*, ICoreWebView2DownloadStartingEventArgs* a) -> HRESULT {
+                    a->put_Cancel(TRUE);
+                    a->put_Handled(TRUE);
+                    ComPtr<ICoreWebView2DownloadOperation> op;
+                    if (FAILED(a->get_DownloadOperation(op.put())) || !op) return S_OK;
+                    LPWSTR raw = nullptr;
+                    const std::wstring uri = SUCCEEDED(op->get_Uri(&raw)) ? guest_url(wv2::take_co_string(raw)) : L"";
+                    raw = nullptr;
+                    const std::wstring disposition =
+                        SUCCEEDED(op->get_ContentDisposition(&raw)) ? wv2::take_co_string(raw) : L"";
+                    raw = nullptr;
+                    const std::wstring mime = SUCCEEDED(op->get_MimeType(&raw)) ? wv2::take_co_string(raw) : L"";
+                    INT64 total = -1;
+                    if (FAILED(op->get_TotalBytesToReceive(&total)) || total < 0) total = -1;
+                    // The length rides with the MIME type (no newline in either), as onDownloadStart's long.
+                    post_event(id, EV_DOWNLOAD, uri, disposition, std::to_wstring(total) + L"\n" + mime);
                     return S_OK;
                 })
                 .get(),
