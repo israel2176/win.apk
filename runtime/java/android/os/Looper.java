@@ -35,29 +35,7 @@ package android.os;
 public final class Looper {
     private static final Looper MAIN = new Looper(true);
 
-    /** Tier 2/3: stand up a REAL main thread that sits in Looper.loop()
-     *  blocked in MessageQueue.next() forever -- the Android execution
-     *  model -- instead of the historical "Cocoa runloop drives
-     *  Handler.drainGlobal per frame" model. This also gates the whole
-     *  AOSP-faithfulness campaign (real ViewRootImpl traversal, real
-     *  measure/layout, Choreographer-driven animations, drawable-state,
-     *  Compose, ...). Read once at class init.
-     *
-     *  GATE REMOVED 2026-06-14 (v1.0.391, M28): now DEFAULT-ON. The
-     *  real-loop path was validated green on the protected sweep across
-     *  M0/M5/M6/M7/M8/M9/M12/M13/M15/M18/M22/M23/M24, so it becomes the
-     *  shipped default. Escape hatch retained: set MACAPK_REAL_LOOPER=0
-     *  to fall back to the legacy per-frame-drain model for A/B diffing
-     *  a suspected regression. See docs/runtime_architecture_plan.md
-     *  (Tier 2) + docs/aosp_faithfulness_kickoff.md. */
-    public static final boolean MACAPK_REAL_LOOPER =
-        !"0".equals(System.getenv("MACAPK_REAL_LOOPER"));
 
-    /** MACAPK_MAIN_LOOP_REENTRY (default ON; =0 = the old fall-through into
-     *  NativeLooper.runMainPoll): a re-entrant loop() on the thread already
-     *  running the real main loop returns to the outer loop. See loop(). */
-    static final boolean MAIN_LOOP_REENTRY_RETURNS =
-        !"0".equals(System.getenv("MACAPK_MAIN_LOOP_REENTRY"));
     private static final java.util.concurrent.atomic.AtomicInteger
         reentrantLoopCalls = new java.util.concurrent.atomic.AtomicInteger();
 
@@ -124,9 +102,6 @@ public final class Looper {
     // constructors, Dialog and WindowManager.addView require it. Code outside
     // the callback on the same OS thread (our own frame driving) is untouched.
     // =0 restores the old answer (MAIN) everywhere, byte-for-byte.
-    // docs/gl-thread-has-no-looper_2026-10-01.md
-    static final boolean GL_THREAD_NO_LOOPER =
-        !"0".equals(System.getenv("MACAPK_GL_THREAD_NO_LOOPER"));
     /** Depth of renderer callbacks in flight on this thread (nesting: a
      *  surfaceChanged reached from inside a render tick). */
     private static final ThreadLocal<int[]> sGlRendererDepth = new ThreadLocal<>();
@@ -157,11 +132,11 @@ public final class Looper {
     }
 
     /** Is MACAPK_GL_THREAD_NO_LOOPER on (callers outside android.os). */
-    public static boolean macapkGlThreadNoLooperEnabled() { return GL_THREAD_NO_LOOPER; }
+    public static boolean macapkGlThreadNoLooperEnabled() { return true; }
 
     /** True when this thread must behave as the app's Looper-less GLThread. */
     public static boolean macapkOnGlRendererThread() {
-        return GL_THREAD_NO_LOOPER && macapkInGlRendererCall();
+        return macapkInGlRendererCall();
     }
 
     private final boolean main;
@@ -601,11 +576,6 @@ public final class Looper {
                 + cur.getName() + " nativeLooper=0x" + Long.toHexString(l.nativeLooper));
         }
     }
-    /** MACAPK_POLL_FDS_WHEN_BUSY (default ON, 2026-10-05): a per-thread
-     *  loop() services its sensor / input-queue fds between messages, not only
-     *  when the queue goes idle (see loop()); =0 restores the old drain. */
-    static final boolean MACAPK_POLL_FDS_WHEN_BUSY =
-        !"0".equals(System.getenv("MACAPK_POLL_FDS_WHEN_BUSY"));
 
     public static void prepareMainLooper() {
         noteMainThread(Thread.currentThread());
@@ -639,7 +609,7 @@ public final class Looper {
             // thread IDENTITY (macapkIsActivityThread) rather than the thread's
             // NAME, so the thread could be renamed to "main" as Android's is.
             // The CAS makes "only one real loop, ever" explicit on top of it.
-            if (MACAPK_REAL_LOOPER && isMainThread()
+            if (isMainThread()
                     && macapkIsActivityThread()
                     && realMainLoopStarted.compareAndSet(false, true)) {
                 runRealMainLoop();
@@ -681,8 +651,7 @@ public final class Looper {
             // never services them (MessageQueue's header), so the nested poll
             // was the only accidental servicer, and only while it starved the
             // Java side. =0 restores the fall-through (A/B only).
-            if (MAIN_LOOP_REENTRY_RETURNS && MACAPK_REAL_LOOPER
-                    && macapkIsActivityThread() && realMainLoopStarted.get()) {
+            if (macapkIsActivityThread() && realMainLoopStarted.get()) {
                 if (reentrantLoopCalls.incrementAndGet() <= 3) {
                     android.util.Log.i("Looper", "loop() re-entered on the running"
                         + " main thread: returning to the outer loop -- a DEVIATION:"
@@ -766,7 +735,7 @@ public final class Looper {
                 // serviced here (NativeLooper.pollPlainFds); vsync receivers and
                 // AChoreographer callbacks keep their existing cadence.
                 // MACAPK_POLL_FDS_WHEN_BUSY=0 restores the old drain.
-                if (nl != 0 && MACAPK_POLL_FDS_WHEN_BUSY) {
+                if (nl != 0) {
                     try { com.macapk.loader.NativeLooper.pollPlainFds(nl); }
                     catch (Throwable ignored) { }
                 }
@@ -815,12 +784,10 @@ public final class Looper {
         final MessageQueue q = MAIN.queue;
         final String tn = Thread.currentThread().getName();
         android.util.Log.i("Looper", "MACAPK_REAL_LOOPER: real main loop START on thread=" + tn);
-        if (MAIN_NATIVE_POLL) {
-            long nl = 0;
-            try { nl = com.macapk.loader.NativeLooper.forCurrentThread(); }
-            catch (Throwable t) { nl = 0; }
-            if (nl != 0) { runRealMainLoopNative(q, tn, nl); return; }
-        }
+        long nl = 0;
+        try { nl = com.macapk.loader.NativeLooper.forCurrentThread(); }
+        catch (Throwable t) { nl = 0; }
+        if (nl != 0) { runRealMainLoopNative(q, tn, nl); return; }
         long n = 0;
         for (;;) {
             Message msg = q.next();   // blocks
@@ -846,10 +813,6 @@ public final class Looper {
             + " (dispatched " + n + ")");
     }
 
-    /** MACAPK_MAIN_NATIVE_POLL (default ON, 2026-10-05; =0 restores the
-     *  monitor-blocking main loop above for A/B). */
-    static final boolean MAIN_NATIVE_POLL =
-        !"0".equals(System.getenv("MACAPK_MAIN_NATIVE_POLL"));
 
     /** The real main loop with AOSP's block primitive: the main thread waits in
      *  its own native ALooper poll, so an fd an app adds to the MAIN looper with
@@ -949,7 +912,6 @@ public final class Looper {
      *  nothing enqueued; absent that, it is safe to delete this method and
      *  the heartbeatPending field together. */
     public static void macapkPumpMainLoop() {
-        if (!MACAPK_REAL_LOOPER) return;
         if (!heartbeatPending.compareAndSet(false, true)) return;
         MAIN.queue.macapkPost(() -> heartbeatPending.set(false));
     }
@@ -975,7 +937,6 @@ public final class Looper {
      *  Bounded so a self-reposting message cannot spin one call forever. No-op
      *  unless MACAPK_REAL_LOOPER. */
     public static void macapkDrainMainDue() {
-        if (!MACAPK_REAL_LOOPER) return;
         MessageQueue q = MAIN.queue;
         for (int i = 0; i < 512; i++) {
             // Skip owner-only messages (ViewCanvasDriver.doFrame /
@@ -1005,7 +966,7 @@ public final class Looper {
         // non-quittable, so this THROWS IllegalStateException("Main thread not
         // allowed to quit.") and names the caller -- deliberate, see
         // MessageQueue.mQuitAllowed (v1.0.833).
-        if (MACAPK_REAL_LOOPER) queue.quit();
+        queue.quit();
     }
     /** AOSP Looper.quitSafely(): stop the loop but let already-due messages
      *  drain first (only future/delayed messages are discarded). Both looper
@@ -1016,7 +977,7 @@ public final class Looper {
      *  could not distinguish a due message from a delayed one at all. */
     public void quitSafely() {
         if (!main) { queue.quitSafely(); return; }
-        if (MACAPK_REAL_LOOPER) queue.quitSafely();
+        queue.quitSafely();
     }
 
     private static void sleepMs(long ms) {

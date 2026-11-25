@@ -22,10 +22,6 @@ public class PatternMatcher implements Parcelable {
      *  parseAndVerifyAdvancedPattern, null for every other type. */
     private final int[] mParsedPattern;
 
-    /** MACAPK_INTENT_DATA_MATCH=0: ADVANCED_GLOB is matched as a SIMPLE_GLOB
-     *  and never rejected, as before AOSP's advanced matcher was ported. */
-    private static final boolean ADVANCED_GLOB =
-            !"0".equals(System.getenv("MACAPK_INTENT_DATA_MATCH"));
 
     /** AOSP: an ADVANCED_GLOB pattern is compiled here, and a malformed one
      *  throws IllegalArgumentException (which is how a manifest with a bad
@@ -33,7 +29,7 @@ public class PatternMatcher implements Parcelable {
     public PatternMatcher(String pattern, int type) {
         mPattern = pattern;
         mType = type;
-        mParsedPattern = (ADVANCED_GLOB && type == PATTERN_ADVANCED_GLOB)
+        mParsedPattern = (type == PATTERN_ADVANCED_GLOB)
                 ? parseAndVerifyAdvancedPattern(pattern) : null;
     }
 
@@ -47,7 +43,7 @@ public class PatternMatcher implements Parcelable {
         mType = src.readInt();
         // AOSP also parcels mParsedPattern; this tree's parcel carries the
         // pattern alone (writeToParcel below), so it is recompiled from it.
-        mParsedPattern = (ADVANCED_GLOB && mType == PATTERN_ADVANCED_GLOB && mPattern != null)
+        mParsedPattern = (mType == PATTERN_ADVANCED_GLOB && mPattern != null)
                 ? parseAndVerifyAdvancedPattern(mPattern) : null;
     }
 
@@ -115,10 +111,7 @@ public class PatternMatcher implements Parcelable {
         } else if (type == PATTERN_ADVANCED_GLOB) {
             // match() hands a compiled pattern to matchAdvancedPattern; with
             // MACAPK_INTENT_DATA_MATCH=0 the pre-port simple-glob fallback stands.
-            if (ADVANCED_GLOB) {
-                return matchAdvancedPattern(parseAndVerifyAdvancedPattern(pattern), match);
-            }
-            return matchGlobPattern(match, pattern);
+            return matchAdvancedPattern(parseAndVerifyAdvancedPattern(pattern), match);
         }
         return false;
     }

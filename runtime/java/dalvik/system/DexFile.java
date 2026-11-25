@@ -137,7 +137,7 @@ public final class DexFile {
                                         java.util.List<Throwable> suppressed) {
         if (closed) return null;
         String binary = name.replace('/', '.');
-        if (DEFINE_IN_LOADER && loader != null
+        if (loader != null
                 && (loader instanceof BaseDexClassLoader || PlainDefiner.AVAILABLE)) {
             return defineInLoader(loader, binary, suppressed);
         }
@@ -154,22 +154,6 @@ public final class DexFile {
         }
     }
 
-    /** MACAPK_DEXFILE_DEFINE_IN_LOADER (default ON; =0 restores the old path that
-     *  hands back a class defined by a private child loader). ART's
-     *  DexFile_defineClassNative defines the class with the CALLER'S loader as its
-     *  defining loader (art/runtime/native/dalvik_system_DexFile.cc, DefineClass(...,
-     *  class_loader, ...)), whatever kind of ClassLoader that is, and never calls
-     *  the loader's loadClass to do it. Protected SDKs rely on both halves: Adyen's
-     *  3DS2 SDK (Efteling) defines its own ClassLoader subclass (atd.e.ChallengeResultSS)
-     *  out of a dex it writes to code_cache -- found afterwards by a plain
-     *  Class.forName from the app loader -- and that loader's own loadClass then
-     *  calls DexFile.loadClass(name, this) for every class of its payload dex. The old
-     *  path resolved the name through a child URLClassLoader whose PARENT was that
-     *  loader, so Class.forName delegated parent-first straight back into the SDK's
-     *  loadClass, which called DexFile.loadClass again: unbounded recursion, ~600,000
-     *  live exceptions and a 1 GiB heap exhausted in seconds. loader == null (the boot
-     *  loader) keeps the old path: nothing can be defined into it. */
-    private static final boolean DEFINE_IN_LOADER = !"0".equals(System.getenv("MACAPK_DEXFILE_DEFINE_IN_LOADER"));
 
     private Class<?> defineInLoader(ClassLoader loader, String binary,
                                     java.util.List<Throwable> suppressed) {

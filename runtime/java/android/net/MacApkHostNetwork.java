@@ -57,18 +57,7 @@ import java.util.concurrent.TimeUnit;
 
 final class MacApkHostNetwork {
 
-    /** Set MACAPK_NET_HOST_TRUTH=0 to restore the pre-v1 constant answer
-     *  ("always WIFI, always connected"). Present so a future session can A/B
-     *  this change in one run instead of re-deriving the boundary; it is the
-     *  labelled bisect gate CLAUDE.md asks for. */
-    private static final boolean HOST_TRUTH =
-            !"0".equals(System.getenv("MACAPK_NET_HOST_TRUTH"));
 
-    /** MACAPK_OFFLINE=1 forces the airplane-mode posture regardless of the
-     *  host -- see ConnectivityManager for why that gate exists. */
-    private static final boolean FORCE_OFFLINE =
-            "1".equals(System.getenv("MACAPK_OFFLINE"))
-                    || "true".equalsIgnoreCase(System.getenv("MACAPK_OFFLINE"));
 
     private static final long TTL_MS = 5_000L;
 
@@ -108,7 +97,7 @@ final class MacApkHostNetwork {
     }
 
     static boolean forcedOffline() {
-        return FORCE_OFFLINE;
+        return false;
     }
 
     static Snapshot get() {
@@ -123,17 +112,6 @@ final class MacApkHostNetwork {
     }
 
     private static Snapshot probe() {
-        if (FORCE_OFFLINE) {
-            return new Snapshot(false, null, TRANSPORT_WIFI, 0,
-                    Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList());
-        }
-        if (!HOST_TRUTH) {
-            // The historical constant answer, kept reachable for bisecting.
-            return new Snapshot(true, null, TRANSPORT_WIFI, 0,
-                    Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList());
-        }
 
         // Windows: the host layer's own answer (see the top of the file).
         String[] host = com.macapk.loader.HostRadios.defaultNetwork();

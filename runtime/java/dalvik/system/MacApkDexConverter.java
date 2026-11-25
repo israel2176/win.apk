@@ -243,8 +243,7 @@ final class MacApkDexConverter {
     // ---- persistent (file-backed) path ----
 
     private static URL persistentJar(List<byte[]> images, String what) {
-        String javaIdFull = System.getenv("MACAPK_BUILD_JAVA_ID");
-        String javaId12 = javaId12(javaIdFull);
+        String javaId12 = javaId12(null);
         String self = selfDigest();
         String dataDir = VMRuntime.processDataDirectory();
         if (javaId12 == null || self == null || dataDir == null || dataDir.isEmpty()) {
@@ -255,7 +254,7 @@ final class MacApkDexConverter {
             return ephemeralJar(images, what);
         }
         Path dir = cacheDir();
-        String name = javaId12 + "-" + cacheKey(javaIdFull, self, images) + ".jar";
+        String name = javaId12 + "-" + cacheKey(null, self, images) + ".jar";
 
         int vanished = 0;
         while (true) {
@@ -497,7 +496,7 @@ final class MacApkDexConverter {
         // while the first is still pruning it.
         if (!PRUNED_DIRS.add(dir.toString())) return;
         long now = System.currentTimeMillis();
-        String cur = javaId12(System.getenv("MACAPK_BUILD_JAVA_ID"));
+        String cur = javaId12(null);
         List<Path> current = new ArrayList<>();
         int removed = 0;
         try (DirectoryStream<Path> ds = Files.newDirectoryStream(dir)) {

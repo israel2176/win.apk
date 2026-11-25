@@ -48,17 +48,8 @@ public class JSONObject {
     // (the value was a java.util.Map) -- Efteling's AWSMobileClient then threw
     // "Neither Cognito Identity or Cognito UserPool was used" out of
     // Application.onCreate, which skipped the rest of the app's init.
-    // MACAPK_JSON_MAP_WRAP=0 restores the old raw copy.
-    static final boolean MAP_WRAP = !"0".equals(System.getenv("MACAPK_JSON_MAP_WRAP"));
 
     public JSONObject(Map<?, ?> copy) {
-        if (!MAP_WRAP) {
-            if (copy != null) for (Map.Entry<?, ?> e : copy.entrySet()) {
-                Object v = e.getValue();
-                if (v != null) map.put(String.valueOf(e.getKey()), v);
-            }
-            return;
-        }
         Map<?, ?> contentsTyped = (Map<?, ?>) copy;
         for (Map.Entry<?, ?> entry : contentsTyped.entrySet()) {
             String key = (String) entry.getKey();
@@ -72,8 +63,6 @@ public class JSONObject {
         // MACAPK_JSON_NOPARSE=1: emergency rollback / A-B isolation knob.
         // Reverts to the pre-v1.0.288 stub behavior (empty object, no
         // parse) so a regression suspected to come from real JSON parsing
-        // can be confirmed without a rebuild. Default-unset = real parse.
-        if ("1".equals(System.getenv("MACAPK_JSON_NOPARSE"))) return;
         // JSONTokener does the real parse; the next value must be an object.
         Object parsed = tok.nextValue();
         if (parsed instanceof JSONObject o) {

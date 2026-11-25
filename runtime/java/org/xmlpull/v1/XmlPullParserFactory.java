@@ -31,9 +31,7 @@ public class XmlPullParserFactory {
             // START_TAG; the same class read as a resource parser reports
             // START_DOCUMENT there (XmlBlock). See DomXmlResourceParser's
             // "two event contracts" note. =0 keeps the resource contract.
-            if (!"0".equals(System.getenv("MACAPK_XMLPULL_KXML_EVENTS"))) {
-                impl.getMethod("macapkPullParserSemantics").invoke(p);
-            }
+            impl.getMethod("macapkPullParserSemantics").invoke(p);
             return p;
         } catch (Throwable t) {
             throw new XmlPullParserException("could not instantiate parser: " + t);

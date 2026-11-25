@@ -47,9 +47,6 @@ public class GLSurfaceView extends SurfaceView
     // the shared EGL surface the new top's window had just been bound to
     // (docs/gd-meltdown-interstitial-hidden-window_2026-10-01.md).
     // =0 restores the old path byte for byte: the mode is stored, never read,
-    // never validated, and requestRender() does nothing.
-    static final boolean RENDER_MODE =
-        !"0".equals(System.getenv("MACAPK_GLSV_RENDER_MODE"));
     /** AOSP GLThread.mRequestRender (initially true). Any thread sets it;
      *  the render tick takes it with getAndSet(false), as guardedRun clears it
      *  under sGLThreadManager before the draw, so a request that lands DURING
@@ -98,7 +95,7 @@ public class GLSurfaceView extends SurfaceView
         Boolean v = sRendererThrowFatal;
         if (v == null) {
             String e = null;
-            try { e = System.getenv("MACAPK_GL_RENDERER_THROW_FATAL"); }
+            try { e = null; }
             catch (Throwable ignored) { }
             v = Boolean.valueOf("1".equals(e));
             sRendererThrowFatal = v;
@@ -150,9 +147,6 @@ public class GLSurfaceView extends SurfaceView
     // logged loudly when it is hit. =0 restores the no-op onPause/onResume and
     // a renderer that is driven after detach, exactly as before -- and, through
     // AppClassLoader.RETIRE_ENGINE_SHADOWS, the org.andengine.b.c shadow, since
-    // the app's own lock under the old no-op onPause wedges AppKit main.
-    static final boolean GLSV_PAUSE =
-        !"0".equals(System.getenv("MACAPK_GLSV_PAUSE"));
     private static final long PAUSE_WAIT_MS = 2000L;
     /** Guards the four fields below. Never held while calling the renderer. */
     private final Object pauseLock = new Object();
@@ -175,7 +169,7 @@ public class GLSurfaceView extends SurfaceView
     private boolean lifecycleCauseLogged;
 
     /** For the offline gate (debug/geh_andengine-lock-shadow_gate.sh). */
-    public static boolean macapkPauseContractEnabled() { return GLSV_PAUSE; }
+    public static boolean macapkPauseContractEnabled() { return true; }
 
     // Static GL10 stub instance handed to the Renderer's callbacks.
     // AndEngine et al. don't actually call GLES1 through it; they
@@ -210,7 +204,7 @@ public class GLSurfaceView extends SurfaceView
         // Only the retired fallback reads it, so with MACAPK_EMPTY_WINDOW_DECOR
         // on (the default: no framework-built GLSurfaceView, nothing to guard)
         // it is never written and no longer pins the last GL activity.
-        if (r != null && !com.macapk.loader.ActivityHost.EMPTY_WINDOW_DECOR) sLastRendererBearing = this;
+        if (r != null && false) sLastRendererBearing = this;
         // NOTE: do NOT fire onSurfaceCreated here. setRenderer is called
         // from the app's onCreate (off the render frame), where the ANGLE
         // EGL context is NOT current -- initShaders() and friends would
@@ -356,7 +350,7 @@ public class GLSurfaceView extends SurfaceView
 
     // ---- MetalSurfaceCallbacks: called from MTKView delegate via JNI ----
     @Override public void macapkDrawFrame() {
-        if (GLSV_PAUSE && renderer != null) {
+        if (renderer != null) {
             macapkDrawFramePausable();
             return;
         }
@@ -650,19 +644,11 @@ public class GLSurfaceView extends SurfaceView
             NativeLog.w("GLSurfaceView", "presentOverlayIfNeeded threw: " + t);
         }
     }
-    /** MACAPK_GLQ_DRAIN=0 restores the pre-v1.0.1639 model exactly: no
-     *  renderer-branch drain, the launch-burst drain in ActivityHost back on,
-     *  and TouchDispatcher's renderer-direct delivery for every engine. */
-    private static final boolean GLQ_DRAIN =
-        !"0".equals(System.getenv("MACAPK_GLQ_DRAIN"));
 
     /** True when queueEvent work is serviced per frame on the render thread by
      *  a GLSurfaceView with a Renderer. Only under the real looper: in the
      *  legacy model GLOBAL_QUEUE holds ALL main Handler.post work, which the
      *  overlay driver already drains, and that path stays byte-identical. */
-    public static boolean macapkGlQueueDrainEnabled() {
-        return android.os.Looper.MACAPK_REAL_LOOPER && GLQ_DRAIN;
-    }
 
     /** v1.0.1639: service GLSurfaceView.queueEvent work on the render thread.
      *
@@ -687,7 +673,6 @@ public class GLSurfaceView extends SurfaceView
      *  keeps the one order the owner thread produced (old pause, then new
      *  resume). */
     private static void macapkRunQueuedGlEvents() {
-        if (!macapkGlQueueDrainEnabled()) return;
         try {
             android.os.Handler.drainGlobal();
         } catch (Throwable t) {
@@ -721,7 +706,7 @@ public class GLSurfaceView extends SurfaceView
         // WHEN_DIRTY view draws once per delivery. Deliveries here are one-shot per
         // size/surface (macapkSurfaceChanged native; the holder's fireChanged on a
         // converged size change), never per frame.
-        if (RENDER_MODE) requestRenderPending.set(true);
+        requestRenderPending.set(true);
         // Record the surface size unconditionally so a renderer installed
         // LATER (via setRenderer from onCreate, after this one-shot native
         // callback) can still be sized correctly by ensureLifecycleDelivered.
@@ -750,9 +735,7 @@ public class GLSurfaceView extends SurfaceView
             // onResume). The check and the in-flight mark are one step, as on a
             // render tick, so an onPause racing this (the SurfaceHolder.Callback
             // form can run on any thread) waits for the delivery to finish.
-            if (!GLSV_PAUSE) {
-                ensureLifecycleDelivered();
-            } else if (macapkEnterRendererCall()) {
+            if (macapkEnterRendererCall()) {
                 try {
                     ensureLifecycleDelivered();
                 } finally {
@@ -937,7 +920,7 @@ public class GLSurfaceView extends SurfaceView
     /** AOSP :494-496 -> GLThread.setRenderMode (:1634-1642): range-checked,
      *  and read by every render tick (readyToDraw). See RENDER_MODE. */
     public void setRenderMode(int mode) {
-        if (RENDER_MODE && !(RENDERMODE_WHEN_DIRTY <= mode && mode <= RENDERMODE_CONTINUOUSLY)) {
+        if (!(RENDERMODE_WHEN_DIRTY <= mode && mode <= RENDERMODE_CONTINUOUSLY)) {
             throw new IllegalArgumentException("renderMode");
         }
         this.renderMode = mode;
@@ -947,14 +930,13 @@ public class GLSurfaceView extends SurfaceView
     /** AOSP :516-518 -> GLThread.requestRender (:1650-1655): one more frame for
      *  a RENDERMODE_WHEN_DIRTY view. May be called from any thread. */
     public void requestRender() {
-        if (RENDER_MODE) requestRenderPending.set(true);
+        requestRenderPending.set(true);
     }
 
     /** The render-mode term of AOSP readyToDraw(), taken once per tick:
      *  CONTINUOUSLY always draws; WHEN_DIRTY draws only when a request is
      *  pending, and consumes it. Package-private for the offline gate. */
     boolean macapkTakeRenderRequest() {
-        if (!RENDER_MODE) return true;
         // guardedRun clears mRequestRender for EVERY frame it takes (:1467),
         // whatever the mode, so a request made under CONTINUOUSLY is consumed
         // there and cannot buy a frame after a later switch to WHEN_DIRTY.
@@ -990,7 +972,7 @@ public class GLSurfaceView extends SurfaceView
      *  keeps the reflection-driven views (cocos2d-x v2 never calls
      *  setRenderer) exactly as before. See GLSV_PAUSE. */
     public void onPause() {
-        if (!GLSV_PAUSE || renderer == null) return;
+        if (renderer == null) return;
         synchronized (pauseLock) {
             requestPaused = true;
             pauseLock.notifyAll();
@@ -1004,8 +986,8 @@ public class GLSurfaceView extends SurfaceView
     public void onResume() {
         // AOSP GLThread.onResume :1747 sets mRequestRender (a resumed WHEN_DIRTY
         // view draws once).
-        if (RENDER_MODE) requestRenderPending.set(true);
-        if (!GLSV_PAUSE || renderer == null) return;
+        requestRenderPending.set(true);
+        if (renderer == null) return;
         synchronized (pauseLock) {
             requestPaused = false;
             pauseLock.notifyAll();
@@ -1018,7 +1000,7 @@ public class GLSurfaceView extends SurfaceView
      *  shared context, so the renderer's latched lifecycle stands.) */
     @Override public void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (!GLSV_PAUSE || renderer == null) return;
+        if (renderer == null) return;
         synchronized (pauseLock) {
             if (exited) {
                 exited = false;
@@ -1032,7 +1014,7 @@ public class GLSurfaceView extends SurfaceView
      *  called again for this attachment. Reached from ActivityHost's teardown
      *  (macapkRemoveWindow) and from a ViewGroup removal. */
     @Override public void onDetachedFromWindow() {
-        if (GLSV_PAUSE && renderer != null) {
+        if (renderer != null) {
             synchronized (pauseLock) {
                 exited = true;
                 pauseLock.notifyAll();

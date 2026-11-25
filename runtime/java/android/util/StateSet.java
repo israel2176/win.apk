@@ -24,10 +24,6 @@ public class StateSet {
      *  byte-for-byte unchanged. Mirrors frameworks/base
      *  core/java/android/util/StateSet.java::stateSetMatches. */
     public static boolean stateSetMatches(int[] stateSpec, int[] state) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            // Legacy permissive stub.
-            return stateSpec == null || stateSpec.length == 0 || true;
-        }
         if (state == null) {
             return stateSpec == null || isWildCard(stateSpec);
         }

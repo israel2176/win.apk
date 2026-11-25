@@ -285,7 +285,7 @@ public class Handler {
     private MessageQueue queue() {
         if (looper == null) return null;
         if (!looper.isMain()) return looper.getQueue();
-        return Looper.MACAPK_REAL_LOOPER ? Looper.mainQueue() : null;
+        return Looper.mainQueue();
     }
 
     /** AOSP Handler.enqueueMessage (:770-779): stamp the target, apply the

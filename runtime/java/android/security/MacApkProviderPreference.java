@@ -64,7 +64,6 @@ public final class MacApkProviderPreference {
     /** Append the BC entries to jdk.security.provider.preferred, keeping any
      *  entries already configured ahead of ours. Idempotent. */
     public static void install() {
-        if ("0".equals(System.getenv("MACAPK_BC_PBE_PREFERRED"))) return;
         String cur = Security.getProperty(PROPERTY);
         StringBuilder sb = new StringBuilder();
         if (cur != null && !cur.trim().isEmpty()) sb.append(cur.trim());

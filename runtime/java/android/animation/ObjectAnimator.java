@@ -559,13 +559,11 @@ public class ObjectAnimator extends ValueAnimator {
      *  2026-10-19). MACAPK_ANIM_HOLDER_PROPERTY=0 restores the field-only store. */
     public void setProperty(android.util.Property property) {
         PropertyValuesHolder[] values = getValues();
-        if (HOLDER_PROPERTY && values != null && values.length > 0 && values[0] != null) {
+        if (values != null && values.length > 0 && values[0] != null) {
             values[0].setProperty(property);
         }
         this.property = property;
     }
-    static final boolean HOLDER_PROPERTY =
-        !"0".equals(System.getenv("MACAPK_ANIM_HOLDER_PROPERTY"));
 
     /** Tier 3 M7: push the per-frame value onto the target property. */
     @Override @SuppressWarnings("unchecked")
@@ -613,7 +611,7 @@ public class ObjectAnimator extends ValueAnimator {
         // A Property set on the holder (AOSP's AnimatedVectorDrawable binds its vector's properties
         // through getValues()[i].setProperty) writes as the animator's own does.
         android.util.Property p = property;
-        if (p == null && HOLDER_PROPERTY && values != null && values.length == 1 && values[0] != null) {
+        if (p == null && values != null && values.length == 1 && values[0] != null) {
             p = values[0].getProperty();
         }
         if (p != null) {
@@ -640,7 +638,7 @@ public class ObjectAnimator extends ValueAnimator {
             // as AOSP PropertyValuesHolder.setAnimatedValue does (`if (mProperty !=
             // null) mProperty.set(target, getAnimatedValue())`), before any setter
             // lookup by name: an app-defined Property has no JavaBean setter.
-            android.util.Property hp = HOLDER_PROPERTY ? h.getProperty() : null;
+            android.util.Property hp = h.getProperty();
             if (hp != null) {
                 try { hp.set(target, v); continue; } catch (Throwable ignored) {}
             }

@@ -162,9 +162,6 @@ public class AnimatorInflater {
      *  createStateListAnimatorFromXml (AOSP:227). */
     private static final int ATTR_ANIMATION = 0x010101cd;
 
-    private static boolean inflateEnabled() {
-        return !"0".equals(System.getenv("MACAPK_ANIMATOR_INFLATE"));
-    }
 
     // ------------------------------------------------------------------
     // Public API
@@ -185,7 +182,6 @@ public class AnimatorInflater {
     /** AOSP:110-155, minus the ConfigurationBoundResourceCache (deviation 1). */
     public static Animator loadAnimator(Resources resources, Resources.Theme theme, int id,
             float pathErrorScale) throws Resources.NotFoundException {
-        if (!inflateEnabled()) return new ValueAnimator();
         XmlResourceParser parser = null;
         try {
             parser = resources.getAnimation(id);
@@ -203,7 +199,6 @@ public class AnimatorInflater {
     /** AOSP:157-203, minus the cache. */
     public static StateListAnimator loadStateListAnimator(Context context, int id)
             throws Resources.NotFoundException {
-        if (!inflateEnabled()) return new StateListAnimator();
         XmlResourceParser parser = null;
         try {
             parser = context.getResources().getAnimation(id);

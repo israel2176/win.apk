@@ -89,11 +89,9 @@ import java.util.Objects;
 public abstract class DocumentsProvider extends ContentProvider {
     private static final String TAG = "DocumentsProvider";
 
-    /** MACAPK_DOCSPROVIDER_DISPATCH, default ON. */
-    static final boolean DISPATCH = !"0".equals(System.getenv("MACAPK_DOCSPROVIDER_DISPATCH"));
 
     /** @hide Mac.apk: whether the AOSP URI / call() dispatch is on. */
-    public static boolean macapkDispatch() { return DISPATCH; }
+    public static boolean macapkDispatch() { return true; }
 
     private static final int MATCH_ROOTS = 1;
     private static final int MATCH_ROOT = 2;
@@ -111,20 +109,18 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :164-181. */
     @Override
     public void attachInfo(Context context, ProviderInfo info) {
-        if (DISPATCH) {
-            registerAuthority(info.authority);
+        registerAuthority(info.authority);
 
-            // Validity check our setup
-            if (!info.exported) {
-                throw new SecurityException("Provider must be exported");
-            }
-            if (!info.grantUriPermissions) {
-                throw new SecurityException("Provider must grantUriPermissions");
-            }
-            if (!android.Manifest.permission.MANAGE_DOCUMENTS.equals(info.readPermission)
-                    || !android.Manifest.permission.MANAGE_DOCUMENTS.equals(info.writePermission)) {
-                throw new SecurityException("Provider must be protected by MANAGE_DOCUMENTS");
-            }
+        // Validity check our setup
+        if (!info.exported) {
+            throw new SecurityException("Provider must be exported");
+        }
+        if (!info.grantUriPermissions) {
+            throw new SecurityException("Provider must grantUriPermissions");
+        }
+        if (!android.Manifest.permission.MANAGE_DOCUMENTS.equals(info.readPermission)
+                || !android.Manifest.permission.MANAGE_DOCUMENTS.equals(info.writePermission)) {
+            throw new SecurityException("Provider must be protected by MANAGE_DOCUMENTS");
         }
         super.attachInfo(context, info);
     }
@@ -235,15 +231,13 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  the document instead; that stays as the =0 arm. */
     public void removeDocument(String documentId, String parentDocumentId)
             throws FileNotFoundException {
-        if (DISPATCH) throw new UnsupportedOperationException("Remove not supported");
-        deleteDocument(documentId);
+        throw new UnsupportedOperationException("Remove not supported");
     }
 
     /** AOSP :401-405 (the message ends with a period there). */
     public DocumentsContract.Path findDocumentPath(String parentDocumentId, String childDocumentId)
             throws FileNotFoundException {
-        throw new UnsupportedOperationException(DISPATCH
-                ? "findDocumentPath not supported." : "findDocumentPath not supported");
+        throw new UnsupportedOperationException("findDocumentPath not supported.");
     }
 
     public IntentSender createWebLinkIntent(String documentId, Bundle options)
@@ -262,7 +256,6 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  argument as honoured. */
     public Cursor queryRecentDocuments(String rootId, String[] projection, Bundle queryArgs,
                                        CancellationSignal signal) throws FileNotFoundException {
-        if (!DISPATCH) return queryRecentDocuments(rootId, projection);
         if (rootId == null) throw new NullPointerException("rootId can not be null");
         Cursor c = queryRecentDocuments(rootId, projection);
         Bundle extras = new Bundle();
@@ -297,7 +290,6 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  display-name query argument. The pre-change body threw. */
     public Cursor querySearchDocuments(String rootId, String[] projection, Bundle queryArgs)
             throws FileNotFoundException {
-        if (!DISPATCH) throw new UnsupportedOperationException("Search not supported");
         if (rootId == null) throw new NullPointerException("rootId can not be null");
         if (queryArgs == null) throw new NullPointerException("queryArgs can not be null");
         return querySearchDocuments(rootId, DocumentsContract.getSearchDocumentsQuery(queryArgs),
@@ -317,23 +309,12 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  null-tolerant read. */
     public String getDocumentType(String documentId) throws FileNotFoundException {
         final Cursor cursor = queryDocument(documentId, null);
-        if (DISPATCH) {
-            try {
-                if (cursor.moveToFirst()) {
-                    return cursor.getString(cursor.getColumnIndexOrThrow(Document.COLUMN_MIME_TYPE));
-                } else {
-                    return null;
-                }
-            } finally {
-                closeQuietly(cursor);
-            }
-        }
         try {
-            if (cursor != null && cursor.moveToFirst()) {
-                int col = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE);
-                return col >= 0 ? cursor.getString(col) : null;
+            if (cursor.moveToFirst()) {
+                return cursor.getString(cursor.getColumnIndexOrThrow(Document.COLUMN_MIME_TYPE));
+            } else {
+                return null;
             }
-            return null;
         } finally {
             closeQuietly(cursor);
         }
@@ -360,8 +341,7 @@ public abstract class DocumentsProvider extends ContentProvider {
     public AssetFileDescriptor openTypedDocument(String documentId, String mimeTypeFilter,
                                                   Bundle opts, CancellationSignal signal)
             throws FileNotFoundException {
-        if (DISPATCH) throw new FileNotFoundException("The requested MIME type is not supported.");
-        throw new UnsupportedOperationException("Typed documents not supported");
+        throw new FileNotFoundException("The requested MIME type is not supported.");
     }
 
     // ---- ContentProvider plumbing: the URI dispatch -----------------------
@@ -372,7 +352,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
-        if (!DISPATCH) return super.query(uri, projection, selection, selectionArgs, sortOrder);
         return query(uri, projection, createSqlQueryBundle(selection, selectionArgs, sortOrder), null);
     }
 
@@ -380,10 +359,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder,
                         CancellationSignal cancellationSignal) {
-        if (!DISPATCH) {
-            return super.query(uri, projection, selection, selectionArgs, sortOrder,
-                    cancellationSignal);
-        }
         return query(uri, projection, createSqlQueryBundle(selection, selectionArgs, sortOrder),
                 cancellationSignal);
     }
@@ -392,7 +367,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, Bundle queryArgs,
                         CancellationSignal cancellationSignal) {
-        if (!DISPATCH) return super.query(uri, projection, queryArgs, cancellationSignal);
         try {
             switch (match(uri)) {
                 case MATCH_ROOTS:
@@ -450,11 +424,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :946-955: the SQL sort order, else one built from the sort columns
      *  (ContentResolver.createSqlSortClause). The =0 arm reads only the former. */
     private static String getSortClause(Bundle queryArgs) {
-        if (!DISPATCH) {
-            if (queryArgs == null) return null;
-            Object raw = queryArgs.get(ContentResolver.QUERY_ARG_SQL_SORT_ORDER);
-            return raw instanceof String ? (String) raw : null;
-        }
         queryArgs = queryArgs != null ? queryArgs : Bundle.EMPTY;
         String sortClause = queryArgs.getString(ContentResolver.QUERY_ARG_SQL_SORT_ORDER);
         if (sortClause == null && queryArgs.containsKey(ContentResolver.QUERY_ARG_SORT_COLUMNS)) {
@@ -495,7 +464,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :962-980. */
     @Override
     public String getType(Uri uri) {
-        if (!DISPATCH) return null;
         try {
             switch (match(uri)) {
                 case MATCH_ROOT:
@@ -515,29 +483,21 @@ public abstract class DocumentsProvider extends ContentProvider {
 
     /**
      * AOSP :985-992: the type answerable WITHOUT a permission grant -- only a
-     * single-root URI ("root/*", MATCH_ROOT). The =0 arm is the pre-change check,
-     * which tested the ROOTS shape (one segment) instead.
+     * single-root URI ("root/*", MATCH_ROOT).
      */
     public final String getTypeAnonymous(Uri uri) {
-        if (DISPATCH) {
-            switch (match(uri)) {
-                case MATCH_ROOT:
-                    return DocumentsContract.Root.MIME_TYPE_ITEM;
-                default:
-                    return null;
-            }
+        switch (match(uri)) {
+            case MATCH_ROOT:
+                return DocumentsContract.Root.MIME_TYPE_ITEM;
+            default:
+                return null;
         }
-        if (uri != null && DocumentsContract.isRootsUri(getContext(), uri)) {
-            return DocumentsContract.Root.MIME_TYPE_ITEM;
-        }
-        return null;
     }
 
     /** AOSP :1007-1022: a tree document URI canonicalizes to the plain document
      *  URI, with the caller's modes extended to it (macapkGrantToCaller). */
     @Override
     public Uri canonicalize(Uri uri) {
-        if (!DISPATCH) return super.canonicalize(uri);
         final Context context = getContext();
         switch (match(uri)) {
             case MATCH_DOCUMENT_TREE:
@@ -563,7 +523,7 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  provider there is nothing to record: the app already holds its own URIs.
      *  MACAPK_URI_GRANT_ENFORCE=0: nothing. */
     private void macapkGrantToCaller(Uri from, Uri to) {
-        if (!android.content.MacApkUriGrants.ENFORCE || !macapkIsAnotherPackage()) return;
+        if (!macapkIsAnotherPackage()) return;
         final int modeFlags = android.content.MacApkUriGrants.callingModeFlags(from);
         if ((modeFlags & (Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION)) == 0) return;
@@ -592,21 +552,18 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :1050-1054. */
     @Override
     public Uri insert(Uri uri, ContentValues values) {
-        if (!DISPATCH) return super.insert(uri, values);
         throw new UnsupportedOperationException("Insert not supported");
     }
 
     /** AOSP :1061-1065. */
     @Override
     public int delete(Uri uri, String selection, String[] selectionArgs) {
-        if (!DISPATCH) return super.delete(uri, selection, selectionArgs);
         throw new UnsupportedOperationException("Delete not supported");
     }
 
     /** AOSP :1070-1076. */
     @Override
     public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
-        if (!DISPATCH) return super.update(uri, values, selection, selectionArgs);
         throw new UnsupportedOperationException("Update not supported");
     }
 
@@ -615,7 +572,7 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  DocumentsContract unwraps again. */
     @Override
     public Bundle call(String method, String arg, Bundle extras) {
-        if (!DISPATCH || !method.startsWith("android:")) {
+        if (!method.startsWith("android:")) {
             return super.call(method, arg, extras);
         }
         try {
@@ -636,7 +593,7 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  matching macapkEnforceRead/Write's own guard (ContentProvider.java) --
      *  the parameter is otherwise unused by either enforce*Inner body. */
     private AttributionSource macapkAttrSourceIfEnforcing() {
-        return (android.content.MacApkUriGrants.ENFORCE && macapkIsAnotherPackage())
+        return (macapkIsAnotherPackage())
                 ? getCallingAttributionSource() : null;
     }
 
@@ -852,7 +809,6 @@ public abstract class DocumentsProvider extends ContentProvider {
      *  persisted ones included, as UriGrantsManagerService does
      *  (MACAPK_PERSISTED_URI_GRANTS). The =0 arm is the pre-change no-op. */
     public final void revokeDocumentPermission(String documentId) {
-        if (!DISPATCH) return;
         final Context context = getContext();
         final Uri doc = DocumentsContract.buildDocumentUri(mAuthority, documentId);
         final Uri tree = DocumentsContract.buildTreeDocumentUri(mAuthority, documentId);
@@ -867,7 +823,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :1319-1323. */
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
-        if (!DISPATCH) return super.openFile(uri, mode);
         enforceTree(uri);
         return openDocument(DocumentsContract.getDocumentId(uri), mode, null);
     }
@@ -876,7 +831,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     @Override
     public ParcelFileDescriptor openFile(Uri uri, String mode, CancellationSignal signal)
             throws FileNotFoundException {
-        if (!DISPATCH) return super.openFile(uri, mode, signal);
         enforceTree(uri);
         return openDocument(DocumentsContract.getDocumentId(uri), mode, signal);
     }
@@ -884,7 +838,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :1343-1349. */
     @Override
     public AssetFileDescriptor openAssetFile(Uri uri, String mode) throws FileNotFoundException {
-        if (!DISPATCH) return super.openAssetFile(uri, mode);
         enforceTree(uri);
         final ParcelFileDescriptor fd = openDocument(DocumentsContract.getDocumentId(uri), mode, null);
         return fd != null ? new AssetFileDescriptor(fd, 0, -1) : null;
@@ -894,7 +847,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     @Override
     public AssetFileDescriptor openAssetFile(Uri uri, String mode, CancellationSignal signal)
             throws FileNotFoundException {
-        if (!DISPATCH) return super.openAssetFile(uri, mode, signal);
         enforceTree(uri);
         final ParcelFileDescriptor fd = openDocument(DocumentsContract.getDocumentId(uri), mode,
                 signal);
@@ -905,7 +857,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     @Override
     public AssetFileDescriptor openTypedAssetFile(Uri uri, String mimeTypeFilter, Bundle opts)
             throws FileNotFoundException {
-        if (!DISPATCH) return super.openTypedAssetFile(uri, mimeTypeFilter, opts);
         return openTypedAssetFileImpl(uri, mimeTypeFilter, opts, null);
     }
 
@@ -914,14 +865,12 @@ public abstract class DocumentsProvider extends ContentProvider {
     public AssetFileDescriptor openTypedAssetFile(Uri uri, String mimeTypeFilter, Bundle opts,
                                                   CancellationSignal signal)
             throws FileNotFoundException {
-        if (!DISPATCH) return super.openTypedAssetFile(uri, mimeTypeFilter, opts, signal);
         return openTypedAssetFileImpl(uri, mimeTypeFilter, opts, signal);
     }
 
     /** AOSP :1405-1430: the document's own type when it is streamable (not
      *  virtual) and matches the filter. The =0 arm is the pre-change null. */
     public String[] getDocumentStreamTypes(String documentId, String mimeTypeFilter) {
-        if (!DISPATCH) return null;
         Cursor cursor = null;
         try {
             cursor = queryDocument(documentId, null);
@@ -965,7 +914,6 @@ public abstract class DocumentsProvider extends ContentProvider {
     /** AOSP :1437-1441. */
     @Override
     public String[] getStreamTypes(Uri uri, String mimeTypeFilter) {
-        if (!DISPATCH) return super.getStreamTypes(uri, mimeTypeFilter);
         enforceTree(uri);
         return getDocumentStreamTypes(DocumentsContract.getDocumentId(uri), mimeTypeFilter);
     }

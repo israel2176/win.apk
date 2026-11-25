@@ -136,7 +136,7 @@ public abstract class NumberFormat extends UFormat {
     // factories likewise return a java.text.DecimalFormat, so wrap that AS our
     // DecimalFormat. MACAPK_ICU_PLATFORM_TYPES=0 restores the old opaque wrapper.
     static NumberFormat wrap(java.text.NumberFormat d) {
-        if (com.macapk.icu.HostIcu.PLATFORM_TYPES && d instanceof java.text.DecimalFormat) {
+        if (d instanceof java.text.DecimalFormat) {
             return new DecimalFormat((java.text.DecimalFormat) d);
         }
         return new JdkNumberFormat(d);
@@ -183,7 +183,6 @@ public abstract class NumberFormat extends UFormat {
      */
     @Override
     public java.text.AttributedCharacterIterator formatToCharacterIterator(Object obj) {
-        if (!com.macapk.icu.HostIcu.PLATFORM_TYPES) return super.formatToCharacterIterator(obj);
         java.text.NumberFormat f = format0();
         // A delegate that is not a stock java.text formatter (CompactDecimalFormat's
         // overriding subclass) renders differently from its own iterator path.

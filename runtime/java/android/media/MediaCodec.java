@@ -987,21 +987,6 @@ public final class MediaCodec {
     // Releases any polled-but-not-yet-released video frames (native
     // CVPixelBuffers) before the index pool that tracks them gets dropped or
     // reset, so they don't leak. Called with mAsyncLock held.
-    /** AOSP MediaCodec hands decoded video out in PRESENTATION order: the
-     *  codec component reorders B-frames. VideoToolbox does not -- its output
-     *  callback fires in DECODE order even with kVTDecodeFrame_Enable
-     *  TemporalProcessing (FFmpeg's videotoolbox hwaccel reorders itself for
-     *  the same reason). Measured on ytdlnis's ExoPlayer preview (H.264 720p
-     *  with B-frames): consecutive release timestamps stepped -66.7 / +33.4 /
-     *  +133.5 ms, i.e. frames shown out of order -- the "stuttery" playback
-     *  (owner report 2026-10-19). This holds VideoToolbox output in a
-     *  pts-ordered window and emits the earliest frame once more than
-     *  mReorderDepth frames are held (or the stream ended). The depth starts at
-     *  2 and grows whenever a frame arrives older than one already emitted
-     *  (that frame is dropped, as a component never emits backwards), capped at
-     *  16 = H.264's max_dec_frame_buffering. MACAPK_VIDEO_REORDER=0 restores
-     *  decode-order output. VP8/VP9 (libvpx) already output in order. */
-    static final boolean VIDEO_REORDER = !"0".equals(System.getenv("MACAPK_VIDEO_REORDER"));
     private final VideoReorder mReorder = new VideoReorder();
     private static final java.util.function.LongConsumer RELEASE_FRAME =
         com.macapk.loader.NativeMedia::nativeVidReleaseFrame;
@@ -1436,8 +1421,7 @@ public final class MediaCodec {
                     ? com.macapk.loader.NativeMedia.nativeVp8Poll(mVidDec)
                     : isVp9()
                     ? com.macapk.loader.NativeMedia.nativeVp9Poll(mVidDec)
-                    : VIDEO_REORDER ? reorderPoll()
-                    : com.macapk.loader.NativeMedia.nativeVidPoll(mVidDec);
+                    : reorderPoll();
                 if (polled == null) return INFO_TRY_AGAIN_LATER;
                 // AOSP reports a new output format ahead of the first buffer
                 // whose size or colour differs from what it reported.
@@ -1529,7 +1513,7 @@ public final class MediaCodec {
      *  judder (ytdlnis's preview player, owner report 2026-10-19).
      *  MACAPK_VIDEO_TIMED_RELEASE=0 restores present-on-release. */
     public void releaseOutputBuffer(int index, long renderTimestampNs) {
-        if (!VIDEO_TIMED_RELEASE || !mIsVideo || !mHasSurface) { releaseOutputBuffer(index, true); return; }
+        if (!mIsVideo || !mHasSurface) { releaseOutputBuffer(index, true); return; }
         long pb = 0;
         synchronized (mAsyncLock) {
             if (mOutPixbuf != null && index >= 0 && index < mOutPixbuf.length) {
@@ -1606,12 +1590,10 @@ public final class MediaCodec {
             com.macapk.loader.NativeLog.i("MediaCodec", String.format(
                 "video present: n=%d mean=%.1fms sd=%.1fms p5=%.1f p50=%.1f p95=%.1f max=%.1f superseded=%d appDropped=%d timed=%b",
                 a.length, mean / 1e6, sd / 1e6, a[6] / 1e6, a[60] / 1e6, a[113] / 1e6, a[119] / 1e6,
-                mTraceDrops, mTraceAppDrops, VIDEO_TIMED_RELEASE));
+                mTraceDrops, mTraceAppDrops, true));
             mTraceN = 0; mTraceDrops = 0; mTraceAppDrops = 0;
         }
     }
-    static final boolean VIDEO_TIMED_RELEASE =
-        !"0".equals(System.getenv("MACAPK_VIDEO_TIMED_RELEASE"));
     private final Object mTimedLock = new Object();
     private final java.util.ArrayDeque<long[]> mTimed = new java.util.ArrayDeque<>();
     private Thread mTimedThread;

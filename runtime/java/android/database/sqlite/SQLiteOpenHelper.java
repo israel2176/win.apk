@@ -127,15 +127,8 @@ public abstract class SQLiteOpenHelper implements AutoCloseable {
         }
     }
 
-    /** Bisect gate for the dispatch above: MACAPK_SQLITE_READABLE_PRIVATE=0
-     *  restores the pre-fix virtual call into getWritableDatabase(). */
-    private static final boolean MACAPK_READABLE_PRIVATE =
-            !"0".equals(System.getenv("MACAPK_SQLITE_READABLE_PRIVATE"));
 
     private SQLiteDatabase getDatabaseLocked(boolean writable) {
-        if (!MACAPK_READABLE_PRIVATE && !writable) {
-            return getWritableDatabase();
-        }
         if (database != null) {
             if (!database.isOpen()) {
                 // The app closed the database itself.

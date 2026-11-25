@@ -147,7 +147,6 @@ public class Process {
      *  returning 0 there so the =0 arm stays byte-identical to the pre-2026-09-28
      *  tree (0 ~= "process start" when SystemClock was itself process-relative). */
     public static void setStartTimes(long elapsedRealtime, long uptimeMillis) {
-        if (!android.os.SystemClock.AOSP_CLOCKS) return;
         sStartElapsedRealtime = elapsedRealtime;
         sStartUptimeMillis = uptimeMillis;
     }
@@ -361,57 +360,13 @@ public class Process {
     // are the empty bodies they have always been. RETIRE CONDITION: an
     // interleaved protected-sweep + fleet A/B showing no regression on the apps
     // above, after which this becomes unconditional and the flag is deleted.
-    // Same land-behind-a-flag-then-flip shape as MACAPK_KILL_ON_UNCAUGHT.
-    private static final boolean SELF_KILL_ENABLED =
-            "1".equals(System.getenv("MACAPK_PROCESS_SELF_KILL"));
 
-    /** Re-entrancy guard only, NOT a once-ever latch: an app may legitimately
-     *  ask to die more than once (a double-tapped restart runs the idiom twice,
-     *  and a device honours both). It exists so that an onDestroy dispatched by
-     *  the teardown below cannot recurse into another teardown. */
-    private static boolean sSelfKillInProgress = false;
-    private static int sSelfKillGeneration = 0;
 
     /** AOSP :1020 -- `sendSignal(pid, SIGNAL_KILL);`, verbatim. */
     public static void killProcess(int pid) { sendSignal(pid, SIGNAL_KILL); }
 
     public static void sendSignal(int pid, int signal) {
-        if (!SELF_KILL_ENABLED) return;
-        // Only SIGKILL ends a process. AOSP sends SIGNAL_QUIT to dump thread
-        // stacks and SIGNAL_USR1 to request a GC; neither is fatal, and we
-        // model neither, so they stay no-ops.
-        if (signal != SIGNAL_KILL) return;
-        // "the kernel will still impose standard restrictions on which PIDs you
-        // are actually able to kill". We host exactly one process, so the only
-        // pid we can act on is our own; any other pid names something that does
-        // not exist here and the request is dropped, as the kernel would drop a
-        // kill aimed at a pid the caller does not own.
-        if (pid != myPid()) return;
-        synchronized (Process.class) {
-            if (sSelfKillInProgress) return;
-            sSelfKillInProgress = true;
-            sSelfKillGeneration++;
-        }
-        try {
-            com.macapk.loader.NativeLog.i("Mac.apk.Process",
-                "killProcess(myPid()) #" + sSelfKillGeneration + ": the app asked"
-                + " for its own process to end. Mac.apk hosts the guest in the"
-                + " runtime process, so instead of exiting we tear the activity"
-                + " stack down the way a dead process leaves it -- anything the"
-                + " app has already queued still runs, into an empty task.");
-            // 2000 ms is what the window-close path passes for the same call;
-            // a guest whose main thread is already wedged must not be able to
-            // hang the caller here either. Timing out is survivable: the
-            // activities that did tear down are still gone.
-            // processExits=false: we stay alive after it, so the close path's
-            // window hiding and exit backstop must not apply.
-            com.macapk.loader.ActivityHost.macapkTerminate(2000L, false);
-        } catch (Throwable t) {
-            com.macapk.loader.NativeLog.w("Mac.apk.Process",
-                "killProcess teardown threw: " + t);
-        } finally {
-            synchronized (Process.class) { sSelfKillInProgress = false; }
-        }
+        return;
     }
 
     /** AOSP Process.isSdkSandbox (API 34): whether the caller runs in the SDK

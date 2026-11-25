@@ -96,17 +96,13 @@ public class BaseDexClassLoader extends URLClassLoader {
     @Override
     protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
         String bn = binaryName(name);
-        if (BOOT_ARRAYS && bn != null && bn.length() > 1 && bn.charAt(0) == '[') {
+        if (bn != null && bn.length() > 1 && bn.charAt(0) == '[') {
             Class<?> a = bootClasspathArray(bn);
             if (a != null) return a;
         }
         return super.loadClass(bn, resolve);
     }
 
-    /** MACAPK_BOOT_ARRAY_LOADCLASS (default ON; =0 restores the old HotSpot answer, a
-     *  ClassNotFoundException for EVERY array name). */
-    static final boolean BOOT_ARRAYS =
-        !"0".equals(System.getenv("MACAPK_BOOT_ARRAY_LOADCLASS"));
 
     /** ART answers loadClass("[B") and HotSpot does not. Every ART loader chain
      *  ends at java.lang.BootClassLoader, whose findClass is

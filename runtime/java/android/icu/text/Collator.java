@@ -54,7 +54,7 @@ public abstract class Collator implements Comparator<Object>, Cloneable {
     // factory likewise returns a java.text.RuleBasedCollator; wrap that AS our
     // RuleBasedCollator. MACAPK_ICU_PLATFORM_TYPES=0 restores the old wrapper.
     private static Collator wrap(java.text.Collator c) {
-        if (com.macapk.icu.HostIcu.PLATFORM_TYPES && c instanceof java.text.RuleBasedCollator) {
+        if (c instanceof java.text.RuleBasedCollator) {
             return new RuleBasedCollator((java.text.RuleBasedCollator) c);
         }
         return new JdkCollator(c);

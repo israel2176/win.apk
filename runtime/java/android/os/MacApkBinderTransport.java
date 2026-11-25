@@ -95,7 +95,7 @@ public final class MacApkBinderTransport {
         }
         try {
             String explicit = System.getProperty("macapk.binder.lib");
-            if (explicit == null || explicit.isEmpty()) explicit = System.getenv("MACAPK_BINDER_LIB");
+            if (explicit == null || explicit.isEmpty()) explicit = null;
             File found = null;
             if (explicit != null && !explicit.isEmpty()) {
                 found = new File(explicit);

@@ -111,8 +111,7 @@ public class ScrollView extends FrameLayout {
      *  overscrolls (canOverscroll is false for SOURCE_MOUSE).
      *  WheelScroll.VIEWS=0: not handled (pre-v1.0.2273). */
     @Override public boolean onGenericMotionEvent(MotionEvent event) {
-        if (com.macapk.loader.WheelScroll.VIEWS
-                && event.getAction() == MotionEvent.ACTION_SCROLL) {
+        if (event.getAction() == MotionEvent.ACTION_SCROLL) {
             final float axisValue;
             if (event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)) {
                 axisValue = event.getAxisValue(MotionEvent.AXIS_VSCROLL);

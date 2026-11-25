@@ -215,8 +215,7 @@ public class HorizontalScrollView extends FrameLayout {
      *  Shift held) x the horizontal scroll factor, clamped, not while a drag is
      *  in progress; a MOUSE never overscrolls. WheelScroll.VIEWS=0: not handled. */
     @Override public boolean onGenericMotionEvent(android.view.MotionEvent event) {
-        if (com.macapk.loader.WheelScroll.VIEWS
-                && event.getAction() == android.view.MotionEvent.ACTION_SCROLL && !mIsBeingDragged) {
+        if (event.getAction() == android.view.MotionEvent.ACTION_SCROLL && !mIsBeingDragged) {
             final float axisValue;
             if (event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)) {
                 if ((event.getMetaState() & android.view.KeyEvent.META_SHIFT_ON) != 0) {
@@ -443,24 +442,6 @@ public class HorizontalScrollView extends FrameLayout {
         return scrollToChildRect(rectangle, immediate);
     }
 
-    /** AOSP HorizontalScrollView.scrollToChild, verbatim (including AOSP's own
-     *  private visibility -- unlike ScrollView's public scrollToDescendant sibling,
-     *  AOSP never elevated this one to a public API, so this mirrors that exact
-     *  asymmetry rather than "fixing" it). Presently only reachable from a
-     *  subclass that calls it directly (AOSP's own only callers are the
-     *  mIsLayoutDirty-gated focus-search paths this lane does not port -- see
-     *  requestChildRectangleOnScreen above), but it is real, correct AOSP
-     *  geometry rather than a stub. */
-    private void scrollToChild(android.view.View child) {
-        android.graphics.Rect rect = new android.graphics.Rect();
-        child.getDrawingRect(rect);
-        // Offset from child's local coordinates to ScrollView coordinates
-        offsetDescendantRectToMyCoords(child, rect);
-        int scrollDelta = computeScrollDeltaToGetChildRectOnScreen(rect);
-        if (scrollDelta != 0) {
-            scrollBy(scrollDelta, 0);
-        }
-    }
 
     /** AOSP HorizontalScrollView.java:487 executeKeyEvent(KeyEvent) -- the x-axis
      *  twin of ScrollView's. Note AOSP's own asymmetries, kept: the no-scroll

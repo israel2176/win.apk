@@ -757,9 +757,6 @@ public class SQLiteDatabase extends SQLiteClosable {
     //
     // MACAPK_SQLITE_TX_PER_THREAD=0 restores the old per-database stack
     // (all threads share one TxState and nobody waits) as a bisect gate for
-    // this change. The default is the AOSP-faithful per-thread shape.
-    private static final boolean TX_PER_THREAD =
-        !"0".equals(System.getenv("MACAPK_SQLITE_TX_PER_THREAD"));
     private static final boolean TRACE_TX =
         "1".equals(System.getenv("MACAPK_TRACE_TX"));
 
@@ -785,9 +782,7 @@ public class SQLiteDatabase extends SQLiteClosable {
     }
     private final ThreadLocal<TxState> threadTx =
         ThreadLocal.withInitial(TxState::new);
-    /** Legacy shared state, used only under MACAPK_SQLITE_TX_PER_THREAD=0. */
-    private final TxState sharedTx = new TxState();
-    private TxState txState() { return TX_PER_THREAD ? threadTx.get() : sharedTx; }
+    private TxState txState() { return threadTx.get(); }
 
     /** The thread whose outermost BEGIN currently holds the (single)
      *  connection; null when no transaction is open. The AOSP analogue is
@@ -804,7 +799,7 @@ public class SQLiteDatabase extends SQLiteClosable {
      *  and the connection reclaimed, the same outcome as Android's
      *  leaked-connection recovery closing the connection. */
     private void macapkAwaitTxConnectionLocked() {
-        if (!TX_PER_THREAD) return;   // legacy mode never waited
+           // legacy mode never waited
         final Thread me = Thread.currentThread();
         boolean interrupted = false;
         long waitedMs = 0;
