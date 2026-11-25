@@ -20,8 +20,11 @@
 // after setAccessible(true), succeeds on HotSpot without it (a final field of an
 // ordinary class is not a trusted final), so the replacement is made. This test pins
 // both halves, so that a JVM option or overlay change that makes the set fail shows
-// here. Why Win.apk does not add an accessFlags field to Field:
-// docs/research/open-issues.md, "Reanimated reflects on ART's Field.accessFlags".
+// here. Why Win.apk does not add an accessFlags field to Field: HotSpot finds Field's
+// fields by name, so an added accessFlags would be a second int, not ART's alias of
+// modifiers; making a write to it change getModifiers() would mislead the JDK's own
+// field accessor factory, and still could not make a static final writable. Apps
+// (Reanimated) catch the NoSuchFieldException and call Field.set anyway, which works.
 //
 //   javac -d out windows/test/java/FinalFieldReflectionTest.java
 //   java --patch-module java.base=<runtime>/lib/java_base_patch -cp out FinalFieldReflectionTest

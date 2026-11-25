@@ -1838,8 +1838,8 @@ public final class SystemServer {
      *  apps updated and push messages flowing). Another app's held job runs when that
      *  app runs, as a phone's rarely used apps get their jobs in the restricted bucket:
      *  each started process is a JVM. (Starting any app's, as Android does within its standby
-     *  buckets, is for the owner to decide: docs/research/open-issues.md, "Decisions for the
-     *  owner"; its opt-in switch is gone.) A field so the broker's test can replace it. */
+     *  buckets, is a decision not taken yet; its opt-in switch is gone.) A field so the
+     *  broker's test can replace it. */
     java.util.function.Predicate<String> mayStartForJob = pkg -> {
         PackageRecord pr = packages.get(pkg);
         return pr != null && MacApkPackageManager.platformSystemApk(pr.pkg, pr.apkPath);

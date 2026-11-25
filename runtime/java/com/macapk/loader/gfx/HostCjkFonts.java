@@ -8,8 +8,8 @@
 //     <family lang="ja">              NotoSansCJK-Regular.ttc index 0
 //     <family lang="ko">              NotoSansCJK-Regular.ttc index 1
 //
-// That file is 19 MB of a 29 MB font folder, and the owner decided it leaves the install (Hebrew
-// and Latin stay exactly Android's; docs/research/open-issues.md). build_aosp_gfx.sh no longer
+// That file is 19 MB of a 29 MB font folder, and it was left out of the install to keep its size
+// down (Hebrew and Latin stay exactly Android's). build_aosp_gfx.sh no longer
 // stages it, so without this every Han, kana and Hangul character would be a box: AOSP's parser
 // skips a font whose file is missing, and a family with none is dropped.
 //

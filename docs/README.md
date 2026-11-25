@@ -22,5 +22,5 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Each layer, an install and a run step by step, the data on disk, CI |
 | [../windows/README.md](../windows/README.md) | Building, testing, environment variables, changes to the upstream `runtime/` |
 | [../windows/PORTING.md](../windows/PORTING.md) | Design decisions, findings and the milestone plan |
-| [research/](research/) | Measurements behind design choices (the ARM translation, startup), and [the improvement plan](research/improvement-plan.md): what to fix next and in what order |
+| [research/](research/) | Design notes and measurements behind design choices (the AOSP layers, the ARM translation, startup) |
 | [../CONTRIBUTING.md](../CONTRIBUTING.md) | How to report, add an app to the list, and send code |

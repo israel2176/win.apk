@@ -205,11 +205,11 @@ final class CameraBackend {
         Map<CameraCharacteristics.Key<?>, Object> p = new LinkedHashMap<>();
 
         // LENS_FACING comes straight from the native layer: every webcam is
-        // offered twice, BACK (even index) and FRONT (odd). The owner's
-        // decision: a PC's camera serves both roles, so apps that ask for the
-        // rear camera (cheque scanners, CameraX's DEFAULT_BACK_CAMERA) work.
-        // (AOSP itself reports a USB camera as EXTERNAL; see
-        // docs/research/open-issues.md for what that would mean here.)
+        // offered twice, BACK (even index) and FRONT (odd). By design a PC's
+        // camera serves both roles, so apps that ask for the rear camera
+        // (cheque scanners, CameraX's DEFAULT_BACK_CAMERA) work. (AOSP itself
+        // reports a USB camera as EXTERNAL, which an app asking for the back
+        // or front lens would not find.)
         int facing = CameraBridge.getDeviceFacing(index);
         if (facing < 0) facing = CameraCharacteristics.LENS_FACING_EXTERNAL;
         p.put(CameraCharacteristics.LENS_FACING, Integer.valueOf(facing));

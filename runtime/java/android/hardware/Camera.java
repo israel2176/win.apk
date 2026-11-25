@@ -255,9 +255,9 @@ public class Camera {
      * CameraInfo.facing is two-valued. AOSP's camera service maps an external
      * camera to FRONT for the legacy API (CameraProviderManager
      * getCameraInfoLocked: "Map external to front for legacy API"). Win.apk
-     * reports no EXTERNAL camera: every webcam is a BACK and a FRONT role (the
-     * owner's decision, docs/research/open-issues.md), so the mapping below
-     * only ever sees those two.
+     * reports no EXTERNAL camera: every webcam is a BACK and a FRONT role (a
+     * PC's camera serves both, so apps that ask for the rear camera work), so
+     * the mapping below only ever sees those two.
      */
     public static void getCameraInfo(int cameraId, CameraInfo cameraInfo) {
         if (cameraInfo == null) {

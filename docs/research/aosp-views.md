@@ -366,7 +366,7 @@ every later `bg_oval` (Win.apk's own resources inflated a new one each time,
 which hid the bug). `View` now mutates before tinting, as AOSP's
 `applyBackgroundTint` does; with the switch off the probe is unchanged.
 
-Sudoku's sweep also shows two of `open-issues.md`'s item 16 gone:
+Sudoku's sweep also shows two known resource differences gone:
 `getResourceEntryName` of an unknown id throws `NotFoundException`, and a
 land-only layout no longer answers in portrait.
 
@@ -610,8 +610,8 @@ Left for V1, in order:
   composites the frame over the GL frame: Klooni (libGDX) and PPSSPP
   (NativeActivity) draw as with the switch off. It is not yet one layer of the
   compositor's among the windows. SDL's native window (Tensy) draws too
-  (`open-issues.md`: the host's render thread no longer uses GL while an app's
-  own EGL window surface lives); `TextureView` and video were not run.
+  (the host's render thread no longer uses GL while an app's own EGL window
+  surface lives); `TextureView` and video were not run.
 - Display commits (a window resize, an app's requested orientation) reach the
   windows: `ViewHost.scheduleLayout` sends `IWindow.resized` to each window
   whose frame changes; `ViewRootImpl.updateConfiguration` then needs
@@ -628,7 +628,7 @@ Left for V1, in order:
   whose target SDK is below a change's. The other inset sources a phone has
   (tappable element, mandatory gestures, cutout) are not reported.
 - CDS with the switch on (`framework-aospviews-<key>.jsa`), real Windows. The
-  smoke apps: `open-issues.md`, "The smoke apps with AOSP's views".
+  smoke apps.
 
 V3: HWUI's own pipeline (`ThreadedRenderer`).
 
@@ -940,9 +940,9 @@ deleted. What was done:
   is no like-for-like base and only the head's run is checked. No run on Java2D's graphics is left
   in CI (they have no views to run now).
 
-What could not go yet, and why (their sources, `ResourceIndex`/`ArscReader`/`ArscRes`,
-`WinApkViewHost`/`ViewCanvasDriver`, the plain-JVM tests that still exercise Win.apk's own views):
-`open-issues.md`, "Size and memory".
+What could not go yet: their sources (`ResourceIndex`/`ArscReader`/`ArscRes`,
+`WinApkViewHost`/`ViewCanvasDriver`) stay, since the rest of the framework compiles against them
+and the plain-JVM tests still exercise Win.apk's own views.
 
 ## 5. Size, start and memory
 

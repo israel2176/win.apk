@@ -197,7 +197,7 @@ app data, but the runtime's own folder needs plain letters.
 ## Environment variables
 
 There are no switches: a change is a change, and the runtime has one behaviour
-(the owner's decision, November 2026; `docs/research/open-issues.md`). What the
+(a project decision, November 2026). What the
 runtime still reads from its environment is only one of three kinds, and this
 table lists every one (`windows/host`, `windows/src`, `runtime/java`,
 `windows/java`):
@@ -1307,7 +1307,7 @@ Windows' faces measure it (taller lines than Noto CJK, other punctuation
 advances), so it wraps and spaces differently from a phone. Every other
 script keeps Android's font. Fetching Noto CJK on first need was looked at
 and left: the font setup cannot wait for a file, so the first run would draw
-boxes (`docs/research/open-issues.md`).
+boxes.
 
 Checked: `test/aospgfx/run.sh` (on Linux, the `.so` with the same data) draws
 the same picture byte for byte and prints the same lines with the dist's
@@ -1324,7 +1324,7 @@ Not cut, and why:
   not Android's, and emoji are in most apps' text. The fonts of the other
   scripts (Thai, the Indic scripts, Ethiopic, Tibetan and more, 154 files,
   9.5 MB) could fall back to Windows' fonts the same way, at a few hundred
-  KB each; left Android's (`docs/research/open-issues.md`).
+  KB each; left Android's.
 - Windows' own ICU (`icu.dll`, Windows 10 1903+) cannot stand in: the DLL
   links ICU 68 statically (`_68` symbols) and reads only its own `.dat`;
   using the system's would mean rebuilding the native runtime.
@@ -1445,8 +1445,7 @@ alike, opaque pixels unchanged, Skia's channel order found from a probe
 pixel), and the first three frames are also read through `getPixels` and
 compared; a difference, an exception or a bitmap that is not premultiplied
 ARGB 8888 in sRGB goes back to `getPixels` (`raw pixel copy on` / `off` in
-the log). Layout's p99 is still 16 ms on AOSP against 7.5 on Java2D
-(`docs/research/open-issues.md`).
+the log). Layout's p99 is still 16 ms on AOSP against 7.5 on Java2D.
 
 ## The compatibility sweep
 
@@ -3331,8 +3330,7 @@ every such change is listed here:
 - `runtime/java/android/view/TextureView.java`: an opaque `TextureView` paints
   black under its frame, nothing over it, as AOSP's software path draws it
   (milestone 2, "A `TextureView` with nothing to show"); `setOpaque` redraws.
-- Off Java2D where AOSP's graphics are the default (`docs/research/open-issues.md`,
-  "What still reaches Java2D"): `com/macapk/loader/Boot.java` does not bring
+- Off Java2D where AOSP's graphics are the default: `com/macapk/loader/Boot.java` does not bring
   AWT up on AOSP's graphics (544-783 ms on the main thread under Wine, beside
   the resource index); `android/provider/MediaStoreProvider.java` reads a
   photo's size with `BitmapFactory`'s bounds decode, not ImageIO;
@@ -3563,7 +3561,7 @@ every such change is listed here:
   `debugTrackpad` (`hostwheel`, `magnify`). Off is unchanged (the probe's `ours.txt` and the Gallery
   and Sudoku sweeps byte-identical to the base). `android/os/ServiceManager.java`: AOSP's
   `ServiceNotFoundException`, which AOSP's managers catch (a missing handler class does not link).
-  After the smoke apps (`docs/research/open-issues.md`, "The smoke apps with AOSP's views"):
+  After the smoke apps with AOSP's views:
   `android/view/SurfaceView.java` punches its hole with AOSP's views when not on top (AOSP's
   `clearSurfaceViewPort`), as the windows are composited over its GL frames;
   `com/macapk/loader/DisplayConfig.java` leaves `CONFIG_WINDOW_CONFIGURATION` out of the relaunch
