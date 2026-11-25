@@ -139,9 +139,6 @@ public class ProgressBar extends View {
     //     progressBarLoadingPanel.getIndeterminateDrawable().setColorFilter(WHITE, MULTIPLY)
     // and threw NullPointerException out of PlayerService.onStartCommand, so no
     // video ever played. AbsSeekBar reads `thumb` the same way.
-    // =0: no styled read at all, exactly as before.
-    static final boolean PROGRESS_STYLED_DRAWABLES =
-        !"0".equals(System.getenv("MACAPK_PROGRESS_STYLED_DRAWABLES"));
     /** android.R.attr.progressDrawable / indeterminateDrawable (SDK-34 R$attr). */
     private static final int[] MACAPK_STYLED_PROGRESS_ATTRS = { 0x0101013c, 0x0101013b };
     /** True while mIndeterminateDrawable is the one the STYLE supplied (not an
@@ -155,7 +152,7 @@ public class ProgressBar extends View {
 
     private void macapkApplyStyledDrawables(Context context, AttributeSet attrs,
                                             int defStyleAttr, int defStyleRes) {
-        if (!PROGRESS_STYLED_DRAWABLES || context == null) return;
+        if (context == null) return;
         android.content.res.TypedArray a = null;
         try {
             a = context.obtainStyledAttributes(attrs, MACAPK_STYLED_PROGRESS_ATTRS,
@@ -209,8 +206,6 @@ public class ProgressBar extends View {
      *  the primary level of a drawable with no layers. */
     private void macapkRefreshLevel(int id) {
         // Under MACAPK_PROGRESS_STYLED_DRAWABLES=0 no level is ever set, so the
-        // =0 arm is the pre-change widget for an app-installed drawable too.
-        if (!PROGRESS_STYLED_DRAWABLES) return;
         final android.graphics.drawable.Drawable cur = mCurrentDrawable;
         if (cur == null || indeterminate) return;
         final int range = max - min;

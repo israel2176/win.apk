@@ -85,117 +85,8 @@ public class LayoutInflater {
      *  under MACAPK_FACTORY_MERGE. */
     private boolean mFactorySet;
 
-    /** BISECT GATES (2026-09-26, default ON; lane C, cluster C of
-     *  docs/widget-fidelity-cluster_2026-09-25.md; gate debug/factorymerge_gate.sh).
-     *
-     *  MACAPK_FACTORY_MERGE=0 -- setFactory / setFactory2 / setPrivateFactory
-     *  REPLACE again (the pre-change code, byte for byte: no FactoryMerger, no
-     *  mFactorySet, a null factory accepted). With it ON they merge the AOSP way,
-     *  the NEW factory consulted first and the inherited one second.
-     *  What the replace cost, measured: androidx Fragment.onGetLayoutInflater
-     *  clones the activity's inflater and calls setFactory2(childFragmentManager
-     *  .mLayoutInflaterFactory) on the clone, so replacing threw AppCompat's
-     *  delegate away inside EVERY fragment; <Button> then fell through to the
-     *  APPCOMPAT_REWRITE table (AppCompatButton) and a Material theme's
-     *  viewInflaterClass (MaterialComponentsViewInflater -> MaterialButton) never
-     *  ran. Aegis fragment_welcome_slide btnImport: AppCompatButton ->
-     *  MaterialButton.
-     *
-     *  MACAPK_FACTORY_SET_ONCE=0 -- a second setFactory / setFactory2 on the SAME
-     *  instance merges again (the new one in front) instead of throwing
-     *  IllegalStateException the way AOSP does (android14 :353 / :372). Only
-     *  meaningful with MERGE on. The throw is kept ON by measurement: over the
-     *  62-APK corpus (debug/factorymerge_verify/factory_census.py) every one of
-     *  the 85 call sites that is not a LayoutInflaterCompat-style wrapper either
-     *  reads getFactory()/getFactory2() first and sets only on null (43:
-     *  AppCompatDelegateImpl.installViewFactory, Fossify
-     *  installFontInflaterFactory, Duolingo's inflater), sets on a fresh
-     *  cloneInContext() (39: androidx Fragment, directly or through
-     *  FragmentHostCallback.onGetLayoutInflater), sets in a constructor on an
-     *  inflater it just built (1: AsyncLayoutInflater), or was read by hand (2:
-     *  Aurora's R8-renamed Fragment.onGetLayoutInflater, whose host override
-     *  clones; Duolingo's LayoutInflater subclass, whose setFactory2 override
-     *  calls super once per branch). None sets twice on one instance, so the
-     *  throw can only fire on a path that also throws on a device. This gate is
-     *  the lever if a live run proves otherwise. */
-    static final boolean MACAPK_FACTORY_MERGE =
-        !"0".equals(System.getenv("MACAPK_FACTORY_MERGE"));
-    static final boolean MACAPK_FACTORY_SET_ONCE =
-        !"0".equals(System.getenv("MACAPK_FACTORY_SET_ONCE"));
-    /** BISECT GATE (2026-09-26, default ON; gate debug/factorymerge_gate.sh):
-     *  cloneInContext goes through the copy constructor, as AOSP's
-     *  PhoneLayoutInflater does, so the clone keeps the Filter as well as the
-     *  factories. =0 restores the pre-change hand copy of the three factories
-     *  (no Filter). See cloneInContext. */
-    static final boolean MACAPK_INFLATER_CLONE_FILTER =
-        !"0".equals(System.getenv("MACAPK_INFLATER_CLONE_FILTER"));
 
-    /** BISECT GATE (2026-09-26, default ON; dialog lane, gate
-     *  debug/dialogtheme_gate.sh 'inflater' arm,
-     *  docs/dialog-window-theme_2026-09-26.md). AOSP android14
-     *  LayoutInflater.java:286-293 asks the Context:
-     *
-     *      LayoutInflater LayoutInflater =
-     *              (LayoutInflater) context.getSystemService(Context.LAYOUT_INFLATER_SERVICE);
-     *      if (LayoutInflater == null) {
-     *          throw new AssertionError("LayoutInflater not found.");
-     *      }
-     *      return LayoutInflater;
-     *
-     *  and ContextThemeWrapper.java:181-189 answers that service with
-     *  `LayoutInflater.from(getBaseContext()).cloneInContext(this)`, cached in
-     *  mInflater: a wrapper's inflater is its base's inflater cloned in,
-     *  FACTORIES KEPT. Ours never asks the Context; it keys a fresh,
-     *  factory-less inflater per Context in macapkPerContext. A wrapper that
-     *  models the AOSP answer (ContextThemeWrapper.macapkOwnInflater(); today
-     *  only android.app.Dialog's dialog context) now answers for itself.
-     *  MEASURED (2026-09-26): once Dialog wraps its context in ?android:dialogTheme,
-     *  LayoutInflater.from(dialog.getContext()) had no Factory2, so Unit
-     *  Converter's own AppCompatDialog, pre-show setContentView(int)
-     *  (AppCompatDelegateImpl inflates with LayoutInflater.from(mContext)),
-     *  consulted the activity's Factory2 0 times instead of 3: no AppCompat /
-     *  Material tag substitution for dialog content inflated before show().
-     *  =0 restores the per-Context cache for every Context. */
-    static final boolean MACAPK_INFLATER_FROM_OWN =
-        !"0".equals(System.getenv("MACAPK_INFLATER_FROM_OWN"));
 
-    /** BISECT GATE (2026-09-26, default ON; lane platlayouts, gate
-     *  debug/platlayout_gate.sh, docs/platform-layouts-axml_2026-09-26.md).
-     *
-     *  A FRAMEWORK layout id (0x01......: android.R.layout.simple_list_item_1,
-     *  simple_spinner_item, select_dialog_*_material, preference_material ...)
-     *  is read the AOSP way, `res.getLayout(resource)` (LayoutInflater.inflate
-     *  (int, ViewGroup, boolean), aosp main :460), which Resources now answers
-     *  with a com.macapk.loader.axml parser over the COMPILED entry of
-     *  framework-res.apk; the parser's document becomes the DOM this inflater
-     *  walks. The same holds for `<include layout="@android:layout/x">`.
-     *  If getLayout serves a framework id through the numeric DOM parser
-     *  instead (the axml path could not open the file), the id stays a miss
-     *  and gets the placeholder, as before, rather than a tree whose ids the
-     *  inflater could only hash.
-     *
-     *  Also under this gate: the getLayout FALLBACK for an APP layout that has
-     *  no file (macapkDocumentFromLayout, the Instagram path) renders its
-     *  parser through the same bridge (macapkDocumentFromParser) rather than
-     *  its own copy, which set a res-auto attribute without its "app:" prefix.
-     *
-     *  Before: openRawResource served the compiled AXML bytes, the text
-     *  DocumentBuilder failed "Content is not allowed in prolog" and the catch
-     *  returned an EMPTY FrameLayout -- bobball's spinners were blank (1,662
-     *  stack traces in one run) and ArrayAdapter set its text on a detached
-     *  TextView. =0 restores all of that exactly. */
-    static final boolean MACAPK_PLATFORM_LAYOUTS =
-        !"0".equals(System.getenv("MACAPK_PLATFORM_LAYOUTS"));
-    /** BISECT GATE (2026-09-26, default ON; same lane and gate script).
-     *  inflate(XmlPullParser, ViewGroup, boolean) inflates the parser's
-     *  document the way AOSP's does (aosp main :509-609: advanceToRootNode,
-     *  then the root and its subtree). It used to be a stub that returned
-     *  `root` without reading the parser at all, so an app that inflates
-     *  res.getLayout(id) / getXml(id) itself got its own container (or null)
-     *  back. Like AOSP it returns ROOT when attaching (root != null &&
-     *  attachToRoot) and the inflated view otherwise. =0 restores the stub. */
-    static final boolean MACAPK_INFLATE_PARSER =
-        !"0".equals(System.getenv("MACAPK_INFLATE_PARSER"));
 
     /** AOSP LayoutInflater.FactoryMerger, verbatim in behaviour (android14
      *  :219-248): f1/f12 is the factory being set NOW and is asked first; f2/f22
@@ -348,7 +239,7 @@ public class LayoutInflater {
                         ? "current Activity" : "Application") + " context instead");
             context = fallback;
         }
-        if (MACAPK_INFLATER_FROM_OWN && context instanceof ContextThemeWrapper) {
+        if (context instanceof ContextThemeWrapper) {
             LayoutInflater own = ((ContextThemeWrapper) context).macapkOwnInflater();
             if (own != null) return own;
         }
@@ -400,12 +291,7 @@ public class LayoutInflater {
      *  clone dropped the parent's Filter (getFilter() == null on the clone).
      *  MACAPK_INFLATER_CLONE_FILTER=0 restores that hand copy. */
     public LayoutInflater cloneInContext(Context newContext) {
-        if (MACAPK_INFLATER_CLONE_FILTER) return new LayoutInflater(this, newContext);
-        LayoutInflater clone = new LayoutInflater(newContext);
-        clone.factory        = this.factory;
-        clone.factory2       = this.factory2;
-        clone.privateFactory = this.privateFactory;
-        return clone;
+        return new LayoutInflater(this, newContext);
     }
     public Factory  getFactory()  { return factory; }
     public Factory2 getFactory2() { return factory2; }
@@ -421,8 +307,7 @@ public class LayoutInflater {
      *  first). That is AOSP's behaviour too, and it is mirrored rather than fixed.
      *  MACAPK_FACTORY_MERGE=0 restores the pre-change replace. */
     public void setFactory(Factory f) {
-        if (!MACAPK_FACTORY_MERGE) { this.factory = f; return; }
-        if (mFactorySet && MACAPK_FACTORY_SET_ONCE) {
+        if (mFactorySet) {
             throw new IllegalStateException("A factory has already been set on this LayoutInflater");
         }
         if (f == null) {
@@ -447,12 +332,7 @@ public class LayoutInflater {
      *  MACAPK_FACTORY_MERGE=0 restores the pre-change replace (factory2 = f, and
      *  factory = f only when it was null). */
     public void setFactory2(Factory2 f) {
-        if (!MACAPK_FACTORY_MERGE) {
-            this.factory2 = f;
-            if (this.factory == null) this.factory = f;
-            return;
-        }
-        if (mFactorySet && MACAPK_FACTORY_SET_ONCE) {
+        if (mFactorySet) {
             throw new IllegalStateException("A factory has already been set on this LayoutInflater");
         }
         if (f == null) {
@@ -489,7 +369,6 @@ public class LayoutInflater {
      *  simply stores the null, and so do we. The API is @hide; the corpus census
      *  found no caller. */
     public void setPrivateFactory(Factory2 f) {
-        if (!MACAPK_FACTORY_MERGE) { this.privateFactory = f; return; }
         if (f == null && privateFactory != null) {
             throw new NullPointerException("Given factory can not be null");
         }
@@ -535,8 +414,7 @@ public class LayoutInflater {
             // for res-auto) as a text-parsed layout has it; the old copy set it
             // unprefixed. MACAPK_PLATFORM_LAYOUTS=0 runs the old copy
             // (macapkDocumentFromLayoutLegacy), unchanged.
-            Document doc = MACAPK_PLATFORM_LAYOUTS
-                ? macapkDocumentFromParser(p, false) : macapkDocumentFromLayoutLegacy(p);
+            Document doc = macapkDocumentFromParser(p, false);
             if (doc == null || doc.getDocumentElement() == null) return null;
             NativeLog.i(TAG, "inflate(0x" + Integer.toHexString(id)
                     + "): served by Resources.getLayout() (the app packs this layout"
@@ -554,49 +432,6 @@ public class LayoutInflater {
         }
     }
 
-    /** macapkDocumentFromLayout's own bridge before 2026-09-26, verbatim,
-     *  kept only for MACAPK_PLATFORM_LAYOUTS=0 (the exact pre-change path). */
-    private static Document macapkDocumentFromLayoutLegacy(org.xmlpull.v1.XmlPullParser p)
-            throws Exception {
-        DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
-        dbf.setNamespaceAware(true);
-        Document doc = dbf.newDocumentBuilder().newDocument();
-        org.w3c.dom.Node cur = doc;
-        for (int ev = p.getEventType();
-             ev != org.xmlpull.v1.XmlPullParser.END_DOCUMENT;
-             ev = p.next()) {
-            if (ev == org.xmlpull.v1.XmlPullParser.START_TAG) {
-                Element e = doc.createElement(p.getName());
-                for (int i = 0, n = p.getAttributeCount(); i < n; i++) {
-                    String ns   = p.getAttributeNamespace(i);
-                    String name = p.getAttributeName(i);
-                    String val  = p.getAttributeValue(i);
-                    if (name == null) continue;
-                    try {
-                        if (ns != null && !ns.isEmpty()) {
-                            // Keep the prefix the DOM path expects; inflateElement
-                            // reads android:* by namespace, and an unprefixed
-                            // qualified name would drop it into the default ns.
-                            String qn = MACAPK_ANDROID_NS.equals(ns)
-                                    ? "android:" + name : name;
-                            e.setAttributeNS(ns, qn, val == null ? "" : val);
-                        } else {
-                            e.setAttribute(name, val == null ? "" : val);
-                        }
-                    } catch (Throwable ignore) { /* skip one bad attribute */ }
-                }
-                cur.appendChild(e);
-                cur = e;
-            } else if (ev == org.xmlpull.v1.XmlPullParser.END_TAG) {
-                org.w3c.dom.Node parent = cur.getParentNode();
-                if (parent != null) cur = parent;
-            } else if (ev == org.xmlpull.v1.XmlPullParser.TEXT) {
-                String txt = p.getText();
-                if (txt != null && cur != doc) cur.appendChild(doc.createTextNode(txt));
-            }
-        }
-        return doc;
-    }
 
     /** Framework layout ids already announced once in the log (the path is
      *  taken per ListView row, so a per-call INFO line would be noise). */
@@ -770,7 +605,7 @@ public class LayoutInflater {
                 return new android.widget.FrameLayout(context);
             }
             Document doc = null;
-            if (MACAPK_PLATFORM_LAYOUTS && (resource >>> 24) == 0x01) {
+            if ((resource >>> 24) == 0x01) {
                 // A framework layout: AOSP's res.getLayout(resource), see the gate.
                 doc = macapkPlatformDocument(r, resource);
                 if (doc == null) {
@@ -920,20 +755,6 @@ public class LayoutInflater {
         // This trace answers the decisive question -- were the flags already
         // gone at the END of inflate (poisoned during inflate) or still set
         // (poisoned later, by the driver's traversal order)? Free unless the
-        // env var is set.
-        if ("1".equals(System.getenv("MACAPK_TRACE_LAYOUTREQ"))) {
-            StringBuilder sb = new StringBuilder("inflate(0x")
-                .append(Integer.toHexString(resource)).append(") layoutReq: ");
-            dumpLayoutRequested(inflated, sb, 0);
-            NativeLog.i(TAG, sb.toString());
-        }
-        // v1.0.98 debug: log IDs of inflated subtree if env DIAG_INFLATE_IDS set
-        if ("1".equals(System.getenv("MACAPK_DIAG_INFLATE_IDS"))) {
-            StringBuilder ids = new StringBuilder("inflate(0x")
-                .append(Integer.toHexString(resource)).append(") IDs: ");
-            collectIds(inflated, ids);
-            NativeLog.i(TAG, ids.toString());
-        }
         // v1.0.95: when the top-level tag was <merge>, inflateElement
         // returns `root` (it has already added the merge's children
         // directly into root). Calling root.addView(root) here would
@@ -954,15 +775,9 @@ public class LayoutInflater {
         // inflates into itself and casts the result to its own class (Hapoalim's
         // SectionsList: a ClassCastException, then an empty FrameLayout in 61
         // layouts). MACAPK_INFLATE_RETURNS_CHILD=1 restores the old answer.
-        if (root != null && attachToRoot && !INFLATE_RETURNS_CHILD) return root;
+        if (root != null && attachToRoot) return root;
         return inflated;
     }
-    /** MACAPK_INFLATE_TYPEFACE_AGAIN=1: the inflater applies textStyle, fontFamily
-     *  and textFontWeight after construction again (TextView.macapkCtorTypefaceRead). */
-    private static final boolean MACAPK_INFLATE_TYPEFACE_AGAIN =
-        "1".equals(System.getenv("MACAPK_INFLATE_TYPEFACE_AGAIN"));
-    private static final boolean INFLATE_RETURNS_CHILD =
-        "1".equals(System.getenv("MACAPK_INFLATE_RETURNS_CHILD"));
 
     /** Attaches an inflated child as AOSP's inflate and rInflate do:
      *  addView(view, params), the two-argument overload, with the params
@@ -1154,7 +969,7 @@ public class LayoutInflater {
                 // framework layout, read through res.getLayout like the root
                 // path (AOSP parseInclude -> getContext().getResources()
                 // .getLayout(layout)). parseResourceId would hash the name.
-                final int fwLayout = MACAPK_PLATFORM_LAYOUTS ? macapkPlatformLayoutId(layoutRef) : 0;
+                final int fwLayout = macapkPlatformLayoutId(layoutRef);
                 if (fwLayout != 0) {
                     doc = macapkPlatformDocument(r, fwLayout);
                     if (doc == null) {
@@ -1215,9 +1030,7 @@ public class LayoutInflater {
         // tags the factories return null and we fall through unchanged. Flag-OFF:
         // factories are never consulted, so behavior is byte-for-byte the same.
         View view = null;
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            view = tryFactoryCreate(parent, name, elem);
-        }
+        view = tryFactoryCreate(parent, name, elem);
         lastCtorFailClass = null;
         lastCtorFailCause = null;
         if (view == null) view = createViewByName(name, elem);
@@ -1311,7 +1124,7 @@ public class LayoutInflater {
             // element's theme overlay (measured: the design_layout_snackbar_include
             // children fell from ThemeOverlay.AppCompat.Dark to the light theme).
             view = new android.widget.FrameLayout(
-                (MACAPK_INFLATE_PARENT_CONTEXT && inflateContext != null) ? inflateContext : context);
+                (inflateContext != null) ? inflateContext : context);
             wasPlaceholder = true;
         }
         // v1.0.93: when we substitute a placeholder View for a class
@@ -1425,11 +1238,9 @@ public class LayoutInflater {
           // context, as AOSP's does. MACAPK_INFLATE_PARENT_CONTEXT=0 restores the
           // inflate-context-for-everything path.
           final Context macapkSavedCtx = inflateContext;
-          if (MACAPK_INFLATE_PARENT_CONTEXT) {
-              Context pc = null;
-              try { pc = vg.getContext(); } catch (Throwable ignored) {}
-              if (pc != null) inflateContext = pc;
-          }
+          Context pc = null;
+          try { pc = vg.getContext(); } catch (Throwable ignored) {}
+          if (pc != null) inflateContext = pc;
           try {
             for (Node n = elem.getFirstChild(); n != null; n = n.getNextSibling()) {
                 if (n instanceof Element child) {
@@ -1493,16 +1304,6 @@ public class LayoutInflater {
      *  Returns null if the parent doesn't define a LayoutParams or
      *  the child has no layout-relevant attrs (in which case the
      *  child uses parent.generateDefaultLayoutParams in addView). */
-    /** v1.0.109: apply the <include> tag's own attributes to the
-     *  inflated child, overriding whatever the included layout's
-     *  root element declared. AOSP semantic: android:id,
-     *  android:visibility, and android:layout_* attrs on the include
-     *  tag win over the included root's. Without this, cross-view
-     *  ConstraintLayout constraints that reference the include
-     *  site's id can't resolve (the inflated view has the included
-     *  file's root-element id, not the include site's). */
-    static final boolean INCLUDE_SITE_STYLE_LP =
-        !"0".equals(System.getenv("MACAPK_INCLUDE_SITE_STYLE_LP"));
     private void applyIncludeOverrides(View inflated, Element includeElem, ViewGroup parent) {
         try {
             org.w3c.dom.NamedNodeMap attrs = includeElem.getAttributes();
@@ -1577,7 +1378,7 @@ public class LayoutInflater {
             // and the cards covered the main protection switch (issue #5,
             // 2026-10-19). MACAPK_INCLUDE_SITE_STYLE_LP=0 restores attrs-only.
             java.util.Map<String, String> siteStyle = java.util.Collections.emptyMap();
-            if (INCLUDE_SITE_STYLE_LP && parent != null && !(siteHasW && siteHasH)) {
+            if (parent != null && !(siteHasW && siteHasH)) {
                 siteStyle = new DomBackedAttributeSet(includeElem, macapkLpContext(parent)).macapkStyleItems();
                 if (siteStyle.containsKey("layout_width"))  siteHasW = true;
                 if (siteStyle.containsKey("layout_height")) siteHasH = true;
@@ -1600,7 +1401,7 @@ public class LayoutInflater {
                 for (java.util.Map.Entry<String, String> en : siteStyle.entrySet()) {
                     String name = en.getKey();
                     if (!name.startsWith("layout_")) continue;
-                    if (LAYOUT_AOSP_1643 && MARGIN_ATTRS.contains(name)) incMargins.put(name, en.getValue());
+                    if (MARGIN_ATTRS.contains(name)) incMargins.put(name, en.getValue());
                     else applyLayoutAttribute(lp, name, en.getValue());
                 }
             }
@@ -1618,7 +1419,7 @@ public class LayoutInflater {
                     else if ("invisible".equals(val)) inflated.setVisibility(View.INVISIBLE);
                     else if ("visible".equals(val)) inflated.setVisibility(View.VISIBLE);
                 } else if (name.startsWith("layout_") && lp != null) {
-                    if (LAYOUT_AOSP_1643 && MARGIN_ATTRS.contains(name)) incMargins.put(name, val);
+                    if (MARGIN_ATTRS.contains(name)) incMargins.put(name, val);
                     else applyLayoutAttribute(lp, name, val);
                 }
             }
@@ -1710,7 +1511,7 @@ public class LayoutInflater {
             // guideBegin/guideEnd/guidePercent (proves "LP loses the value" vs
             // "solver ignores a correct LP"). Guideline elements are named
             // androidx...Guideline or R8'd; gate on the dump env to stay free.
-            if (gen != null && System.getenv("MACAPK_TRACE_GUIDE") != null
+            if (gen != null && false
                     && gen.getClass() != ViewGroup.LayoutParams.class
                     && gen.getClass() != ViewGroup.MarginLayoutParams.class) {
                 StringBuilder sb = new StringBuilder("buildLP-CLchild tag="
@@ -1816,7 +1617,7 @@ public class LayoutInflater {
         java.util.Map<String, String> margins = new java.util.HashMap<>();
         for (java.util.Map.Entry<String, String> en : sitems.entrySet()) {
             if (en.getKey().startsWith("layout_")) {
-                if (LAYOUT_AOSP_1643 && MARGIN_ATTRS.contains(en.getKey())) margins.put(en.getKey(), en.getValue());
+                if (MARGIN_ATTRS.contains(en.getKey())) margins.put(en.getKey(), en.getValue());
                 else applyLayoutAttribute(lp, en.getKey(), en.getValue());
             }
         }
@@ -1827,23 +1628,13 @@ public class LayoutInflater {
             String name = a.getLocalName();
             if (name == null) name = a.getNodeName();
             String val = a.getNodeValue();
-            if (LAYOUT_AOSP_1643 && name != null && val != null && MARGIN_ATTRS.contains(name)) margins.put(name, val);
+            if (name != null && val != null && MARGIN_ATTRS.contains(name)) margins.put(name, val);
             else applyLayoutAttribute(lp, name, val);
         }
         applyMargins(lp, margins);
         return lp;
     }
 
-    /** BISECT GATE (v1.0.1643, default ON; remove once the fleet A/B is read).
-     *  MACAPK_LAYOUT_AOSP_1643=0 restores the pre-1643 layout inflation in one
-     *  switch: margins applied attribute by attribute (no marginHorizontal /
-     *  Vertical), the padding shorthand replayed FIRST (per-side wins),
-     *  fillViewport ignored, TableLayout writing each cell's lp.width, and
-     *  VectorDrawable `@dimen` floats left at their defaults. Each of those is
-     *  an AOSP-precedence fix that re-lays-out many apps, so the fleet is
-     *  measured OFF vs ON (debug/recap_ab.sh) before and after landing. */
-    static final boolean LAYOUT_AOSP_1643 =
-        !"0".equals(System.getenv("MACAPK_LAYOUT_AOSP_1643"));
 
     private static final java.util.Set<String> MARGIN_ATTRS = new java.util.HashSet<>(
         java.util.Arrays.asList("layout_margin", "layout_marginHorizontal",
@@ -2108,12 +1899,6 @@ public class LayoutInflater {
         return null;
     }
 
-    /** Apply a RelativeLayout-specific `layout_*` attribute. The
-     *  AOSP rule index constants (RelativeLayout.ALIGN_PARENT_BOTTOM
-     *  etc.) are stable; using them keeps the rule mapping uniform
-     *  with whatever addRule() the app code might call directly. */
-    static final boolean MACAPK_RL_RELATIVE_VERBS =
-        !"0".equals(System.getenv("MACAPK_RL_RELATIVE_VERBS"));
     private void applyRelativeLayoutAttribute(android.widget.RelativeLayout.LayoutParams rlp,
                                                 String attr, String value) {
         // Diagnostic: confirm we're seeing layout_* attrs.
@@ -2144,17 +1929,13 @@ public class LayoutInflater {
                 if (isTrue) rlp.addRule(android.widget.RelativeLayout.ALIGN_PARENT_LEFT);
                 return;
             case "layout_alignParentStart":
-                if (isTrue) rlp.addRule(MACAPK_RL_RELATIVE_VERBS
-                        ? android.widget.RelativeLayout.ALIGN_PARENT_START
-                        : android.widget.RelativeLayout.ALIGN_PARENT_LEFT);
+                if (isTrue) rlp.addRule(android.widget.RelativeLayout.ALIGN_PARENT_START);
                 return;
             case "layout_alignParentRight":
                 if (isTrue) rlp.addRule(android.widget.RelativeLayout.ALIGN_PARENT_RIGHT);
                 return;
             case "layout_alignParentEnd":
-                if (isTrue) rlp.addRule(MACAPK_RL_RELATIVE_VERBS
-                        ? android.widget.RelativeLayout.ALIGN_PARENT_END
-                        : android.widget.RelativeLayout.ALIGN_PARENT_RIGHT);
+                if (isTrue) rlp.addRule(android.widget.RelativeLayout.ALIGN_PARENT_END);
                 return;
             case "layout_centerInParent":
                 if (isTrue) rlp.addRule(android.widget.RelativeLayout.CENTER_IN_PARENT);
@@ -2177,13 +1958,11 @@ public class LayoutInflater {
             case "layout_toLeftOf":
                 rlp.addRule(android.widget.RelativeLayout.LEFT_OF, subject); return;
             case "layout_toStartOf":
-                rlp.addRule(MACAPK_RL_RELATIVE_VERBS ? android.widget.RelativeLayout.START_OF
-                        : android.widget.RelativeLayout.LEFT_OF, subject); return;
+                rlp.addRule(android.widget.RelativeLayout.START_OF, subject); return;
             case "layout_toRightOf":
                 rlp.addRule(android.widget.RelativeLayout.RIGHT_OF, subject); return;
             case "layout_toEndOf":
-                rlp.addRule(MACAPK_RL_RELATIVE_VERBS ? android.widget.RelativeLayout.END_OF
-                        : android.widget.RelativeLayout.RIGHT_OF, subject); return;
+                rlp.addRule(android.widget.RelativeLayout.END_OF, subject); return;
             case "layout_alignTop":
                 rlp.addRule(android.widget.RelativeLayout.ALIGN_TOP, subject); return;
             case "layout_alignBottom":
@@ -2191,13 +1970,11 @@ public class LayoutInflater {
             case "layout_alignLeft":
                 rlp.addRule(android.widget.RelativeLayout.ALIGN_LEFT, subject); return;
             case "layout_alignStart":
-                rlp.addRule(MACAPK_RL_RELATIVE_VERBS ? android.widget.RelativeLayout.ALIGN_START
-                        : android.widget.RelativeLayout.ALIGN_LEFT, subject); return;
+                rlp.addRule(android.widget.RelativeLayout.ALIGN_START, subject); return;
             case "layout_alignRight":
                 rlp.addRule(android.widget.RelativeLayout.ALIGN_RIGHT, subject); return;
             case "layout_alignEnd":
-                rlp.addRule(MACAPK_RL_RELATIVE_VERBS ? android.widget.RelativeLayout.ALIGN_END
-                        : android.widget.RelativeLayout.ALIGN_RIGHT, subject); return;
+                rlp.addRule(android.widget.RelativeLayout.ALIGN_END, subject); return;
             case "layout_alignBaseline":
                 rlp.addRule(android.widget.RelativeLayout.ALIGN_BASELINE, subject); return;
         }
@@ -2236,19 +2013,7 @@ public class LayoutInflater {
         return f > 0 ? 1 : -1;
     }
 
-    /** BISECT GATE (2026-09-26, default ON; docs/fleet-newpipe-vlc-residual_2026-09-26.md).
-     *  applyConstraintLayoutAttribute stores layout_constraintGuide_percent as the
-     *  float it is. =0 restores the pre-change dimension write, which truncated
-     *  every fractional percent Guideline to 0. */
-    static final boolean MACAPK_CL_GUIDE_PERCENT_FLOAT =
-        !"0".equals(System.getenv("MACAPK_CL_GUIDE_PERCENT_FLOAT"));
 
-    /** BISECT GATE (2026-09-26, default ON; lane platlayouts, gate
-     *  debug/platlayout_gate.sh). `@android:dimen/x` in a dimension attribute
-     *  resolves through the platform table (parseDimensionPx). =0 restores the
-     *  pre-change answer, null, which dropped the attribute. */
-    static final boolean MACAPK_INFLATE_FW_DIMEN =
-        !"0".equals(System.getenv("MACAPK_INFLATE_FW_DIMEN"));
 
     /** The literal ("20.0dip") platform dimension `name` holds, or null when the
      *  platform table has no such dimen. Resources.getValue(id, v, true) chases
@@ -2342,43 +2107,6 @@ public class LayoutInflater {
         } catch (Throwable t) { return null; }
     }
 
-    /** BISECT GATES (2026-09-26, default ON; lane B-inflater, cluster B of
-     *  docs/widget-fidelity-cluster_2026-09-25.md). Each restores one pre-change
-     *  inflater behaviour on its own, so a fleet A/B can name which half moved a
-     *  row. The offline gate debug/inflaterattr_gate.sh turns each off on its own
-     *  and requires exactly that gate's rows to go back to the pre-change answers
-     *  (its positive control).
-     *
-     *  MACAPK_INFLATE_STYLE_ATTR=0 -- `style=` accepts only `@style/X` again
-     *  (macapkStyleItems returned an EMPTY map for `style="?attr"`,
-     *  `style="@android:style/X"` and an id-ref style, so every View/TextView
-     *  field those styles carry was dropped by the inflater's own tier-2 copy).
-     *  MACAPK_INFLATE_TA_ATTR=0 -- `android:textAppearance="?attr"` is passed
-     *  through as if it were a style NAME again (so it resolves to nothing and
-     *  the appearance is dropped), a `style=` item's textAppearance again
-     *  outranks the element's own android:textAppearance, and the fontFamily
-     *  path goes back to the old answers: `@android:string/font_family_*` reads
-     *  as no family, and an appearance with no resolvable family resets the
-     *  view's face to DEFAULT (see macapkResolveFontFamilyValue and
-     *  applyTextAppearance). That hardening rides on this gate because B2 is what
-     *  made the path fleet-wide; without it B2 alone erased the constructor's
-     *  face on 59 VLC views. */
-    static final boolean MACAPK_INFLATE_STYLE_ATTR =
-        !"0".equals(System.getenv("MACAPK_INFLATE_STYLE_ATTR"));
-    static final boolean MACAPK_INFLATE_TA_ATTR =
-        !"0".equals(System.getenv("MACAPK_INFLATE_TA_ATTR"));
-    /** Children are built with the parent view's context, and the factories and
-     *  an unknown-class placeholder get the same per-view context (AOSP
-     *  rInflateChildren / createViewFromTag); =0 restores the inflate context
-     *  for every view. */
-    static final boolean MACAPK_INFLATE_PARENT_CONTEXT =
-        !"0".equals(System.getenv("MACAPK_INFLATE_PARENT_CONTEXT"));
-    /** MACAPK_TRACE_INFLATE_STYLE=1: one line per `style=` / textAppearance
-     *  reference the inflater resolves (the raw ref, what it resolved to, and how
-     *  many items the flattened chain carried). The live falsifier for cluster B
-     *  reads this, because dialog windows are not in the tree dump. */
-    private static final boolean MACAPK_TRACE_INFLATE_STYLE =
-        System.getenv("MACAPK_TRACE_INFLATE_STYLE") != null;
 
     /** The Theme of a Context, or null when there is none (or it throws). */
     private static android.content.res.Resources.Theme macapkThemeOf(Context c) {
@@ -2534,14 +2262,8 @@ public class LayoutInflater {
      *  TextViewAppearance, ...)` then `theme.obtainStyledAttributes(ap,
      *  TextAppearance)`). */
     private String styleNameFromRef(String ref, android.content.res.Resources.Theme theme) {
-        if (MACAPK_INFLATE_TA_ATTR) {
-            String n = macapkStyleNameOfRef(ref, theme);
-            if (MACAPK_TRACE_INFLATE_STYLE) {
-                NativeLog.i(TAG, "textAppearance " + ref + " -> " + n);
-            }
-            return n;
-        }
-        return styleNameFromRef(ref);
+        String n = macapkStyleNameOfRef(ref, theme);
+        return n;
     }
     private String styleNameFromRef(String ref) {
         if (ref == null || ref.isEmpty()) return null;
@@ -2572,12 +2294,6 @@ public class LayoutInflater {
         applyTextAppearance(view, styleRef, true);
     }
 
-    /** BISECT GATE (2026-09-26, default ON). A TextView whose element or style
-     *  declares android:textColor keeps its constructor's colour over the
-     *  textAppearance's (see the call in applyAttributes). =0 restores the
-     *  unconditional appearance colour. */
-    static final boolean MACAPK_TA_DECLARED_TEXTCOLOR =
-        !"0".equals(System.getenv("MACAPK_TA_DECLARED_TEXTCOLOR"));
 
     private void applyTextAppearance(View view, String styleRef, boolean applyColor) {
         if (!(view instanceof android.widget.TextView)) return;
@@ -2617,8 +2333,7 @@ public class LayoutInflater {
             // a theme the view is not actually using.
             android.content.res.ColorStateList csl = macapkResolveTextColorList(view, col, viewTheme);
             Integer c = csl != null ? null
-                    : (MACAPK_INFLATE_TA_ATTR ? macapkResolveColorValue(col, viewTheme)
-                                              : macapkResolveColorValue(col));
+                    : (macapkResolveColorValue(col, viewTheme));
             if (csl != null) tv.setTextColor(csl);
             else if (c != null) tv.setTextColor(c);
         }
@@ -2632,9 +2347,9 @@ public class LayoutInflater {
         String fname = (fam == null || fres != null) ? null : macapkResolveFontFamilyValue(fam);
         if (fres != null) {
             tv.setMacapkFontResource(fres);
-        } else if (fname != null || (fam != null && !MACAPK_INFLATE_TA_ATTR)) {
+        } else if (fname != null || (fam != null && false)) {
             tv.setMacapkFontFamily(fname);
-        } else if (MACAPK_INFLATE_TA_ATTR) {
+        } else {
             // The appearance names NO family we can resolve (none in its chain,
             // or one our resolver cannot read). AOSP never lets that ERASE a
             // family: its TextView constructor reads the appearance first and
@@ -2656,10 +2371,6 @@ public class LayoutInflater {
             // MACAPK_INFLATE_TA_ATTR=0 restores the old path.
             android.graphics.Typeface cur = tv.getTypeface();
             if (cur != null) tv.setMacapkFontResource(cur);
-            if (MACAPK_TRACE_INFLATE_STYLE && fam != null) {
-                NativeLog.i(TAG, "textAppearance " + styleName + " fontFamily " + fam
-                    + " unresolved; kept the constructor's face " + cur);
-            }
         }
         String fw = macapkStyleAttrRaw(styleName, "textFontWeight");
         if (fw != null) {
@@ -2889,7 +2600,7 @@ public class LayoutInflater {
         // it would construct with (android14 :1017 tryCreateView(parent, name,
         // context, attrs), after the :1003-1010 android:theme wrap), i.e. the
         // parent's context plus the element's theme. We passed the inflater's.
-        final Context fctx = (MACAPK_INFLATE_PARENT_CONTEXT && inflateContext != null)
+        final Context fctx = (inflateContext != null)
             ? inflateContext : context;
         View v = null;
         try {
@@ -2985,10 +2696,6 @@ public class LayoutInflater {
         return null;
     }
 
-    /** MACAPK_APPCOMPAT_REWRITE_ANY=1 rewrites bare tags for every inflater of an
-     *  app that bundles AppCompat, as before appCompatRewriteApplies. */
-    static final boolean MACAPK_APPCOMPAT_REWRITE_ANY =
-        "1".equals(System.getenv("MACAPK_APPCOMPAT_REWRITE_ANY"));
 
     /** Whether a bare tag becomes AppCompat's subclass here. On Android that is
      *  the work of AppCompat's factory, which AppCompatActivity installs on its
@@ -3003,7 +2710,6 @@ public class LayoutInflater {
      *  there); an Application's context, a plain Activity's and the wrappers
      *  around them get the framework's own classes, as on Android. */
     private boolean appCompatRewriteApplies() {
-        if (MACAPK_APPCOMPAT_REWRITE_ANY || !android.os.Looper.MACAPK_REAL_LOOPER) return true;
         if (factory != null || factory2 != null) return true;
         Context c = context;
         for (int i = 0; c != null && i < 16; i++) {
@@ -3041,7 +2747,6 @@ public class LayoutInflater {
         return "firstBaselineToTopHeight".equals(name) || "lastBaselineToBottomHeight".equals(name);
     }
 
-    static final boolean MACAPK_DEFSTYLE_BARE = "1".equals(System.getenv("MACAPK_DEFSTYLE_BARE"));
 
     /** A widget whose constructor passes a library attribute as its default
      *  style (AppCompat's, the support library's, Material's): its class or an
@@ -3330,21 +3035,10 @@ public class LayoutInflater {
                 if (elem == null) return styleItemsCache;
                 String ref = elem.getAttribute("style");
                 String name;
-                if (MACAPK_INFLATE_STYLE_ATTR) {
-                    if (ref == null || ref.isEmpty()) return styleItemsCache;
-                    name = macapkStyleNameOfRef(ref, macapkThemeOf(styleContext));
-                    if (name == null) {
-                        if (MACAPK_TRACE_INFLATE_STYLE) {
-                            NativeLog.i(TAG, "style " + ref + " on <" + elem.getTagName()
-                                + "> -> UNRESOLVED (no items)");
-                        }
-                        return styleItemsCache;
-                    }
-                } else {
-                    if (ref == null || !ref.startsWith("@style/")) {
-                        return styleItemsCache;
-                    }
-                    name = ref.substring(7);
+                if (ref == null || ref.isEmpty()) return styleItemsCache;
+                name = macapkStyleNameOfRef(ref, macapkThemeOf(styleContext));
+                if (name == null) {
+                    return styleItemsCache;
                 }
                 Object ri = ResBackend.get().resourceIndex();
                 if (ri == null) return styleItemsCache;
@@ -3371,10 +3065,6 @@ public class LayoutInflater {
                                 String.valueOf(en.getValue()));
                         }
                     }
-                }
-                if (MACAPK_TRACE_INFLATE_STYLE && !ref.startsWith("@style/")) {
-                    NativeLog.i(TAG, "style " + ref + " on <" + elem.getTagName() + "> -> "
-                        + chain.size() + " style(s), " + styleItemsCache.size() + " item(s)");
                 }
             } catch (Throwable ignored) {}
             return styleItemsCache;
@@ -3637,11 +3327,6 @@ public class LayoutInflater {
         @Override public int    getStyleAttribute() { return 0; }
     }
 
-    /** BISECT GATE (cluster B3, 2026-09-26, default ON):
-     *  MACAPK_CTOR_PADDING_SKIP=0 replays tier-1/2 padding after construction
-     *  and keeps the MaterialButton stand-in padding exactly as before. */
-    static final boolean MACAPK_CTOR_PADDING_SKIP =
-        !"0".equals(System.getenv("MACAPK_CTOR_PADDING_SKIP"));
 
     /** True when the post-construction padding replay would re-apply only what
      *  the view's OWN constructor already resolved from the same cascade
@@ -3724,7 +3409,7 @@ public class LayoutInflater {
     private void applyAttributes(View view, Element elem) {
         // Cluster B3: the padding the view's constructor chain left, before
         // anything below can move it (see macapkCtorPaddingAlreadyApplied).
-        final int[] macapkPadAfterCtor = (MACAPK_CTOR_PADDING_SKIP && view.macapkCtorPaddingMask != 0)
+        final int[] macapkPadAfterCtor = (view.macapkCtorPaddingMask != 0)
             ? new int[]{ view.getPaddingLeft(), view.getPaddingTop(),
                          view.getPaddingRight(), view.getPaddingBottom() }
             : null;
@@ -3780,12 +3465,7 @@ public class LayoutInflater {
                 "http://schemas.android.com/apk/res/android", "textAppearance");
             String own = taAttr != null ? taAttr.getValue() : null;
             String ta;
-            if (MACAPK_INFLATE_TA_ATTR) {
-                ta = (own != null && !own.isEmpty()) ? own : sitems.get("textAppearance");
-            } else {
-                ta = sitems.get("textAppearance");
-                if (ta == null) ta = own;
-            }
+            ta = (own != null && !own.isEmpty()) ? own : sitems.get("textAppearance");
             if (ta != null) {
                 // BISECT GATE MACAPK_TA_DECLARED_TEXTCOLOR (2026-09-26, default ON;
                 // docs/fleet-newpipe-vlc-residual_2026-09-26.md). AOSP TextView reads
@@ -3803,8 +3483,7 @@ public class LayoutInflater {
                 // read the Button appearance's #ffffffff. So when the element or its
                 // style declares textColor, the appearance's colour is not applied.
                 // =0 restores the unconditional re-apply.
-                boolean declaredColor = MACAPK_TA_DECLARED_TEXTCOLOR
-                    && view instanceof android.widget.TextView
+                boolean declaredColor = view instanceof android.widget.TextView
                     && (sitems.get("textColor") != null
                         || elem.getAttributeNodeNS("http://schemas.android.com/apk/res/android",
                                                    "textColor") != null);
@@ -3851,8 +3530,7 @@ public class LayoutInflater {
         // background instead of clearing afterwards, so a background a view's
         // own constructor installed in code survives, as on a device.
         // MACAPK_INFLATE_ELEMENT_NULL_BG=0 restores the old order.
-        final boolean elemNullBg = MACAPK_INFLATE_ELEMENT_NULL_BG
-            && macapkIsNullBackground(macapkElementAttr(elem, "background"));
+        final boolean elemNullBg = macapkIsNullBackground(macapkElementAttr(elem, "background"));
         for (java.util.Map.Entry<String, String> en : sitems.entrySet()) {
             String name = en.getKey();
             if (name.startsWith("layout_") || "style".equals(name)
@@ -3952,18 +3630,8 @@ public class LayoutInflater {
         // at all and were dropped. deferredPadding holds the MERGED family
         // (style items, then the element's own attributes overwriting the same
         // name), which is exactly what a TypedArray presents to that code.
-        if (LAYOUT_AOSP_1643) {
-            if (!macapkCtorPaddingAlreadyApplied(view, deferredPadding, macapkPadAfterCtor))
-                macapkApplyResolvedPadding(view, deferredPadding);
-        } else {
-            for (String first : new String[]{"padding", "paddingHorizontal", "paddingVertical"}) {
-                String v = deferredPadding.remove(first);
-                if (v != null) applyAttribute(view, first, v);
-            }
-            for (java.util.Map.Entry<String, String> en : deferredPadding.entrySet()) {
-                applyAttribute(view, en.getKey(), en.getValue());
-            }
-        }
+        if (!macapkCtorPaddingAlreadyApplied(view, deferredPadding, macapkPadAfterCtor))
+            macapkApplyResolvedPadding(view, deferredPadding);
         // Last, so it beats any lineSpacingMultiplier applied above -- AOSP
         // TextView.java:2014-2018.
         for (java.util.Map.Entry<String, String> en : deferredLineHeight.entrySet()) {
@@ -3979,26 +3647,9 @@ public class LayoutInflater {
         macapkApplyThemeElevation(view, elem, sitems);
     }
 
-    /** AOSP View(Context, AttributeSet, int, int) reads android:elevation through
-     *  obtainStyledAttributes, whose last fallback, after the XML attribute, the
-     *  style= items and the default style, is the view's own THEME. So a theme
-     *  overlay that sets android:elevation (app:theme on a view, wrapped into a
-     *  ContextThemeWrapper by AppCompat's inflater) raises that view. Our View
-     *  constructor makes that read only for a view given a default style
-     *  (MACAPK_VIEW_CTOR_ELEVATION); for one built with defStyleAttr and
-     *  defStyleRes both 0, the plain XML case, elevation came only from the
-     *  element and its style here, so a theme overlay left it at Z 0.
-     *
-     *  Z orders touch dispatch, not only shadows: WhatsApp's welcome screen
-     *  centres a scroll view that, on a short screen, reaches up under its top
-     *  bar. On Android the bar's overlay gives it 4dp and the bar takes the taps
-     *  over its overflow button first; at Z 0 the scroll view took them.
-     *  MACAPK_THEME_ELEVATION=0 turns this off. */
-    private static final boolean MACAPK_THEME_ELEVATION =
-        !"0".equals(System.getenv("MACAPK_THEME_ELEVATION"));
     private void macapkApplyThemeElevation(View view, Element elem,
                                            java.util.Map<String, String> sitems) {
-        if (!MACAPK_THEME_ELEVATION || view == null || view.getElevation() != 0f) return;
+        if (view == null || view.getElevation() != 0f) return;
         if (elem.hasAttributeNS(MACAPK_ANDROID_NS, "elevation")) return;
         if (sitems != null && sitems.containsKey("elevation")) return;
         final Context vc = view.getContext();
@@ -4019,12 +3670,6 @@ public class LayoutInflater {
         }
     }
 
-    /** BISECT GATE shared by name with android.widget.TextView and
-     *  android.text.Layout (MACAPK_TEXT_LINES_AOSP=0 restores the pre-gate
-     *  text line behaviour); the inflater half is the singleLine replay, the
-     *  style-sourced END default and the XML-marquee hook. */
-    static final boolean MACAPK_TEXT_LINES_AOSP =
-        !"0".equals(System.getenv("MACAPK_TEXT_LINES_AOSP"));
 
     /** AOSP's TextView constructor reads singleLine and ellipsize through the
      *  TypedArray -- style= and defStyle values included -- and acts on them
@@ -4043,7 +3688,6 @@ public class LayoutInflater {
      *  inputType, the two things that give a TextView one at that point. */
     private static void macapkReplaySingleLine(android.widget.TextView tv, Element elem,
                                                java.util.Map<String, String> sitems) {
-        if (!MACAPK_TEXT_LINES_AOSP) return;
         try {
             String sl = null;
             org.w3c.dom.Attr a = (elem == null) ? null : elem.getAttributeNodeNS(
@@ -4074,22 +3718,6 @@ public class LayoutInflater {
      *  View.macapkPaintMaterialChrome; the text goes white + centered + ~40dp tall.
      *  Generic for any app's filled MaterialButton, keyed on the widget + the
      *  Material3 selector name -- no per-APK data. */
-    /** Fill `sitems` with the theme's WIDGET DEFAULT STYLE for this view class,
-     *  without overwriting anything the app's own `style=` already set.
-     *
-     *  See the call site for why this tier was missing entirely. The framework
-     *  style table answers PER-ATTR (ResourceIndex.frameworkStyleAttr ->
-     *  macapkFrameworkButtonGeom) rather than handing back an item map, so this
-     *  asks for the specific attrs those styles carry.
-     *
-     *  Deliberately Button-only: it is the one widget with a measured victim and
-     *  with a framework style we can actually answer for. Widening it to
-     *  textViewStyle / checkboxStyle / etc. means teaching the framework style
-     *  table about those styles first, and each family has DIFFERENT values
-     *  (see macapkFrameworkButtonGeom's citation block) -- so that is a separate,
-     *  separately-measured change, not a loop over more names here. */
-    private static final boolean MACAPK_DEFSTYLE_UNDER_ELEMENT =
-        "1".equals(System.getenv("MACAPK_DEFSTYLE_UNDER_ELEMENT"));
 
     private void applyWidgetDefaultStyle(View view, java.util.Map<String, String> sitems,
                                          Element elem) {
@@ -4103,7 +3731,6 @@ public class LayoutInflater {
             // simplified TypedArray, which never delivered the framework style's
             // `background`.
             final String cn = view.getClass().getSimpleName();
-            final boolean trace = "1".equals(System.getenv("MACAPK_TRACE_DEFSTYLE_APPLY"));
             // v1.0.906: driven off the AOSP widget-class -> defStyleAttr map
             // instead of a hardcoded `if Button`. Every framework widget gets its
             // default style through its own constructor -- RadioButton(Context,
@@ -4131,7 +3758,6 @@ public class LayoutInflater {
                 defStyleAttr = macapkDefStyleAttrFor("EditText");
             }
             if (defStyleAttr == null) {
-                if (trace) android.util.Log.i("Mac.apk.DefStyle", "skip class=" + cn);
                 return;
             }
             Object ri = ResBackend.get().resourceIndex();
@@ -4148,11 +3774,9 @@ public class LayoutInflater {
             // (minimum touch target, 48 dp): every plain CheckBox and Switch came
             // out 48x48 where Android has 32x32 (the screens sweep, Fossify's menus
             // and preferences). MACAPK_DEFSTYLE_BARE=1 brings back the bare query.
-            final String queryAttr = !MACAPK_DEFSTYLE_BARE && !macapkLibraryWidget(view.getClass())
+            final String queryAttr = !macapkLibraryWidget(view.getClass())
                     ? "android:" + defStyleAttr : defStyleAttr;
             Object sr = ResBackend.get().indexResolveAttrInTheme(ri, (String) appTheme, queryAttr);
-            if (trace) android.util.Log.i("Mac.apk.DefStyle",
-                "cn=" + cn + " appTheme=" + appTheme + " " + queryAttr + "=" + sr);
             if (!(sr instanceof String)) return;
             String styleName = ((String) sr).trim();
             // ⚠ v1.0.871 BUG FIX. This used to `return` unless the name began
@@ -4260,16 +3884,14 @@ public class LayoutInflater {
                 // applied. Installing it first and replacing it after left that
                 // padding behind: 12,10,12,10 on a button Android pads 0 (Cal,
                 // Maccabi). MACAPK_DEFSTYLE_UNDER_ELEMENT=1 restores that.
-                if (!MACAPK_DEFSTYLE_UNDER_ELEMENT && elem != null
+                if (elem != null
                         && elem.hasAttributeNS(MACAPK_ANDROID_NS, attr)) continue;
                 Object v = ResBackend.get().indexResolveAttrInTheme(ri, styleName, attr);
-                if (trace) android.util.Log.i("Mac.apk.DefStyle",
-                    "  " + styleName + "." + attr + " = " + v);
                 if (v instanceof String && !((String) v).isEmpty()) {
                     sitems.put(attr, (String) v);
                 }
             }
-            if (compound) macapkInstallButtonDrawable(view, sitems, ri, appTheme, trace, elem);
+            if (compound) macapkInstallButtonDrawable(view, sitems, ri, appTheme, false, elem);
         } catch (Throwable ignored) {}
     }
 
@@ -4379,7 +4001,7 @@ public class LayoutInflater {
                 // right here, before the synthesized fallback below could run.
                 // See macapkInstallFrameworkButtonDrawable for the regression
                 // and its gate; with the gate off this is the old early return.
-                if (MACAPK_BUTTON_FW_REF && ref.startsWith("@android:drawable/")) {
+                if (ref.startsWith("@android:drawable/")) {
                     // THE TAG'S OWN android:button OUTRANKS THIS DEFAULT. `ref`
                     // came from the defStyleAttr (tier 3); AOSP reads the
                     // indicator with obtainStyledAttributes(attrs,
@@ -4470,13 +4092,6 @@ public class LayoutInflater {
         } catch (Throwable ignored) {}
     }
 
-    /** Wave 5 (2026-09-26), docs/w5-inflater-fixes_2026-09-26.md F3. Default ON;
-     *  `MACAPK_BUTTON_FW_REF=0` restores the early return in
-     *  macapkInstallButtonDrawable for an `@android:drawable/` indicator, so a
-     *  plain framework-themed CheckBox is again drawn with no box (the regressed
-     *  state), from one binary. */
-    static final boolean MACAPK_BUTTON_FW_REF =
-        !"0".equals(System.getenv("MACAPK_BUTTON_FW_REF"));
 
     /** The indicator for a CompoundButton whose `button` chases to a PLATFORM
      *  drawable, `@android:drawable/<name>`.
@@ -4610,14 +4225,6 @@ public class LayoutInflater {
             } catch (Throwable ignored) {}
             String rawTint = macapkElementAttr(elem, "backgroundTint");
             if (rawTint == null) rawTint = sitems.get("backgroundTint");
-            if (System.getenv("MACAPK_TRACE_MTLBTN") != null) {
-                android.util.Log.i("Mac.apk.MtlBtn", "cn=" + cn
-                    + " elemTint=" + macapkElementAttr(elem, "backgroundTint")
-                    + " styleTint=" + sitems.get("backgroundTint")
-                    + " raw=" + rawTint
-                    + " resolved=" + (rawTint == null ? null : macapkResolveColorValue(rawTint, vth))
-                    + " overlay=" + macapkMaterialOverlayColor(elem, "colorContainer"));
-            }
             if (rawTint == null) return;   // no tint declared anywhere: not ours to paint
             Integer fill = macapkResolveColorValue(rawTint, vth);
             if (fill == null) {
@@ -4706,7 +4313,7 @@ public class LayoutInflater {
                 // added its insets to it): anki get_started 48,20,48,20 on a
                 // device, this wrote 48,12,48,12 over it.
                 if (!macapkDeclares(elem, sitems, "padding")
-                        && !(MACAPK_CTOR_PADDING_SKIP && view.macapkCtorPaddingMask != 0)) {
+                        && !(view.macapkCtorPaddingMask != 0)) {
                     int hp = 24 * density, vp = 6 * density;
                     tv.setPadding(hp, vp, hp, vp);
                 }
@@ -5298,7 +4905,7 @@ public class LayoutInflater {
                     // android:textStyle="bold|italic". F-Droid's summary is
                     // bold; without this it rendered regular weight.
                     if (view instanceof android.widget.TextView tvst
-                            && (MACAPK_INFLATE_TYPEFACE_AGAIN || !tvst.macapkCtorTypefaceRead())) {
+                            && (!tvst.macapkCtorTypefaceRead())) {
                         tvst.setMacapkTextStyle(parseTextStyle(value));
                     }
                     return;
@@ -5312,7 +4919,7 @@ public class LayoutInflater {
                     // textStyle, because the family is looked up at NORMAL and
                     // the style applied on top (AOSP setTypefaceFromAttrs).
                     if (view instanceof android.widget.TextView tvff
-                            && (MACAPK_INFLATE_TYPEFACE_AGAIN || !tvff.macapkCtorTypefaceRead())) {
+                            && (!tvff.macapkCtorTypefaceRead())) {
                         // A FONT RESOURCE takes precedence over a family name,
                         // matching AOSP's setTypefaceFromAttrs precedence.
                         android.graphics.Typeface fres = macapkResolveFontResource(value);
@@ -5326,7 +4933,7 @@ public class LayoutInflater {
                             // DEFAULT". Same rule, and the same gate, as
                             // applyTextAppearance's family branch.
                             String fname = macapkResolveFontFamilyValue(value);
-                            if (fname != null || !MACAPK_INFLATE_TA_ATTR) tvff.setMacapkFontFamily(fname);
+                            if (fname != null) tvff.setMacapkFontFamily(fname);
                         }
                     }
                     return;
@@ -5336,7 +4943,7 @@ public class LayoutInflater {
                     // +300 and no synthetic bold -- so it is NOT interchangeable
                     // with textStyle. See TextView.macapkApplyTypefaceFromAttrs.
                     if (view instanceof android.widget.TextView tvfw
-                            && (MACAPK_INFLATE_TYPEFACE_AGAIN || !tvfw.macapkCtorTypefaceRead())) {
+                            && (!tvfw.macapkCtorTypefaceRead())) {
                         try { tvfw.setMacapkFontWeight(Integer.parseInt(value.trim())); }
                         catch (NumberFormatException ignored) {}
                     }
@@ -5434,7 +5041,7 @@ public class LayoutInflater {
                     // of right-aligned. v1.0.1643. (androidx NestedScrollView
                     // reads it from its own TypedArray; setting it again here is
                     // the same value.)
-                    if (LAYOUT_AOSP_1643) setBooleanReflect(view, attr, "true".equals(value));
+                    setBooleanReflect(view, attr, "true".equals(value));
                     return;
                 case "descendantFocusability":
                     // AOSP ViewGroup's constructor: setDescendantFocusability(
@@ -5645,7 +5252,7 @@ public class LayoutInflater {
                         // TextView.java:1797-1806); a programmatic
                         // setEllipsize(MARQUEE) does not. See
                         // TextView.macapkEffectiveEllipsize.
-                        if (e == android.text.TextUtils.TruncateAt.MARQUEE && MACAPK_TEXT_LINES_AOSP)
+                        if (e == android.text.TextUtils.TruncateAt.MARQUEE)
                             tv.macapkSetXmlMarquee();
                         if (e != null) tv.setEllipsize(e);
                     }
@@ -6086,7 +5693,7 @@ public class LayoutInflater {
     private String macapkResolveFontFamilyValue(String v) {
         if (v == null || v.isEmpty()) return null;
         if (v.startsWith("@font/") || v.startsWith("@android:font/")) return null;
-        String s = (MACAPK_INFLATE_TA_ATTR && v.startsWith("@android:string/"))
+        String s = (v.startsWith("@android:string/"))
             ? macapkPlatformString(v.substring("@android:string/".length()))
             : resolveString(v);
         if (s == null || s.isEmpty() || s.charAt(0) == '@' || s.charAt(0) == '?') return null;
@@ -6251,7 +5858,7 @@ public class LayoutInflater {
                 // table type ^attr-private). A theme item is keyed by the attr's
                 // NAME, which is unique across attr and ^attr-private in one
                 // package, so the type prefix is dropped for the theme walk.
-                if (MACAPK_PLATFORM_LAYOUTS && attr.startsWith("android:^attr-private/")) {
+                if (attr.startsWith("android:^attr-private/")) {
                     attr = "android:" + attr.substring("android:^attr-private/".length());
                 }
                 // The theme of the context being inflated into answers first: a size written
@@ -6278,7 +5885,7 @@ public class LayoutInflater {
                 String raw = macapkDimenRaw(body.substring(6));
                 if (raw == null || raw.isEmpty()) return null;
                 s = raw;
-            } else if (MACAPK_INFLATE_FW_DIMEN && body.startsWith("android:dimen/")) {
+            } else if (body.startsWith("android:dimen/")) {
                 // A PLATFORM dimension, the spelling of every 0x0105.... reference
                 // in a compiled framework layout (select_dialog_singlechoice_material's
                 // paddingStart = @android:dimen/select_dialog_padding_start_material)
@@ -6609,14 +6216,6 @@ public class LayoutInflater {
         }
     }
 
-    /** Wave 5 (2026-09-26), docs/w5-inflater-fixes_2026-09-26.md F6. Default ON;
-     *  `MACAPK_COLOR_FILE_DRAWABLE=0` restores the flattening, where a
-     *  `@color/` selector background became setBackgroundColor(default row).
-     *  The same name gates the matching Resources.getDrawable and
-     *  ColorStateListDrawable.isStateful changes (drawables lane), so one env
-     *  var A/Bs the whole chain. */
-    static final boolean MACAPK_COLOR_FILE_DRAWABLE =
-        !"0".equals(System.getenv("MACAPK_COLOR_FILE_DRAWABLE"));
 
     /** `android:background="@color/X"` where X is a res/color FILE (a
      *  ColorStateList `<selector>`), as the stateful ColorStateListDrawable a
@@ -6660,7 +6259,7 @@ public class LayoutInflater {
      *  loadColorOrXmlDrawable second arm, a DRAWABLE xml filed under res/color. */
     private static android.graphics.drawable.Drawable macapkColorFileDrawable(
             View view, String value, android.content.res.Resources.Theme theme) {
-        if (!MACAPK_COLOR_FILE_DRAWABLE || value == null || !value.startsWith("@color/")) return null;
+        if (value == null || !value.startsWith("@color/")) return null;
         try {
             android.content.res.Resources r = view.getResources();
             if (r == null) return null;
@@ -6680,20 +6279,8 @@ public class LayoutInflater {
         }
     }
 
-    /** Cluster A3: aapt2's two TYPE_NULL spellings (ResourceUtils.cpp
-     *  TryParseNullOrEmpty :345-364, android14-release). Gated with A2
-     *  (MACAPK_TYPEDARRAY_NULL_HASVALUE=0 -> false): with A2 off the View
-     *  constructor still installs the VectorDrawable stub, which sets the flag
-     *  itself, so the gate-off path stays byte-for-byte the pre-A2 one. */
-    private static final boolean MACAPK_A3_NULL_BG_DECLARED =
-        !"0".equals(System.getenv("MACAPK_TYPEDARRAY_NULL_HASVALUE"));
-    /** Plague Inc. news bar: an element's own background=@null keeps the
-     *  style tier's background off (see the style-items loop). =0 restores the
-     *  pre-change order, where the style background stayed. */
-    private static final boolean MACAPK_INFLATE_ELEMENT_NULL_BG =
-        !"0".equals(System.getenv("MACAPK_INFLATE_ELEMENT_NULL_BG"));
     private static boolean macapkIsNullBackground(String v) {
-        if (v == null || !MACAPK_A3_NULL_BG_DECLARED) return false;
+        if (v == null) return false;
         String t = v.trim();
         return t.equals("@null") || t.equals("@empty");
     }
@@ -6854,23 +6441,9 @@ public class LayoutInflater {
         return null;
     }
 
-    /** A TextView colour attribute as AOSP reads it: TypedArray.getColorStateList,
-     *  so a @color/ SELECTOR (directly, or reached through ?attr hops in the
-     *  view's theme) keeps its states. Both of our textColor paths (the direct
-     *  attribute and the textAppearance's) resolved to ONE int, which froze every
-     *  selector text colour on its default row: a disabled preference
-     *  (androidx's setEnabledStateOnViews -> setEnabled(false)) kept full-ink
-     *  text under Material 3's m3_default_color_primary_text, whose
-     *  state_enabled="false" row carries the 38% disabled alpha (Privacy
-     *  Friendly Notes' Settings: "Autodelete timespan" while its dependency is
-     *  off). Returns null for anything that is not a STATEFUL list, so plain
-     *  colours keep the int path exactly. MACAPK_TEXTCOLOR_CSL=0 restores the
-     *  int-only path. */
-    static final boolean MACAPK_TEXTCOLOR_CSL =
-        !"0".equals(System.getenv("MACAPK_TEXTCOLOR_CSL"));
     private android.content.res.ColorStateList macapkResolveTextColorList(View view, String value,
             android.content.res.Resources.Theme th) {
-        if (!MACAPK_TEXTCOLOR_CSL || value == null) return null;
+        if (value == null) return null;
         String cur = value.trim();
         if (cur.isEmpty() || cur.startsWith("#")) return null;
         android.content.res.Resources r = view.getResources();
@@ -7134,15 +6707,8 @@ public class LayoutInflater {
             // ("startToStart,mResolvedLeftToLeft") -- we set every
             // listed field so both the public + package-private shadow
             // get the same target ID.
-            boolean traceOn = "1".equals(System.getenv("MACAPK_TRACE_CL_PARAMS"));
             for (String fieldName : fieldSpec.split(",")) {
                 boolean ok = setIntField(lp, fieldName, targetId);
-                if (traceOn) {
-                    com.macapk.loader.NativeLog.i(TAG,
-                        "CL." + fieldName + " <- " + targetId
-                        + " (attr=" + attr + ", val=" + value
-                        + ", set=" + ok + ")");
-                }
             }
             return;
         }
@@ -7174,7 +6740,7 @@ public class LayoutInflater {
         // answer: a literal is re-stored as the same float, and a reference
         // (@dimen / @fraction / ?attr), which the constructor already chased, is
         // left alone. =0 restores the dimension write exactly.
-        if (MACAPK_CL_GUIDE_PERCENT_FLOAT && "layout_constraintGuide_percent".equals(attr)) {
+        if ("layout_constraintGuide_percent".equals(attr)) {
             try {
                 setFloatField(lp, "guidePercent", Float.parseFloat(value.trim()));
             } catch (NumberFormatException refLeftToTheCtor) {
@@ -7283,7 +6849,6 @@ public class LayoutInflater {
      *  MACAPK_INFLATE_PARSER=0 restores the old stub, which returned `root`
      *  without reading the parser. */
     public android.view.View inflate(org.xmlpull.v1.XmlPullParser parser, android.view.ViewGroup root, boolean attachToRoot) {
-        if (!MACAPK_INFLATE_PARSER) return root;
         if (parser == null) throw new NullPointerException("parser");
         Document doc;
         try {
@@ -7311,11 +6876,6 @@ public class LayoutInflater {
         }
     }
 
-    /** Wave 5 (2026-09-26), docs/w5-inflater-fixes_2026-09-26.md E3. Default ON;
-     *  `MACAPK_INFLATE_FAIL_ONCE=0` restores a full NativeLog.e line plus
-     *  printStackTrace() for EVERY swallowed inflate failure. */
-    static final boolean MACAPK_INFLATE_FAIL_ONCE =
-        !"0".equals(System.getenv("MACAPK_INFLATE_FAIL_ONCE"));
 
     /** Failures seen per (layout id, exception class). Bounded by the app's
      *  layout count times the distinct exception classes it can raise. */
@@ -7347,11 +6907,6 @@ public class LayoutInflater {
      *  gets its own full trace. `resId` is 0 for a parser that carries no
      *  source id; those share one key per exception class. */
     private static void macapkReportInflateFailure(String msg, int resId, Throwable t) {
-        if (!MACAPK_INFLATE_FAIL_ONCE) {
-            NativeLog.e(TAG, msg);
-            t.printStackTrace();
-            return;
-        }
         String key = Integer.toHexString(resId) + '|' + t.getClass().getName();
         int n = macapkInflateFailCounts
             .computeIfAbsent(key, k -> new java.util.concurrent.atomic.AtomicInteger())

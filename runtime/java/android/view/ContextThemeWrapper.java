@@ -45,7 +45,7 @@ public class ContextThemeWrapper extends ContextWrapper {
     // one AntennaPod boot (MACAPK_TRACE_DEFSTYLE, 2026-08-01), the M2-shaped
     // 63dp bottom bar, and the unstyled toolbar title.
     public static final boolean MACAPK_VIEW_THEME =
-        macapkFlagOn(System.getenv("MACAPK_VIEW_THEME"), true);
+        macapkFlagOn(null, true);
 
     private static boolean macapkFlagOn(String v, boolean dflt) {
         if (v == null || v.isEmpty()) return dflt;
@@ -299,7 +299,7 @@ public class ContextThemeWrapper extends ContextWrapper {
     /** Gate MACAPK_CTW_INFLATER_SERVICE (default ON; =0 restores the old
      *  forward-to-base answer byte for byte). */
     static final boolean MACAPK_CTW_INFLATER_SERVICE =
-        macapkFlagOn(System.getenv("MACAPK_CTW_INFLATER_SERVICE"), true);
+        macapkFlagOn(null, true);
 
     /** AOSP ContextThemeWrapper.getSystemService (android14-release
      *  core/java/android/view/ContextThemeWrapper.java:181-189):

@@ -69,27 +69,20 @@ public class ActionMenuView extends LinearLayout {
     /** AOSP ActionMenuView(Context, AttributeSet) :78-88: baselineAligned off,
      *  the cell constants, "mPopupContext = context". */
     private void macapkInit() {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) return;
         setBaselineAligned(false);
         mPopupContext = getContext();
     }
 
     public Menu getMenu() {
         if (mMenu == null) {
-            if (Toolbar.MACAPK_PLATFORM_TOOLBAR) {
-                // AOSP :641-655 -- a MenuBuilder with this view's presenter,
-                // "mPresenter.setReserveOverflow(true)"; adding the presenter
-                // runs its initForMenu (ActionMenuPresenter :153-168), which
-                // creates the overflow button up front, so getOverflowIcon()
-                // answers the style's icon before any item exists.
-                mReserveOverflow = true;
-                mMenu = new MenuImpl(getContext(), this);
-                overflowButton();
-            } else {
-                // Reuse PopupMenu's concrete Menu (MenuStub) so inflate + getItem
-                // work; ActionMenuView itself does not paint the items.
-                mMenu = new PopupMenu(getContext(), this).getMenu();
-            }
+            // AOSP :641-655 -- a MenuBuilder with this view's presenter,
+            // "mPresenter.setReserveOverflow(true)"; adding the presenter
+            // runs its initForMenu (ActionMenuPresenter :153-168), which
+            // creates the overflow button up front, so getOverflowIcon()
+            // answers the style's icon before any item exists.
+            mReserveOverflow = true;
+            mMenu = new MenuImpl(getContext(), this);
+            overflowButton();
         }
         return mMenu;
     }
@@ -99,13 +92,11 @@ public class ActionMenuView extends LinearLayout {
      *  reset them", then LinearLayout's measure. */
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        if (Toolbar.MACAPK_PLATFORM_TOOLBAR) {
-            final int childCount = getChildCount();
-            for (int i = 0; i < childCount; i++) {
-                final ViewGroup.LayoutParams lp = getChildAt(i).getLayoutParams();
-                if (lp instanceof LayoutParams) {
-                    ((LayoutParams) lp).leftMargin = ((LayoutParams) lp).rightMargin = 0;
-                }
+        final int childCount = getChildCount();
+        for (int i = 0; i < childCount; i++) {
+            final ViewGroup.LayoutParams lp = getChildAt(i).getLayoutParams();
+            if (lp instanceof LayoutParams) {
+                ((LayoutParams) lp).leftMargin = ((LayoutParams) lp).rightMargin = 0;
             }
         }
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
@@ -121,7 +112,6 @@ public class ActionMenuView extends LinearLayout {
 
     /** AOSP :95-104 -- the popup context is what the overflow popup runs in. */
     public void setPopupTheme(int resId) {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) { mPopupTheme = resId; return; }
         if (mPopupTheme != resId) {
             mPopupTheme = resId;
             mPopupContext = resId == 0 ? getContext()
@@ -135,7 +125,6 @@ public class ActionMenuView extends LinearLayout {
      *  to put in it; the popup opens from a post, as AOSP's OpenOverflowRunnable
      *  does, so a menu view that has not been laid out yet anchors correctly. */
     public boolean showOverflowMenu() {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) return false;
         if (mReserveOverflow && !isOverflowMenuShowing() && mMenu instanceof MenuImpl
                 && mPostedOpenRunnable == null && !overflowItems((MenuImpl) mMenu).isEmpty()) {
             mPostedOpenRunnable = new Runnable() {
@@ -151,7 +140,6 @@ public class ActionMenuView extends LinearLayout {
     }
     /** AOSP ActionMenuPresenter.hideOverflowMenu (:572-585). */
     public boolean hideOverflowMenu() {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) return false;
         if (mPostedOpenRunnable != null) {
             removeCallbacks(mPostedOpenRunnable);
             mPostedOpenRunnable = null;
@@ -165,13 +153,11 @@ public class ActionMenuView extends LinearLayout {
         return false;
     }
     public boolean isOverflowMenuShowing() {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) return false;
         return mOverflowPopup != null && mOverflowPopupShowing;
     }
     /** AOSP isOverflowReserved (:570). */
     public boolean isOverflowReserved() { return mReserveOverflow; }
     public void dismissPopupMenus() {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) return;
         hideOverflowMenu();
     }
 
@@ -186,7 +172,6 @@ public class ActionMenuView extends LinearLayout {
      *  gate off the icon is simply held on the view, as before. */
     private android.graphics.drawable.Drawable mOverflowIcon;
     public void setOverflowIcon(android.graphics.drawable.Drawable icon) {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) { mOverflowIcon = icon; return; }
         getMenu();
         if (mOverflowButton != null) {
             mOverflowButton.setImageDrawable(icon);
@@ -196,7 +181,6 @@ public class ActionMenuView extends LinearLayout {
         }
     }
     public android.graphics.drawable.Drawable getOverflowIcon() {
-        if (!Toolbar.MACAPK_PLATFORM_TOOLBAR) return mOverflowIcon;
         getMenu();
         if (mOverflowButton != null) return mOverflowButton.getDrawable();
         return mPendingOverflowIconSet ? mOverflowIcon : null;
@@ -232,11 +216,8 @@ public class ActionMenuView extends LinearLayout {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof ActionMenuView.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
 
     /** AOSP ActionMenuView.generateLayoutParams(AttributeSet). See TableRow.
      *

@@ -207,11 +207,6 @@ public final class AssetManager implements AutoCloseable {
 
     private static java.io.File macapkFrameworkAssetApk() {
         try {
-            String env = System.getenv("MACAPK_FW_RES_APK");
-            if (env != null && !env.isEmpty()) {
-                java.io.File f = new java.io.File(env);
-                if (f.isFile()) return f;
-            }
             // The same apk the ResourceIndex resolves against, found relative
             // to the jar this class runs from (runtime/build/lib/ ->
             // ../bin/tools/, Contents/lib/ -> ../Resources/tools/). v1.0.1590:

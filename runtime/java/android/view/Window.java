@@ -608,7 +608,7 @@ public abstract class Window {
             if (mWindowStyle == null && mContext != null) {
                 try {
                     mWindowStyle = mContext.obtainStyledAttributes(
-                            MACAPK_WINDOW_STYLEABLE ? macapkWindowStyleable(mContext) : new int[0]);
+                            macapkWindowStyleable(mContext));
                 } catch (Throwable ignored) {}
             }
             return mWindowStyle;
@@ -637,9 +637,6 @@ public abstract class Window {
     //  * a PRIVATE name (windowActionBarFullscreenDecorLayout, the four
     //    windowFixed*, windowOutsetBottom) takes getIdentifier(name,
     //    "^attr-private", "android").
-    // Built once per process: the platform table is process-global.
-    static final boolean MACAPK_WINDOW_STYLEABLE =
-            !"0".equals(System.getenv("MACAPK_WINDOW_STYLEABLE"));
     private static final String[] MACAPK_WINDOW_STYLEABLE_NAMES = {
         "windowBackground", "windowBackgroundFallback", "windowBackgroundBlurRadius",
         "windowContentOverlay", "windowFrame", "windowNoTitle", "windowFullscreen",
@@ -796,9 +793,6 @@ public abstract class Window {
     // it attached the code field's TextWatcher, so a complete code did nothing.
     // Nothing runs the transitions (cosmetic, see above); the objects exist so
     // the app's own code around them completes. MACAPK_WINDOW_TRANSITIONS=0
-    // restores the null stubs.
-    static final boolean MACAPK_WINDOW_TRANSITIONS =
-            !"0".equals(System.getenv("MACAPK_WINDOW_TRANSITIONS"));
     /** PhoneWindow.USE_DEFAULT_TRANSITION: "return falls back to enter". */
     private static final android.transition.Transition USE_DEFAULT_TRANSITION =
             new android.transition.TransitionSet();
@@ -816,7 +810,7 @@ public abstract class Window {
      *  installDecor (setContentView), before any app code can read these. Only
      *  a slot the app has not set yet takes the theme's value. */
     private void macapkLoadTransitions() {
-        if (mMacapkTransitionsLoaded || !MACAPK_WINDOW_TRANSITIONS) return;
+        if (mMacapkTransitionsLoaded) return;
         mMacapkTransitionsLoaded = true;
         final android.content.res.TypedArray a;
         try { a = getWindowStyle(); } catch (Throwable t) { return; }
@@ -1010,22 +1004,8 @@ public abstract class Window {
         //
         // ⚠ Note "1".equals, NOT getenv != null. The trace gate below uses
         // != null and the two idioms live four lines apart; a gate that fires on
-        // MACAPK_DECOR_FITS_HONOUR=0 would be worse than no gate.
-        if ("1".equals(System.getenv("MACAPK_DECOR_FITS_HONOUR"))) {
-            sDecorFitsSystemWindows = decorFitsSystemWindows;
-        }
         // The TRACE stays ungated on purpose: the log must still say the app
         // asked, even when we decline to act on it. A silent decline is how a
-        // future session concludes the app never called this at all.
-        if (System.getenv("MACAPK_TRACE_INSETS") != null) {
-            try {
-                com.macapk.loader.NativeLog.i("Mac.apk.Window",
-                    "setDecorFitsSystemWindows(" + decorFitsSystemWindows + ")"
-                    + (decorFitsSystemWindows ? "" : " -- app opted into EDGE-TO-EDGE")
-                    + ("1".equals(System.getenv("MACAPK_DECOR_FITS_HONOUR"))
-                        ? " [HONOURED]" : " [ignored: MACAPK_DECOR_FITS_HONOUR unset]"));
-            } catch (Throwable ignored) {}
-        }
     }
     /** Static entry point for the SAME preference expressed the pre-API-30 way.
      *  `Window.setDecorFitsSystemWindows` is API 30, and we report SDK_INT 29, so
@@ -1034,13 +1014,6 @@ public abstract class Window {
      *  a static door onto the same flag rather than a second source of truth. */
     static void macapkSetDecorFits(boolean decorFits) {
         sDecorFitsSystemWindows = decorFits;
-        if (System.getenv("MACAPK_TRACE_INSETS") != null) {
-            try {
-                com.macapk.loader.NativeLog.i("Mac.apk.Window",
-                    "setSystemUiVisibility -> decorFits=" + decorFits
-                    + (decorFits ? "" : " -- app opted into EDGE-TO-EDGE"));
-            } catch (Throwable ignored) {}
-        }
     }
     /** Does the current app want the decor to reserve the system-bar space?
      *  True (AOSP default) unless the app explicitly opted out. */
@@ -1223,15 +1196,6 @@ public abstract class Window {
         }
         sTypesHiddenByFlags |= typesToHide;
         sTypesHiddenByFlags &= ~typesToShow;
-        if (System.getenv("MACAPK_TRACE_INSETS") != null) {
-            try {
-                com.macapk.loader.NativeLog.i("Mac.apk.Window",
-                    "setSystemUiVisibility(0x" + Integer.toHexString(sysUiVis)
-                    + ") -> hide=0x" + Integer.toHexString(typesToHide)
-                    + " show=0x" + Integer.toHexString(typesToShow)
-                    + " hiddenNow=0x" + Integer.toHexString(sHiddenBarTypes));
-            } catch (Throwable ignored) {}
-        }
     }
     /** Reset with the other per-activity system-ui state. */
     public static void macapkResetTypesHiddenByFlags() { sTypesHiddenByFlags = 0; }
@@ -1264,9 +1228,7 @@ public abstract class Window {
             synchronized (mOnBackInvokedDispatcherLock) {
                 d = mOnBackInvokedDispatcher;
                 if (d == null) {
-                    d = android.window.WindowOnBackInvokedDispatcher.MACAPK_BACK_INVOKED
-                            ? new android.window.WindowOnBackInvokedDispatcher(this::getContext)
-                            : android.window.OnBackInvokedDispatcher.macapkNew();
+                    d = new android.window.WindowOnBackInvokedDispatcher(this::getContext);
                     mOnBackInvokedDispatcher = d;
                 }
             }

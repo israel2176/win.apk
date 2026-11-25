@@ -76,9 +76,6 @@ public class Display {
     // debug/fwprobe/cycle.sh moves to --height 898 in the same change.
     //
     // Gate: MACAPK_DISPLAY_DECOR=0 collapses the ladder again (real == app),
-    // which is the one-command A/B for any fleet movement this causes.
-    private static final boolean MACAPK_DISPLAY_DECOR =
-        !"0".equals(System.getenv("MACAPK_DISPLAY_DECOR"));
 
     /** The PHYSICAL surface, decor included.
      *  v1.0.1637: the COMMITTED display size (com.macapk.loader.DisplayConfig),
@@ -95,7 +92,6 @@ public class Display {
      *  when the app opted into edge-to-edge, matching what ViewCanvasDriver
      *  already does when sizing rootView -- the two must not disagree. */
     public static int macapkNavDecorPx() {
-        if (!MACAPK_DISPLAY_DECOR) return 0;
         try {
             if (!android.view.Window.macapkDecorFitsSystemWindows()) return 0;
             return com.macapk.loader.StatusBarDriver.navBarInsetPx(null);
@@ -117,7 +113,6 @@ public class Display {
      *  landscape every app that sizes itself from Display.getHeight() got a
      *  short answer and a wide one. */
     public static int macapkNavDecorWidthPx() {
-        if (!MACAPK_DISPLAY_DECOR) return 0;
         try {
             return com.macapk.loader.StatusBarDriver.contentInsetLeftPx(null)
                  + com.macapk.loader.StatusBarDriver.contentInsetRightPx(null);
@@ -126,7 +121,6 @@ public class Display {
     /** The navigation decor AOSP subtracts from the app HEIGHT -- non-zero only
      *  while the bar is at the bottom. See macapkNavDecorWidthPx. */
     public static int macapkNavDecorHeightPx() {
-        if (!MACAPK_DISPLAY_DECOR) return 0;
         try {
             return com.macapk.loader.StatusBarDriver.contentInsetBottomPx(null);
         } catch (Throwable t) { return 0; }
@@ -135,7 +129,6 @@ public class Display {
      *  subtracts BOTH bars there) but NOT from getSize/getMetrics, which on
      *  AOSP subtract only the navigation decor. */
     public static int macapkStatusDecorPx() {
-        if (!MACAPK_DISPLAY_DECOR) return 0;
         // heightPxRaw, not heightPx: this is a DISPLAY property. AOSP's
         // DisplayContent.computeScreenConfiguration and
         // computeSizeRangesAndScreenLayout subtract the status bar height for

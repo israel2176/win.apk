@@ -43,7 +43,7 @@ public class Button extends TextView {
      *  one per Button construction. */
     private static Boolean sTraceStyle;
     private static boolean macapkTraceStyle() {
-        if (sTraceStyle == null) sTraceStyle = System.getenv("MACAPK_TRACE_WINDOW_FLAGS") != null;
+        if (sTraceStyle == null) sTraceStyle = false;
         return sTraceStyle;
     }
 

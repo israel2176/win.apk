@@ -181,7 +181,7 @@ final class ArscRes implements ResBackend {
         return theme.macapkResolveAttrRawHonest(attrName);
     }
 
-    @Override public boolean attrStyleLane() { return Resources.MACAPK_ATTRSTYLE; }
+    @Override public boolean attrStyleLane() { return true; }
 
     // ---- Drawables, tints, densities ----
 

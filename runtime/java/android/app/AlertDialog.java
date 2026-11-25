@@ -34,122 +34,11 @@ public class AlertDialog extends Dialog implements DialogInterface {
     public static final int THEME_HOLO_LIGHT = 3;
     public static final int THEME_TRADITIONAL = 1;
 
-    /** MACAPK_ALERT_DIALOG_IDS (default ON; =0 builds the pre-change id-less
-     *  tree, for bisecting). The views we build carry the ids AOSP's layouts
-     *  give them -- alert_dialog.xml / alert_dialog_material.xml and their
-     *  includes: @id/parentPanel, title_template, icon, alertTitle, contentPanel,
-     *  scrollView, message, customPanel, custom, buttonPanel, button1..3 and the
-     *  spacers -- because app code reaches into a platform AlertDialog by id.
-     *  AlertController itself does (`mTitleView = (TextView)
-     *  mWindow.findViewById(R.id.alertTitle)`, android14 AlertController.java
-     *  :707), and so do SDKs: AppLovin's consent dialog (com.applovin.impl.z0,
-     *  in 10 corpus apps) runs, from its OnShowListener,
-     *  getIdentifier("android:id/alertTitle") -> findViewById -> (TextView)
-     *  .getCurrentTextColor(). With no ids that NPE'd, Dialog.show swallowed it,
-     *  and the title never got its link colour, movement method or min height
-     *  (docs/fleet-games-smashhit-gd-meltdown-jumplite_2026-09-26.md, G1).
-     *  Public ids are the frozen literals below; internal ones (alertTitle,
-     *  parentPanel, ...) come from the same framework table the app queries
-     *  (getIdentifier(name, "id", "android")), so the two agree by
-     *  construction, and a view is left without an id when that answers 0. */
-    static final boolean MACAPK_ALERT_DIALOG_IDS =
-        !"0".equals(System.getenv("MACAPK_ALERT_DIALOG_IDS"));
 
-    /** MACAPK_ALERT_DIALOG_TITLE (default ON; =0 builds the title as the
-     *  pre-change plain single-line TextView). The title is a
-     *  com.android.internal.widget.DialogTitle, as in both AOSP alert layouts,
-     *  so a title that does not fit on one line wraps to two at
-     *  textAppearanceMedium instead of ending in "..." (G3). */
-    /** BISECT GATE (2026-09-26, default ON): the Material title is sans-serif-medium, not fake bold. */
-    static final boolean MACAPK_ALERT_TITLE_MEDIUM =
-        !"0".equals(System.getenv("MACAPK_ALERT_TITLE_MEDIUM"));
-    /** BISECT GATE (2026-09-26, default ON): dialog buttons carry the borderless mask's 12dp x 10dp padding. */
-    static final boolean MACAPK_ALERT_BUTTON_MASK_PADDING =
-        !"0".equals(System.getenv("MACAPK_ALERT_BUTTON_MASK_PADDING"));
-    static final boolean MACAPK_ALERT_DIALOG_TITLE =
-        !"0".equals(System.getenv("MACAPK_ALERT_DIALOG_TITLE"));
 
-    /** MACAPK_ALERT_DIALOG_TRADITIONAL (default ON; =0 always builds the
-     *  Material tree, the pre-change behaviour). AlertController picks its
-     *  layout from the dialog theme's alertDialogStyle (android14
-     *  AlertController.java:212-216, verbatim):
-     *
-     *      final TypedArray a = context.obtainStyledAttributes(null,
-     *              R.styleable.AlertDialog, R.attr.alertDialogStyle, 0);
-     *      mAlertDialogLayout = a.getResourceId(
-     *              R.styleable.AlertDialog_layout, R.layout.alert_dialog);
-     *
-     *  The root Theme binds alertDialogStyle = @style/AlertDialog, which sets
-     *  the popup_* backgrounds and NO layout (styles.xml:56-70), so every
-     *  Theme / Theme.NoTitleBar / Theme.Light app gets the traditional
-     *  R.layout.alert_dialog (dark title and message panels, 22sp / 18sp text,
-     *  a grey button bar, a single button centred at half width). Material,
-     *  Holo and DeviceDefault bind their own layouts. We built the Material tree
-     *  for everyone. Measured victim: Geometry Dash Meltdown, a
-     *  Theme.NoTitleBar.Fullscreen activity whose alertDialogTheme is
-     *  Theme.Dialog.Alert (G2). Needs MACAPK_DIALOG_THEME_WRAPPER, since the
-     *  style is read from the dialog theme the wrapper installs; with that off
-     *  the whole dialog-theme stack is back at its pre-change behaviour.
-     *
-     *  ⚠ ALSO NEEDS THE 9-PATCH LATTICE (MACAPK_TRADITIONAL_LATTICE_READY). The
-     *  traditional panels ARE 9-patches (popup_top/center/bottom_dark|bright,
-     *  btn_default), and a NinePatch.draw that blits the whole bitmap scaled
-     *  smears their fixed borders across the panel: popup_top_dark (101px,
-     *  28px translucent shadow columns each side) drawn 1000px wide keeps
-     *  alpha 0x0e at x=100 where the stretched body is 0xe6, so about a quarter
-     *  of each side of every panel is nearly transparent, with white 18sp text
-     *  over the game (measured by debug/w5alertdialog_gate.sh's ninepatch row).
-     *  That is worse than the Material tree it replaces, and the reviewer's
-     *  census puts it on 141 theme rows across ~45 corpus apps, hcr181 (a
-     *  protected sweep row) and all 10 AppLovin games among them. So the
-     *  traditional tree is built only when android.graphics.NinePatch carries
-     *  the lattice draw (debug/w5alertdialog_verify/ninepatch-lattice.patch)
-     *  AND its gate MACAPK_NINEPATCH_LATTICE is on; otherwise every dialog keeps
-     *  the Material tree, exactly as with this gate at 0. The dependency is read
-     *  reflectively because NinePatch is another lane's file and its gate field
-     *  is package-private to android.graphics. Consequence for bisecting:
-     *  MACAPK_NINEPATCH_LATTICE=0 also puts dialogs back on the Material tree
-     *  (the pre-change state of both); the lattice's own effect on a panel is
-     *  isolated by the gate's ninepatch row, which draws the 9-patch directly. */
-    static final boolean MACAPK_ALERT_DIALOG_TRADITIONAL =
-        !"0".equals(System.getenv("MACAPK_ALERT_DIALOG_TRADITIONAL"));
 
-    /** Whether the running NinePatch honours its stretch zones (see above):
-     *  its MACAPK_NINEPATCH_LATTICE field exists and is true. False when the
-     *  field is absent (the lattice patch has not landed) or unreadable. */
-    static final boolean MACAPK_TRADITIONAL_LATTICE_READY = macapkLatticeReady();
 
-    private static boolean macapkLatticeReady() {
-        try {
-            java.lang.reflect.Field f = android.graphics.NinePatch.class
-                    .getDeclaredField("MACAPK_NINEPATCH_LATTICE");
-            f.setAccessible(true);
-            return f.getBoolean(null);
-        } catch (Throwable t) {
-            return false;
-        }
-    }
 
-    /** MACAPK_ALERT_DIALOG_ICON_ATTR (default ON; =0 restores the pre-change
-     *  setIconAttribute, which stored the ATTRIBUTE id as the icon's resource
-     *  id and resolved nothing). android14 AlertDialog.java:426-430, verbatim:
-     *
-     *      public void setIconAttribute(@AttrRes int attrId) {
-     *          TypedValue out = new TypedValue();
-     *          mContext.getTheme().resolveAttribute(attrId, out, true);
-     *          mAlert.setIcon(out.resourceId);
-     *      }
-     *
-     *  (Builder.setIconAttribute :612-617 and AlertParams.apply :1123-1125 do
-     *  the same against the builder's / dialog's theme.) The Material tree never
-     *  read the stored id, so the old value was harmless there, but the
-     *  traditional tree's setupTitle does (`if (mIconId != 0)`), and
-     *  Resources.getDrawable(0x01010355, alertDialogIcon's attr id) answered an
-     *  unrelated 24x24 vector (measured, 2026-09-26 review). With it on, the
-     *  Material tree also shows the theme's icon (ic_dialog_alert_material
-     *  under Theme.Material), as a device does. */
-    static final boolean MACAPK_ALERT_DIALOG_ICON_ATTR =
-        !"0".equals(System.getenv("MACAPK_ALERT_DIALOG_ICON_ATTR"));
 
     /** android.R.id / android.R.attr values (public-final.xml; frozen, so safe
      *  as literals -- see Dialog's ATTR_* note). */
@@ -160,7 +49,6 @@ public class AlertDialog extends Dialog implements DialogInterface {
     private static final int ID_BUTTON3 = 0x0102001b;
     private static final int ID_CUSTOM  = 0x0102002b;
     static final int ATTR_ALERT_DIALOG_STYLE = 0x0101005d;
-    private static final int ATTR_LAYOUT = 0x010100f2;
     private static final int ATTR_TEXT_APPEARANCE_LARGE  = 0x01010040;
     private static final int ATTR_TEXT_APPEARANCE_MEDIUM = 0x01010041;
     private static final int ATTR_WINDOW_BACKGROUND = 0x01010054;
@@ -191,9 +79,9 @@ public class AlertDialog extends Dialog implements DialogInterface {
     public AlertDialog(Context c) { this(c, 0); }
     public AlertDialog(Context c, int themeResId) { this(c, themeResId, true); }
     AlertDialog(Context c, int themeResId, boolean createContextThemeWrapper) {
-        super(c, (MACAPK_DIALOG_THEME_WRAPPER && createContextThemeWrapper)
+        super(c, createContextThemeWrapper
                         ? resolveDialogTheme(c, themeResId) : 0,
-              MACAPK_DIALOG_THEME_WRAPPER && createContextThemeWrapper);
+              createContextThemeWrapper);
     }
     protected AlertDialog(Context context, boolean cancelable, OnCancelListener cancelListener) {
         this(context, 0);
@@ -291,15 +179,6 @@ public class AlertDialog extends Dialog implements DialogInterface {
     /** AOSP resolves the icon ATTRIBUTE against the dialog's theme and sets the
      *  resource it names (see MACAPK_ALERT_DIALOG_ICON_ATTR). */
     public void setIconAttribute(int attrId) {
-        if (!MACAPK_ALERT_DIALOG_ICON_ATTR) {
-            // Pre-change: the attribute id stored as if it were a drawable id.
-            // The flag only keeps the traditional tree (which reads mIconId,
-            // where the pre-change Material tree never did) from drawing the
-            // unrelated resource that id happens to name.
-            this.mIconId = attrId;
-            mMacapkIconIdIsAttr = true;
-            return;
-        }
         android.util.TypedValue out = new android.util.TypedValue();
         try {
             if (mContext != null && mContext.getTheme() != null) {
@@ -486,14 +365,6 @@ public class AlertDialog extends Dialog implements DialogInterface {
                     (mContext != null) ? mContext.getTheme() : null;
             if (th != null) {
                 int v = ResBackend.get().resolveAttrColor(th, attr, fallback);
-                if (System.getenv("MACAPK_TRACE_WINDOW_FLAGS") != null) {
-                    int stat = ResBackend.get().themeColor(attr, fallback);
-                    com.macapk.loader.NativeLog.i("Mac.apk.AlertDialog",
-                        "attr=" + attr + " viaContext=#" + Integer.toHexString(v)
-                        + " viaGlobal=#" + Integer.toHexString(stat)
-                        + " ctx=" + mContext.getClass().getName()
-                        + (v != stat ? "  <== STAGE-A CHANGED IT" : ""));
-                }
                 return v;
             }
         } catch (Throwable ignored) {}
@@ -600,22 +471,18 @@ public class AlertDialog extends Dialog implements DialogInterface {
             mTitleView.setTextColor(colText);
             mTitleView.setSingleLine(true);
             mTitleView.setEllipsize(android.text.TextUtils.TruncateAt.END);
-            if (MACAPK_ALERT_TITLE_MEDIUM) {
-                // BISECT GATE MACAPK_ALERT_TITLE_MEDIUM (2026-09-26, default ON;
-                // docs/fleet-newpipe-vlc-residual_2026-09-26.md). The title's
-                // appearance is TextAppearance.Material.DialogWindowTitle ->
-                // TextAppearance.Material.Title: fontFamily
-                // @string/font_family_title_material = "sans-serif-medium"
-                // (weight 500), textStyle normal. The fake-bold below predates
-                // family/weight support in this tree (the "FONT WEIGHT IS
-                // UNREACHABLE" note is stale: Roboto-Medium ships in
-                // runtime/fonts and TextView resolves family names). NewPipe's
-                // "Keep Android Open" title rendered 343 px wide and heavy against
-                // the emulator's 337 px medium. =0 restores the fake bold.
-                ViewHost.get().setFontFamily(mTitleView, "sans-serif-medium");
-            } else {
-                ViewHost.get().setTextStyle(mTitleView, android.graphics.Typeface.BOLD);
-            }
+            // BISECT GATE MACAPK_ALERT_TITLE_MEDIUM (2026-09-26, default ON;
+            // docs/fleet-newpipe-vlc-residual_2026-09-26.md). The title's
+            // appearance is TextAppearance.Material.DialogWindowTitle ->
+            // TextAppearance.Material.Title: fontFamily
+            // @string/font_family_title_material = "sans-serif-medium"
+            // (weight 500), textStyle normal. The fake-bold below predates
+            // family/weight support in this tree (the "FONT WEIGHT IS
+            // UNREACHABLE" note is stale: Roboto-Medium ships in
+            // runtime/fonts and TextView resolves family names). NewPipe's
+            // "Keep Android Open" title rendered 343 px wide and heavy against
+            // the emulator's 337 px medium. =0 restores the fake bold.
+            ViewHost.get().setFontFamily(mTitleView, "sans-serif-medium");
             titleTemplate.addView(mTitleView, matchWrap());
             root.addView(titleTemplate, matchWrap());
         }
@@ -747,7 +614,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
      *  public (frozen), else the framework table's answer for `internalName`.
      *  No id at all when the table has none -- an invented one could collide. */
     private void macapkSetAospId(View v, int publicId, String internalName) {
-        if (!MACAPK_ALERT_DIALOG_IDS || v == null) return;
+        if (v == null) return;
         int id = publicId;
         if (id == 0 && internalName != null) id = macapkFrameworkId(internalName, "id");
         if (id != 0) v.setId(id);
@@ -767,9 +634,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
     /** The title view: a DialogTitle (MACAPK_ALERT_DIALOG_TITLE), as both AOSP
      *  alert layouts declare it, else the pre-change plain TextView. */
     private android.widget.TextView macapkNewTitleView() {
-        return MACAPK_ALERT_DIALOG_TITLE
-                ? new com.android.internal.widget.DialogTitle(mContext)
-                : new android.widget.TextView(mContext);
+        return new com.android.internal.widget.DialogTitle(mContext);
     }
 
     /** Whether AlertController would inflate R.layout.alert_dialog for this
@@ -783,24 +648,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
      *  one. Every platform theme defines alertDialogStyle (the root Theme binds
      *  it at themes.xml:216), so a real theme always answers. */
     private boolean macapkUsesTraditionalLayout() {
-        if (!MACAPK_ALERT_DIALOG_TRADITIONAL || !MACAPK_TRADITIONAL_LATTICE_READY
-                || !MACAPK_DIALOG_THEME_WRAPPER || mContext == null) {
-            return false;
-        }
-        if (macapkResolveThemeAttr(mContext, ATTR_ALERT_DIALOG_STYLE) == 0) return false;
-        android.content.res.TypedArray a = null;
-        try {
-            a = mContext.obtainStyledAttributes(null, new int[] { ATTR_LAYOUT },
-                    ATTR_ALERT_DIALOG_STYLE, 0);
-            final int layout = a.getResourceId(0, 0);
-            if (layout == 0) return true;
-            final int traditional = macapkFrameworkId("alert_dialog", "layout");
-            return traditional != 0 && layout == traditional;
-        } catch (Throwable t) {
-            return false;
-        } finally {
-            if (a != null) try { a.recycle(); } catch (Throwable ignored) { }
-        }
+        return false;
     }
 
     /** What the traditional tree last built, for the offline gate
@@ -1397,22 +1245,20 @@ public class AlertDialog extends Dialog implements DialogInterface {
         // face again here: a borderless dialog button is bare text on the panel,
         // which is exactly what the rest of this method already assumes.
         b.setBackgroundDrawable(null);
-        if (MACAPK_ALERT_BUTTON_MASK_PADDING) {
-            // BISECT GATE MACAPK_ALERT_BUTTON_MASK_PADDING (2026-09-26, default ON;
-            // docs/fleet-newpipe-vlc-residual_2026-09-26.md). The borderless
-            // background paints nothing at rest, but it DOES carry padding: AOSP
-            // LayerDrawable.getPadding -> computeNestedPadding (android14
-            // LayerDrawable.java :1030-1036, :1234-1251) sums EVERY layer, the
-            // @id/mask of btn_borderless_material.xml included, and that mask is
-            // btn_default_mtrl_shape = <inset> button_inset_horizontal_material 4dp /
-            // button_inset_vertical_material 6dp around a <shape> with padding
-            // button_padding_horizontal_material 8dp / control_padding_material 4dp.
-            // So each dialog button is padded 12dp x 10dp. Measured on NewPipe's
-            // dialog: SOLUTION's ink started 24 px (12dp) left of the emulator's and
-            // DETAILS sat 15 px right of it, exactly the missing 12dp per side.
-            // =0 restores the unpadded button.
-            b.setPadding(macapkDp(12f), macapkDp(10f), macapkDp(12f), macapkDp(10f));
-        }
+        // BISECT GATE MACAPK_ALERT_BUTTON_MASK_PADDING (2026-09-26, default ON;
+        // docs/fleet-newpipe-vlc-residual_2026-09-26.md). The borderless
+        // background paints nothing at rest, but it DOES carry padding: AOSP
+        // LayerDrawable.getPadding -> computeNestedPadding (android14
+        // LayerDrawable.java :1030-1036, :1234-1251) sums EVERY layer, the
+        // @id/mask of btn_borderless_material.xml included, and that mask is
+        // btn_default_mtrl_shape = <inset> button_inset_horizontal_material 4dp /
+        // button_inset_vertical_material 6dp around a <shape> with padding
+        // button_padding_horizontal_material 8dp / control_padding_material 4dp.
+        // So each dialog button is padded 12dp x 10dp. Measured on NewPipe's
+        // dialog: SOLUTION's ink started 24 px (12dp) left of the emulator's and
+        // DETAILS sat 15 px right of it, exactly the missing 12dp per side.
+        // =0 restores the unpadded button.
+        b.setPadding(macapkDp(12f), macapkDp(10f), macapkDp(12f), macapkDp(10f));
         b.setText(text);
         // Widget.Material.Button.ButtonBar.AlertDialog, resolved leaf by leaf
         // (styles_material.xml:570 -> Borderless.Colored :565 -> textAppearance
@@ -1596,9 +1442,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
          *  that. */
         public Builder(Context c) { this(c, 0); }
         public Builder(Context c, int themeResId) {
-            this.context = MACAPK_DIALOG_THEME_WRAPPER
-                    ? macapkThemedContext(c, resolveDialogTheme(c, themeResId), ATTR_ALERT_DIALOG_THEME)
-                    : c;
+            this.context = macapkThemedContext(c, resolveDialogTheme(c, themeResId), ATTR_ALERT_DIALOG_THEME);
         }
 
         public Context getContext() { return context; }
@@ -1771,9 +1615,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
         /** AOSP: `new AlertDialog(P.mContext, 0, false); P.apply(dialog.mAlert);` */
         public AlertDialog create() {
             // "Context has already been wrapped with the appropriate theme."
-            AlertDialog d = MACAPK_DIALOG_THEME_WRAPPER
-                    ? new AlertDialog(context, 0, false)
-                    : new AlertDialog(context);
+            AlertDialog d = new AlertDialog(context, 0, false);
             if (mCustomTitleView != null) d.setCustomTitle(mCustomTitleView);
             else if (mTitle != null) d.setTitle(mTitle);
             if (mMessage != null) d.setMessage(mMessage);
@@ -1800,9 +1642,7 @@ public class AlertDialog extends Dialog implements DialogInterface {
             if (v == null && mViewLayoutResId != 0) {
                 // AlertController.setupCustomContent: mInflater.inflate(...), with
                 // mInflater = LayoutInflater.from(the dialog context).
-                android.view.LayoutInflater inf = MACAPK_DIALOG_THEME_WRAPPER
-                        ? macapkInflaterFor(context)
-                        : android.view.LayoutInflater.from(context);
+                android.view.LayoutInflater inf = macapkInflaterFor(context);
                 if (inf != null) v = inf.inflate(mViewLayoutResId, null, false);
             }
             if (v != null) d.setView(v);

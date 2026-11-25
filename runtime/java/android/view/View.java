@@ -38,28 +38,7 @@ import com.macapk.loader.res.ResBackend;
 public class View implements android.graphics.drawable.Drawable.Callback,
                               android.view.KeyEvent.Callback,
                               android.view.accessibility.AccessibilityEventSource {
-    // Process-environment snapshots for the per-draw / per-frame / per-layout /
-    // per-event sites below (debug/w9textdraw_verify/hoist_getenv.py). A
-    // System.getenv call encodes the name and hashes it on every call; the
-    // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
-    // "subsequent calls to putenv/setenv from C will not be visible from Java
-    // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_CARD_CLIP = System.getenv("MACAPK_CARD_CLIP");
-    private static final String ENV_MACAPK_CLIP_OUTLINE = System.getenv("MACAPK_CLIP_OUTLINE");
-    private static final String ENV_MACAPK_EDGE_TO_EDGE = System.getenv("MACAPK_EDGE_TO_EDGE");
-    private static final String ENV_MACAPK_INSETS_DISPATCH_LEGACY = System.getenv("MACAPK_INSETS_DISPATCH_LEGACY");
-    private static final String ENV_MACAPK_TRACE_BGTINT = System.getenv("MACAPK_TRACE_BGTINT");
-    private static final String ENV_MACAPK_TRACE_CHROME = System.getenv("MACAPK_TRACE_CHROME");
-    private static final String ENV_MACAPK_TRACE_DEFSTYLE = System.getenv("MACAPK_TRACE_DEFSTYLE");
-    private static final String ENV_MACAPK_TRACE_EDITMODE = System.getenv("MACAPK_TRACE_EDITMODE");
-    private static final String ENV_MACAPK_TRACE_INSETS = System.getenv("MACAPK_TRACE_INSETS");
-    private static final String ENV_MACAPK_TRACE_MEASURE = System.getenv("MACAPK_TRACE_MEASURE");
-    private static final String ENV_MACAPK_TRACE_RIPPLE = System.getenv("MACAPK_TRACE_RIPPLE");
-    private static final String ENV_MACAPK_TRACE_SETBG = System.getenv("MACAPK_TRACE_SETBG");
-    private static final String ENV_MACAPK_TRACE_TOUCH = System.getenv("MACAPK_TRACE_TOUCH");
 
-    static final boolean TRACE_COMPOSE = "1".equals(System.getenv("MACAPK_TRACE_COMPOSE"));
     // ---- Public constants used by AndEngine + apps ----
     public static final int VISIBLE   = 0x00000000;
     public static final int INVISIBLE = 0x00000004;
@@ -257,7 +236,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 // rides the SAME cascade read (see macapkReadCtorPadding). With
                 // MACAPK_VIEW_CTOR_PADDING=0 the call is the pre-B3 three-slot
                 // array, byte for byte.
-                final boolean readPad = MACAPK_VIEW_CTOR_PADDING;
+                final boolean readPad = true;
                 android.content.res.TypedArray a = context.obtainStyledAttributes(
                     attrs, readPad ? CTOR_STYLED_ATTRS_WITH_PADDING : CTOR_STYLED_ATTRS,
                     defStyleAttr, defStyleRes);
@@ -318,29 +297,9 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 // 20000 ink offline; Signal's DarkOverflowToolbar in the
                 // corpus). Mac.apk-internal flag, so no AOSP deviation.
                 if (declaredNullBg) macapkBackgroundExplicitlySet = true;
-                if (ENV_MACAPK_TRACE_DEFSTYLE != null) {
-                    try {
-                        com.macapk.loader.NativeLog.i("Mac.apk.View",
-                            "ctor4 " + getClass().getSimpleName()
-                            + " dsa=0x" + Integer.toHexString(defStyleAttr)
-                            + " dsr=0x" + Integer.toHexString(defStyleRes)
-                            + " minW=" + mw + " minH=" + mh + " bg=" + styleBg
-                            + (declaredNullBg ? " bg-declared-null" : "")
-                            + (ctorPad == null ? ""
-                               : " padMask=0x" + Integer.toHexString(macapkCtorPaddingMask)
-                                 + " pad=" + paddingLeft + "," + paddingTop + ","
-                                 + paddingRight + "," + paddingBottom));
-                    } catch (Throwable ignored) {}
-                }
                 if (mw >= 0) setMinimumWidth(mw);
                 if (mh >= 0) setMinimumHeight(mh);
             } catch (Throwable t) {
-                if (ENV_MACAPK_TRACE_DEFSTYLE != null) {
-                    try {
-                        com.macapk.loader.NativeLog.i("Mac.apk.View", "ctor4 " + getClass().getSimpleName()
-                            + " default-style read threw " + t);
-                    } catch (Throwable ignored) {}
-                }
             }
             // AOSP's View constructor reads R.styleable.View_elevation from the
             // same four-tier cascade (android14 View.java, `case
@@ -355,21 +314,17 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             // the slot indexes above stay put. The inflater applies an element
             // android:elevation afterwards, which still wins.
             // MACAPK_VIEW_CTOR_ELEVATION=0 restores the old constructor.
-            if (MACAPK_VIEW_CTOR_ELEVATION) {
-                try {
-                    android.content.res.TypedArray ea = context.obtainStyledAttributes(
-                        attrs, CTOR_ELEVATION_ATTR, defStyleAttr, defStyleRes);
-                    if (ea.hasValue(0)) {
-                        float ev = ea.getDimension(0, 0f);
-                        if (ev != 0f && getElevation() == 0f) setElevation(ev);
-                    }
-                    ea.recycle();
-                } catch (Throwable ignored) {}
-            }
+            try {
+                android.content.res.TypedArray ea = context.obtainStyledAttributes(
+                    attrs, CTOR_ELEVATION_ATTR, defStyleAttr, defStyleRes);
+                if (ea.hasValue(0)) {
+                    float ev = ea.getDimension(0, 0f);
+                    if (ev != 0f && getElevation() == 0f) setElevation(ev);
+                }
+                ea.recycle();
+            } catch (Throwable ignored) {}
         }
     }
-    static final boolean MACAPK_VIEW_CTOR_ELEVATION =
-        !"0".equals(System.getenv("MACAPK_VIEW_CTOR_ELEVATION"));
     private static final int[] CTOR_ELEVATION_ATTR = { 0x01010440 /*elevation*/ };
 
     // ------------------------------------------------------------------
@@ -400,9 +355,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     //
     // MACAPK_VIEW_CTOR_PADDING=0 restores the pre-B3 constructor exactly (the
     // three-slot read, no padding touched): a labelled bisect gate.
-    // ------------------------------------------------------------------
-    static final boolean MACAPK_VIEW_CTOR_PADDING =
-        !"0".equals(System.getenv("MACAPK_VIEW_CTOR_PADDING"));
 
     /** The pre-B3 constructor read. Ids from AOSP public-final.xml
      *  (android14-release): minWidth 0x0101013f, minHeight 0x01010140,
@@ -670,16 +622,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         onVisibilityChanged(changedView, visibility);
     }
 
-    /** MACAPK_VISIBILITY_AGGREGATED (default ON; =0 none of these calls, as
-     *  before): onVisibilityAggregated(boolean), and onWindowVisibilityChanged and
-     *  onVisibilityChanged at attach and detach, were declared but never called.
-     *  They are how a widget learns that it is, or no longer is, on screen:
-     *  AOSP's ProgressBar and ImageView start and stop their drawables from
-     *  onVisibilityAggregated, which tells a view the RESULT (shown or not, its
-     *  ancestors and its window counted) where onVisibilityChanged tells it which
-     *  view changed. */
-    static final boolean MACAPK_VISIBILITY_AGGREGATED =
-            !"0".equals(System.getenv("MACAPK_VISIBILITY_AGGREGATED"));
 
     /** AOSP View.dispatchVisibilityAggregated (android14 View.java:16127-16135),
      *  package-private there too: "Internal dispatching method for
@@ -731,7 +673,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  would now see null where it used to see a Handler. */
     private android.os.Handler mViewHandler;
     public android.os.Handler getHandler() {
-        if (sIsShownDetachedAosp && !macapkAttached) return null;
+        if (!macapkAttached) return null;
         // The UI looper explicitly: AOSP's View handler is the ViewRootImpl
         // handler of the UI thread, whichever thread asks first. An implicit
         // `new Handler()` binds the CALLING thread's Looper when it has
@@ -779,7 +721,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // it is non-null. Log when a WrappedComposition tag is RETURNED (reuse
         // path taken) so we can confirm whether the welcome AndroidComposeView is
         // composing against a reused/populated composition. Gated off by default.
-        if (v != null && com.macapk.loader.ComposeViewFallback.MACAPK_TRACE_COMPOSE_INSERT
+        if (v != null && false
                 && "androidx.compose.ui.platform.a0".equals(v.getClass().getName())) {
             com.macapk.loader.NativeLog.i("Mac.apk.WrapComp",
                 "getTag(WrappedComposition) -> REUSE on " + getClass().getName()
@@ -848,11 +790,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (isViewTreeOwnerKey(key)) {
             Object owner = activityOwnerFor();
             boolean ok = owner != null && macapkActivitySatisfiesOwnerKey(owner, key);
-            if (OWNER_TRACE && !sWarnedOwnerFallback) {
-                sWarnedOwnerFallback = true;
-                com.macapk.loader.NativeLog.i("View", "owner-fallback key=" + key
-                    + " -> " + (owner == null ? "null" : owner.getClass().getName()));
-            }
             if (ok) return owner;
         }
         return null;
@@ -950,8 +887,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  plus a ClassNotFound log line. */
     private static final java.util.Map<ClassLoader, java.util.Set<String>> sOwnerIfaceMissing =
         new java.util.WeakHashMap<>();
-    private static final boolean OWNER_TRACE = System.getenv("MACAPK_OWNER_TRACE") != null;
-    private static boolean sWarnedOwnerFallback = false;
     /** THE androidx view-tree owner families. This table is the SINGLE place any
      *  of them is named; everything else in the codebase derives from it. One row
      *  per family, columns:
@@ -1095,7 +1030,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // (doSetContent's create path) -- paired with the getTag REUSE log, this
         // tells us whether the welcome AndroidComposeView's composition is created
         // fresh (one setTag, getTag null first) or reused (getTag non-null).
-        if (t != null && com.macapk.loader.ComposeViewFallback.MACAPK_TRACE_COMPOSE_INSERT
+        if (t != null && false
                 && "androidx.compose.ui.platform.a0".equals(t.getClass().getName())) {
             com.macapk.loader.NativeLog.i("Mac.apk.WrapComp",
                 "setTag(WrappedComposition) -> FRESH on " + getClass().getName()
@@ -1117,7 +1052,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             // v1.0.439: remember this key is an owner-key so getTag can fall back
             // to the Activity for descendants that resolve no owner (the Conductor
             // attach race). Learned rename-proof via the structural gate.
-            if (sObservedOwnerKeys.add(key) && OWNER_TRACE) {
+            if (sObservedOwnerKeys.add(key) && false) {
                 com.macapk.loader.NativeLog.i("View", "owner-key observed key=" + key
                     + " value=" + t.getClass().getName());
             }
@@ -1432,7 +1367,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // shipped build is byte-for-byte unchanged.
     public boolean isSelected()  { return selected; }
     public void setSelected(boolean s) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         if (selected != s) {
             selected = s; refreshDrawableState(); invalidate();
             dispatchSetSelected(s);
@@ -1440,7 +1374,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
     public boolean isActivated() { return activated; }
     public void setActivated(boolean a) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         if (activated != a) {
             activated = a; refreshDrawableState(); invalidate();
             dispatchSetActivated(a);
@@ -1460,7 +1393,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     protected void dispatchSetPressed(boolean pressed) {}
     public boolean isHovered() { return hovered; }
     public void setHovered(boolean h) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         // AOSP View.setHovered (android14 :17898): refreshDrawableState, then
         // the onHoverChanged hook.
         if (hovered != h) { hovered = h; refreshDrawableState(); onHoverChanged(h); }
@@ -1546,8 +1478,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private static volatile int sCompatTargetSdk;   // 0 == not resolved yet
     static boolean macapkBrokenInsetsDispatch(android.content.Context ctx) {
         // Kill switch: force the legacy behaviour for EVERY app in one run, so
-        // a regression can be A/B'd without a bisect.
-        if ("1".equals(ENV_MACAPK_INSETS_DISPATCH_LEGACY)) return true;
         int t = sCompatTargetSdk;
         if (t == 0) {
             try {
@@ -1972,7 +1902,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         macapkAttached = true;
         // A view that joins a window has to be drawn: its invalidations asked for
         // no frame while its tree was in none (macapkCannotBeDrawn).
-        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewRootImpl.schedule();
+        ViewRootImpl.schedule();
         // hasWindowFocus() flips false -> true at this moment (it gates on
         // macapkAttached since the fwprobe DRAWSTATE fix), so any drawable
         // state cached during construction is stale now. AOSP recomputes via
@@ -2057,14 +1987,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // what they animate from these (ProgressBar.onVisibilityAggregated, a
         // Material progress bar's onVisibilityChanged) and stop it from the
         // counterparts in macapkDispatchDetachedFromWindow and setVisibility.
-        if (MACAPK_VISIBILITY_AGGREGATED) {
-            try { onWindowVisibilityChanged(VISIBLE); }
-            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.windowVisibility", t); }
-            try { if (isShown()) onVisibilityAggregated(true); }
-            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
-            try { onVisibilityChanged(this, macapkCombinedVisibility()); }
-            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityChanged", t); }
-        }
+        try { onWindowVisibilityChanged(VISIBLE); }
+        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.windowVisibility", t); }
+        try { if (isShown()) onVisibilityAggregated(true); }
+        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
+        try { onVisibilityChanged(this, macapkCombinedVisibility()); }
+        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityChanged", t); }
         // v1.0.410: a late-attached view that carries a ViewTree* owner tag
         // (e.g. a Conductor controller view hosting a ComposeView -- Conductor
         // sets ViewTreeLifecycleOwner on the controller view before adding it)
@@ -2156,12 +2084,10 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // A removed child has lost its parent by now (macapkFinishRemoval), so
         // isShown() answers for the view alone; a view that was under a hidden
         // parent hears a second "not visible", which changes nothing.
-        if (MACAPK_VISIBILITY_AGGREGATED) {
-            try { onWindowVisibilityChanged(GONE); }
-            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.windowVisibility", t); }
-            try { if (isShown()) onVisibilityAggregated(false); }
-            catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
-        }
+        try { onWindowVisibilityChanged(GONE); }
+        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.windowVisibility", t); }
+        try { if (isShown()) onVisibilityAggregated(false); }
+        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
         macapkAttached = false;
         try { onDetachedFromWindow(); } catch (Throwable ignored) {}
         if (attachStateChangeListeners != null) {
@@ -2992,16 +2918,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // listener (CoordinatorLayout.onChildViewsChanged), which is app code, so
     // no amount of reading OUR source could name it. Same shape as
     // MACAPK_TRACE_ATTR: when a fix that should work doesn't, instrument the
-    // site rather than improving the fix.
-    private static final String MACAPK_TRACE_OFFSET =
-        System.getenv("MACAPK_TRACE_OFFSET");
     private void macapkTraceOffset(String which, int offset) {
-        if (MACAPK_TRACE_OFFSET == null) return;
-        String cn = getClass().getSimpleName();
-        if (!cn.contains(MACAPK_TRACE_OFFSET)) return;
-        System.err.println("[TRACE_OFFSET] " + cn + " " + which + "=" + offset
-            + " before l=" + left + " t=" + top + " r=" + right + " b=" + bottom);
-        new Throwable("offset caller").printStackTrace();
+        return;
     }
     public void offsetLeftAndRight(int offset) {
         macapkTraceOffset("dx", offset);
@@ -3122,7 +3040,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  root is never attached here, so a popup's children answer GONE until
      *  WindowOverlayStack dispatches attach. */
     public int getWindowVisibility() {
-        if (!sIsShownDetachedAosp) return VISIBLE;
         return macapkAttached ? VISIBLE : GONE;
     }
     public void onWindowVisibilityChanged(int visibility) {}
@@ -3459,11 +3376,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // MACAPK_LEGACY_ANIM=0 disables the pump entirely (a labelled bisect gate
     // per CLAUDE.md, not a supported mode): with it off, dispatchDraw's
     // per-child block is byte-for-byte what it was before this landed.
-    // ------------------------------------------------------------------
-    static final boolean MACAPK_LEGACY_ANIM = !"0".equals(System.getenv("MACAPK_LEGACY_ANIM"));
-    /** MACAPK_TRACE_LEGACY_ANIM=1: log each legacy (tween) animation's start and
-     *  end, so "a view animation never finished" is visible in a run log. */
-    static final boolean TRACE_LEGACY_ANIM = "1".equals(System.getenv("MACAPK_TRACE_LEGACY_ANIM"));
 
     /** AOSP's PFLAG_ANIMATION_STARTED (View.java:2775). Set by onAnimationStart,
      *  cleared by onAnimationEnd, and read by ViewGroup.finishAnimatingView to
@@ -3513,11 +3425,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (!a.isInitialized()) {
             a.initialize(getRight() - getLeft(), getBottom() - getTop(),
                     parent.getWidth(), parent.getHeight());
-            if (TRACE_LEGACY_ANIM) {
-                com.macapk.loader.NativeLog.i("Mac.apk.LegacyAnim", "start " + a.getClass().getSimpleName()
-                    + " dur=" + a.getDuration() + " on " + getClass().getName() + "@"
-                    + Integer.toHexString(System.identityHashCode(this)) + " t=" + drawingTime);
-            }
             onAnimationStart();
         }
         final android.view.animation.Transformation t = parent.getChildTransformation();
@@ -3628,15 +3535,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // DIAGNOSTIC (MACAPK_TRACE_BGTINT=1): who sets a background tint, and to
         // what. opencalculator's digit buttons end up with an OPAQUE BLACK tint
         // that overrides their correct #efefef <solid>, and the inflater's only
-        // call site null-guards -- so the caller is elsewhere.
-        if ("1".equals(ENV_MACAPK_TRACE_BGTINT)) {
-            StringBuilder sb = new StringBuilder();
-            StackTraceElement[] st = Thread.currentThread().getStackTrace();
-            for (int i = 2; i < Math.min(st.length, 8); i++) sb.append("\n    at ").append(st[i]);
-            android.util.Log.i("Mac.apk.BgTint", "setBackgroundTintList("
-                + (tint == null ? "null" : "0x" + Integer.toHexString(tint.getDefaultColor()))
-                + ") on " + getClass().getName() + sb);
-        }
     }
     /** Inflation-time android:backgroundTint, written STRAIGHT INTO the View's
      *  tint fields the way AOSP's View constructor does it:
@@ -3688,7 +3586,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // M23: drive the animator off this view's drawable state (flag-gated).
         if (animator != null) {
             animator.setTarget(this);
-            if (android.os.Looper.MACAPK_REAL_LOOPER) animator.setState(getDrawableState());
+            animator.setState(getDrawableState());
         }
     }
     public android.animation.StateListAnimator getStateListAnimator() {
@@ -3713,11 +3611,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         void onLayoutChange(View v, int left, int top, int right, int bottom,
                             int oldLeft, int oldTop, int oldRight, int oldBottom);
     }
-    /** MACAPK_LAYOUT_CHANGE_LISTENERS (default ON). =0 restores the pre-change
-     *  inert add/remove: the list is then never created, so layout() has nothing
-     *  to dispatch and runs exactly as before. */
-    static final boolean MACAPK_LAYOUT_CHANGE_LISTENERS =
-        !"0".equals(System.getenv("MACAPK_LAYOUT_CHANGE_LISTENERS"));
     /** AOSP keeps this in ListenerInfo.mOnLayoutChangeListeners; a plain field
      *  here, null until the first add (most views never get one). */
     private java.util.ArrayList<OnLayoutChangeListener> mOnLayoutChangeListeners;
@@ -3726,7 +3619,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *          li.mOnLayoutChangeListeners.add(listener);
      *      } */
     public void addOnLayoutChangeListener(OnLayoutChangeListener listener) {
-        if (!MACAPK_LAYOUT_CHANGE_LISTENERS) return;
         if (mOnLayoutChangeListeners == null) {
             mOnLayoutChangeListeners = new java.util.ArrayList<>();
         }
@@ -4584,14 +4476,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // accessibility event, which we don't model). callOnClick() is the same
     // minus the sound/accessibility side effects.
     public boolean performClick() {
-        if ("1".equals(ENV_MACAPK_TRACE_TOUCH)) {
-            com.macapk.loader.NativeLog.i("View",
-                "performClick on " + getClass().getSimpleName()
-                + "@" + Integer.toHexString(System.identityHashCode(this))
-                + " id=0x" + Integer.toHexString(getId())
-                + " listener=" + (onClickListener == null ? "NULL"
-                    : onClickListener.getClass().getName()));
-        }
         if (onClickListener != null) {
             onClickListener.onClick(this);
             return true;
@@ -4770,12 +4654,12 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  which is why the plain field read went unnoticed. Rides
      *  MACAPK_VIEW_CTOR_PADDING (=0 is the plain field read). */
     public int getPaddingLeft()   {
-        if (MACAPK_VIEW_CTOR_PADDING && !isPaddingResolved()) resolvePadding();
+        if (!isPaddingResolved()) resolvePadding();
         return paddingLeft;
     }
     public int getPaddingTop()    { return paddingTop; }
     public int getPaddingRight()  {
-        if (MACAPK_VIEW_CTOR_PADDING && !isPaddingResolved()) resolvePadding();
+        if (!isPaddingResolved()) resolvePadding();
         return paddingRight;
     }
     public int getPaddingBottom() { return paddingBottom; }
@@ -4908,10 +4792,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  every `== VISIBLE` / `== GONE` test in the framework quietly missed
      *  (fwprobe VW.flag.vis.{one,seven,minus1}). */
     static final int VISIBILITY_MASK = 0x0000000C;   // package-private, as on AOSP
-    /** Gate MACAPK_HIDE_CLEARS_FOCUS (default ON; =0 keeps focus on a view
-     *  that is hidden, the old behaviour). */
-    static final boolean MACAPK_HIDE_CLEARS_FOCUS =
-        !"0".equals(System.getenv("MACAPK_HIDE_CLEARS_FOCUS"));
 
     /** AOSP View.setFlags (android14-release View.java:17513-17557) clears the
      *  focus of a view (or of the focused descendant of a ViewGroup) that
@@ -4928,7 +4808,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  user could no longer see, and a widget that commits its typed value on
      *  focus loss (NumberPicker's input, hidden by hideSoftInput) never did. */
     private void macapkClearFocusIfHidden(int oldV, int newV) {
-        if (!MACAPK_HIDE_CLEARS_FOCUS || oldV == newV) return;
+        if (oldV == newV) return;
         final int changed = oldV ^ newV;
         if ((changed & GONE) != 0 && newV == GONE) {
             if (hasFocus()) clearFocus();
@@ -4944,49 +4824,42 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // traversal (AOSP View.setVisibility -> requestLayout + invalidate when
         // GONE toggles, invalidate otherwise). Gated; flag-off is the historical
         // bare field write (the driver re-traverses every frame anyway).
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            if (this.visibility != v) {
-                this.visibility = v;
-                requestLayout();
-                // The frame that shows (or erases) this view. invalidate() alone
-                // no longer asks for one when the view has just become hidden
-                // (macapkCannotBeDrawn); AOSP setFlags invalidates the PARENT
-                // for that reason (`parent.invalidate(true)`).
-                ViewRootImpl.schedule();
-                invalidate();
-                // AOSP View.setFlags runs the GONE / INVISIBLE clearFocus blocks
-                // (View.java android14-release ~17512-17557) BEFORE the
-                // `(changed & VISIBILITY_MASK) != 0` block that dispatches
-                // onVisibilityChanged (~17566-17581), so a callback already sees
-                // hasFocus()==false.
-                macapkClearFocusIfHidden(macapkOldVisibility, v);
-                // AOSP View.setFlags gates the dispatch on `mAttachInfo != null`
-                // (frameworks/base .../View.java ~line 16912: "if (mAttachInfo !=
-                // null) { dispatchVisibilityChanged(this, newVisibility); ... }"),
-                // i.e. a visibility toggle on a not-yet-attached view (common
-                // during construction/inflation) does not fire the callback.
-                // macapkAttached is this codebase's mAttachInfo != null stand-in.
-                if (macapkAttached) {
-                    dispatchVisibilityChanged(this, v);
-                    // AOSP setFlags, right after it: "Aggregated visibility changes
-                    // are dispatched to attached views in visible windows where the
-                    // parent is currently shown/drawn or the parent is not a
-                    // ViewGroup (and therefore assumed to be a ViewRoot)". Our root
-                    // has no parent at all.
-                    if (MACAPK_VISIBILITY_AGGREGATED
-                            && (!(parent instanceof ViewGroup pg) || pg.isShown())) {
-                        try { dispatchVisibilityAggregated(v == VISIBLE); }
-                        catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
-                    }
+        if (this.visibility != v) {
+            this.visibility = v;
+            requestLayout();
+            // The frame that shows (or erases) this view. invalidate() alone
+            // no longer asks for one when the view has just become hidden
+            // (macapkCannotBeDrawn); AOSP setFlags invalidates the PARENT
+            // for that reason (`parent.invalidate(true)`).
+            ViewRootImpl.schedule();
+            invalidate();
+            // AOSP View.setFlags runs the GONE / INVISIBLE clearFocus blocks
+            // (View.java android14-release ~17512-17557) BEFORE the
+            // `(changed & VISIBILITY_MASK) != 0` block that dispatches
+            // onVisibilityChanged (~17566-17581), so a callback already sees
+            // hasFocus()==false.
+            macapkClearFocusIfHidden(macapkOldVisibility, v);
+            // AOSP View.setFlags gates the dispatch on `mAttachInfo != null`
+            // (frameworks/base .../View.java ~line 16912: "if (mAttachInfo !=
+            // null) { dispatchVisibilityChanged(this, newVisibility); ... }"),
+            // i.e. a visibility toggle on a not-yet-attached view (common
+            // during construction/inflation) does not fire the callback.
+            // macapkAttached is this codebase's mAttachInfo != null stand-in.
+            if (macapkAttached) {
+                dispatchVisibilityChanged(this, v);
+                // AOSP setFlags, right after it: "Aggregated visibility changes
+                // are dispatched to attached views in visible windows where the
+                // parent is currently shown/drawn or the parent is not a
+                // ViewGroup (and therefore assumed to be a ViewRoot)". Our root
+                // has no parent at all.
+                if ((!(parent instanceof ViewGroup pg) || pg.isShown())) {
+                    try { dispatchVisibilityAggregated(v == VISIBLE); }
+                    catch (Throwable t) { com.macapk.loader.GfxTrace.caught("View.visibilityAggregated", t); }
                 }
-                macapkDragVisibilityChanged(v);
             }
-            return;
+            macapkDragVisibilityChanged(v);
         }
-        final boolean changed = this.visibility != v;
-        this.visibility = v;
-        macapkClearFocusIfHidden(macapkOldVisibility, v);
-        if (changed) macapkDragVisibilityChanged(v);
+        return;
     }
     /** AOSP View.setFlags -> ViewGroup.onChildVisibilityChanged(this, old, new):
      *  the only consumer here is the drag bookkeeping (a drop zone revealed
@@ -5079,19 +4952,13 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                 // WindowOverlayStack.addView, not a change here. Until it lands,
                 // MACAPK_ISSHOWN_DETACHED=0 restores the previous "top of the View
                 // chain is always shown" answer for a one-run A/B.
-                return !sIsShownDetachedAosp || current.macapkAttached;
+                return current.macapkAttached;
             }
             if (!(p instanceof View)) return true;
             current = (View) p;
         } while (current != null);
         return true;
     }
-    /** Bisect gate for the isShown()/getLocationInWindow() detached-tree contract
-     *  above. DEFAULT ON (AOSP behaviour); set MACAPK_ISSHOWN_DETACHED=0 to get the
-     *  pre-fix answers back without a rebuild. Read once into a static so the touch
-     *  and draw paths do not pay a getenv. */
-    private static final boolean sIsShownDetachedAosp =
-        !"0".equals(System.getenv("MACAPK_ISSHOWN_DETACHED"));
     public boolean isEnabled()          { return enabled; }
     public void setEnabled(boolean e)   {
         // Flag-OFF: just set the field (exactly the old behavior). Flag-ON:
@@ -5099,7 +4966,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // drawables/colors repaint.
         boolean changed = enabled != e;
         enabled = e;
-        if (changed && android.os.Looper.MACAPK_REAL_LOOPER) { refreshDrawableState(); invalidate(); }
+        if (changed) { refreshDrawableState(); invalidate(); }
     }
     // v1.0.110: AOSP duplicate-parent-state flag.
     // MaterialCardView's super.<init> reads this to decide whether to
@@ -5220,19 +5087,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // found one layer down (in the button's PADDING, not its BOUNDS). Kept
     // as a standing tool, same shape as MACAPK_TRACE_ATTR/MACAPK_TRACE_OFFSET:
     // the next "my fix should work but doesn't" layout bug gets the real
-    // parent-assigned bounds instead of another guess-and-read cycle.
-    private static final String MACAPK_TRACE_LAYOUT = System.getenv("MACAPK_TRACE_LAYOUT");
     private void macapkTraceLayout(int l, int t, int r, int b) {
-        if (MACAPK_TRACE_LAYOUT == null) return;
-        final String cn = getClass().getSimpleName();
-        for (String needle : MACAPK_TRACE_LAYOUT.split(",")) {
-            if (!needle.isEmpty() && cn.contains(needle)) {
-                System.err.println("[TRACE_LAYOUT] " + cn + " id=" + getId()
-                    + " l=" + l + " t=" + t + " r=" + r + " b=" + b
-                    + " w=" + (r - l) + " padL=" + getPaddingLeft() + " padR=" + getPaddingRight());
-                break;
-            }
-        }
+        return;
     }
     public void layout(int l, int t, int r, int b) {
         macapkTraceLayout(l, t, r, b);
@@ -5345,18 +5201,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public void measure(int wSpec, int hSpec) {
         // Diagnostic (env-gated): trace which classes the measure
         // recursion reaches, verifying the pass flows through app
-        // containers (ConstraintLayout etc.) and with what specs.
-        if (ENV_MACAPK_TRACE_MEASURE != null) {
-            try {
-                Class<?> log = Class.forName("com.macapk.loader.NativeLog");
-                log.getMethod("i", String.class, String.class).invoke(null,
-                    "Mac.apk.Measure",
-                    getClass().getSimpleName() + "@"
-                    + Integer.toHexString(System.identityHashCode(this))
-                    + " w=" + MeasureSpec.toString(wSpec)
-                    + " h=" + MeasureSpec.toString(hSpec));
-            } catch (Throwable ignored) {}
-        }
         // v1.0.841: self-heal a STALE `macapkAttached==false` before onMeasure
         // runs. AOSP's real invariant is that a view is ALWAYS attached by the
         // time it is measured -- ViewRootImpl.performTraversals only measures a
@@ -5516,29 +5360,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // log measure of any ComposeView/AndroidComposeView (the renamed
         // AndroidComposeView is androidx.compose.ui.platform.c). Confirms
         // whether the Compose host's onMeasure runs (which sets the Compose
-        // root Constraints) vs being sized only via layout().
-        if (sComposeMeasureTrace) {
-            String cn = getClass().getName();
-            // Name-suffix shape only, no app package literals. A previous
-            // `startsWith("com.reddit.screen.RedditComposeView")` clause was
-            // removed: that class name already ENDS with "ComposeView", so the
-            // first clause matched it and the app-specific one could never be
-            // the deciding test. If some app ever ships a host whose name does
-            // not end in ComposeView, the generic fix is a superclass check
-            // against AbstractComposeView, never a package string.
-            if (cn.endsWith("ComposeView") || cn.equals("androidx.compose.ui.platform.c")
-                || cn.endsWith("ScreenContainerView")) {
-                try {
-                    Class<?> log = Class.forName("com.macapk.loader.NativeLog");
-                    log.getMethod("i", String.class, String.class).invoke(null, "Mac.apk.ComposeMeasure",
-                        cn + " measure w=" + MeasureSpec.toString(wSpec) + " h=" + MeasureSpec.toString(hSpec)
-                        + " -> " + measuredWidth + "x" + measuredHeight);
-                } catch (Throwable ignored) {}
-            }
-        }
     }
-    private static final boolean sComposeMeasureTrace =
-        "1".equals(System.getenv("MACAPK_TRACE_COMPOSE_FALLBACK"));
     /** AOSP `View.onMeasure` (aosp-mirror android-11.0.0_r48
      *  core/java/android/view/View.java:25540-25543), verbatim:
      *      setMeasuredDimension(getDefaultSize(getSuggestedMinimumWidth(), widthMeasureSpec),
@@ -5619,9 +5441,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  changed and skip the heavy update path. */
     public void requestLayout()  {
         macapkTraceComposeInsert("requestLayout");
-        try { if (com.macapk.loader.ComposeViewFallback.SHEET_PROBE_ON
-            && com.macapk.loader.ComposeViewFallback.macapkIsComposeHost(this))
-            com.macapk.loader.ComposeViewFallback.sAcvReqLayout.incrementAndGet(); } catch (Throwable ignored) {}
+        try {  } catch (Throwable ignored) {}
         macapkTraceOffset("requestLayout", 0);
         layoutRequested = true;
         ViewParent p = parent;
@@ -5634,7 +5454,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // not just a redraw -- it sets ViewRootImpl.mLayoutRequested so the driver
         // does the full traversal (vs invalidate()'s draw-only frame). Mirrors
         // AOSP requestLayout -> mLayoutRequested = true; scheduleTraversals().
-        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewRootImpl.scheduleLayout();
+        ViewRootImpl.scheduleLayout();
     }
     /** AOSP View.forceLayout(): marks THIS view as needing layout +
      *  invalidation, WITHOUT bubbling up the parent chain (the key
@@ -5650,39 +5470,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // Tier 3 M6: invalidate() schedules a draw traversal on the next frame
     // (AOSP View.invalidate -> ViewRootImpl.invalidate -> scheduleTraversals).
     // Gated: flag-off stays a no-op (the driver redraws every frame anyway).
-    public void invalidate()     { macapkTraceComposeInsert("invalidate"); try { if (com.macapk.loader.ComposeViewFallback.SHEET_PROBE_ON && com.macapk.loader.ComposeViewFallback.macapkIsComposeHost(this)) com.macapk.loader.ComposeViewFallback.sAcvInval.incrementAndGet(); } catch (Throwable ignored) {} if (android.os.Looper.MACAPK_REAL_LOOPER) macapkScheduleRedraw(); macapkInvalidateParent(); }
-    /** MACAPK_INVALIDATE_SKIP_UNDRAWN (default ON; =0 every invalidation asks for a
-     *  frame again). An invalidation only has to produce a frame when drawing the
-     *  window again can show the change. AOSP View.invalidateInternal (android14
-     *  View.java:20733-20780) drops it in two cases, and both apply to the walk a
-     *  draw makes from the root down to this view:
-     *    - skipInvalidate(): the view is not VISIBLE and runs no View animation
-     *      (ViewGroup draws, and re-records, a child only when
-     *      `(child.mViewFlags & VISIBILITY_MASK) == VISIBLE || child.getAnimation()
-     *      != null`: dispatchDraw and dispatchGetDisplayList). The same test holds
-     *      for every ancestor: nothing below a hidden group is drawn, so nothing
-     *      below it can change a pixel. On a device that invalidation costs an
-     *      empty frame; here a frame is a software redraw of the whole window.
-     *    - `mAttachInfo == null`: a tree that is in no window has no ViewRootImpl
-     *      to ask. Ours is "no view from this one up to the top of its parent
-     *      chain is attached": a leaf can be unattached under an attached parent
-     *      for a while (see the self-heal in measure()), and that one is drawn.
-     *  Measured on Google Maps' idle map (Win.apk issue 114): a list row that had
-     *  left its RecyclerView kept an indeterminate bar and a Compose layer
-     *  animating, 57 invalidations a second each, and every one of them redrew
-     *  the window -- 288 of 300 frames, the main thread at 90% of a core.
-     *
-     *  What makes skipping safe is that everything that can END the hidden state
-     *  asks for a frame itself: setVisibility (below), attaching to a window
-     *  (macapkDispatchAttachedToWindow), startAnimation (the animation is set
-     *  before its invalidate), and addView / removeView (requestLayout). */
-    static final boolean MACAPK_INVALIDATE_SKIP_UNDRAWN =
-            !"0".equals(System.getenv("MACAPK_INVALIDATE_SKIP_UNDRAWN"));
+    public void invalidate()     { macapkTraceComposeInsert("invalidate"); try {  } catch (Throwable ignored) {} macapkScheduleRedraw(); macapkInvalidateParent(); }
     /** Whether drawing the window again cannot show a change of this view: it or
      *  an ancestor is hidden and not animating, or its tree is in no window. Reads
      *  only fields, so it is as safe off the UI thread as invalidate() was. */
     final boolean macapkCannotBeDrawn() {
-        if (!MACAPK_INVALIDATE_SKIP_UNDRAWN) return false;
         boolean attached = false;
         View v = this;
         // Bounded: a parent cycle cannot exist on AOSP (addView throws), but must
@@ -5848,31 +5640,13 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         root.macapkScheduleDamage(source.mMacapkRecL, source.mMacapkRecT, source.mMacapkRecR, source.mMacapkRecB);
         return true;
     }
-    /** MACAPK_INVALIDATE_PARENT (default ON, =0 the old schedule-only invalidate):
-     *  AOSP View.invalidateInternal (android14 View.java:20733-20780) reports the
-     *  damage to the parent, `p.invalidateChild(this, damage)`, whose
-     *  hardware-accelerated branch is `onDescendantInvalidated(child, child)` up
-     *  to ViewRootImpl. Ours only scheduled a frame, so a ViewGroup that keeps
-     *  its own cached drawing of a child never heard that the child changed --
-     *  Compose's AndroidViewHolder, whose onDescendantInvalidated /
-     *  invalidateChildInParent are what re-record the GraphicsLayer it draws the
-     *  View into (invalidateOrDefer -> layoutNode.invalidateLayer). An
-     *  AndroidView { WebView } therefore replayed the recording from its FIRST
-     *  draw forever (mGradani NIAS login white; Mac.apk-Releases issue 2;
-     *  debug/wvtest/compose_shape). Same guards as AOSP: skipInvalidate (not
-     *  VISIBLE, no animation), attached, non-empty bounds. Off the UI thread
-     *  (our postInvalidate calls invalidate directly) the walk is posted to it,
-     *  as AOSP's postInvalidate posts. */
-    static final boolean MACAPK_INVALIDATE_PARENT =
-            !"0".equals(System.getenv("MACAPK_INVALIDATE_PARENT"));
     private void macapkInvalidateParent() {
-        if (!MACAPK_INVALIDATE_PARENT) return;
         final ViewParent p = parent;
         if (p == null || !macapkAttached) return;
         if (getVisibility() != VISIBLE && getAnimation() == null) return;
         if (right <= left || bottom <= top) return;
         if (!android.os.Looper.getMainLooper().isCurrentThread()) {
-            if (android.os.Looper.MACAPK_REAL_LOOPER) post(this::macapkInvalidateParent);
+            post(this::macapkInvalidateParent);
             return;
         }
         try { p.invalidateChild(this, null); } catch (Throwable t) {
@@ -5886,32 +5660,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // upstream vs insert-reached-but-measure-flush-dropped). Gated off by default.
     private void macapkTraceComposeInsert(String which) {
         try {
-            if (!com.macapk.loader.ComposeViewFallback.MACAPK_TRACE_COMPOSE_INSERT) return;
-            if (!com.macapk.loader.ComposeViewFallback.macapkIsComposeHost(this)) return;
-            // Only log layout/place-sourced events (the populated-content signal),
-            // and capture the host's identity + attach/visibility/size so we can
-            // tell WHICH c instance holds the content and whether it is in the
-            // visible, drawn hierarchy.
-            boolean attached = macapkAttached;
-            android.view.ViewParent par = parent;
-            // Only log when 0x0 (the collapse signal) to cut noise, and walk the
-            // FULL ancestor chain so we can see WHICH view collapses to 0x0.
-            int w = getRight()-getLeft(), h = getBottom()-getTop();
-            if (w != 0 && h != 0) return;
-            StringBuilder sb = new StringBuilder("ACV." + which + " host=@"
-                + Integer.toHexString(System.identityHashCode(this))
-                + " attached=" + attached + " vis=" + getVisibility()
-                + " size=" + w + "x" + h + " lp=" + lpStr() + " ANCESTRY:\n");
-            android.view.ViewParent p2 = parent; int depth = 0;
-            while (p2 instanceof View av && depth < 12) {
-                sb.append("  ").append(av.getClass().getName())
-                  .append(" ").append(av.getRight()-av.getLeft()).append("x").append(av.getBottom()-av.getTop())
-                  .append(" lp=").append(av.lpStr())
-                  .append(" measured=").append(av.measuredWidth).append("x").append(av.measuredHeight)
-                  .append(" layoutReq=").append(av.layoutRequested).append('\n');
-                p2 = av.getParent(); depth++;
-            }
-            com.macapk.loader.NativeLog.i("Mac.apk.ComposeInsert", sb.toString());
+            return;
         } catch (Throwable ignored) {}
     }
     // v1.0.411 DIAGNOSTIC: trace attach/detach transitions on Compose hosts
@@ -5923,18 +5672,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     // composes (resources load) but the live tree is empty." Gated off by default.
     private void macapkTraceComposeAttach(String which, boolean wasAttached) {
         try {
-            if (!com.macapk.loader.ComposeViewFallback.MACAPK_TRACE_COMPOSE_INSERT) return;
-            String cn = getClass().getName();
-            // See the note in onMeasure's trace: the removed
-            // com.reddit.screen.RedditComposeView clause was redundant, because
-            // that name already ends with "ComposeView".
-            boolean host = cn.endsWith("ComposeView") || cn.equals("androidx.compose.ui.platform.c")
-                || cn.endsWith("AbstractComposeView");
-            if (!host) return;
-            com.macapk.loader.NativeLog.i("Mac.apk.ComposeAttach",
-                which + " " + cn + "@" + Integer.toHexString(System.identityHashCode(this))
-                + " wasAttached=" + wasAttached + " vis=" + getVisibility()
-                + " parent=" + (parent == null ? "null" : parent.getClass().getName()));
+            return;
         } catch (Throwable ignored) {}
     }
     // v1.0.843 DIAGNOSTIC: exact occurrence count + ancestor-chain dump for the
@@ -6069,8 +5807,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // BACKGROUND/BOUNDS providers leave the outline empty and
         // short-circuit. MACAPK_CLIP_OUTLINE=0 reverts.
         int macapkOutlineSave = -1;
-        if (mClipToOutline && outlineProvider != null
-                && !"0".equals(ENV_MACAPK_CLIP_OUTLINE)) {
+        if (mClipToOutline && outlineProvider != null) {
             int ow = right - left, oh = bottom - top;
             if (ow > 0 && oh > 0) {
                 try {
@@ -6245,22 +5982,11 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             }
         }
         // Tier 3 M18: Material ripple, over the background + under the content.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) macapkDrawRipple(canvas);
+        macapkDrawRipple(canvas);
         onDraw(canvas);
         // Diagnostic (MACAPK_TRACE_COMPOSE): for a Compose host view, log
         // its bounds + child count just before its (Compose-overridden)
         // dispatchDraw runs. Empty bounds or zero children means the
-        // composition never produced a layout tree to paint.
-        if (TRACE_COMPOSE) {
-            String cn = getClass().getName();
-            if (cn.endsWith("ComposeView") || cn.endsWith("AndroidComposeView")) {
-                com.macapk.loader.NativeLog.i("Mac.apk.ComposeDraw",
-                    cn + " bounds=[" + left + "," + top + "-" + right + "," + bottom
-                    + "] size=" + (right-left) + "x" + (bottom-top)
-                    + " attached=" + isAttachedToWindow() + " children="
-                    + (this instanceof android.view.ViewGroup ? ((android.view.ViewGroup)this).getChildCount() : 0));
-            }
-        }
         // v1.0.406: clip a CardView's children to its rounded outline so
         // image/text content can't bleed over the stylistic rounded corners
         // (AOSP MaterialCardView sets clipToOutline + a MaterialShapeDrawable
@@ -6345,9 +6071,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  if its bounds are 0x0 (unlaid).
      */
     private static volatile boolean materialChromeOff = false;
-    private static java.util.concurrent.ConcurrentHashMap<String, Boolean> macapkChromeTraced;
     static {
-        materialChromeOff = "0".equals(System.getenv("MACAPK_MATERIAL_CHROME"));
+        materialChromeOff = false;
     }
     /** v1.0.121 single-arg entry: read bounds from the View itself,
      *  skip if 0x0 (unlaid view -- chrome at full canvas would
@@ -6370,7 +6095,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private int macapkBeginCardClip(android.graphics.Canvas canvas) {
         try {
             if (canvas == null) return -1;
-            if ("0".equals(ENV_MACAPK_CARD_CLIP)) return -1;
             if (!getClass().getSimpleName().endsWith("CardView")) return -1;
             int w = right - left, h = bottom - top;
             if (w <= 0 || h <= 0) return -1;
@@ -6401,21 +6125,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // v1.0.121 diagnostic: log when chrome path fires per class so
         // we can see which Material widgets actually reach View.draw
         // and which never paint. One-shot per-class so the log stays
-        // small. Env-gated to avoid permanent spam.
-        if ("1".equals(ENV_MACAPK_TRACE_CHROME)) {
-            if (macapkChromeTraced == null) {
-                macapkChromeTraced = new java.util.concurrent.ConcurrentHashMap<>();
-            }
-            if (macapkChromeTraced.putIfAbsent(name, Boolean.TRUE) == null) {
-                com.macapk.loader.NativeLog.i("View",
-                    "macapkPaintMaterialChrome class=" + name
-                    + " bounds=" + w + "x" + h
-                    + " local=(" + left + "," + top + "-" + right + "," + bottom + ")"
-                    + " canvasTx=(" + GfxBackend.get().currentTx(canvas)
-                    + "," + GfxBackend.get().currentTy(canvas) + ")"
-                    + " full=" + getClass().getName());
-            }
-        }
 
         // --- MaterialCardView / CardView ---
         // AOSP MaterialCardView paints via MaterialShapeDrawable which
@@ -6594,9 +6303,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // MaterialShapeDrawable included) is drawn. Filling the Toolbar with
         // colorSurface painted a white band over that colour: PalGate's blue
         // app bar came out white and its white "OK" button vanished into it.
-        if (name.endsWith("AppBarLayout")
-            || (MACAPK_TOOLBAR_CHROME
-                && (name.endsWith("Toolbar") || name.endsWith("MaterialToolbar")))) {
+        if (name.endsWith("AppBarLayout")) {
             int fill = backgroundColor;
             if ((fill & 0xFF000000) != 0) return; // already opaque
             // Honor an EXPLICIT background (incl. transparent). F-Droid's
@@ -6614,10 +6321,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             return;
         }
     }
-    /** Gate: MACAPK_TOOLBAR_CHROME=1 restores the colorSurface fill behind a
-     *  Toolbar / MaterialToolbar with no background (see macapkPaintMaterialChrome). */
-    static final boolean MACAPK_TOOLBAR_CHROME =
-        "1".equals(System.getenv("MACAPK_TOOLBAR_CHROME"));
     protected void onDraw(android.graphics.Canvas canvas)      {}
     protected void dispatchDraw(android.graphics.Canvas canvas) {}
 
@@ -6721,17 +6424,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public boolean isInEditMode() {
         // Diagnostic (env-gated): ConstraintLayout.setChildrenConstraints
         // calls this FIRST, so a trace here proves whether the
-        // constraint-wiring pass ran for a given CL instance.
-        if (ENV_MACAPK_TRACE_EDITMODE != null) {
-            try {
-                Class<?> log = Class.forName("com.macapk.loader.NativeLog");
-                log.getMethod("i", String.class, String.class).invoke(null,
-                    "Mac.apk.EditMode",
-                    getClass().getSimpleName() + "@"
-                    + Integer.toHexString(System.identityHashCode(this))
-                    + " id=0x" + Integer.toHexString(getId()));
-            } catch (Throwable ignored) {}
-        }
         return false;
     }
     // Tier 3 M12: real translationZ / Z (were no-op stubs). AOSP semantics:
@@ -6799,15 +6491,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         return requestFocusNoSearch(direction, previouslyFocusedRect);
     }
     public boolean requestFocusFromTouch()         { return requestFocus(FOCUS_DOWN); }
-    static final boolean sTraceIme = "1".equals(System.getenv("MACAPK_TRACE_IME"));
     boolean requestFocusNoSearch(int direction, android.graphics.Rect previouslyFocusedRect) {
         if (!isFocusableConsideringTouchMode()) {
-            if (sTraceIme) {
-                System.err.println("[Mac.apk.IME] requestFocus REFUSED " + getClass().getName()
-                    + " focusable=" + focusable + " vis=" + visibility
-                    + " enabled=" + isEnabled() + " touchMode=" + isInTouchMode()
-                    + " focusableInTouchMode=" + focusableInTouchMode);
-            }
             return false;
         }
         // AOSP requestFocusNoSearch (android14): "need to not have any parents
@@ -6817,10 +6502,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         if (hasAncestorThatBlocksDescendantFocus()) return false;
         if (mIsFocused) return true;
         handleFocusGainInternal(direction, previouslyFocusedRect);
-        if (sTraceIme) {
-            System.err.println("[Mac.apk.IME] requestFocus GRANTED " + getClass().getName()
-                + " parent=" + (getParent() == null ? "null" : getParent().getClass().getName()));
-        }
         return true;
     }
     /** AOSP View.hasAncestorThatBlocksDescendantFocus (android14): a
@@ -6849,18 +6530,8 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         return focusable && visibility == VISIBLE && isEnabled()
             && (!isInTouchMode() || focusableInTouchMode);
     }
-    /** MACAPK_TRACE_FOCUS=1: who takes focus, from where (diagnostic). */
-    static final boolean sTraceFocus = "1".equals(System.getenv("MACAPK_TRACE_FOCUS"));
     void handleFocusGainInternal(int direction, android.graphics.Rect previouslyFocusedRect) {
         if (mIsFocused) return;
-        if (sTraceFocus) {
-            StringBuilder sb = new StringBuilder("focus-gain ").append(getClass().getName())
-                .append('@').append(Integer.toHexString(System.identityHashCode(this)))
-                .append(" dir=").append(direction);
-            StackTraceElement[] st = new Throwable().getStackTrace();
-            for (int i = 1; i < Math.min(st.length, 14); i++) sb.append("\n      at ").append(st[i]);
-            com.macapk.loader.NativeLog.i("Mac.apk.Focus", sb.toString());
-        }
         mIsFocused = true;
         ViewParent p = getParent();
         if (p != null) p.requestChildFocus(this, this);   // builds the mFocused chain to root, clears old branch
@@ -7020,12 +6691,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  here. The drawable is built lazily, so a view that never has its
      *  background read still allocates nothing. */
     private android.graphics.drawable.ColorDrawable macapkColorBackground;
-    /** Bisect gate for the setBackground(null) clear below. DEFAULT ON (AOSP
-     *  behaviour); MACAPK_BG_NULL_CLEARS_COLOR=0 gets the pre-v1.0.923 answer
-     *  back without a rebuild. Read once into a static so the draw path pays no
-     *  getenv. */
-    private static final boolean sBgNullClearsColor =
-        !"0".equals(System.getenv("MACAPK_BG_NULL_CLEARS_COLOR"));
     public void setBackgroundColor(int color) {
         this.backgroundColor = color;
         this.macapkBackgroundExplicitlySet = true;
@@ -7044,7 +6709,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // other drawable is dropped. Its padding stays applied, as in AOSP (a
         // ColorDrawable reports no padding, so setBackground keeps the old one).
         // MACAPK_SETBG_COLOR_REPLACES=0 restores the additive behaviour.
-        if (sSetBgColorReplaces && backgroundDrawable != null) {
+        if (backgroundDrawable != null) {
             if (backgroundDrawable instanceof android.graphics.drawable.ColorDrawable cd) {
                 cd.mutate();
                 cd.setColor(color);
@@ -7054,8 +6719,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             invalidate();
         }
     }
-    private static final boolean sSetBgColorReplaces =
-        !"0".equals(System.getenv("MACAPK_SETBG_COLOR_REPLACES"));
     /** Read the bound background color (0 if never set). Not on AOSP's
      *  public View API, but the framework's renderer-side helpers
      *  (ViewCanvasDriver) need it to decide whether to paint an
@@ -7088,17 +6751,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // null path below deliberately clears BOTH (see the comment there). An
         // unconditional identity return would resurrect the bug that fixed.
         if (d != null && d == backgroundDrawable) return;
-        if (ENV_MACAPK_TRACE_SETBG != null
-                && getClass().getSimpleName().endsWith("Button")) {
-            StringBuilder sb = new StringBuilder();
-            StackTraceElement[] st = Thread.currentThread().getStackTrace();
-            for (int i = 2; i < Math.min(st.length, 7); i++) sb.append("\n    at ").append(st[i]);
-            android.util.Log.i("Mac.apk.SetBg", "setBackgroundDrawable("
-                + (d == null ? "null" : d.getClass().getSimpleName()
-                   + (d instanceof android.graphics.drawable.VectorDrawable vd
-                      ? " stub=" + GfxBackend.get().isUnresolvedStub(vd) : ""))
-                + ") on " + getClass().getName() + sb);
-        }
         // AOSP's mBackground is ONE slot: installing null means the view has no
         // background at all. Mac.apk splits that state across two fields (the
         // flat `backgroundColor` fast path and `backgroundDrawable`), and
@@ -7113,7 +6765,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // MACAPK_BG_NULL_CLEARS_COLOR=0 restores the old behaviour for a
         // one-run A/B if this turns out to remove a background something relied
         // on.
-        if (d == null && sBgNullClearsColor) {
+        if (d == null) {
             this.backgroundColor = 0;
             this.macapkColorBackground = null;
         }
@@ -7425,7 +7077,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
 
     public void setOnTouchListener(OnTouchListener l) {
         this.onTouchListener = l;
-        if (l != null && "1".equals(ENV_MACAPK_TRACE_TOUCH)) {
+        if (l != null && false) {
             com.macapk.loader.NativeLog.i("View",
                 "setOnTouchListener(" + l.getClass().getName() + ") on "
                 + getClass().getName() + " id=" + getId());
@@ -7458,12 +7110,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // regardless, so a view the app had disabled still ran its touch handler --
         // exactly the "disabled button still fires" shape.
         if (onTouchListener != null && isEnabled()) {
-            if ("1".equals(ENV_MACAPK_TRACE_TOUCH)) {
-                com.macapk.loader.NativeLog.i("View",
-                    "dispatchTouchEvent -> onTouchListener " + onTouchListener.getClass().getName()
-                    + " on " + getClass().getName() + " ev=(" + ev.getX() + "," + ev.getY()
-                    + ") action=" + ev.getAction());
-            }
             if (onTouchListener.onTouch(this, ev)) return true;
         }
         return onTouchEvent(ev);
@@ -7520,11 +7166,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             }
         });
         rippleAnimator = a;
-        if ("1".equals(ENV_MACAPK_TRACE_RIPPLE)) {
-            com.macapk.loader.NativeLog.i("View", "ripple start " + getClass().getSimpleName()
-                + " at (" + (int) x + "," + (int) y + ") maxR=" + (int) rippleMaxRadius
-                + " color=" + Integer.toHexString(rippleColor));
-        }
         try { a.start(); } catch (Throwable ignored) {}
     }
     /** Ripple highlight color: a RippleDrawable background's color when present,
@@ -7676,13 +7317,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     public boolean onTouchEvent(MotionEvent ev) {
         final int action = ev.getActionMasked();
         final boolean clickable = isClickable() || isLongClickable();
-        if ("1".equals(ENV_MACAPK_TRACE_TOUCH)) {
-            com.macapk.loader.NativeLog.i("View",
-                "onTouchEvent " + getClass().getSimpleName()
-                + "@" + Integer.toHexString(System.identityHashCode(this))
-                + " id=0x" + Integer.toHexString(getId())
-                + " action=" + action + " clickable=" + clickable);
-        }
         if (!isEnabled()) {
             // AOSP View.onTouchEvent, disabled branch (android16-release
             // core/java/android/view/View.java:18104-18106):
@@ -7735,7 +7369,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
                     if (performButtonActionOnTouchDown(ev)) break;
                     setPressed(true);
                     // M18: kick off a Material ripple from the touch point.
-                    if (android.os.Looper.MACAPK_REAL_LOOPER) macapkStartRipple(ev.getX(), ev.getY());
+                    macapkStartRipple(ev.getX(), ev.getY());
                     // AOSP View.java:18219-18226: arm the long-press timer on the
                     // same DOWN that shows the pressed state.
                     checkForLongClick(ViewConfiguration.getLongPressTimeout(),
@@ -7998,7 +7632,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     private boolean mDrawableStateDirty = true;
 
     public void refreshDrawableState() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         mDrawableStateDirty = true;
         drawableStateChanged();
         // AOSP View.refreshDrawableState (android14 View.java:23683-23691):
@@ -8014,7 +7647,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
 
     protected int[] onCreateDrawableState(int extraSpace) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return new int[0];
         // AOSP: DUPLICATE_PARENT_STATE delegates to the parent's state.
         if (duplicateParentState && getParent() instanceof View) {
             return ((View) getParent()).onCreateDrawableState(extraSpace);
@@ -8053,7 +7685,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
 
     public final int[] getDrawableState() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return new int[0];
         if (mDrawableState != null && !mDrawableStateDirty) return mDrawableState;
         mDrawableState = onCreateDrawableState(0);
         mDrawableStateDirty = false;
@@ -8068,7 +7699,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  narrow access. Our own widget subclasses declare it public, which is a
      *  legal WIDENING and stays legal. */
     protected void drawableStateChanged() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         int[] state = getDrawableState();
         boolean changed = false;
         // Forward to the background DRAWABLE if the view owns a stateful
@@ -8103,7 +7733,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
     }
 
     public void jumpDrawablesToCurrentState() {
-        if (android.os.Looper.MACAPK_REAL_LOOPER && stateListAnimator != null) {
+        if (stateListAnimator != null) {
             try { stateListAnimator.jumpToCurrentState(); } catch (Throwable ignored) {}
         }
     }
@@ -8162,14 +7792,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         //
         // The flag STORAGE above is kept unconditionally -- getSystemUiVisibility
         // must round-trip for AndroidX's read-modify-write regardless, and that
-        // part is harmless and correct on its own.
-        if ("1".equals(ENV_MACAPK_EDGE_TO_EDGE)) {
-            final int edgeToEdge = SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                                 | SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN;
-            try {
-                android.view.Window.macapkSetDecorFits((flags & edgeToEdge) == 0);
-            } catch (Throwable ignored) {}
-        }
         // ---- the HIDE bits, which are a DIFFERENT REQUEST from the block above.
         //
         // v1.0.962 made the ViewCanvasDriver overlay actually reach the screen,
@@ -8250,7 +7872,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  the two want to be A/B-ed together. */
     public void transformFromViewToWindowSpace(int[] inOutLocation) {
         if (inOutLocation == null || inOutLocation.length < 2) return;
-        if (sIsShownDetachedAosp && !macapkAttached) {
+        if (!macapkAttached) {
             inOutLocation[0] = inOutLocation[1] = 0;
             return;
         }
@@ -8496,15 +8118,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
         // Routes through the same field as the Object-typed overload
         // (line ~835). ViewCompat (API 21+ path) lands here.
         onApplyWindowInsetsListener = l;
-        if ("1".equals(ENV_MACAPK_TRACE_INSETS)) {
-            try {
-                com.macapk.loader.NativeLog.i("View",
-                    "setOnApplyWindowInsetsListener on "
-                    + getClass().getSimpleName() + "@"
-                    + Integer.toHexString(System.identityHashCode(this))
-                    + " listener=" + (l == null ? "null" : l.getClass().getName()));
-            } catch (Throwable ignored) {}
-        }
     }
     /** AOSP dispatch: invoke the registered listener if any (the
      *  listener overrides our onApplyWindowInsets), else fall through
@@ -8514,16 +8127,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  is done -- depth-first, stopping at the first consumed bag. */
     public android.view.WindowInsets dispatchApplyWindowInsets(android.view.WindowInsets insets) {
         if (insets == null) return null;
-        if ("1".equals(ENV_MACAPK_TRACE_INSETS)) {
-            try {
-                com.macapk.loader.NativeLog.i("View",
-                    "dispatchApplyWindowInsets on "
-                    + getClass().getSimpleName() + "@"
-                    + Integer.toHexString(System.identityHashCode(this))
-                    + " listener=" + (onApplyWindowInsetsListener != null)
-                    + " sys=" + insets.getSystemWindowInsets());
-            } catch (Throwable ignored) {}
-        }
         if (onApplyWindowInsetsListener != null) {
             try {
                 android.view.WindowInsets out = onApplyWindowInsetsListener.onApplyWindowInsets(this, insets);
@@ -8662,7 +8265,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             java.util.Collections.synchronizedSet(new java.util.HashSet<String>());
     private static Boolean sTraceInsets;
     private static boolean macapkTraceInsets() {
-        if (sTraceInsets == null) sTraceInsets = System.getenv("MACAPK_TRACE_INSETS") != null;
+        if (sTraceInsets == null) sTraceInsets = false;
         return sTraceInsets;
     }
     private static void macapkTraceRootInsetsCaller() {
@@ -8971,7 +8574,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  invalidate() and invalidateDrawable() land here; only invalidate()
      *  is subclass-overridable, matching AOSP's dispatch shape. */
     private void macapkInvalidateNonVirtual() {
-        if (android.os.Looper.MACAPK_REAL_LOOPER) macapkScheduleRedraw();
+        macapkScheduleRedraw();
     }
     // Pending drawable animation ticks, keyed by the DRAWABLE that scheduled
     // them. AOSP gets this for free: it posts to the Choreographer with `who`
@@ -9281,8 +8884,7 @@ public class View implements android.graphics.drawable.Drawable.Callback,
             DragShadowBuilder shadowBuilder, Object myLocalState, int flags) {
         // MACAPK_DRAG_AND_DROP (default ON): an in-window drag session, see
         // MacApkDragSession. =0 restores "the drag did not start" (false).
-        boolean r = MacApkDragSession.ENABLED
-                && MacApkDragSession.start(this, data, shadowBuilder, myLocalState, flags);
+        boolean r = MacApkDragSession.start(this, data, shadowBuilder, myLocalState, flags);
         // HARNESS runs only (ViewTextDump.ENABLED = MACAPK_DUMP_TREE_EVERY set): say the
         // app ASKED and what it got, so drive_app's dragprobe can tell "our layer gave a
         // drag the app asked for a silent false" (the pre-port stub, or the =0 arm) from
@@ -9302,7 +8904,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  clears the drag surface and has the builder redraw it; without one AOSP
      *  logs "No active drag" and does nothing (so do we). */
     public final void updateDragShadow(DragShadowBuilder shadowBuilder) {
-        if (!MacApkDragSession.ENABLED) return;
         if (!MacApkDragSession.updateShadow(this, shadowBuilder)) {
             com.macapk.loader.NativeLog.e("View", "No active drag");
         }
@@ -9312,7 +8913,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  (result false). Without an active drag AOSP logs "No active drag to
      *  cancel" and does nothing (so do we). */
     public final void cancelDragAndDrop() {
-        if (!MacApkDragSession.ENABLED) return;
         if (!MacApkDragSession.cancel(this)) {
             com.macapk.loader.NativeLog.e("View", "No active drag to cancel");
         }
@@ -9890,7 +9490,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  OnHoverListener first (an enabled view only), then onHoverEvent. Both
      *  used to answer false, so no view ever saw a hover (GitHub #25). */
     public boolean dispatchHoverEvent(android.view.MotionEvent event) {
-        if (!HOVER_VIEWS) return false;
         if (mOnHoverListener != null && isEnabled() && mOnHoverListener.onHover(this, event)) {
             return true;
         }
@@ -9902,7 +9501,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  onGenericMotionEvent for compatibility, and consumes it. The accessibility
      *  hover events and the scrollbar wake-up are not modelled. */
     public boolean onHoverEvent(android.view.MotionEvent event) {
-        if (!HOVER_VIEWS) return false;
         if (isHoverable() || isHovered()) {
             switch (event.getActionMasked()) {
                 case android.view.MotionEvent.ACTION_HOVER_ENTER: setHovered(true); break;
@@ -9927,9 +9525,6 @@ public class View implements android.graphics.drawable.Drawable.Callback,
      *  children; ViewGroup answers from its hover targets. */
     protected boolean hasHoveredChild() { return false; }
     protected boolean pointInHoveredChild(android.view.MotionEvent event) { return false; }
-    /** MACAPK_HOVER_EVENTS (default ON; =0 = the pre-change views, which never
-     *  answered a hover). Read by ViewGroup's hover routing and TouchDispatcher. */
-    public static final boolean HOVER_VIEWS = !"0".equals(System.getenv("MACAPK_HOVER_EVENTS"));
     private OnHoverListener mOnHoverListener;
 
     // ---- content-translation (API 31): no on-device translator ---------------
