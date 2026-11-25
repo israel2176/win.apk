@@ -1278,6 +1278,31 @@ void log_launcher_error(const fs::path& log, const std::wstring& what, DWORD err
     CloseHandle(f);
 }
 
+// The runtime ended with an NTSTATUS (0xC...): Windows ended it, often before it could write a line (a DLL
+// that does not load stops it before main). Appended to its log, after the runtime's own lines, with what the
+// status means when it is a known one.
+void log_runtime_status(const fs::path& log, DWORD code) {
+    if (log.empty() || code < 0xC0000000u) return;
+    const wchar_t* what = code == 0xC0000135u   ? L"a DLL it needs was not found"
+                          : code == 0xC0000139u ? L"a DLL it needs lacks a function (a mismatched DLL)"
+                          : code == 0xC000007Bu ? L"a DLL it needs is not a valid 64-bit image"
+                          : code == 0xC0000142u ? L"a DLL it needs failed to initialize"
+                          : code == 0xC0000005u ? L"an access violation"
+                          : code == 0xC00000FDu ? L"a stack overflow"
+                          : code == 0xC0000409u ? L"a fail-fast stop (a broken check or a stack buffer overrun)"
+                                                : L"ended by Windows";
+    wchar_t hex[16];
+    swprintf(hex, 16, L"0x%08lX", static_cast<unsigned long>(code));
+    const std::string line =
+        wide_to_utf8(L"[E] launcher: winapk-runtime.exe ended with " + std::wstring(hex) + L" (" + what + L")\r\n");
+    HANDLE f = CreateFileW(log.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(f, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
 // `name` is the app the runtime opens, for its orientation; empty for an install. The runtime's
 // stdout and stderr go to `log` (none: NUL). `ready`, when given, is the launch handshake's event
 // (win32_window.h, take_launcher_ready_event): the child gets it, and only it and the log, through
@@ -1449,9 +1474,9 @@ DWORD WINAPI run_thread(void* param) {
     AcquireSRWLockShared(&g_proc_lock);
     const bool stopped_early = g_runs.stop_requested(job->name);
     ReleaseSRWLockShared(&g_proc_lock);
+    const fs::path log = stopped_early ? fs::path() : start_run_log(job->name);
     HANDLE p = stopped_early ? nullptr
-                             : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name),
-                                             job->name, ready, job->env);
+                             : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", log, job->name, ready, job->env);
     DWORD code = 1;
     AcquireSRWLockExclusive(&g_proc_lock);
     if (!p) {
@@ -1472,6 +1497,7 @@ DWORD WINAPI run_thread(void* param) {
         }
         WaitForSingleObject(p, INFINITE);
         GetExitCodeProcess(p, &code);
+        log_runtime_status(log, code);
         AcquireSRWLockExclusive(&g_proc_lock);
         g_runs.ended(job->name, code == 0);
         ReleaseSRWLockExclusive(&g_proc_lock);
@@ -1825,6 +1851,7 @@ bool install_into_library(const fs::path& source, const std::wstring& name, bool
             ReleaseSRWLockExclusive(&g_installs_lock);
             WaitForSingleObject(p, INFINITE);
             GetExitCodeProcess(p, &code);
+            log_runtime_status(install_log(name), code);
             AcquireSRWLockExclusive(&g_installs_lock);
             g_installs.detach(name);
             ReleaseSRWLockExclusive(&g_installs_lock);
@@ -4665,7 +4692,10 @@ std::wstring runtime_failure_reason(const fs::path& log) {
     const std::string tail = read_tail(log, 64 * 1024);
     if (tail.find("[E] launcher: could not start ") != std::string::npos)
         return tr(L"Win.apk could not start its runtime. See the log for details.");
-    if (tail.find("[win.apk] error: AOSP graphics:") != std::string::npos)
+    if (tail.find("[win.apk] error: AOSP graphics:") != std::string::npos ||
+        tail.find("[E] launcher: winapk-runtime.exe ended with 0xC0000135") != std::string::npos ||
+        tail.find("[E] launcher: winapk-runtime.exe ended with 0xC0000139") != std::string::npos ||
+        tail.find("[E] launcher: winapk-runtime.exe ended with 0xC000007B") != std::string::npos)
         return tr(L"A part of Win.apk is missing or does not load. Install Win.apk again.");
     return {};
 }
