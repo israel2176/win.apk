@@ -666,7 +666,7 @@ the **Threads** row under the switch (every running app), from an app's
 details page (**Troubleshooting > Threads**, that app only) or with Ctrl+T.
 
 - **The app** is picked at the top left: one app, **All apps**, or **Win.apk
-  services** (the system broker of "Use Google services"). An app is all its
+  services** (the system broker of "Use Google services (experimental)"). An app is all its
   processes: each `winapk-runtime.exe` that runs it and whatever those
   started (WebView2's processes, an ARM translation worker).
 - **Every thread is a row.** The list comes from Windows itself, once a

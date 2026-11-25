@@ -80,7 +80,7 @@ downloads Google's apps.
 
 ### Setting it up
 
-1. Turn on **Use Google services**. The **Google services setup** page opens
+1. Turn on **Use Google services (experimental)**. The **Google services setup** page opens
    by itself (later: **Google Play** in the left pane, or the row under the
    switch).
 2. For each of the three apps, Google Services Framework, Google Play services
@@ -184,7 +184,7 @@ Google has its own way on for devices like this (custom ROMs and Waydroid
 use it): you register the device's ID with your Google account, and Google
 apps then let that account sign in on it.
 
-1. Turn on **Settings > Google account > Use Google services**, set them up,
+1. Turn on **Settings > Google account > Use Google services (experimental)**, set them up,
    and open the Play Store once so Google services check in with Google.
 2. Under **Settings > Google account**, the row **Device ID for Google** shows
    a long number (it may start with a minus sign). Press **Copy**.
