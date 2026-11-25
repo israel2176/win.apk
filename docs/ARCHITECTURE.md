@@ -164,10 +164,16 @@ deleted by the next dump); an install,
 drops the `--patch-module` flags only when the JRE's
 `lib\winapk-baked-patches` records the same SHA-256 as the patch folders (a
 plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
-framework archive is dumped by `java -Xshare:dump`, in the background after the
-first app start of each Win.apk and JRE version (`winapk-runtime --cds-dump`),
-from the class list Win.apk ships (`lib\winapk-framework.classlist`, the classes at
-least three of the ten smoke apps load) and the classes that start loaded. The key changes with the
+framework archive is dumped by `java -Xshare:dump` before any app starts, as
+Android compiles its framework at an update: by Win.apk's installer
+(`winapk-runtime --cds-prepare`, hidden, at the end of the setup), else at the
+end of the first app install (`--install-only`, after the DEX conversion), from
+the class list Win.apk ships (`lib\winapk-framework.classlist`, the classes at
+least three of the ten smoke apps load). Only when neither made it does an app
+start record the classes it loads and dump in the background after its first
+frame (`winapk-runtime --cds-dump`): a second JVM of about 200 MB beside the app
+(the dump's heap is its own, `-Xmx96m`), which made a first start's peak twice a
+second's (comparison run 45513190823) while it was the rule. The key changes with the
 graphics, the JRE, the jars, the shipped list and the JVM options; HotSpot itself checks the
 JRE and the jars when it maps the file and otherwise starts without it. A new
 archive is checked whole (`-XX:+VerifySharedSpaces`) on its first use and
@@ -918,9 +924,11 @@ the change refused from anyone but the launcher.
    C1 compiler only (a faster start than tiered C1+C2) and class-data sharing:
    the JRE's archive and the framework archive (see [The host](#the-host); the
    run log's `[win.apk] cds:` line says which, and `startup:` lines when the
-   JVM was up and when the first frame came, with the working set). The first
-   start without a framework archive records its classes, and 10 s after its
-   first frame (or at its exit) starts the archive's dump in the background;
+   JVM was up and when the first frame came, with the working set). The
+   archive is normally there before the first start (the installer and the
+   first app install make it); a start without one records its classes, and
+   10 s after its first frame (or at its exit) starts the archive's dump in
+   the background;
    JVMTI is enabled for the `NativeMethodBind` hook and signature lookups; the
    host natives are bound; SQLite's natives are registered.
 5. `Boot.run` starts the Android side: the TLS trust store is set to the
