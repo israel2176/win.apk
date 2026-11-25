@@ -22,6 +22,12 @@
 #include "../host/win32_window.h"
 #include "../host/window_fit.h"
 
+// win32_window.cpp asks the graphics DLL to compose again on a resize or a snapshot (hwui_host.cpp,
+// which needs the runtime's natives); this test has no DLL and no frames, so there is nothing to do.
+namespace winapk::host {
+void hwui_recompose() {}
+}  // namespace winapk::host
+
 namespace {
 
 int g_failures = 0;
