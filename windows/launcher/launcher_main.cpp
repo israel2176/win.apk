@@ -10685,6 +10685,10 @@ fs::path registry_apk(const std::string& pkg) {
     return {};
 }
 
+namespace appops {
+std::string installed_at(const std::string& pkg);
+}
+
 // <data>\installed_apps.json, upstream's registry (launcher/InstallCore.swift
 // RegistryStore, schema 2) as MacApkPackageManager.InstalledRegistry reads
 // it: one row per library app whose package is known. Rewritten whole, to a
@@ -10699,6 +10703,11 @@ void write_registry() {
         if (std::find(seen.begin(), seen.end(), p[0]) != seen.end()) continue;
         seen.push_back(p[0]);
         const std::string when = iso_time(package_file(app.name));
+        // installedAt is Android's firstInstallTime: an update keeps the row's, so the app keeps what it was
+        // granted (the signed grants are keyed by package and installedAt); a removal drops the row, and the
+        // next install of the package starts with no grant.
+        std::string since = appops::installed_at(p[0]);
+        if (since.empty()) since = when;
         out += first ? "\n" : ",\n";
         first = false;
         out += "{\"package\":" + json_string(p[0]) + ",\"label\":" + json_string(wide_to_utf8(app.label)) +
@@ -10707,7 +10716,7 @@ void write_registry() {
                ",\"apkPath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
                ",\"bundlePath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
                ",\"dirName\":" + json_string(wide_to_utf8(app.name)) + ",\"state\":\"installed\"" +
-               ",\"installedAt\":" + json_string(when) + ",\"updatedAt\":" + json_string(when) + "}";
+               ",\"installedAt\":" + json_string(since) + ",\"updatedAt\":" + json_string(when) + "}";
     }
     out += "\n]}\n";
     std::error_code ec;
@@ -11649,6 +11658,12 @@ bool identity_of(const std::string& pkg, Identity* id) {
         });
     });
     return j.ok && found == 1;
+}
+
+// The registry's installedAt of `pkg`, empty when it has no row (write_registry keeps it across updates).
+std::string installed_at(const std::string& pkg) {
+    Identity id;
+    return identity_of(pkg, &id) ? id.installed_at : std::string();
 }
 
 // ---- the caller ----------------------------------------------------------------
