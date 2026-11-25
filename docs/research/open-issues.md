@@ -116,6 +116,61 @@ owner's decisions" and delete the item.
   limits (more memory and processor in the background, apps' sync and
   reminders work); (c) (b) only during the 4-hourly maintenance window the
   launcher already opens.
+- **The display's refresh rate.** Apps are told 60 Hz and Choreographer and
+  GL swaps are paced to it (`host/swap_pacing.h` `kDisplayHz`), whatever the
+  monitor runs at. Android reports the panel's own rate (90, 120, 144 Hz) and
+  apps may ask for it. Options: (a) keep 60 (fewer frames to read back and
+  compose on the processor; most phones' apps are made for 60); (b) the
+  monitor's rate (smoother games and scrolling on fast monitors, more
+  processor and power).
+- **A camera when the PC has none.** With no webcam, `CameraBridge` reports a
+  virtual back camera that gives dark-grey frames, so screens built around a
+  preview open (WhatsApp's "link a device" hides its phone-number button
+  otherwise); `MACAPK_VIRTUAL_CAMERA=0` turns it off. This is a made-up
+  device, which the owner's "no made-up sensors" rule forbids for sensors.
+  Options: (a) keep it (those screens work); (b) none, as Android on a device
+  without a camera (`FEATURE_CAMERA*` not declared, those screens refuse to
+  open), and remove the switch either way.
+- **Window behaviours the user guide offers only as variables.**
+  `WINAPK_RESIZABLE=0` (the window letterboxes the phone instead of resizing
+  the app), `MACAPK_LETTERBOX=0` (with it, stretches instead) and
+  `WINAPK_MAXIMIZE_TURNS=0` (a maximized window is a tablet-sized display, not
+  the phone turned) change what the user sees, with no setting in the
+  launcher. The same for the troubleshooting ones `WINAPK_WEBVIEW2=0`,
+  `WINAPK_ANGLE_BACKEND`, `WINAPK_CDS=0`, `WINAPK_AOT=0`,
+  `WINAPK_SYSTEM_CACERTS=0`. Options: (a) remove the three window ones (one
+  behaviour, as Android's freeform windows), keep the troubleshooting ones
+  documented as such; (b) keep all as they are; (c) make the window ones
+  settings.
+- **Upstream's switches still in the loaded framework.** About 390
+  `MACAPK_*` variables are read by framework classes that still load (not
+  shadowed by AOSP's jars), about 310 of them not traces or dumps: kill
+  switches of fixes (`=0` puts the old behaviour back) and opt-ins (`=1`).
+  Many sit in Win.apk's old view and input code that no app runs any more
+  (`ViewCanvasDriver` is never constructed; `TouchDispatcher`'s own delivery,
+  replaced by `AospInput`; `KeyBindProfiles`, `TiltControl`, `ArrowPad`,
+  `SpaceTap`; `ComposeViewFallback`, which branches on one app's class names,
+  `com.reddit.*`). The QA sweep removed the ones the documents listed as live
+  (the permission, resources, keyboard, wheel, readback, manifest and
+  SurfaceView switches) and the README's dead entries. Options: (a) a removal
+  pass: delete the dead old view and input code (with "Size and memory"'s
+  Win.apk views item), then make each remaining switch's default the only
+  path, file by file, under the UI gate; (b) keep the diagnostics (`*_TRACE`,
+  `*_DUMP`) and remove only behaviour switches; (c) leave them.
+- **Google's certificate reported for Play services and the Play Store**
+  (`GoogleGmsCertificate`, upstream's; `MACAPK_GMS_GOOGLE_CERT=0` reports the
+  platform's instead, and apps then call Play services invalid). It is a
+  claim no signature backs, made so apps accept the layer. Options: keep (with
+  or without the switch), or report the real signer (apps refuse Play
+  services). Its comments, and upstream's whole Google services layer
+  (`runtime/java/com/macapk/gms/`), name another Play services
+  reimplementation as their protocol reference dozens of times; the owner's
+  rule says no other compatibility project is named.
+- **Other projects named outside the code.** The front page (`README.md`,
+  `README.he.md`) names two Android emulators and Microsoft's former Android
+  subsystem to say how Win.apk differs; `docs/research/background-translation.md`
+  names other binary translators as prior art for the arm64 cache. Options:
+  keep (a comparison, not copied code) or reword without names.
 
 ## Check again after each AOSP layer lands
 
