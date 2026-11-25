@@ -6,8 +6,8 @@
 // variant (Play services'). Each was chosen for Win.apk, which presents Android 14 (API level 34):
 //
 //   Services Framework  14-10182995, the build for Android 14 (minSdkVersion 34), no native code.
-//   Play services       26.46.32 (040800-...), the x86 + x86_64 nodpi variant for Android 7.0+ (minSdkVersion 24).
-//   Play Store          54.2.12-24 [0] [PR] ..., the universal nodpi variant for Android 7.0+ (minSdkVersion 24).
+//   Play services       26.34.36 (040800-...), the x86 + x86_64 nodpi variant for Android 7.0+ (minSdkVersion 24).
+//   Play Store          52.9.21-24 [0] [PR] ..., the universal nodpi variant for Android 7.0+ (minSdkVersion 24).
 //
 // They set only the first install: from then on the Play Store updates itself and Play services, as on a phone.
 // Every file is still checked by `winapk-runtime --verify-apk` before it is installed (Google's signature,
@@ -26,6 +26,6 @@ struct GooglePin {
 
 constexpr GooglePin kGooglePins[] = {
     {"com.google.android.gsf", "14-10182995"},
-    {"com.google.android.gms", "26.46.32 (040800-1025220680)"},
-    {"com.android.vending", "54.2.12-24 [0] [PR] 1019424474"},
+    {"com.google.android.gms", "26.34.36 (040800-981326859)"},
+    {"com.android.vending", "52.9.21-24 [0] [PR] 968642861"},
 };

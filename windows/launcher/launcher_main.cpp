@@ -6134,7 +6134,7 @@ DWORD WINAPI setup_fetch_thread(void* param) {
                                " left no app file (apkeep exit code " + std::to_string(code) + ")");
             continue;
         }
-        // "com.google.android.gms@26.46.32 (...)@x86_64.apk" -> "com.google.android.gms.apk": the name install_name
+        // "com.google.android.gms@26.34.36 (...)@x86_64.apk" -> "com.google.android.gms.apk": the name install_name
         // reads.
         const fs::path keep = dir / (utf8_to_wide(f->pkg) + got.extension().wstring());
         std::error_code fe;

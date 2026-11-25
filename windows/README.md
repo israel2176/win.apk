@@ -194,8 +194,8 @@ The setup downloads the versions of Google's three apps that
 `launcher/google_apps.h` pins, never APKPure's newest (a preview build of
 Services Framework, minSdkVersion "Q", and an x86-only Play services variant
 have been its newest): Services Framework `14-10182995` (Android 14's build,
-minSdkVersion 34), Play services `26.46.32 (040800-1025220680)` (x86 + x86_64,
-nodpi, Android 7.0+) and the Play Store `54.2.12-24 [0] [PR] 1019424474`
+minSdkVersion 34), Play services `26.34.36 (040800-981326859)` (x86 + x86_64,
+nodpi, Android 7.0+) and the Play Store `52.9.21-24 [0] [PR] 968642861`
 (universal, nodpi, Android 7.0+). apkeep is run as
 `apkeep -a "<package>@<version>" -d apk-pure -o acknowledge_dangers=true,arch=x86_64,sdk=34 <dir>`:
 `sdk=34` (`scripts/apkeep-patches/0002`) tells APKPure the device is on

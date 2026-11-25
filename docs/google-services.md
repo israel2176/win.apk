@@ -119,8 +119,8 @@ presents; every file is still checked for all three before it is installed:
 | App | Version | Variant | Needs |
 |---|---|---|---|
 | Google Services Framework | `14-10182995` | the build for Android 14, no native code | Android 14 (API 34) |
-| Google Play services | `26.46.32 (040800-1025220680)` | x86 + x86_64, nodpi | Android 7.0 (API 24) |
-| Google Play Store | `54.2.12-24 [0] [PR] 1019424474` | universal, nodpi | Android 7.0 (API 24) |
+| Google Play services | `26.34.36 (040800-981326859)` | x86 + x86_64, nodpi | Android 7.0 (API 24) |
+| Google Play Store | `52.9.21-24 [0] [PR] 968642861` | universal, nodpi | Android 7.0 (API 24) |
 
 These set only the first install. From then on the Play Store updates itself
 and Play services from Google, as on a phone. Win.apk asks APKPure as a
