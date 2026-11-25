@@ -42,7 +42,7 @@
 //   Win.apk.exe), and an app's own PACKAGE_ADDED broadcast is dropped.
 // Google accounts, "accounts" child with its own GmsStore folder: the broker's
 //   account service mirrors GmsStore's accounts into its table (master token as
-//   the password, the gaia id as GoogleUserId), sees an account another process
+//   the password, in its sealed table; the gaia id as GoogleUserId), sees an account another process
 //   signs in after the service started (the Play Store's "Sign in" in its own
 //   process, Settings' `--gms signin-window`), with or without being asked, and
 //   drops a mirrored account once it is signed out; a row it did not mirror stays.
@@ -1117,6 +1117,7 @@ public final class BinderTransportTest {
     }
 
     static int gmsWrite(String[] args) {
+        com.macapk.gms.GmsStore.becomeOwner();   // as `--gms` is: it holds the account
         String email = args[2];
         if (args[1].equals("add")) {
             com.macapk.gms.GmsStore.putAccount(email, "master-" + email);
@@ -1129,11 +1130,13 @@ public final class BinderTransportTest {
 
     static int accounts() throws Exception {
         System.out.println("Google account checks (pid " + myPid() + ")");
+        com.macapk.gms.GmsStore.becomeOwner();   // as the broker is
         final String a = "first@example.com", b = "second@example.com", c = "third@example.com";
         final String other = "kept@example.com";
         check("first account written", gmsWriter("add", a), "");
         File storeFile = new File(new File(System.getenv("MACAPK_GMS_DIR")).getParentFile(), "accounts_ce.properties");
-        com.macapk.accounts.AccountStore store = com.macapk.accounts.AccountStore.at(storeFile);
+        // The broker's table, sealed (DPAPI, the natives winapk-binder-test binds) as the service opens it.
+        com.macapk.accounts.AccountStore store = com.macapk.accounts.AccountStore.sealedAt(storeFile);
         // A com.google row the service did not mirror (added the way Play services' own
         // sign-in would add one): a sign-out in Win.apk must leave it alone.
         store.add(other, GOOGLE, "pw", null);
@@ -1144,6 +1147,11 @@ public final class BinderTransportTest {
         check("its gaia id is GoogleUserId", ("4242" + a.length()).equals(store.userData(a, GOOGLE, "GoogleUserId")),
                 String.valueOf(store.userData(a, GOOGLE, "GoogleUserId")));
         check("a second sync changes nothing", !svc.syncGoogleAccounts(), "");
+        String sealed = new String(Files.readAllBytes(store.file().toPath()), StandardCharsets.ISO_8859_1);
+        check("the table holding the master token is sealed", !sealed.contains("master-" + a), store.file().getName());
+        String state = new String(Files.readAllBytes(new File(System.getenv("MACAPK_GMS_DIR"),
+                "gms_state.properties").toPath()), StandardCharsets.ISO_8859_1);
+        check("gms_state.properties holds no master token", !state.contains("master-"), "");
 
         check("second account written by another process", gmsWriter("add", b), "");
         boolean changed = svc.syncGoogleAccounts();
