@@ -31,7 +31,8 @@
 //                                           its provider's binder (phase 4)
 //   START(callerPkg, Intent)                AMS startService for another app's
 //                                           service (resolved first via RESOLVE)
-//   BROADCAST(callerPkg, Intent) (oneway)   AMS broadcastIntent across apps:
+//   BROADCAST(callerPkg, Intent, proc, requiredPermissions) (oneway)
+//                                           AMS broadcastIntent across apps:
 //                                           every running app's receivers, plus
 //                                           a stopped app's manifest receiver
 //                                           for an explicit target or a
@@ -41,6 +42,15 @@
 //   PROVIDER_PACKAGE(authority) -> pkg      PMS resolveContentProvider: which
 //                                           package declares the authority (null:
 //                                           none); no process is started
+//   CHECK_PROVIDER(pid, uri, write) -> answer, reason
+//                                           Win.apk: ContentProvider.Transport's
+//                                           enforceRead/WritePermission, asked by
+//                                           the provider's own process for its caller
+//   CHECK_PERMISSION(perm, pkg) -> granted  PackageManager.checkPermission
+//   CHECK_PERMISSION_PID(perm, pid) -> granted
+//                                           Context.checkPermission for another process
+//   GRANT_URI(target, uri, mode) / REVOKE_URI(target, uri, mode) / CHECK_URI(pid, uri, mode)
+//                                           Context.grantUriPermission and its kin
 //   PACKAGE_CHANGED(op, pkg, apk, dataRemoved)
 //                                           Win.apk: PMS's commit of an install,
 //                                           an update or a removal, from the
@@ -52,7 +62,8 @@
 //                                           looper (ActivityThread.handleBindService)
 //   ACQUIRE_PROVIDER(authority) -> IBinder  the app's own provider, as a binder
 //   SCHEDULE_START(Intent)                  startService on the app's main looper
-//   SCHEDULE_BROADCAST(Intent) (oneway)     deliver to the app's own receivers
+//   SCHEDULE_BROADCAST(Intent, fromSystem, senderPkg) (oneway)
+//                                           deliver to the app's own receivers
 //
 // PROCESSES. An app is not one process but one per android:process its manifest
 // uses, as on a device: the package's default process (its application-level
@@ -112,6 +123,11 @@
 // every install, update and removal the launcher commits while it runs, which
 // the launcher tells it (PACKAGE_CHANGED) as PackageManagerService learns a
 // package at its commit; it then broadcasts PACKAGE_* to the running apps.
+// What that caller may reach is decided as system_server decides it
+// (BrokerPermissions): a component's android:permission, a provider's read and
+// write permissions, path-permissions and URI grants, a broadcast's required
+// permissions both ways, each against the permissions the caller's package
+// holds (signature ones by its verified signer).
 package com.macapk.loader;
 
 import android.content.ComponentName;
@@ -141,6 +157,8 @@ public final class SystemServer {
     /** RESOLVE answers: AMS bindService returns false / throws SecurityException
      *  synchronously, before any process starts, and so must we. */
     static final int RESOLVE_NONE = 0, RESOLVE_OK = 1, RESOLVE_NOT_EXPORTED = 2;
+    /** The service requires a permission the caller does not hold; the permission follows. */
+    static final int RESOLVE_NO_PERMISSION = 3;
     static final int TX_GET_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 4;
     static final int TX_START = IBinder.FIRST_CALL_TRANSACTION + 5;
     static final int TX_BROADCAST = IBinder.FIRST_CALL_TRANSACTION + 6;
@@ -185,6 +203,21 @@ public final class SystemServer {
      *  the caller and must agree with these numbers. */
     static final int TX_PACKAGE_CHANGED = IBinder.FIRST_CALL_TRANSACTION + 25;
     static final int PACKAGE_ADDED = 0, PACKAGE_REPLACED = 1, PACKAGE_REMOVED = 2;
+    /** Win.apk: ContentProvider.Transport's per-operation check, asked by the process serving the
+     *  provider: (callingPid, uri, write) -> BrokerPermissions.OP_*, the denial's tail. */
+    static final int TX_CHECK_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 29;
+    /** PackageManager.checkPermission(perm, pkg) -> 1 granted / 0 not. */
+    static final int TX_CHECK_PERMISSION = IBinder.FIRST_CALL_TRANSACTION + 30;
+    /** ActivityManagerService.checkPermission(perm, pid, uid) for another process: (perm, pid) -> 1
+     *  granted / 0 not, for the package the broker knows that process as. */
+    static final int TX_CHECK_PERMISSION_PID = IBinder.FIRST_CALL_TRANSACTION + 34;
+    /** Context.grantUriPermission(target, uri, mode), by the calling package. */
+    static final int TX_GRANT_URI = IBinder.FIRST_CALL_TRANSACTION + 31;
+    /** Context.revokeUriPermission([target,] uri, mode), by the provider's owner: (target or null, uri, mode). */
+    static final int TX_REVOKE_URI = IBinder.FIRST_CALL_TRANSACTION + 32;
+    /** Context.checkUriPermission(uri, pid, uid, mode): (pid, uri, mode) -> URI_GRANTED / URI_DENIED /
+     *  URI_UNKNOWN (no installed app's provider: the asking process answers for its own). */
+    static final int TX_CHECK_URI = IBinder.FIRST_CALL_TRANSACTION + 33;
     static final int TX_SCHEDULE_NOTIFY = IBinder.FIRST_CALL_TRANSACTION + 16;
     static final int TX_SCHEDULE_BIND = IBinder.FIRST_CALL_TRANSACTION + 10;
     static final int TX_ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 11;
@@ -197,6 +230,8 @@ public final class SystemServer {
     static final class PackageRecord {
         final String pkg, apkPath;
         final Manifest manifest;
+        /** Its verified signers (ApkVerification), read when a permission check first needs them. */
+        volatile ApkVerification.Result signers;
         PackageRecord(String pkg, String apkPath, Manifest manifest) {
             this.pkg = pkg; this.apkPath = apkPath; this.manifest = manifest;
         }
@@ -215,6 +250,55 @@ public final class SystemServer {
     }
 
     private final Map<String, PackageRecord> packages = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Tests: a package's signers, instead of verifying its APK. */
+    java.util.function.Function<String, ApkVerification.Result> signersOf;
+
+    /** system_server's permission checks over this broker's packages. */
+    final BrokerPermissions perms = new BrokerPermissions(new BrokerPermissions.Packages() {
+        @Override public Manifest manifest(String pkg) {
+            PackageRecord pr = pkg == null ? null : packages.get(pkg);
+            return pr == null ? null : pr.manifest;
+        }
+        @Override public ApkVerification.Result signers(String pkg) {
+            if (signersOf != null) return signersOf.apply(pkg);
+            PackageRecord pr = pkg == null ? null : packages.get(pkg);
+            if (pr == null) return ApkVerification.of(null);
+            ApkVerification.Result r = pr.signers;
+            if (r == null) pr.signers = r = ApkVerification.of(pr.apkPath);
+            return r;
+        }
+        @Override public boolean privileged(String pkg) {
+            PackageRecord pr = pkg == null ? null : packages.get(pkg);
+            return pr != null && MacApkPackageManager.platformSystemApk(pr.pkg, pr.apkPath);
+        }
+        @Override public boolean runtimeGranted(String pkg, Manifest m, String perm) {
+            return SpecialAccessStore.runtimeGrantedFor(pkg, m, perm);
+        }
+        @Override public int uid(String pkg) {
+            PackageRecord pr = pkg == null ? null : packages.get(pkg);
+            return AppUids.uidFor(pkg, pr != null ? pr.manifest.sharedUserId : null);
+        }
+        @Override public Iterable<String> all() { return new ArrayList<>(packages.keySet()); }
+    });
+
+    /** findProvider as BrokerPermissions asks it: {owning package, entry}. */
+    private final BrokerPermissions.ProviderLookup providerLookup = authority -> {
+        Object[] hit = findProvider(authority);
+        return hit == null ? null : new Object[] { ((PackageRecord) hit[0]).pkg, hit[1] };
+    };
+
+    /** How AOSP names a caller in a denial: "(pid=<pid>, uid=<uid>)" for the calling process. */
+    String who(int pid) { return "(pid=" + pid + ", uid=" + uidOfPid(pid) + ")"; }
+
+    /** The URI grants an intent the broker hands from `caller` to `target` carries (AMS grants them as
+     *  it delivers); a refused one is logged and not made, the delivery goes on. */
+    void grantFromIntent(String caller, String target, Intent intent) {
+        if (caller == null || target == null || caller.equals(target)) return;
+        for (String why : perms.grantFromIntent(caller, target, intent, providerLookup)) {
+            log("uri grant " + caller + " -> " + target + " REFUSED: " + why);
+        }
+    }
     /** Running processes by PROCESS NAME (not package): a package has several. */
     private final Map<String, AppRecord> running = new LinkedHashMap<>();
     private final Map<String, CompletableFuture<AppRecord>> starting = new LinkedHashMap<>();
@@ -753,22 +837,32 @@ public final class SystemServer {
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     String[] target = intent == null ? null : resolve(intent);
                     int answer = RESOLVE_NONE;
+                    String missing = null;
                     if (target != null) {
                         Manifest.ServiceEntry se = packages.get(target[0]).manifest.services.get(target[1]);
-                        answer = (se.exported || target[0].equals(caller)) ? RESOLVE_OK : RESOLVE_NOT_EXPORTED;
+                        missing = serviceDenial(caller, target, se);
+                        answer = missing == null ? RESOLVE_OK
+                                : missing.isEmpty() ? RESOLVE_NOT_EXPORTED : RESOLVE_NO_PERMISSION;
                     } else {
                         log("resolve from " + caller + ": nothing serves " + intent);
                     }
                     reply.writeNoException();
                     reply.writeInt(answer);
                     reply.writeTypedObject(target == null ? null : new ComponentName(target[0], target[1]), 0);
+                    if (answer == RESOLVE_NO_PERMISSION) reply.writeString(missing);
                     return true;
                 }
                 case TX_GET_PROVIDER: {
                     data.enforceInterface(DESCRIPTOR);
                     String caller = callerPackage(data.readString());
                     String authority = data.readString();
-                    IBinder b = getProvider(caller, authority);
+                    IBinder b;
+                    try {
+                        b = getProvider(caller, authority);
+                    } catch (SecurityException e) {
+                        reply.writeException(e);
+                        return true;
+                    }
                     reply.writeNoException();
                     reply.writeStrongBinder(b);
                     return true;
@@ -787,6 +881,8 @@ public final class SystemServer {
                     Intent intent = data.readTypedObject(Intent.CREATOR);
                     // The sender's own process, which delivered to itself.
                     String callerProc = data.dataAvail() > 0 ? data.readString() : null;
+                    // sendBroadcast(intent, receiverPermission): what a receiving app must hold.
+                    String[] required = data.dataAvail() > 0 ? data.createStringArray() : null;
                     if (intent != null && intent.getAction() != null && osIdentity()
                             && PACKAGE_ACTIONS.contains(intent.getAction())) {
                         // AMS: a protected broadcast only the system sends ("Permission Denial: not
@@ -797,7 +893,8 @@ public final class SystemServer {
                     }
                     if (intent != null) {
                         final Intent fi = intent; final String fc = caller, fp = callerProc;
-                        new Thread(() -> broadcast(fc, fp, fi), "broker-broadcast").start();
+                        final String[] fr = required;
+                        new Thread(() -> broadcast(fc, fp, fi, fr), "broker-broadcast").start();
                     }
                     if (reply != null) reply.writeNoException();
                     return true;
@@ -835,7 +932,13 @@ public final class SystemServer {
                     data.enforceInterface(DESCRIPTOR);
                     String caller = callerPackage(data.readString());
                     Intent intent = data.readTypedObject(Intent.CREATOR);
-                    boolean stopped = stopService(caller, intent);
+                    boolean stopped;
+                    try {
+                        stopped = stopService(caller, intent);
+                    } catch (SecurityException e) {
+                        reply.writeException(e);
+                        return true;
+                    }
                     reply.writeNoException();
                     reply.writeInt(stopped ? 1 : 0);
                     return true;
@@ -849,6 +952,87 @@ public final class SystemServer {
                     data.enforceInterface(DESCRIPTOR);
                     jobReport(data);
                     if (reply != null) reply.writeNoException();
+                    return true;
+                }
+                case TX_CHECK_PROVIDER: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String self = callerPackage(null);   // the provider's own process asks
+                    int pid = data.readInt();
+                    String uri = data.readString();
+                    boolean write = data.readInt() != 0;
+                    Object[] answer = checkProvider(self, pid, uri, write);
+                    reply.writeNoException();
+                    reply.writeInt((Integer) answer[0]);
+                    reply.writeString((String) answer[1]);
+                    return true;
+                }
+                case TX_CHECK_PERMISSION: {
+                    data.enforceInterface(DESCRIPTOR);
+                    callerPackage(null);
+                    String perm = data.readString();
+                    String pkg = data.readString();
+                    boolean granted = pkg != null && packages.containsKey(pkg) && perms.holds(pkg, perm);
+                    reply.writeNoException();
+                    reply.writeInt(granted ? 1 : 0);
+                    return true;
+                }
+                case TX_CHECK_PERMISSION_PID: {
+                    data.enforceInterface(DESCRIPTOR);
+                    callerPackage(null);
+                    String perm = data.readString();
+                    int pid = data.readInt();
+                    boolean granted;
+                    if (pid == ProcessHandle.current().pid()) {
+                        granted = true;   // the system
+                    } else {
+                        String pkg = packageOfProcess(pid);
+                        granted = pkg != null && perms.holds(pkg, perm);
+                    }
+                    reply.writeNoException();
+                    reply.writeInt(granted ? 1 : 0);
+                    return true;
+                }
+                case TX_GRANT_URI: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String caller = callerPackage(null);
+                    String target = data.readString();
+                    String uri = data.readString();
+                    int mode = data.readInt();
+                    String why = target == null || uri == null || !packages.containsKey(target) ? null
+                            : perms.grant(caller, target, android.net.Uri.parse(uri), mode,
+                                    (mode & Intent.FLAG_GRANT_PREFIX_URI_PERMISSION) != 0, providerLookup);
+                    if (why != null) {
+                        log("uri grant " + caller + " -> " + target + " REFUSED: " + why);
+                        reply.writeException(new SecurityException(why));
+                        return true;
+                    }
+                    reply.writeNoException();
+                    return true;
+                }
+                case TX_REVOKE_URI: {
+                    data.enforceInterface(DESCRIPTOR);
+                    String caller = callerPackage(null);
+                    String target = data.readString();
+                    String uri = data.readString();
+                    int mode = data.readInt();
+                    android.net.Uri u = uri == null ? null : android.net.Uri.parse(uri);
+                    Object[] hit = u == null || u.getAuthority() == null ? null : providerLookup.find(u.getAuthority());
+                    // UriGrantsManagerService.revokeUriPermission: the provider's own app revokes the grants
+                    // of the uri, to one package or to all.
+                    if (hit != null && perms.sameApp(caller, (String) hit[0])) {
+                        perms.grants.revoke((String) hit[0], target, u, mode);
+                    }
+                    reply.writeNoException();
+                    return true;
+                }
+                case TX_CHECK_URI: {
+                    data.enforceInterface(DESCRIPTOR);
+                    callerPackage(null);
+                    int pid = data.readInt();
+                    String uri = data.readString();
+                    int mode = data.readInt();
+                    reply.writeNoException();
+                    reply.writeInt(checkUri(pid, uri, mode));
                     return true;
                 }
                 case TX_APP_STATE: {
@@ -920,10 +1104,17 @@ public final class SystemServer {
      *  receiver runs in ITS android:process, so one broadcast can have receivers
      *  in several processes of the same package. */
     private static java.util.Set<String> receiverProcesses(PackageRecord pr, Intent intent) {
+        return receiverProcesses(pr, intent, null);
+    }
+
+    /** receiverProcesses, of the receivers `admit` lets the broadcast reach (null: all). */
+    private static java.util.Set<String> receiverProcesses(PackageRecord pr, Intent intent,
+            java.util.function.Predicate<Manifest.ActivityEntry> admit) {
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
         ComponentName cn = intent.getComponent();
         for (Manifest.ActivityEntry r : pr.manifest.receivers.values()) {
             if (!r.enabled) continue;
+            if (admit != null && !admit.test(r)) continue;
             boolean match = false;
             if (cn != null) {
                 match = cn.getClassName().equals(r.name);
@@ -948,7 +1139,15 @@ public final class SystemServer {
      *  is reached too, in its OTHER processes: the caller's process delivered to
      *  itself, and a receiver declared in a sibling android:process is only ever
      *  run there. `callerProc` is the process that sent it (null = unknown). */
-    void broadcast(String caller, String callerProc, Intent intent) {
+    void broadcast(String caller, String callerProc, Intent intent) { broadcast(caller, callerProc, intent, null); }
+
+    /** broadcast, with the sender's required permissions (sendBroadcast's receiverPermission): a
+     *  package that does not hold every one of them is left out (BroadcastQueue's skip, logged as AMS
+     *  logs it). A receiver's own android:permission is the sender's to hold: the broker leaves such
+     *  a manifest receiver out of the processes it starts, and the receiving process checks it, and a
+     *  registered receiver's, against the sender it is told (SCHEDULE_BROADCAST). An explicitly
+     *  targeted broadcast's URI grants go to its package (AMS grants them as it delivers). */
+    void broadcast(String caller, String callerProc, Intent intent, String[] required) {
         // Play services announces a finished device check-in; the boot nudge
         // below has done its job.
         if (CHECKIN_COMPLETE.equals(intent.getAction())
@@ -966,7 +1165,22 @@ public final class SystemServer {
             // boot-time broadcast; the app's own broadcast starts the sibling
             // process that owns the receiver (AMS starts a receiver's process).
             boolean mayStart = own || target != null || STARTING_ACTIONS.contains(intent.getAction());
-            deliverToPackage(pkg, intent, own, mayStart, own ? callerProc : null);
+            String lacks = null;
+            if (required != null) {
+                for (String rp : required) {
+                    if (rp != null && !perms.holds(pkg, rp)) { lacks = rp; break; }
+                }
+            }
+            if (lacks != null) {
+                PackageRecord pr = packages.get(pkg);
+                if (target != null || (pr != null && manifestReceives(pr, intent)) || !processesOf(pkg).isEmpty()) {
+                    log("Permission Denial: receiving " + intent + " to " + pkg + " requires " + lacks
+                            + " due to sender " + caller + " (uid " + perms.uidOf(caller) + ")");
+                }
+                continue;
+            }
+            if (!own && target != null) grantFromIntent(caller, pkg, intent);
+            deliverToPackage(pkg, intent, own, mayStart, own ? callerProc : null, own ? null : caller);
         }
     }
 
@@ -976,9 +1190,24 @@ public final class SystemServer {
      *  broadcast, which reaches non-exported receivers too (see deliverTo).
      *  `skipProc`: the sender's own process, which delivered to itself. */
     void deliverToPackage(String pkg, Intent intent, boolean fromSystem, boolean mayStart, String skipProc) {
+        deliverToPackage(pkg, intent, fromSystem, mayStart, skipProc, null);
+    }
+
+    /** deliverToPackage from `sender`, another app (null: the system or the package itself): a
+     *  stopped process is started only for a manifest receiver the sender may reach (exported, and
+     *  its android:permission held: AMS checkComponentPermission). */
+    void deliverToPackage(String pkg, Intent intent, boolean fromSystem, boolean mayStart, String skipProc,
+            String sender) {
         PackageRecord pr = packages.get(pkg);
         if (pr == null) return;
-        java.util.Set<String> owners = receiverProcesses(pr, intent);
+        java.util.Set<String> owners = receiverProcesses(pr, intent, sender == null ? null : r -> {
+            if (perms.checkComponent(r.permission, sender, pkg, r.exported)) return true;
+            if (r.exported) {
+                log("Permission Denial: broadcasting " + intent + " from " + sender + " (uid " + perms.uidOf(sender)
+                        + ") requires " + r.permission + " due to receiver " + pkg + "/" + r.name);
+            }
+            return false;
+        });
         java.util.Set<String> procs = new java.util.LinkedHashSet<>();
         for (AppRecord r : processesOf(pkg)) procs.add(r.proc);
         procs.addAll(owners);
@@ -993,7 +1222,7 @@ public final class SystemServer {
                     continue;
                 }
             }
-            deliverTo(app, intent, fromSystem);
+            deliverTo(app, intent, fromSystem, sender);
         }
     }
 
@@ -1002,12 +1231,17 @@ public final class SystemServer {
     /** `fromSystem`: the broker's own broadcast (boot), which AMS delivers to
      *  non-exported receivers too; another app's broadcast reaches only
      *  exported ones. */
-    private void deliverTo(AppRecord app, Intent intent, boolean fromSystem) {
+    private void deliverTo(AppRecord app, Intent intent, boolean fromSystem) { deliverTo(app, intent, fromSystem, null); }
+
+    /** `sender`: the app that sent it, whose permissions the receivers' required ones are checked
+     *  against in the receiving process (null: the system, or the package's own process). */
+    private void deliverTo(AppRecord app, Intent intent, boolean fromSystem, String sender) {
         Parcel d = Parcel.obtain();
         try {
             d.writeInterfaceToken(THREAD_DESCRIPTOR);
             d.writeTypedObject(intent, 0);
             d.writeInt(fromSystem ? 1 : 0);
+            d.writeString(fromSystem ? null : sender);
             app.thread.transact(TX_SCHEDULE_BROADCAST, d, null, IBinder.FLAG_ONEWAY);
             log("broadcast " + intent.getAction() + " -> " + app.proc);
         } catch (Throwable t) {
@@ -1067,6 +1301,7 @@ public final class SystemServer {
                 bundles.remove(pkg);
                 accounts().forget(pkg);
                 jobs().removeAll(pkg);   // JobSchedulerService drops a removed package's jobs
+                perms.grants.forget(pkg);   // and UriGrantsManagerService its grants
                 log("package " + pkg + " removed" + (dataRemoved ? " with its data" : ""));
                 replacing = false;
             } else {
@@ -1397,16 +1632,21 @@ public final class SystemServer {
         return null;
     }
 
-    /** AMS getContentProvider: resolve, enforce android:exported for another
-     *  app, start the process if needed, and fetch the provider's binder. */
+    /** AMS getContentProvider: resolve, enforce android:exported and the
+     *  provider's permissions for another app (SecurityException, as
+     *  ContentProviderHelper throws it), start the process if needed, and fetch
+     *  the provider's binder. */
     private IBinder getProvider(String caller, String authority) {
         Object[] hit = authority == null ? null : findProvider(authority);
         if (hit == null) return null;
         PackageRecord pr = (PackageRecord) hit[0];
         Manifest.ProviderEntry e = (Manifest.ProviderEntry) hit[1];
-        if (!e.exported && !pr.pkg.equals(caller)) {
-            log("provider " + authority + " of " + pr.pkg + " is not exported to " + caller);
-            return null;
+        // ContentProviderHelper.checkContentProviderPermission: exported, and the caller holds the
+        // read or write permission (or a path-permission's), or has a URI grant under the authority.
+        String denial = perms.providerOpenDenial(caller, pr.pkg, e, who(Binder.getCallingPid()));
+        if (denial != null) {
+            log(denial);
+            throw new SecurityException(denial);
         }
         try {
             AppRecord app = ensureRunning(pr, processOf(pr, e.name));
@@ -1432,7 +1672,8 @@ public final class SystemServer {
         String[] target = intent == null ? null : resolve(intent);
         if (target == null) return;
         Manifest.ServiceEntry se = packages.get(target[0]).manifest.services.get(target[1]);
-        if (!se.exported && !target[0].equals(caller)) return;
+        if (serviceDenial(caller, target, se) != null) return;
+        grantFromIntent(caller, target[0], intent);
         try {
             AppRecord app = ensureServiceProcess(target[0], target[1]);
             Intent explicit = new Intent(intent);
@@ -1458,7 +1699,8 @@ public final class SystemServer {
         if (target == null) return false;
         PackageRecord pr = packages.get(target[0]);
         Manifest.ServiceEntry se = pr.manifest.services.get(target[1]);
-        if (!se.exported && !target[0].equals(caller)) return false;
+        // ContextImpl.stopServiceCommon: a service the caller may not use throws.
+        if (serviceDenial(caller, target, se) != null) throw new SecurityException("Not allowed to stop service " + intent);
         AppRecord app;
         synchronized (this) { app = running.get(processOf(pr, target[1])); }
         if (app == null || !app.thread.isBinderAlive()) return false;
@@ -1786,6 +2028,68 @@ public final class SystemServer {
         saveJobs();
     }
 
+    /** ActiveServices.retrieveServiceLocked's check (checkComponentPermission): null when `caller`
+     *  may use the service, "" when it is not exported to it, else the permission it lacks; a denial
+     *  is logged as AMS logs it. */
+    String serviceDenial(String caller, String[] target, Manifest.ServiceEntry se) {
+        if (perms.checkComponent(se.permission, caller, target[0], se.exported)) return null;
+        int pid = Binder.getCallingPid();
+        String head = "Permission Denial: Accessing service " + target[0] + "/" + target[1] + " from pid=" + pid
+                + ", uid=" + uidOfPid(pid);
+        if (!se.exported) {
+            log(head + " that is not exported from uid " + perms.uidOf(target[0]));
+            return "";
+        }
+        log(head + " requires " + se.permission);
+        return se.permission;
+    }
+
+    /** The package process `pid` is (attached, else what the OS says it is), or null. */
+    String packageOfProcess(int pid) {
+        String p = packageOfPid(pid);
+        if (p == null) {
+            String[] id = identityOfPid(pid);
+            if (id != null) p = id[0];
+        }
+        return p;
+    }
+
+    /** TX_CHECK_PROVIDER: may process `pid` read (or write) `uri` of a provider of `self`'s?
+     *  {BrokerPermissions.OP_*, the denial's tail}. The broker itself is the system. */
+    Object[] checkProvider(String self, int pid, String uri, boolean write) {
+        android.net.Uri u = uri == null ? null : android.net.Uri.parse(uri);
+        Object[] hit = u == null || u.getAuthority() == null ? null : providerLookup.find(u.getAuthority());
+        if (hit == null || !perms.sameApp(self, (String) hit[0])) {
+            return new Object[] { BrokerPermissions.OP_DENIED, " (the uri's authority is not this provider's)" };
+        }
+        if (pid == ProcessHandle.current().pid()) return new Object[] { BrokerPermissions.OP_ALLOWED, null };
+        String caller = packageOfProcess(pid);
+        if (caller == null) {
+            return new Object[] { BrokerPermissions.OP_DENIED, " (the calling process is no installed app's)" };
+        }
+        Object[] answer = perms.providerOp(caller, (String) hit[0], (Manifest.ProviderEntry) hit[1], u, write);
+        if ((Integer) answer[0] == BrokerPermissions.OP_DENIED) {
+            log("Permission Denial: " + (write ? "writing " : "reading ") + uri + " from " + caller + " " + who(pid)
+                    + answer[1]);
+        }
+        return answer;
+    }
+
+    /** TX_CHECK_URI's answers: granted, denied, and no installed app's provider serves the uri. */
+    static final int URI_GRANTED = 1, URI_DENIED = 0, URI_UNKNOWN = 2;
+
+    /** TX_CHECK_URI: Context.checkUriPermission(uri, pid, uid, mode) for process `pid`. */
+    int checkUri(int pid, String uri, int mode) {
+        if (pid == ProcessHandle.current().pid()) return URI_GRANTED;
+        android.net.Uri u = uri == null ? null : android.net.Uri.parse(uri);
+        Object[] hit = u == null || u.getAuthority() == null ? null : providerLookup.find(u.getAuthority());
+        if (hit == null) return URI_UNKNOWN;
+        String caller = packageOfProcess(pid);
+        if (caller == null) return URI_DENIED;
+        return perms.uriAccess(caller, (String) hit[0], (Manifest.ProviderEntry) hit[1], u, mode)
+                ? URI_GRANTED : URI_DENIED;
+    }
+
     private void bind(String caller, Intent intent, Parcel reply) {
         String[] target = intent == null ? null : resolve(intent);
         if (target == null) {
@@ -1794,13 +2098,13 @@ public final class SystemServer {
             return;
         }
         Manifest.ServiceEntry se = packages.get(target[0]).manifest.services.get(target[1]);
-        // AMS: a service another app binds must be exported (same-package binds
-        // are always allowed).
-        if (!se.exported && !target[0].equals(caller)) {
-            reply.writeException(new SecurityException("Not allowed to bind to service "
-                    + target[0] + "/" + target[1] + ": not exported"));
+        // AMS: a service another app binds must be exported and its android:permission held
+        // (same-app binds are always allowed); ContextImpl.bindServiceCommon throws.
+        if (serviceDenial(caller, target, se) != null) {
+            reply.writeException(new SecurityException("Not allowed to bind to service " + intent));
             return;
         }
+        grantFromIntent(caller, target[0], intent);
         try {
             AppRecord app = ensureServiceProcess(target[0], target[1]);
             Intent explicit = new Intent(intent);

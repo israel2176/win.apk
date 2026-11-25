@@ -101,6 +101,13 @@ public interface AppHost {
      *  broker relayed, to this process's receivers. */
     void deliverBroadcast(Intent intent, boolean fromOtherApp);
 
+    /** deliverBroadcast from `sender`, the other app that sent it as the system broker knows it: a
+     *  receiver that requires a permission (its android:permission, or registerReceiver's
+     *  broadcastPermission) hears it only when `sender` holds that permission (null: the system). */
+    default void deliverBroadcast(Intent intent, boolean fromOtherApp, String sender) {
+        deliverBroadcast(intent, fromOtherApp);
+    }
+
     /** A service of the app's bound for the host, which waits for its binder: one the system broker
      *  binds into this app for another, an account authenticator, the measurement service. The
      *  service is created if it was not and the binding held for the process's life; null when

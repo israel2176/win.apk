@@ -87,18 +87,54 @@ public final class ActivityManagerService {
 
     public void removeContentProvider(android.os.IBinder connection, boolean stable) {}
 
+    // ---- URI grants (UriGrantsManagerService, the system broker's) ----
+
+    /** Context.grantUriPermission: to another app, recorded by the system broker, which checks the
+     *  provider allows it and this app may grant it (a SecurityException otherwise); to this app
+     *  itself, nothing to grant. */
+    public void grantUriPermission(IApplicationThread caller, String targetPkg, android.net.Uri uri, int mode,
+            int userId) {
+        if (targetPkg == null || targetPkg.equals(app.info.packageName)) return;
+        com.macapk.loader.SystemClient.grantUri(targetPkg, uri, mode);
+    }
+
+    /** Context.revokeUriPermission([targetPackage,] uri, mode). */
+    public void revokeUriPermission(IApplicationThread caller, String targetPkg, android.net.Uri uri, int mode,
+            int userId) {
+        com.macapk.loader.SystemClient.revokeUri(targetPkg, uri, mode);
+    }
+
+    /** Context.checkUriPermission(uri, pid, uid, mode): the system broker's answer for an installed
+     *  app's provider (its permissions and the grants, UriGrantsManagerService.checkUriPermission).
+     *  A uri no installed app's provider serves (this process's own document providers) is this
+     *  app's own to reach: granted to this app, denied to others. */
+    public int checkUriPermission(android.net.Uri uri, int pid, int uid, int mode, int userId,
+            android.os.IBinder callerToken) {
+        if (pid == android.os.Process.myPid()) return android.content.pm.PackageManager.PERMISSION_GRANTED;
+        int answer;
+        try {
+            answer = com.macapk.loader.SystemClient.checkUri(pid, uri, mode);
+        } catch (LinkageError e) {
+            answer = -1;   // a JVM without the loader (the plain-JVM test)
+        }
+        if (answer == 1 || (answer != 0 && uid == android.os.Process.myUid())) {
+            return android.content.pm.PackageManager.PERMISSION_GRANTED;
+        }
+        return android.content.pm.PackageManager.PERMISSION_DENIED;
+    }
+
     // ---- Broadcasts (ActiveBroadcasts) ----
 
     public android.content.Intent registerReceiverWithFeature(IApplicationThread caller, String callerPackage,
             String callingFeatureId, String receiverId, android.content.IIntentReceiver receiver,
             android.content.IntentFilter filter, String requiredPermission, int userId, int flags) {
-        return app.broadcasts.register(receiver, filter, flags);
+        return app.broadcasts.register(receiver, filter, flags, requiredPermission);
     }
 
     public android.content.Intent registerReceiver(IApplicationThread caller, String callerPackage,
             android.content.IIntentReceiver receiver, android.content.IntentFilter filter, String requiredPermission,
             int userId, int flags) {
-        return app.broadcasts.register(receiver, filter, flags);
+        return app.broadcasts.register(receiver, filter, flags, requiredPermission);
     }
 
     public void unregisterReceiver(android.content.IIntentReceiver receiver) {
@@ -110,13 +146,15 @@ public final class ActivityManagerService {
             int resultCode, String resultData, Bundle resultExtras, String[] requiredPermissions,
             String[] excludedPermissions, String[] excludedPackages, int appOp, Bundle options, boolean serialized,
             boolean sticky, int userId) {
-        return app.broadcasts.broadcast(intent, resultTo, resultCode, resultData, resultExtras, serialized, sticky);
+        return app.broadcasts.broadcast(intent, resultTo, resultCode, resultData, resultExtras, serialized, sticky,
+                requiredPermissions);
     }
 
     public int broadcastIntent(IApplicationThread caller, android.content.Intent intent, String resolvedType,
             android.content.IIntentReceiver resultTo, int resultCode, String resultData, Bundle resultExtras,
             String[] requiredPermissions, int appOp, Bundle options, boolean serialized, boolean sticky, int userId) {
-        return app.broadcasts.broadcast(intent, resultTo, resultCode, resultData, resultExtras, serialized, sticky);
+        return app.broadcasts.broadcast(intent, resultTo, resultCode, resultData, resultExtras, serialized, sticky,
+                requiredPermissions);
     }
 
     public void unbroadcastIntent(IApplicationThread caller, android.content.Intent intent, int userId) {
