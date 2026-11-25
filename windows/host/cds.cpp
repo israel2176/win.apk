@@ -348,18 +348,22 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
     g.java_exe = jdk / "bin" / "java.exe";
     g.shipped = shipped;
     // The dump runs with this start's options, except: the class path is the
-    // framework's, and the collector is G1, the only one HotSpot 21 archives
+    // framework's, the collector is G1, the only one HotSpot 21 archives
     // heap objects with (interned strings, class mirrors); a Serial start
-    // loads them all the same.
+    // loads them all the same; and the heap is small: the dump allocates
+    // little beyond the classes' mirrors and strings (~20 MB), and the app's
+    // -Xms128m -Xmx1g made it a 200+ MB process (cds::dump_heap_options).
     g.dump_opts.clear();
     g.dump_opts.push_back("-cp");
     g.dump_opts.push_back(cp);
     for (const std::string& o : *opts) {
         if (cds::per_launch(o) || starts(o, "-Djava.class.path=")) continue;
         if (starts(o, "-XX:+Use") && o.size() > 10 && o.compare(o.size() - 2, 2, "GC") == 0) continue;
+        if (starts(o, "-Xms") || starts(o, "-Xmx")) continue;
         g.dump_opts.push_back(o);
     }
     g.dump_opts.push_back("-XX:+UseG1GC");
+    for (const char* o : cds::kDumpHeapOptions) g.dump_opts.push_back(o);
 
     if (read_count(g.fails) >= 2) {
         std::fprintf(stderr, "[win.apk] cds: the framework archive failed twice for this Win.apk and Java runtime; "
@@ -464,6 +468,15 @@ int cds_prepare() {
     std::fprintf(stderr, "[win.apk] cds: %s %s (%s)\n", utf8(g.jsa.wstring()).c_str(),
                  rc == 0 ? "made" : "NOT made", utf8((g.dir / L"dump.log").wstring()).c_str());
     return rc;
+}
+
+void cds_after_install() {
+    std::error_code ec;
+    if (!g.shared || fs::exists(g.jsa, ec) || read_count(g.fails) >= 2) return;
+    std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk yet: made now, at install, so that "
+                         "the app's first start maps it\n");
+    std::fflush(stderr);
+    cds_prepare();
 }
 
 int cds_dump_main(int argc, wchar_t** argv) {
