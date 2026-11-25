@@ -72,6 +72,15 @@ static inline int winapk_dprintf(int fd, const char* fmt, ...) {
 #define strerror_r winapk_strerror_r
 #define dprintf winapk_dprintf
 
+// Bionic's: the kernel thread id of a pthread. HWUI asks it only of the calling thread (its render
+// thread, its pool's workers, the UI thread) to name them to the performance-hint session.
+#include <pthread.h>
+static inline int pthread_gettid_np(pthread_t t) {
+    return pthread_equal(t, pthread_self()) ? (int)GetCurrentThreadId() : -1;
+}
+static inline int gettid(void) { return (int)GetCurrentThreadId(); }
+#include <sys/mman.h>
+
 #ifdef __cplusplus
 #include <limits>
 #include <memory>
