@@ -42,6 +42,12 @@
 //    (InstalledSplits.fallbackLibDirs). Only those: the background
 //    translation translates whatever is in lib/arm64.
 //
+//  - Names are held to the device installer's rules before they name a file:
+//    the manifest's package to PackageParser.validateName (it names the
+//    installed directory, the data directory and the library's files), and
+//    each library's and each bundle APK's file name to NativeLibraryHelper's
+//    isFilenameSafe (on Windows a '\' or ':' in one names a file elsewhere).
+//
 // The installed base.apk's path is written to the record file, which the host
 // reads back and also uses to tell an install is current.
 //
@@ -138,6 +144,11 @@ public final class AppInstall {
                 System.err.println("[install] no package name in " + source);
                 return 3;
             }
+            String bad = validatePackageName(pkg);
+            if (bad != null) {
+                System.err.println("[install] invalid package name \"" + pkg + "\" in " + source + ": " + bad);
+                return 3;
+            }
             Path dir = androidRoot.resolve("data").resolve("app").resolve(DIR_NONCE)
                     .resolve(pkg + "-" + NAME_NONCE);
             Files.createDirectories(dir.getParent());
@@ -221,7 +232,7 @@ public final class AppInstall {
             List<ZipEntry> apks = new ArrayList<>();
             for (Enumeration<? extends ZipEntry> e = zip.entries(); e.hasMoreElements(); ) {
                 ZipEntry z = e.nextElement();
-                if (!z.isDirectory() && z.getName().endsWith(".apk")) apks.add(z);
+                if (!z.isDirectory() && z.getName().endsWith(".apk") && isFilenameSafe(baseName(z))) apks.add(z);
             }
             if (apks.isEmpty()) {
                 System.err.println("[install] no APK inside " + bundle);
@@ -282,7 +293,7 @@ public final class AppInstall {
                     String name = e.nextElement().getName();
                     if (!name.startsWith(prefix) || !name.endsWith(".so")) continue;
                     String file = name.substring(prefix.length());
-                    if (!file.contains("/")) names.add(file);
+                    if (isFilenameSafe(file)) names.add(file);
                 }
             }
         }
@@ -371,7 +382,7 @@ public final class AppInstall {
                 String name = z.getName();
                 if (z.isDirectory() || !name.startsWith(prefix) || !name.endsWith(".so")) continue;
                 String file = name.substring(prefix.length());
-                if (file.contains("/")) continue;
+                if (!isFilenameSafe(file)) continue;
                 Files.createDirectories(libDir);
                 try (InputStream in = zip.getInputStream(z)) {
                     Files.copy(in, libDir.resolve(file), StandardCopyOption.REPLACE_EXISTING);
@@ -380,6 +391,44 @@ public final class AppInstall {
             }
         }
         return n;
+    }
+
+    /** PackageParser.validateName(name, requireSeparator, requireFilename) for a manifest's package: segments of
+     *  a letter then letters, digits or '_', at least one '.', and a valid file name (FileUtils.isValidExtFilename:
+     *  not "." or ".."). Null when valid, else why not. The package names the installed directory, the data
+     *  directory and the library's files, so a name with a path in it must never get that far. */
+    static String validatePackageName(String name) {
+        boolean hasSep = false, front = true;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+                front = false;
+                continue;
+            }
+            if (!front && ((c >= '0' && c <= '9') || c == '_')) continue;
+            if (c == '.') {
+                hasSep = true;
+                front = true;
+                continue;
+            }
+            return "bad character '" + c + "'";
+        }
+        if (name.isEmpty() || name.equals(".") || name.equals("..")) return "Invalid filename";
+        return hasSep ? null : "must have at least one '.' separator";
+    }
+
+    /** NativeLibraryHelper's isFilenameSafe (android.os.FileUtils.isFilenameSafe) for one file name inside an
+     *  APK: letters, digits and + , - . = _ only. A library or split named otherwise is skipped, as a device's
+     *  installer skips it; on Windows a '\\' or ':' in it would otherwise name a file outside the app. */
+    static boolean isFilenameSafe(String name) {
+        if (name.isEmpty()) return false;
+        for (int i = 0; i < name.length(); i++) {
+            char c = name.charAt(i);
+            boolean ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '+'
+                    || c == ',' || c == '-' || c == '.' || c == '=' || c == '_';
+            if (!ok) return false;
+        }
+        return true;
     }
 
     /** VMRuntime.getInstructionSet: the directory name an ABI installs under. */
