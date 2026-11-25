@@ -1,6 +1,6 @@
 ﻿; winapk.iss -- the Win.apk installer (Inno Setup 6).
 ;
-;   iscc /DSourceDir=<staged folder with jre> /DAppVersion=0.1.0-preview windows\package\winapk.iss
+;   iscc /DSourceDir=<staged folder with jre> /DAppVersion=1.0.0 windows\package\winapk.iss
 ;
 ; Installs per user (no administrator rights) to %LOCALAPPDATA%\Programs\Win.apk,
 ; adds Win.apk to the Start menu (and the desktop if asked), opens .apk files
@@ -20,7 +20,7 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
-; The numeric part (0.2.0 of 0.2.0-preview), for the file's version resource.
+; The numeric part (1.1.0 of 1.1.0-rc1), for the file's version resource.
 #ifndef AppNumber
   #define AppNumber "0.1.0"
 #endif
@@ -32,7 +32,7 @@ AppVersion={#AppVersion}
 AppVerName=Win.apk {#AppVersion}
 AppPublisher=Win.apk
 VersionInfoVersion={#AppNumber}
-; The full version (0.2.0-preview) as the installer's ProductVersion: the launcher's updater runs a downloaded
+; The full version (1.1.0-rc1) as the installer's ProductVersion: the launcher's updater runs a downloaded
 ; installer only when this is the release's version (launcher/updates.h judge_setup).
 VersionInfoProductTextVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\Win.apk

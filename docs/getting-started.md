@@ -33,7 +33,7 @@ Windows Features.
    - **`Win.apk-windows-x64.zip`**, the portable copy: unzip it anywhere and
      start `Win.apk.exe`.
 2. Run the installer. **Windows SmartScreen will warn** that it does not know
-   the publisher, because preview builds are not code-signed yet. Click
+   the publisher, because Win.apk's builds are not code-signed yet. Click
    **More info**, then **Run anyway**.
 3. The installer speaks English or Hebrew, following the Windows display
    language. So does Win.apk; Settings > Appearance > Language changes it.

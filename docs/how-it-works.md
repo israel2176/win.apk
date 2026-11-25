@@ -49,9 +49,10 @@ they are closed.
 
 - **The Java side** runs on a standard Java VM (built from Eclipse Temurin 21,
   included; the Java classes every app loads are kept ready to map, so starts
-  after the first are quicker)
-  against a re-implementation of Android's framework (the Activity, View,
-  Resources... classes), which comes from Mac.apk.
+  are quicker) against Android's framework: Android 14's own app, view,
+  resource and graphics code (the Activity, View, Resources and Canvas
+  classes, from the Android Open Source Project), with the rest re-implemented
+  for Windows, starting from Mac.apk's.
 - **The native side** (`.so` libraries in the APK) is loaded by Win.apk's own
   loader. Android libraries expect Android's C library and Linux's calling
   conventions; Win.apk provides a Windows version of that library and bridges

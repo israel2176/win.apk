@@ -2,7 +2,7 @@
 
 **🇮🇱 [לדף הזה בעברית — לחצו כאן](he/troubleshooting.md)**
 
-Win.apk is a preview: some apps will not work yet. This page helps you tell a
+Win.apk does not run every app yet. This page helps you tell a
 known limit from a new bug, and send a report we can act on.
 
 - [First steps](#first-steps)
@@ -22,14 +22,14 @@ known limit from a new bug, and send a report we can act on.
 
 ## Common problems
 
-**Windows protected your PC (SmartScreen) when running the installer.** The
-preview is not code-signed yet. Click **More info**, then **Run anyway**, if
+**Windows protected your PC (SmartScreen) when running the installer.** Win.apk
+is not code-signed yet. Click **More info**, then **Run anyway**, if
 you downloaded it from this repository's
 [Releases](https://github.com/israel2176/win.apk/releases) page.
 
 **An antivirus flags Win.apk or an app.** Win.apk writes code (the ARM
-translation) and then runs it, which some scanners dislike, and the preview is
-not signed. Allow it if you trust the download.
+translation) and then runs it, which some scanners dislike, and Win.apk is
+not signed yet. Allow it if you trust the download.
 
 **The app does not start.** An app with only 32-bit ARM code installs but
 stops as soon as it loads that code; its log says `this is a 32-bit ARM library

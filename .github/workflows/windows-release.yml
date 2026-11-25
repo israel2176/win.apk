@@ -1,4 +1,4 @@
-# Publishes a Win.apk pre-release: builds the runtime on Windows, packages it
+# Publishes a Win.apk release (a full release unless marked a pre-release): builds the runtime on Windows, packages it
 # with its Java runtime (bake_jre.sh) and ANGLE (the same folder as CI's winapk-preview
 # artifact), makes the installer (windows/package/winapk.iss), and attaches
 # both to a GitHub release for the given tag.
@@ -8,9 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v0.1.0-preview'
+        description: 'Release tag, for example v1.0.0'
         required: true
-        default: 'v0.1.0-preview'
+        default: 'v1.0.0'
+      prerelease:
+        description: 'Mark it a pre-release (the update check and the web page offer a full release first)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -107,7 +111,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $pre = @()
+          if ("${{ inputs.prerelease }}" -eq "true") { $pre = @("--prerelease") }
           gh release create "${{ inputs.tag }}" Win.apk-Setup.exe Win.apk-windows-x64.zip `
-            --prerelease --target "${{ github.sha }}" `
+            @pre --target "${{ github.sha }}" `
             --title "Win.apk ${{ inputs.tag }}" `
             --notes-file windows/package/RELEASE_NOTES.md
