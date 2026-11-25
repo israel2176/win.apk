@@ -17,15 +17,19 @@ add_compile_definitions(SK_R32_SHIFT=0 USE_MINGW WIN32_LEAN_AND_MEAN _WIN32_WINN
 # bitfields; MinGW defaults to MSVC's layout), the same in every library that shares a struct.
 add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-O2;-fno-strict-aliasing;-ffunction-sections;-fdata-sections;-w;-Wno-error;-fmessage-length=0;-fdebug-prefix-map=${AOSP}=.;-mno-ms-bitfields>")
 # The cross build links GCC's libstdc++ for MinGW, whose thread_locals are emulated (the toolchain
-# file's -femulated-tls); MSYS2's CLANG64 links libc++ with native TLS.
-if(CMAKE_CROSSCOMPILING)
+# file's -femulated-tls); MSYS2's CLANG64 and llvm-mingw link LLVM's libc++ with native TLS.
+include(CheckCXXSourceCompiles)
+check_cxx_source_compiles("#include <cstddef>\n#ifndef _LIBCPP_VERSION\n#error libstdc++\n#endif\nint main() {}"
+                          HWUI_LIBCXX)
+if(NOT HWUI_LIBCXX)
   add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-femulated-tls>")
   set(HWUI_CXX_RUNTIME -lstdc++ -latomic)
 else()
   set(HWUI_CXX_RUNTIME)
 endif()
-# libc++ (Soong's) pulls these in transitively; libstdc++ does not.
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include cstring -include cstdint -include cstdlib -include functional -include optional")
+# Soong's libc++ pulls these in transitively; libstdc++ and a newer libc++ (MSYS2's: BlobCache.cpp's
+# std::lower_bound, std::terminate) do not.
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include cstring -include cstdint -include cstdlib -include functional -include optional -include algorithm -include exception")
 set(KHRONOS "${WINAPK}/windows/third_party/khronos")
 include_directories(SYSTEM "${CMAKE_CURRENT_SOURCE_DIR}/shim" "${KHRONOS}")
 include(${CMAKE_CURRENT_SOURCE_DIR}/modules.cmake)
