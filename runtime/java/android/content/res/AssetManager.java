@@ -177,7 +177,7 @@ public final class AssetManager implements AutoCloseable {
     // On a device this is unconditional: /system/framework/framework-res.apk
     // always exists. Here it is the platform apk the build ships next to the
     // runtime's tools (v1.0.1589/1590: the FULL API-36 apk built from AOSP
-    // source, Apache-2.0, by scripts/build_framework_res.sh -- the only
+    // source, Apache-2.0, by upstream's scripts/build_framework_res.sh -- the only
     // shippable source, no Google binary), named by MACAPK_FW_RES_APK (which
     // main.cpp defaults to <binary_dir>/tools/framework-res.apk) or found
     // relative to this jar. It carries exactly the four framework assets a

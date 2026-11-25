@@ -133,7 +133,7 @@ instead.
 | Need | On Android | Robolectric | Win.apk today | Plan |
 |---|---|---|---|---|
 | Resource tables, XML, themes, attribute resolution | libandroidfw (`AssetManager2`, `LoadedArsc`, `ResXMLParser`, `AttributeResolution`, `Theme`) behind 94 natives of `AssetManager`, `ApkAssets`, `XmlBlock` and `StringBlock` | Java port `org.robolectric.res.android` (`resources` jar, 400 KB + Guava), through `ShadowArscAssetManager10/14`, `ShadowArscApkAssets9`, `ShadowXmlBlock`, `ShadowStringBlock`. **Its native runtime does not carry libandroidfw** (no `AssetManager2` symbol, no `register_android_content_*`) | Its own `Resources` (8102 lines), `ArscReader`, `ResourceIndex`, `BinaryXmlParser` / `axml` | R1: the port, as the spike does. R2: libandroidfw built for Windows |
-| The framework's resources at the framework's level | `/system/framework/framework-res.apk` | android-all carries `resources.arsc` and `res/` | `scripts/build_framework_res.sh` builds one from AOSP source, at API 30 by default | Build it at the level of the classes (34). The classes' `R` ids must match the table |
+| The framework's resources at the framework's level | `/system/framework/framework-res.apk` | android-all carries `resources.arsc` and `res/` | upstream's `scripts/build_framework_res.sh` built one from AOSP source, at API 30 by default | Build it at the level of the classes (34). The classes' `R` ids must match the table |
 | System assets | `createSystemAssetsInZygoteLocked`, with the static overlays from `OverlayConfig` (partitions, `Environment`, libcore's `Os`) | shadowed | none | Win.apk's `Boot` sets `AssetManager.sSystem` with no overlays, as the spike does |
 | ART: `VMRuntime` (non-movable arrays and their addresses for `TypedArray`), `NativeAllocationRegistry`, `SystemProperties`, `Log`, `Trace` | ART, libcore | `ShadowVMRuntime` and others | Its own (`dalvik.system`, `android.os`, `android.util`) | Keep Win.apk's. `VMRuntime` gains the address-to-array map |
 | The system layer: clocks, `OsConstants`, libcore's `Os`, `MessageQueue`, `Binder`, `EventLog` | libutils, libcore, libbinder | shadows | Win.apk's own `android.os`, `NativeLooper`, the libcore shim | Keep Win.apk's classes. These packages stay outside the swap |
@@ -929,7 +929,7 @@ deleted. What was done:
   (`META-INF/winapk-aosp-shadowed.txt`); the `build_aosp_*.sh` scripts refuse such a jar. LinkScan
   over the class path as the host builds it gives the same 306 lines with and without them. The jar
   as compiled stays in `<build>/java/` for the tests on a plain JVM.
-- **The API-36 table**: `bin\tools\framework-res.apk` and `windows/scripts/build_framework_res.sh` are
+- **The API-36 table**: `bin\tools\framework-res.apk` and `scripts/build_framework_res.sh` are
   gone (CI's and the release's caches too); `AospResIds` reads android-all's own `resources.arsc`, the
   table `framework-res-34.apk` is made from, so no private id is rewritten any more; `ResourceIndex`,
   should anything ask it for the platform's table, finds `framework-res-34.apk`; the installer deletes

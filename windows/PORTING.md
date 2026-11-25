@@ -171,7 +171,7 @@ Everything in this section is merged on `main` and tested in CI on
 | `host/native_log.cpp`, `host/native_cocoa.cpp` | `NativeLog`, and `NativeCocoa`: screen metrics, a 60 Hz render tick driving the app's renderer, presents, input delivery to `TouchDispatcher`, and headless mode (frames optionally written to a BMP) |
 | `compat/CoreFoundation/CoreFoundation.h`, upstream `runtime/src/native_sqlite.cpp` | SQLite for apps: upstream's `NativeSqlite` bridge compiled unchanged, with the few CoreFoundation string calls it makes implemented on Win32. SQLite is the official amalgamation, downloaded and hash-checked at configure time |
 | `host/win32_window.cpp` | The app's Win32 window on its own UI thread: frames painted with GDI and scaled to the per-monitor-DPI client area; mouse to `MotionEvent`, wheel to a short drag, keyboard to `KeyEvent` (Escape is BACK); minimize and restore for `moveTaskToBack`/`Front`; the app's launcher icon (Boot's `icon.png`, decoded with WIC) as the window and taskbar icon |
-| `scripts/build_java.sh`, `scripts/build_framework_res.sh`, `scripts/stage_runtime.sh` | Build upstream's Java runtime with a stock JDK, the platform resource APK with upstream's script and Google's `aapt2`, and stage `bin/` and `lib/` into a runnable folder |
+| `scripts/build_java.sh`, `scripts/stage_runtime.sh` | Build upstream's Java runtime with a stock JDK and stage `bin/` and `lib/` into a runnable folder (the platform resource APK came from upstream's `scripts/build_framework_res.sh` then; now from android-all, `scripts/build_aosp_res.sh`) |
 | `tools/elfrun_main.cpp` | `winapk-elfrun`, the loader and ABI test runner |
 | `tools/jvmrun_main.cpp` | `winapk-jvm-run`, the real-JVM end-to-end test |
 
@@ -441,8 +441,8 @@ nobody has to find them again.
   vsync. Frames come back through `presentFrame` (the default) or
   `presentBitmap`.
 - The platform resource APK is required: without it every `@android:`
-  reference fails. Upstream's `scripts/build_framework_res.sh` builds it on
-  Linux and Windows unchanged given `aapt2` 9.x; 8.x rejects
+  reference fails. Upstream's `scripts/build_framework_res.sh` (since removed
+  from this tree) built it on Linux and Windows unchanged given `aapt2` 9.x; 8.x rejects
   `--feature-flags`. Without apktool's table as a reference, internal
   resource ids are assigned by `aapt2` rather than matching upstream's.
 - The runtime finds jars and the resource APK relative to each other
