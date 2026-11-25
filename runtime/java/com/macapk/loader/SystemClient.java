@@ -25,7 +25,6 @@
 // broadcast aimed at a component in another process -- including another process
 // of THIS package -- goes through the broker, exactly as one aimed at another
 // app does. hostsHere() is the one question every in-process path asks first.
-// MACAPK_PROCESS_SPLIT=0 puts a package back in one process (the old behaviour).
 //
 // ENABLED by Settings > Google services > "Use Google GMS" (the file
 // useGoogleGmsFile) or MACAPK_BROKER=1; default off. A service host (MACAPK_SERVICE_HOST=1, set by the
@@ -102,14 +101,7 @@ public final class SystemClient {
 
     public static boolean isServiceHost() { return "1".equals(System.getenv("MACAPK_SERVICE_HOST")); }
 
-    /** MACAPK_PROCESS_SPLIT=0: keep a package's android:process components in
-     *  ONE process, named after the package (the behaviour before processes were
-     *  split). Anything else, including unset, splits. The broker reads the same
-     *  variable and passes it to every process it spawns. */
-    static boolean splitOff() { return false; }
-
-    /** The broker is on and not told to collapse packages: android:process
-     *  components get their own processes. A pure function of the environment, so
+    /** The broker is on: android:process components get their own processes. A pure function of the environment, so
      *  it is the same answer before and after attach (provider install runs
      *  before attach). */
     static boolean splitConfigured() {
