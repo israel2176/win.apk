@@ -933,6 +933,42 @@ New bugs found with AOSP views:
   (its `initialize` runs only lazily from the GMS clients). No per-app proxy
   setting: decide only if an owner's need appears.
 
+## Security review (November 2026)
+
+The limit stands as `binder_win.cpp`'s header says: every app runs with the
+user's rights and its native code is not confined, so nothing below stops an
+app that means harm; what matters is what hostile *data* (a web page, a link in
+a message, an APK only installed, a downloaded file Explorer looks at) can do.
+
+- *Fixed*: a link in an app's text (`URLSpan`) went to `ShellExecute` with any
+  scheme (search-ms:, ms-msdt:...); now AOSP's `ACTION_VIEW`, and the native
+  open takes only http(s), mailto, tel, geo, ms-settings (`host/host_url.h`,
+  `winapk-host-url-test`). An APK being installed could name its package, a
+  library or a bundle's APK with a path (`\`, a drive) and write outside the
+  app (another app's `lib\`); `AppInstall` holds them to `validateName` and
+  `isFilenameSafe` (`AppInstallTest`). A page in an app's WebView could save a
+  file into the user's Downloads through WebView2's own download UI; downloads
+  go to `DownloadListener`. A JS interface's unannotated overloads were
+  callable. The sign-in window's picture URL host check.
+- *Verified, no change*: the Binder pipes (owner+SYSTEM DACL, first instance,
+  remote clients refused, peer image checked); the install helper's caller
+  (the parent runtime, not its arguments); `judge_setup`; toast XML escaped;
+  the WebView's external schemes cancelled and its file origin rule; the
+  thumbnail parser (1.2 million mutated APKs and bundles under ASan/UBSan, no
+  fault); no log line found with a token's value.
+- *Not fixed, needs a decision*: the broker enforces `android:exported` only,
+  not a component's `android:permission` / a provider's `readPermission` and
+  `writePermission`, and `RemoteProviders.Transport` calls the provider
+  directly, past `ContentProvider`'s own checks: any app reaches another's
+  exported component guarded by a signature permission. Doing it as AMS does
+  needs the callers' grants and signers in the broker, and GMS's broadcasts
+  (`c2dm.permission.SEND`) to come from a caller that holds them. And the
+  Google master token is in `gms\gms_state.properties`, which every app's
+  process reads directly (on Android only GMS holds it).
+- *Not looked at closely*: the background arm64 translation parses an
+  installed app's ELF files before the app is ever run (upstream's
+  translator); the AOSP graphics' native decoders render an icon at install.
+
 ## Size and memory (decide later)
 
 - **The arm64 translation's compiler, `clang\`, is 233 MB** (`libLLVM` 156,
