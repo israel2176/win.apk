@@ -1239,10 +1239,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // one, and keeps it. A holder with none of those has no GL consumer the
     // window-box layer could misplace, so it gets the view's size, as on AOSP.
     //
-    // BISECT GATE, default ON: MACAPK_SV_OVERSIZE_HOLDER=0 restores the window
-    // size for these holders.
-    static final boolean sOversizeHolderGate =
-        !"0".equals(System.getenv("MACAPK_SV_OVERSIZE_HOLDER"));
+    // Always on: its bisect switch (MACAPK_SV_OVERSIZE_HOLDER=0, the window size
+    // for these holders) is gone, as the owner wants no switches.
+    static final boolean sOversizeHolderGate = true;
 
     private int[] macapkOversizeUnclaimedViewSize() {
         if (!sOversizeHolderGate) return null;
