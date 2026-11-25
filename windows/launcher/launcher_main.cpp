@@ -297,7 +297,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Sign in", L"כניסה"},
         {L"Sign in with Google", L"כניסה עם חשבון Google"},
         {L"Add another account", L"הוספת חשבון נוסף"},
-        {L"One account for every app: Google sign-in, Play licence checks and push notifications.",
+        {L"One account for every app: Google sign-in, Play license checks and push notifications.",
          L"חשבון אחד לכל האפליקציות: כניסה עם Google, בדיקת רישיון Play והתראות push."},
         {L"Sign in…", L"כניסה…"},
         {L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your password. The "
@@ -422,7 +422,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Reset", L"איפוס"},
         {L"Window", L"חלון"},
         {L"Window size  ·  {0} × {1} dp", L"גודל החלון  ·  {0} × {1} dp"},
-        {L"The size you last gave the app's window. Reset, it opens at the app window size in Settings again.",
+        {L"The size you last gave the app's window. After a reset, it opens at the app window size in Settings again.",
          L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל חלון האפליקציות שבהגדרות."},
         {L"{0} opens at the app window size in Settings again.", L"{0} תיפתח שוב בגודל חלון האפליקציות שבהגדרות."},
         {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."},
@@ -508,7 +508,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"OK", L"אישור"},
         {L"Screen it opens", L"המסך שנפתח"},
         {L"Asked when it opens", L"ייבחר בעת הפתיחה"},
-        {L"The app has no screen to open from a launcher; this is the screen it opens, of those other apps can "
+        {L"The app has no screen to open from a launcher, so it opens this one of the screens other apps can "
          L"open.",
          L"לאפליקציה אין מסך שנפתח ממסך הבית; זה המסך שנפתח, מבין אלה שאפליקציות אחרות יכולות לפתוח."},
         {L"Change…", L"שינוי…"},
@@ -6181,7 +6181,7 @@ Section google_account_section() {
             sec.rows.push_back(button_row(a, L"", tr(L"Sign out"), [a] { google_signout(a); }, true));
         }
         sec.rows.push_back(button_row(accounts.empty() ? tr(L"Sign in with Google") : tr(L"Add another account"),
-                                      tr(L"One account for every app: Google sign-in, Play licence checks and "
+                                      tr(L"One account for every app: Google sign-in, Play license checks and "
                                          L"push notifications."),
                                       tr(L"Sign in…"), [] { start_google_signin(); }));
     }
@@ -7397,7 +7397,7 @@ void show_info(const App& app) {
             char x = 0;
             if (f >> w >> x >> h && w > 0 && h > 0) {
                 window.push_back(button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
-                                            tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                            tr(L"The size you last gave the app's window. After a reset, it opens at the "
                                                L"app window size in Settings again."),
                                             tr(L"Reset"), [a] {
                                                 std::error_code ec;
@@ -7418,8 +7418,8 @@ void show_info(const App& app) {
             if (!list.empty()) {
                 window.insert(window.begin(),
                               button_row(std::wstring(tr(L"Screen it opens")) + L"  ·  " + shown,
-                                         tr(L"The app has no screen to open from a launcher; this is the screen it "
-                                            L"opens, of those other apps can open."),
+                                         tr(L"The app has no screen to open from a launcher, so it opens this one of the "
+                                            L"screens other apps can open."),
                                          tr(L"Change…"), [a, list] {
                                              std::wstring chosen;
                                              if (!choose_activity(a, list, &chosen)) return;
