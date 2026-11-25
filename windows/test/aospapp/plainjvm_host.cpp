@@ -66,6 +66,11 @@ JNIEXPORT jint JNICALL Java_com_macapk_loader_NativeCocoa_phoneHeight(JNIEnv*, j
 JNIEXPORT jfloat JNICALL Java_com_macapk_loader_NativeCocoa_backingScale(JNIEnv*, jclass) { return 2.0f; }
 JNIEXPORT jint JNICALL Java_com_macapk_loader_NativeCocoa_displayHz(JNIEnv*, jclass) { return 60; }
 
+// Choreographer's constructor sets the render thread's FPS divisor (HardwareRenderer.setFPSDivisor),
+// a native Robolectric's runtime lacks: with no render thread here (the harnesses draw in software)
+// there is no animation on it to enable or disable.
+JNIEXPORT void JNICALL Java_android_graphics_HardwareRenderer_nSetRtAnimationsEnabled(JNIEnv*, jclass, jboolean) {}
+
 // AospAppLifecycleTest.redirectBegin() / redirectEnd(): around System.load of the native runtime, as
 // host/aosp_gfx.cpp does around its LoadLibrary.
 JNIEXPORT jboolean JNICALL Java_AospAppLifecycleTest_redirectBegin(JNIEnv* env, jclass) {
