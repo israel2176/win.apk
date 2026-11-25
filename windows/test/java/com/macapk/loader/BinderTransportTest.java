@@ -16,8 +16,14 @@
 // Broker, "client" child -> "broker" child (com.macapk.loader.SystemServer):
 //   a process registering as, or calling as, a package it is not is refused;
 //   the package of the process is what its command line (--apk) makes it; the
-//   android:exported check of a cross-package resolve; the uid of a process is
-//   its package's. The parent, which is no installed app, is refused too.
+//   android:exported check of a cross-package resolve; a service's
+//   android:permission (a normal one the caller requests opens it, another
+//   app's signature one does not: these test APKs are unsigned, so they share no
+//   signer; signed APKs are BrokerPermissionsTest's), PackageManager's
+//   checkPermission through the broker, a provider's permissions and an
+//   unexported provider refused with AOSP's message, a URI grant of what the
+//   caller cannot reach refused and of its own provider made; the uid of a
+//   process is its package's. The parent, which is no installed app, is refused too.
 // Jobs, "jobclient" child -> "jobbroker" child: a job reported by a process that then
 //   exits is kept by the broker (BrokerJobs) and, once due, handed to the package's
 //   process, which the broker starts for it ("jobhost"): JobScheduler running a job
@@ -395,11 +401,23 @@ public final class BinderTransportTest {
     static String manifest(String pkg) {
         return "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
             + "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\" package=\"" + pkg + "\">\n"
+            + "  <permission android:name=\"" + pkg + ".permission.NORMAL\" android:protectionLevel=\"normal\"/>\n"
+            + "  <permission android:name=\"" + pkg + ".permission.SIGNATURE\" android:protectionLevel=\"signature\"/>\n"
+            + "  <uses-permission android:name=\"" + VICTIM + ".permission.SIGNATURE\"/>\n"
+            + (pkg.equals(GOOD) ? "  <uses-permission android:name=\"" + VICTIM + ".permission.NORMAL\"/>\n" : "")
             + "  <application>\n"
             + "    <service android:name=\"" + pkg + ".Exported\" android:exported=\"true\">\n"
             + "      <intent-filter><action android:name=\"com.example.BIND\"/></intent-filter>\n"
             + "    </service>\n"
             + "    <service android:name=\"" + pkg + ".Private\" android:exported=\"false\"/>\n"
+            + "    <service android:name=\"" + pkg + ".Normal\" android:exported=\"true\""
+            + " android:permission=\"" + pkg + ".permission.NORMAL\"/>\n"
+            + "    <service android:name=\"" + pkg + ".Signature\" android:exported=\"true\""
+            + " android:permission=\"" + pkg + ".permission.SIGNATURE\"/>\n"
+            + "    <provider android:name=\"" + pkg + ".Data\" android:authorities=\"" + pkg + ".data\""
+            + " android:exported=\"true\" android:permission=\"" + pkg + ".permission.SIGNATURE\"/>\n"
+            + "    <provider android:name=\"" + pkg + ".Files\" android:authorities=\"" + pkg + ".files\""
+            + " android:exported=\"false\" android:grantUriPermissions=\"true\"/>\n"
             + "  </application>\n"
             + "</manifest>\n";
     }
@@ -445,6 +463,8 @@ public final class BinderTransportTest {
         String name = args[1];
         File dir = new File(args[2]);
         SystemServer s = new SystemServer();
+        // The test's APKs are not signed: no signer, so no signature permission is shared.
+        s.signersOf = pkg -> ApkVerification.Result.failed("an unsigned test APK");
         java.lang.reflect.Field f = SystemServer.class.getDeclaredField("packages");
         f.setAccessible(true);
         @SuppressWarnings("unchecked")
@@ -475,6 +495,39 @@ public final class BinderTransportTest {
         sys.transact(SystemServer.TX_RESOLVE, d, r, 0);
         r.readException();
         return r.readInt();
+    }
+
+    static boolean checkPermission(IBinder sys, String perm, String pkg) throws Exception {
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(perm);
+        d.writeString(pkg);
+        sys.transact(SystemServer.TX_CHECK_PERMISSION, d, r, 0);
+        r.readException();
+        return r.readInt() != 0;
+    }
+
+    /** GET_PROVIDER's SecurityException message, or null when it answered. */
+    static String providerDenial(IBinder sys, String authority) throws Exception {
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(GOOD);
+        d.writeString(authority);
+        sys.transact(SystemServer.TX_GET_PROVIDER, d, r, 0);
+        try { r.readException(); } catch (SecurityException e) { return e.getMessage(); }
+        return null;
+    }
+
+    /** GRANT_URI's SecurityException message, or null when the grant was made. */
+    static String grantUri(IBinder sys, String target, String uri) throws Exception {
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(target);
+        d.writeString(uri);
+        d.writeInt(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        sys.transact(SystemServer.TX_GRANT_URI, d, r, 0);
+        try { r.readException(); } catch (SecurityException e) { return e.getMessage(); }
+        return null;
     }
 
     static int client(String[] args) throws Exception {
@@ -517,6 +570,38 @@ public final class BinderTransportTest {
                 resolve(sys, GOOD, VICTIM, VICTIM + ".Exported") == SystemServer.RESOLVE_OK, "");
         check("our own non-exported service does",
                 resolve(sys, GOOD, GOOD, GOOD + ".Private") == SystemServer.RESOLVE_OK, "");
+        check("a service guarded by a normal permission we request resolves",
+                resolve(sys, GOOD, VICTIM, VICTIM + ".Normal") == SystemServer.RESOLVE_OK, "");
+        d = Parcel.obtain();
+        r = Parcel.obtain();
+        d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+        d.writeString(GOOD);
+        d.writeTypedObject(new Intent().setComponent(new ComponentName(VICTIM, VICTIM + ".Signature")), 0);
+        sys.transact(SystemServer.TX_RESOLVE, d, r, 0);
+        r.readException();
+        int answer = r.readInt();
+        r.readTypedObject(ComponentName.CREATOR);
+        String missing = answer == SystemServer.RESOLVE_NO_PERMISSION ? r.readString() : null;
+        check("one guarded by the other app's signature permission does not: the permission we lack",
+                (VICTIM + ".permission.SIGNATURE").equals(missing), answer + " " + missing);
+        check("our own signature-guarded service resolves",
+                resolve(sys, GOOD, GOOD, GOOD + ".Signature") == SystemServer.RESOLVE_OK, "");
+        check("the broker says we hold the other app's normal permission",
+                checkPermission(sys, VICTIM + ".permission.NORMAL", GOOD), "");
+        check("  and not its signature permission", !checkPermission(sys, VICTIM + ".permission.SIGNATURE", GOOD), "");
+        String denied = providerDenial(sys, VICTIM + ".data");
+        String sig = VICTIM + ".permission.SIGNATURE";
+        check("a provider whose read and write permissions we lack is refused with AOSP's message",
+                denied != null && denied.startsWith("Permission Denial: opening provider " + VICTIM + ".Data from (pid="
+                        + myPid() + ", uid=") && denied.endsWith("requires " + sig + " or " + sig),
+                String.valueOf(denied));
+        denied = providerDenial(sys, VICTIM + ".files");
+        check("an unexported provider of another app is refused",
+                denied != null && denied.contains("that is not exported from uid"), String.valueOf(denied));
+        check("granting a uri of another app's provider we cannot reach is refused",
+                grantUri(sys, GOOD, "content://" + VICTIM + ".files/x") != null, "");
+        check("granting a uri of our own provider to another app is accepted",
+                grantUri(sys, VICTIM, "content://" + GOOD + ".files/x") == null, "");
 
         d = Parcel.obtain();
         r = Parcel.obtain();
