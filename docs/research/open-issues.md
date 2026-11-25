@@ -1525,6 +1525,13 @@ Left, being a matter of direction:
   installer about +0.04 MB. On a machine without a GPU (WARP, as CI's Windows
   runner and many VMs) the GPU path costs ~4x the CPU and ~2x the memory; a
   real GPU's numbers are not measured yet (the owner's machine or a GPU runner).
+  The owner's PC (Intel UHD, first package) dropped frames (1068-1291 of 1500
+  presented) and its frame times were nonsense: libutils' systemTime was the wall
+  clock on Windows (HWUI compared it with Choreographer's System.nanoTime), and
+  the compositor's swap waited for vblank on the render thread; both fixed
+  (c5b91fd), Wine now 1494/1500, median/p99 4.58/12.78 ms against 5.47/13.53.
+  Peak memory there +65 MB; Skia's GPU cache holds 2.2 MB of it (the compositor
+  logs it), the rest to find on the second package (Win.apk-gpu-test-2.zip).
 
 - **AOSP's app layer (November 2026; the owner approved the layer, and decided:
   no switch).** Every app's process runs on AOSP 14's own `ActivityThread`,
