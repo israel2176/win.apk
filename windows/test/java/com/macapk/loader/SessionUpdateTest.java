@@ -18,7 +18,9 @@
 // holding base.apk and the split, byte for byte, without the .dm; its JSON answer becomes
 // STATUS_SUCCESS with the package it names and INSTALL_SUCCEEDED; the staged bundle is gone
 // afterwards. A declined install (helper exit 3) is STATUS_FAILURE_ABORTED, a failed one
-// (exit 5) STATUS_FAILURE with the helper's reason; an empty session STATUS_FAILURE_INVALID
+// (exit 5) STATUS_FAILURE with the helper's reason; a helper that prints "[helper] exit <code>" and
+// stays up (Win.apk's install window left open on "App installed.") has its status sent at that line,
+// not when it exits; an empty session STATUS_FAILURE_INVALID
 // without asking the helper; a sealed session refuses a second write.
 // Prints PASS/FAIL per check and "ALL PASSED" at the end; exits 1 on a failure.
 package com.macapk.loader;
@@ -216,6 +218,33 @@ public class SessionUpdateTest {
         String msg = i == null ? "" : String.valueOf(i.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE));
         check("with the helper's reason: " + msg, msg.contains("the app is running and could not be stopped"));
 
+        // Win.apk's helper shows the install's end ("App installed." with Open and Done) and stays up until
+        // the user closes it; its "[helper] exit 0" line, printed when the install ends, is when the session's
+        // status goes out, as a device sends it when the install ends, not when its dialog is dismissed.
+        Files.writeString(next.toPath(), "0-linger");
+        s = PackageInstallerBackend.create(APP, base.length, "bit");
+        write(s, "base.apk", base);
+        st = new Status();
+        long t0 = System.nanoTime();
+        s.commit(st);
+        i = st.await();
+        long ms = (System.nanoTime() - t0) / 1_000_000;
+        eq("an install whose window stays: STATUS_SUCCESS", PackageInstaller.STATUS_SUCCESS, status(i));
+        check("sent when the helper says the install ended, not when its window closes (" + ms + " ms)",
+                ms < LINGER_MS - 5_000);
+        Files.writeString(next.toPath(), "5-linger");
+        s = PackageInstallerBackend.create(APP, base.length, "bit");
+        write(s, "base.apk", base);
+        st = new Status();
+        t0 = System.nanoTime();
+        s.commit(st);
+        i = st.await();
+        ms = (System.nanoTime() - t0) / 1_000_000;
+        eq("a failure whose window stays: STATUS_FAILURE", PackageInstaller.STATUS_FAILURE, status(i));
+        check("also sent at once (" + ms + " ms)", ms < LINGER_MS - 5_000);
+        eq("the exit line's code", Integer.valueOf(3), PackageInstallerBackend.helperExitLine("[helper] exit 3"));
+        eq("not an exit line", null, PackageInstallerBackend.helperExitLine("[helper] progress 0.50 extracted"));
+
         // Nothing written: refused before the helper is asked.
         saw.delete();
         s = PackageInstallerBackend.create(APP, 0, "bit");
@@ -227,9 +256,13 @@ public class SessionUpdateTest {
 
     // ---- the stand-in for Win.apk.exe install ----------------------------------------
 
+    static final long LINGER_MS = 30_000;
+
     static int helper(String[] args) throws Exception {
         File dir = new File(args[1]);
-        int exit = Integer.parseInt(Files.readString(new File(dir, "next-exit").toPath()).trim());
+        String next = Files.readString(new File(dir, "next-exit").toPath()).trim();
+        boolean linger = next.endsWith("-linger");
+        int exit = Integer.parseInt(linger ? next.substring(0, next.indexOf('-')) : next);
         List<String> rest = new ArrayList<>();
         for (int k = 2; k < args.length; k++) rest.add(args[k]);
         StringBuilder sb = new StringBuilder(String.join(" ", rest)).append('\n');
@@ -256,6 +289,11 @@ public class SessionUpdateTest {
         } else {
             System.out.println("{\"ok\":false,\"stage\":\"install\",\"message\":\"the app is running and could not"
                     + " be stopped\"}");
+        }
+        if (linger) {  // the install window, left open on its result
+            System.out.println("[helper] exit " + exit);
+            System.out.flush();
+            Thread.sleep(LINGER_MS);
         }
         System.out.flush();
         return exit;

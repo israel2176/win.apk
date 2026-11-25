@@ -1726,6 +1726,19 @@ public final class PackageInstallerBackend {
         java.util.regex.Pattern.compile(
             "^\\[helper\\] progress ([0-9]*\\.?[0-9]+) (\\S+)");
 
+    /** `[helper] exit <code>`: the helper's work is over and this is its exit
+     *  code, though the process may live on (Win.apk's install window stays to
+     *  show the result). Printed after the one-line --json object. */
+    private static final java.util.regex.Pattern HELPER_EXIT =
+        java.util.regex.Pattern.compile("^\\[helper\\] exit (-?[0-9]{1,9})\\s*$");
+
+    /** The code of a `[helper] exit <code>` line, else null. */
+    static Integer helperExitLine(String line) {
+        if (line == null) return null;
+        java.util.regex.Matcher m = HELPER_EXIT.matcher(line);
+        return m.find() ? Integer.valueOf(m.group(1)) : null;
+    }
+
     public static HelperResult runInstallHelper(File helper, File staged, String requestor)
             throws IOException, InterruptedException {
         return runInstallHelper(helper, staged, requestor, null);
@@ -1904,8 +1917,17 @@ public final class PackageInstallerBackend {
             // waitFor(timeout) doubles as the sleep so this needs only one wait
             // primitive. 150 ms is far finer than the helper's seven real stage
             // boundaries, so the progress bar loses nothing.
+            //
+            // Or the helper's own word that the work is over: Win.apk's helper
+            // keeps its window up after an install to show the result ("App
+            // installed." with Open and Done, as Android's InstallSuccess does)
+            // and prints `[helper] exit <code>` the moment the install ends.
+            // On a device the session's status goes to the installer when the
+            // install ends, not when the user dismisses the system's dialog, so
+            // that line, not the process's exit, ends the wait.
             while (!p.waitFor(150, java.util.concurrent.TimeUnit.MILLISECONDS)) {
                 out.pump(progress);
+                if (out.reportedExit != null) break;
             }
             // The child's fd is closed by now, so one final pass drains
             // everything written between the last poll and exit -- including
@@ -1916,7 +1938,7 @@ public final class PackageInstallerBackend {
             out.close();
         }
         String output = out.captured();
-        int exit = p.exitValue();
+        int exit = out.reportedExit != null ? out.reportedExit : p.exitValue();
         NativeLog.i(TAG, "helper exit " + exit
                 + (output.isEmpty() ? "" : (" output: " + output.trim())));
         return new HelperResult(exit, output, false);
@@ -1966,7 +1988,12 @@ public final class PackageInstallerBackend {
         /** Consume whatever is available right now; must not block. */
         abstract void pump(HelperProgress progress);
 
+        /** The code of the helper's `[helper] exit <code>` line, null until it printed one. */
+        Integer reportedExit;
+
         final void onLine(String line, HelperProgress progress) {
+            Integer exit = helperExitLine(line);
+            if (exit != null && reportedExit == null) reportedExit = exit;
             if (headBuf.length() < 4000) {
                 headBuf.append(line).append('\n');
             } else {
