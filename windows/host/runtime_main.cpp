@@ -792,8 +792,7 @@ bool install_app(Options* o, const fs::path& android_root) {
 //     while the user is active or an app of Win.apk runs (another
 //     winapk-runtime.exe: its memory comes first, as Android leaves its
 //     background compiling to when the device is idle; clang beside Open
-//     Sudoku made its second start's peak 597 MB, comparison run
-//     45513190823), none on battery saver or under a full-screen program, never so many that free memory falls below kAotReserve, and
+//     Sudoku made its second start's peak 597 MB, measured on windows-latest), none on battery saver or under a full-screen program, never so many that free memory falls below kAotReserve, and
 //     no new one while the whole machine is above 80% busy.
 //   - The worker and everything it starts run at idle priority, in
 //     background mode (low I/O and memory priority) and as EcoQoS, in a job

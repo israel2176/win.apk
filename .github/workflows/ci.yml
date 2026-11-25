@@ -772,7 +772,7 @@ jobs:
           grep -F "class-data sharing ON" cds-gms.log
           # The usual way: the install starts the archive's dump in the background (cds_dump_at_install)
           # and does not wait for it; the app's first start, right after, waits for that dump if it still
-          # runs, maps the archive and starts no dump beside the app (comparison's first starts were
+          # runs, maps the archive and starts no dump beside the app (the first starts measured on windows-latest were
           # twice the second).
           idata="$(cygpath -w "$PWD/cdsinstall")"
           timeout 600 ./stage/bin/winapk-runtime.exe --apk sudoku.apk --data "$idata" --install-only > cds-i.log 2>&1 \

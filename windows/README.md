@@ -1213,7 +1213,7 @@ version (a JVM of 166-207 MB under Wine, once per data folder, in the
 background: the install does not wait for it, and a start meanwhile waits
 for it instead of dumping again; Win.apk's installer makes it first; until November 2026 it ran 10 s after an app's
 first frame, beside the app, and doubled the first start's peak: Jerboa 586
-against 351 MB, 540 against 241 on Windows in comparison run 45513190823)
+against 351 MB, 540 against 241 on Windows measured on windows-latest)
 and the arm64 translation (26 MB, and its compilers, above). In AOSP's own test (`test/aospgfx`, on
 Linux) the native runtime adds 12 MB resident when it loads and setting the
 system fonts up from `fonts.xml` 31 MB (the fonts are mapped), the same with
