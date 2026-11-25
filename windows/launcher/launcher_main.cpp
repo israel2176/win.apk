@@ -316,6 +316,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Register this device", L"רישום המכשיר הזה"},
         {L"Device ID copied.", L"מזהה המכשיר הועתק."},
         {L"Could not sign out", L"ההתנתקות נכשלה"},
+        {L"{0} could not be read as an Android app. It may be damaged or not fully downloaded; download it again.", L"לא ניתן היה לקרוא את {0} כאפליקציית אנדרואיד. ייתכן שהקובץ פגום או שההורדה לא הושלמה; הורד אותו שוב."},
         {L"Win.apk could not remove the account from this PC. The log says why.", L"Win.apk לא הצליחה להסיר את החשבון מהמחשב הזה. הסיבה כתובה ביומן."},
         {L"Signed in to Google.", L"הכניסה ל-Google הושלמה."},
         {L"Signed in as {0}.", L"מחובר בתור {0}."},
@@ -6528,6 +6529,13 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
     const std::wstring file = c->file.filename().wstring();
     if (c->code < 0) {
         error_with_log(tr(L"The file could not be checked"), tr(L"Win.apk's runtime did not start."), setup_log());
+    } else if (c->pkg.empty() && c->dropped) {
+        // ApkCheck read no package: a damaged or cut-off download, not "another app".
+        error_with_log(tr(L"The file could not be checked"),
+                       fmt(L"{0} could not be read as an Android app. It may be damaged or not fully downloaded; "
+                           L"download it again.",
+                           {file}),
+                       setup_log());
     } else if (!app) {
         // A download of something else is none of the page's business; a file dropped on it is.
         if (c->dropped) {
