@@ -3,11 +3,13 @@
 set -u
 S=${1:?work dir}/src
 TAG=android-14.0.0_r1
+PY=$(command -v python3 || command -v python)
+HERE=$(cd "$(dirname "$0")" && pwd)
 get() {  # get <project> <dest> [subdir]
   local url="https://android.googlesource.com/$1/+archive/refs/tags/$TAG${3:+/$3}.tar.gz"
   [ -d "$S/$2" ] && return 0
   mkdir -p "$S/$2.tmp"
-  if curl -sS --retry 3 -o "$S/$2.tgz" "$url" && tar -xzf "$S/$2.tgz" -C "$S/$2.tmp"; then
+  if curl -sS --retry 3 -o "$S/$2.tgz" "$url" && "$PY" "$HERE/untar.py" "$S/$2.tgz" "$S/$2.tmp"; then
     mv "$S/$2.tmp" "$S/$2"; rm -f "$S/$2.tgz"; echo "ok $2"
   else
     echo "FAIL $2 ($url)"; rm -rf "$S/$2.tmp"
