@@ -362,7 +362,10 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   and caps their memory together (half the RAM, at least 2 GB), as many at once as the PC allows: up to half the logical processors while
   the user is away, one while the user is active, none on battery saver or
   under a full-screen program, and never more than free memory allows
-  (512 MB each, 20% of the RAM and at least 2 GB kept free). A library of up
+  (512 MB each, 20% of the RAM and at least 2 GB kept free). A library the
+  app has never run code in (no profile, no stamp) is not translated
+  (`aot_stamp_needs_work`; Android's install-time dexopt likewise compiles
+  only what a profile names). A library of up
   to 1,000,000 instructions is translated whole (the parts are of a fixed
   size, so that costs time, not memory); a larger one only where the JIT's
   profile (`<lib>.so.aot.profile`) says code ran, and again once the profile

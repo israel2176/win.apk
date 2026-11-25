@@ -100,7 +100,11 @@ void test_loader() {
 void test_worker() {
     std::printf("the worker\n");
     const AotStamp none = aot_parse_stamp("");
-    check("no stamp, no translation: translate", aot_stamp_needs_work(none, facts(false)));
+    check("no stamp, never loaded (no profile): nothing yet", !aot_stamp_needs_work(none, facts(false)));
+    check("no stamp, the app ran code in it: translate", aot_stamp_needs_work(none, facts(false, 1)));
+    AotStampFacts unasked = facts(false);
+    unasked.profile_lines = nullptr;
+    check("no stamp, no way to ask for the profile: nothing", !aot_stamp_needs_work(none, unasked));
     check("a whole translation in place: nothing to do", !aot_stamp_needs_work(stamp(AotStampKind::kFull), facts(true, 100000)));
     check("its DLL is gone or cut short: translate again", aot_stamp_needs_work(stamp(AotStampKind::kFull), facts(false)));
     check("made by another translator: translate again",

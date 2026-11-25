@@ -28,6 +28,7 @@
 //   from                      to         by       when
 //   kNone, any, not current   kSkip      worker   the library is not an arm64 ELF file
 //   kNone, kWait, kProfile    kFull      worker   translated whole, or its translation was in the cache
+//                                                 (from kNone only once the app has run code in it)
 //   kNone                     kWait(0)   worker   too large, and no profile yet
 //   kWait(0), kProfile        kProfile   worker   translated from a profile that grew enough
 //   any the worker works on   kWait(n+1) worker   winapk-aot or clang failed (n from a kWait before)
@@ -165,6 +166,13 @@ inline bool aot_stamp_needs_work(const AotStamp& s, const AotStampFacts& f) {
         const size_t p = f.profile_lines ? f.profile_lines() : 0;
         return p >= s.lines + std::max<size_t>(200, s.lines / 4);
     };
+    // Never translated: only once the app has run code in it (a profile), as
+    // Android's install-time dexopt compiles only what a profile names and
+    // verifies the rest. Many libraries an app ships are never loaded (Open
+    // Sudoku's TensorFlow Lite and libc++, loaded only to import a photo):
+    // translating them at install kept clang busy through the app's first
+    // runs (comparison: 17-21% of a core at idle, the app itself under 1%).
+    if (!f.have && s.kind == AotStampKind::kNone) return f.profile_lines && f.profile_lines() > 0;
     if (!f.have) return s.kind != AotStampKind::kWait || grown();
     if (s.kind == AotStampKind::kNone || s.kind == AotStampKind::kFull) return false;
     // From a profile: not again within the worker's interval (the stamp's retry

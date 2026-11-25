@@ -726,6 +726,9 @@ bool install_app(Options* o, const fs::path& android_root) {
 // library whole took most of an hour (libwaze.so, 1.5M instructions), and the
 // app waited for it. Now nothing waits: the app starts on the JIT while a
 // background process (this program, --aot-translate) does the work.
+// A library the app has never run code in (no profile yet) is not translated
+// at all (aot_stamp.h, aot_stamp_needs_work): installing an app must not keep
+// clang busy for libraries it may never load.
 // A library of up to kAotFullBelow instructions (1 million: about a quarter
 // of an hour of one core, once, then shared) is translated whole;
 // a larger one only where its profile says code ran (arm64_aot.h,
