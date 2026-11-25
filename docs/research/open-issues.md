@@ -325,6 +325,14 @@ New bugs found with AOSP views:
   a JVMTI out-of-memory exit 77 retried with a larger heap; a bare exit 0
   with no whole `classes.jar.tmp` is refused with a log line). Real Windows
   not checked yet.
+- **DEX conversion fails with `AccessDeniedException` when updating a running app.**
+  Seen Nov 25 2026 updating Google Play while it was open: the converter tried to
+  write `classes.jar.tmp.tmp` but the old process still held it open.  On the
+  second attempt (after the old process closed) the conversion succeeded and the
+  app opened fine.  Two things to fix: (1) the launcher should stop a running app
+  before installing an update over it; (2) the install window should surface the
+  converter's error (exit code 4 + the exception text from the log) instead of a
+  bare "failed" — the user currently sees no explanation.
 - **The runtime's heap (`-Xmx1g`, `runtime_main.cpp` ~1492) filled after about
   3,100 layout inflations** in Mercantile's sweep: a leak in Win.apk or the
   app holding views; not found.
