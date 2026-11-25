@@ -1,6 +1,6 @@
 // launcher_state_test.cpp -- winapk-launcher-state-test: the launcher's state machines
-// (launcher/app_runs.h, launcher/installs.h, launcher/updates.h), which hold no lock and make no Windows call, driven
-// step by step as the library's thread and a worker's thread drive them.
+// (launcher/app_runs.h, launcher/installs.h, launcher/updates.h, launcher/store_app.h), which hold no lock and
+// make no Windows call, driven step by step as the library's thread and a worker's thread drive them.
 //
 //   winapk-launcher-state-test
 //
@@ -12,9 +12,9 @@
 // InfoBar says of it (once per release); a failed check keeps a newer version found before; the
 // download's progress. The release offered (never a draft; a pre-release only while there is no full release),
 // an installer downloaded only with GitHub's SHA-256 of it, and run only at the release's size, SHA-256, version
-// and signer; a download's body kept only at the length HTTP announced. The Store's signed index
-// (launcher/signed_jar.h): the jar's directory, its one-signer layout and its manifests' digests (the signature
-// itself is checked under Windows, against f-droid.org's real index-v1.jar).
+// and signer; a download's body kept only at the length HTTP announced. The Store (launcher/store_app.h): its
+// apk-store.apk downloaded only with GitHub's SHA-256 of it and kept only at the release's size and SHA-256; first
+// opening, the daily check's update, an update that waits while the store app runs, and each failure.
 // The Threads window (launcher/debug_threads.h, include/winapk/debug_protocol.h): an agent's answer
 // survives its own writer and a cut-off reply; every thread Windows lists is a row with or without an
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
@@ -38,7 +38,7 @@
 #include "../launcher/installs.h"
 #include "../launcher/library_files.h"
 #include "../launcher/maintenance.h"
-#include "../launcher/signed_jar.h"
+#include "../launcher/store_app.h"
 #include "../launcher/updates.h"
 
 namespace {
@@ -666,94 +666,89 @@ void test_update_integrity() {
               body(L"1000, 5", L"", L"chunked").kind == BodyLength::kUnknown);
 }
 
-// A zip of stored entries, as a jar holds them, for the signed index's layout rules (signed_jar.h).
-std::string stored_zip(const std::vector<std::pair<std::string, std::string>>& files) {
-    std::string zip, dir;
-    auto u16 = [](std::string* s, unsigned v) {
-        s->push_back(static_cast<char>(v & 255));
-        s->push_back(static_cast<char>(v >> 8 & 255));
-    };
-    auto u32 = [&u16](std::string* s, unsigned v) {
-        u16(s, v & 0xFFFF);
-        u16(s, v >> 16);
-    };
-    for (const auto& [name, data] : files) {
-        const unsigned at = static_cast<unsigned>(zip.size()), n = static_cast<unsigned>(data.size());
-        u32(&zip, 0x04034b50);
-        u16(&zip, 10), u16(&zip, 0), u16(&zip, 0), u16(&zip, 0), u16(&zip, 0);
-        u32(&zip, 0), u32(&zip, n), u32(&zip, n);
-        u16(&zip, static_cast<unsigned>(name.size())), u16(&zip, 0);
-        zip += name + data;
-        u32(&dir, 0x02014b50);
-        u16(&dir, 20), u16(&dir, 10), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0);
-        u32(&dir, 0), u32(&dir, n), u32(&dir, n);
-        u16(&dir, static_cast<unsigned>(name.size())), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0), u16(&dir, 0);
-        u32(&dir, 0), u32(&dir, at);
-        dir += name;
-    }
-    const unsigned dir_at = static_cast<unsigned>(zip.size());
-    zip += dir;
-    u32(&zip, 0x06054b50);
-    u16(&zip, 0), u16(&zip, 0);
-    u16(&zip, static_cast<unsigned>(files.size())), u16(&zip, static_cast<unsigned>(files.size()));
-    u32(&zip, static_cast<unsigned>(dir.size())), u32(&zip, dir_at);
-    u16(&zip, 0);
-    return zip;
-}
-
-void test_signed_jar() {
+void test_store_setup() {
     using namespace winapk::launcher;
-    std::printf("the Store's signed index\n");
-    const std::string zip = stored_zip({{"META-INF/MANIFEST.MF", "m"}, {"META-INF/CIARANG.SF", "s"},
-                                        {"META-INF/CIARANG.RSA", "r"}, {"index-v1.json", "{}"}});
-    std::vector<ZipEntry> e;
-    check("the zip's directory reads", zip_entries(zip, &e) && e.size() == 4 && e[3].name == "index-v1.json" &&
-                                           e[3].usize == 2 && e[3].method == 0);
-    check("and an entry's data is where its local header says",
-          e.size() == 4 && zip_data_at(zip, e[3]) && zip.compare(zip_data_at(zip, e[3]), 2, "{}") == 0);
-    JarLayout l;
-    check("one signer, its manifest and the index: the layout holds",
-          jar_layout(e, "index-v1.json", &l) && l.payload == 3 && l.manifest == 0 && l.sf == 1 && l.signature == 2);
-    check("a jar without the index is not one", !jar_layout(e, "entry.json", &l));
-    std::vector<ZipEntry> more = e;
-    more.push_back(more[3]);
-    more.back().name = "evil.txt";
-    check("a file beside the signed one: refused", !jar_layout(more, "index-v1.json", &l));
-    more = e;
-    more.push_back(more[1]);
-    more.back().name = "META-INF/OTHER.SF";
-    check("a second signer: refused", !jar_layout(more, "index-v1.json", &l));
-    more = e;
-    more[2].name = "META-INF/OTHER.RSA";
-    check("a signature block of another name than its .SF: refused", !jar_layout(more, "index-v1.json", &l));
-    more = e;
-    more.push_back(more[3]);
-    check("the index twice: refused", !jar_layout(more, "index-v1.json", &l));
-    check("not a zip", !zip_entries("not a zip at all, nothing like one", &e) && !zip_entries("", &e));
-    std::string cut = zip;
-    cut.resize(cut.size() - 30);
-    check("a zip cut short does not read", !zip_entries(cut, &e));
+    using Step = StoreSetup::Step;
+    using Failure = StoreSetup::Failure;
+    std::printf("the Store's setup\n");
+    ListedRelease r;
+    r.tag = L"v1.4";
+    r.asset = true;
+    r.asset_state = "uploaded";
+    r.size = 1588099;
+    r.digest = "sha256:" + std::string(64, 'a');
+    check("an uploaded apk-store.apk with GitHub's SHA-256: checkable", store_asset_checkable(r));
+    ListedRelease bad = r;
+    bad.digest.clear();
+    check("no digest: not downloaded", !store_asset_checkable(bad));
+    bad = r;
+    bad.size = kMaxStoreBytes + 1;
+    check("an unbelievable size: not downloaded", !store_asset_checkable(bad));
+    bad = r;
+    bad.asset_state = "open";
+    check("still uploading: not downloaded", !store_asset_checkable(bad));
+    const std::string sha(64, 'a');
+    check("the release's size and SHA-256: kept", judge_store_file(1588099, sha, 1588099, sha) == StoreFile::kOk);
+    check("another size: refused before its hash",
+          judge_store_file(1588098, sha, 1588099, sha) == StoreFile::kWrongSize);
+    check("another SHA-256: refused",
+          judge_store_file(1588099, std::string(64, 'b'), 1588099, sha) == StoreFile::kWrongSha256);
+    check("an empty file: refused", judge_store_file(0, "", 0, "") == StoreFile::kWrongSize);
 
-    const auto m = manifest_sections(
-        "Manifest-Version: 1.0\r\nCreated-By: 17\r\n\r\nName: index-v1.json\r\nSHA1-Digest: abc=\r\n\r\n"
-        "Name: a-very-long-name-that-jarsigner-wraps-at-seventy-two-bytes-per-line-so-it\r\n continues.json\r\n"
-        "SHA-256-Digest: def=\r\nSHA1-Digest: ghi=\r\n");
-    ManifestDigest d;
-    check("a manifest's sections, by name",
-          m.size() == 3 && m.at("").at("Manifest-Version") == "1.0" && m.count("index-v1.json"));
-    check("a section's digest: SHA1 when that is all",
-          pick_digest(m.at("index-v1.json"), "-Digest", &d) && d.alg == "SHA1" && d.base64 == "abc=");
-    const std::string wrapped = "a-very-long-name-that-jarsigner-wraps-at-seventy-two-bytes-per-line-so-itcontinues.json";
-    check("a continued line joins the one before, and SHA-256 is preferred",
-          m.count(wrapped) && pick_digest(m.at(wrapped), "-Digest", &d) && d.alg == "SHA-256" && d.base64 == "def=");
-    check("no digest: none", !pick_digest(m.at(""), "-Digest-Manifest", &d));
-    const auto sf = manifest_sections("Signature-Version: 1.0\nSHA1-Digest-Manifest: xyz=\n\nName: index-v1.json\n"
-                                      "SHA1-Digest: q=\n");
-    check("a .SF's digest of the whole manifest, with LF lines",
-          sf.count("") && pick_digest(sf.at(""), "-Digest-Manifest", &d) && d.base64 == "xyz=");
-    check("two sections of one name: the manifest is refused",
-          manifest_sections("A: 1\n\nName: x\nB: 2\n\nName: x\nB: 3\n").empty());
-    check("a line that is no attribute: refused", manifest_sections("Manifest-Version 1.0\n").empty());
+    {
+        StoreSetup s;
+        check("first opening: the check starts", s.begin_check() && s.step() == Step::kChecking && s.busy());
+        check("one at a time", !s.begin_check());
+        check("a release, nothing installed: download", s.checked(true, true, false, false) &&
+                                                            s.step() == Step::kDownloading && s.percent() == 0);
+        s.progress(42);
+        check("its progress", s.percent() == 42);
+        check("checked, not running: install now", s.downloaded(true, true, false) && s.step() == Step::kInstalling);
+        check("an install's end out of order changes nothing", !s.begin_check());
+        s.installed(true);
+        check("installed: idle", s.step() == Step::kIdle && s.failure() == Failure::kNone && !s.busy());
+    }
+    {
+        StoreSetup s;
+        s.begin_check();
+        check("GitHub unreached, nothing installed: failed, unreached",
+              !s.checked(false, false, false, false) && s.step() == Step::kFailed &&
+                  s.failure() == Failure::kUnreached && !s.busy());
+        check("Try again: a new check", s.begin_check() && s.failure() == Failure::kNone);
+        check("no checkable release: failed, no release",
+              !s.checked(true, false, false, false) && s.failure() == Failure::kNoRelease);
+        s.begin_check();
+        s.checked(true, true, false, false);
+        check("a file that is not the release's: failed, never installed",
+              !s.downloaded(true, false, false) && s.step() == Step::kFailed && s.failure() == Failure::kUnverified);
+        s.begin_check();
+        s.checked(true, true, false, false);
+        check("a download that broke off: failed, unreached",
+              !s.downloaded(false, false, false) && s.failure() == Failure::kUnreached);
+        s.begin_check();
+        s.checked(true, true, false, false);
+        s.downloaded(true, true, false);
+        s.installed(false);
+        check("an install that failed: failed, install", s.step() == Step::kFailed && s.failure() == Failure::kInstall);
+    }
+    {
+        StoreSetup s;
+        s.begin_check();
+        check("the daily check, the installed copy is the release's: nothing to do",
+              !s.checked(true, true, true, true) && s.step() == Step::kIdle);
+        s.begin_check();
+        check("installed, GitHub unreached: the installed store stays, no failure shown",
+              !s.checked(false, false, false, true) && s.step() == Step::kIdle && s.failure() == Failure::kNone);
+        s.begin_check();
+        check("a newer release: download", s.checked(true, true, false, true));
+        check("checked while the store runs: it waits", !s.downloaded(true, true, true) && s.step() == Step::kWaiting);
+        check("still running: still waits", !s.may_install(true) && s.step() == Step::kWaiting && s.busy());
+        check("no check while it waits", !s.begin_check());
+        check("the store stopped: install now", s.may_install(false) && s.step() == Step::kInstalling);
+        s.installed(true);
+        check("updated", s.step() == Step::kIdle);
+        check("may_install with nothing waiting does nothing", !s.may_install(false) && s.step() == Step::kIdle);
+    }
 }
 
 void test_debug_threads() {
@@ -1024,7 +1019,7 @@ int main() {
     test_installs();
     test_updates();
     test_update_integrity();
-    test_signed_jar();
+    test_store_setup();
     test_debug_threads();
     test_library_files();
     test_maintenance();
