@@ -7519,7 +7519,8 @@ enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, 
 constexpr UINT kFitInstall = WM_APP + 20;
 
 // How far an install got, from the lines the runtime writes, in the order it works (runtime_main.cpp):
-// 0 starting, 1 installing, 2 reading the name and icon, 3 converting the code, the long part.
+// 0 starting, 1 installing, 2 reading the name and icon, 3 converting the code, the long part (which starts
+// beside the name and icon, so 2 shows only until the conversion has said so).
 int install_phase(const fs::path& log) {
     const std::string tail = read_tail(log, 128 * 1024);
     if (tail.find("converting the app's code") != std::string::npos) return 3;

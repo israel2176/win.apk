@@ -41,7 +41,7 @@
 // icon and name in <app dir>/icon.png and label.txt (com.winapk.tools.AppMeta,
 // in a JVM with the host natives but no app running), which is what the
 // launcher (launcher/) runs when an APK is added to the library. The metadata
-// is written before the code is converted, so the launcher shows the app's
+// is written while the code is converted, so the launcher shows the app's
 // own icon and name while the long step runs.
 //
 // App data lives under %LOCALAPPDATA%\Win.apk unless --data says otherwise.
@@ -2565,19 +2565,24 @@ int wmain(int argc, wchar_t** argv) {
     // starting Play services for an app) names another app.
     SetEnvironmentVariableW(L"MACAPK_APK_PATH", b.options.apk.c_str());
     if (b.options.install_only) {
-        // The app's icon and name first (AppMeta, on boot_thread), then the long part, converting its code:
-        // the launcher shows the real icon and name while an install runs, as Android's installer does,
-        // instead of at its very end. Neither needs the other: the icon comes from the APK's resources.
+        // The app's code is converted (its child JVM) while this process's JVM writes the app's icon and
+        // name (AppMeta, on boot_thread): neither needs the other (the icon comes from the APK's
+        // resources), and one after the other the install took the sum of the two. The icon is still
+        // there long before the code, so the launcher shows the real icon and name while an install
+        // runs, as Android's installer does, instead of at its very end.
+        bool converted = false;
+        std::thread convert([&b, &converted] {
+            prepare_arm64(b.options, b.app_dir);
+            converted = convert_dex(b.options, b.app_dir, &b.app_jar);
+        });
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, boot_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
-        if (!t) return 1;
-        WaitForSingleObject(t, INFINITE);
-        CloseHandle(t);
-        int code = b.result;
-        if (code == 0) {
-            prepare_arm64(b.options, b.app_dir);
-            if (!convert_dex(b.options, b.app_dir, &b.app_jar)) code = 1;
+        if (t) {
+            WaitForSingleObject(t, INFINITE);
+            CloseHandle(t);
         }
+        convert.join();
+        const int code = t && b.result == 0 && converted ? 0 : 1;
         // The framework archive, when this Win.apk has none yet: here, after the conversion (one JVM
         // child at a time), and not 10 s into the app's first start (cds.h).
         if (code == 0) winapk::host::cds_after_install();
