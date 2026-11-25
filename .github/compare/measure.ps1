@@ -301,6 +301,18 @@ if ($Phase -eq 'install') {
   # the other runtime's own e2e takes an install as done on exit 0 and its "installed <package>" line.
   $result.install_ok = $done -and $p.ExitCode -eq 0 -and
     ($Runtime -eq 'winapk' -or $text -match "installed $([regex]::Escape($Package))|$([regex]::Escape($Package)) is installed")
+  # Win.apk's first install on a fresh runner leaves the framework archive's dump running in the
+  # background (host/cds.h, once per Win.apk version; Win.apk's setup makes it before any install).
+  # Its end is waited for here, apart from install_s, so that the cold run measures a start and not
+  # the rest of a one-time dump it would wait for.
+  if ($Runtime -eq 'winapk') {
+    $dumpSw = [Diagnostics.Stopwatch]::StartNew()
+    while ((Get-CimInstance Win32_Process -Filter "Name = 'winapk-runtime.exe'" |
+            Where-Object { "$($_.CommandLine)" -match '--cds-dump' }) -and $dumpSw.Elapsed.TotalSeconds -lt 120) {
+      Start-Sleep -Milliseconds 200
+    }
+    $result.cds_dump_after_install_s = [Math]::Round($dumpSw.Elapsed.TotalSeconds, 1)
+  }
   Save
   "$tag`: ok $($result.install_ok), exit $($result.exit) after $($result.install_s) s"
   exit 0

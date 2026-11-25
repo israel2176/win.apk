@@ -156,7 +156,7 @@ screenshots and logs in `compare-<package>`) has, cold / warm:
 
 | Column | What |
 |---|---|
-| Installs | The install command's exit 0 (the other runtime: and its "installed <package>" line, as its e2e checks) and its seconds |
+| Installs | The install command's exit 0 (the other runtime: and its "installed <package>" line, as its e2e checks) and its seconds. Win.apk's first install on a fresh runner leaves the framework archive's dump running in the background; `measure.ps1` waits for it after the install (`cds_dump_after_install_s` in the JSON, not in the seconds), so the cold run is not a start waiting for it |
 | Draws (cold) | At the end of the cold run, the app's window (the largest visible window of the run's processes) read back with PrintWindow and from the screen (the screen's read only while no window of another process, or a console, covers the window: `screen_covered` in the JSON), `measure.ps1`'s `CmpWin.Judge`: "yes" from 0.5% of pixels away from the most common color (the other runtime's e2e threshold), or for a sparse screen from 0.4% of neighbouring pixel pairs differing with 32 colors or more away from the background (anti-aliased text and icons; a blank window, a hairline or a lone progress ring stays "NO"). The cell shows the share; `edges_pct` and `colors` are in the JSON. "exited" when the runtime ended by itself |
 | First frame | Seconds from the launch command to the runtime's own first-frame log line (Win.apk `[win.apk] first frame presented`; the other runtime `first frame drawn (N presented)`) |
 | First non-blank | Seconds to the first 1-second sample whose window read back non-blank: the same measure for both, coarser |
