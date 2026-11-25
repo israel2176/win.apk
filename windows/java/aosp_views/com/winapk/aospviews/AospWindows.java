@@ -203,7 +203,9 @@ public final class AospWindows {
             return new android.graphics.Point(widthPx(), heightPx());
         }
         public boolean isUidPresentOnDisplay(int uid, int displayId) { return displayId == Display.DEFAULT_DISPLAY; }
-        public float getPreferredWideGamutColorSpaceId() { return 0; }
+        /** The display's wide-gamut colour space, which HWUI takes for a window that asks for wide
+         *  colour (HardwareRenderer's display info): Display P3, as a phone's. */
+        public int getPreferredWideGamutColorSpaceId() { return android.graphics.ColorSpace.Named.DISPLAY_P3.ordinal(); }
     }
 
     /** IWindowManager, the calls an app process makes. */
