@@ -7,7 +7,8 @@ private reporting: the repository's **Security** tab, then **Report a
 vulnerability**. Say what you found, how to reproduce it, and which Win.apk
 version and Windows version you used.
 
-Only the newest pre-release is supported; a fix ships in the next one.
+Only the newest release is supported; a fix ships in the next one, which
+Win.apk offers through its update check.
 
 ## What Win.apk is, security-wise
 
@@ -21,9 +22,10 @@ around it. Consequences:
 - Android's permission dialogs (location, camera, contacts and so on) decide
   what the Android framework tells the app, not what the process can reach.
 - All apps share one Android file system under `%LOCALAPPDATA%\Win.apk\android`.
-- Preview builds are not code-signed. Windows SmartScreen warns on install,
+- Releases are not code-signed yet. Windows SmartScreen may warn on install,
   and some scanners flag the runtime because it writes and then runs
-  translated code.
+  translated code. The update check runs a downloaded installer only when its
+  size and SHA-256 match the release's.
 
 ## What counts as a vulnerability
 
