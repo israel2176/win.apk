@@ -357,6 +357,10 @@ jobs:
             if [ -z "$file" ]; then
               echo "::endgroup::"
               echo "::error::$pkg@$ver: APKPure gave no file in three tries"
+              # What APKPure offers for it (with this arch and SDK level), to pick the next pin from.
+              echo "::group::$pkg: the versions APKPure lists"
+              timeout 300 "$apkeep" -l -a "$pkg" -d apk-pure -o arch=x86_64,sdk=34 || true
+              echo "::endgroup::"
               echo "| $pkg | $ver | (no file) | | | | | FAIL |" >> "$GITHUB_STEP_SUMMARY"
               failed=1
               continue
