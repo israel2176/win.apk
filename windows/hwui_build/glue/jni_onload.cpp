@@ -26,6 +26,7 @@ extern "C" void init_android_graphics();
 
 namespace winapk::hwui {
 void register_layers(JNIEnv* env);  // layers.cpp
+void log_memory(const char* when);  // layers.cpp
 }
 
 namespace {
@@ -116,6 +117,27 @@ void JNICALL apply_free(JNIEnv*, jclass, jlong f, jlong p) {
     reinterpret_cast<void (*)(void*)>(static_cast<intptr_t>(f))(reinterpret_cast<void*>(static_cast<intptr_t>(p)));
 }
 
+}  // namespace
+
+// The host path of an Android path (Win.apk's java.base: jdk.internal.util.WinApkPaths.hostPath), for
+// a file native code opens itself; the path as it is when there is no such mapping.
+namespace android {  // where HardwareRenderer's JNI declares it (patch_src.py)
+jstring winapk_host_path(JNIEnv* env, jstring path) {
+    if (!path) return path;
+    jclass c = env->FindClass("jdk/internal/util/WinApkPaths");
+    jmethodID m = c ? env->GetStaticMethodID(c, "hostPath", "(Ljava/lang/String;)Ljava/lang/String;") : nullptr;
+    jstring host = m ? static_cast<jstring>(env->CallStaticObjectMethod(c, m, path)) : nullptr;
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+        host = nullptr;
+    }
+    if (c) env->DeleteLocalRef(c);
+    return host ? host : path;
+}
+}  // namespace android
+
+namespace {
+
 void register_soft(JNIEnv* env, const char* cls, const JNINativeMethod* m, int n) {
     jclass c = env->FindClass(cls);
     if (!c) {
@@ -175,5 +197,6 @@ extern "C" __declspec(dllexport) jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
     };
     register_soft(env, "libcore/util/NativeAllocationRegistry", kNar, 1);
     winapk::hwui::register_layers(env);
+    winapk::hwui::log_memory("graphics loaded");
     return JNI_VERSION_1_6;
 }

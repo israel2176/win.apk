@@ -195,6 +195,26 @@ EDITS = [
     ('system_core/libutils/Timers.cpp',
      '#include <utils/Timers.h>\n',
      '#include <utils/Timers.h>\n#if defined(_WIN32)\n#include <windows.h>\n#endif\n'),
+    # The shader caches' files: Java names them by their Android path (Win.apk's File keeps it,
+    # /data/user/0/<pkg>/cache/...); native code opens host paths (glue: WinApkPaths.hostPath).
+    ('hwui/jni/android_graphics_HardwareRenderer.cpp',
+     '        jstring diskCachePath, jstring skiaDiskCachePath) {\n',
+     '        jstring diskCachePath, jstring skiaDiskCachePath) {\n'
+     '    diskCachePath = winapk_host_path(env, diskCachePath);  // Win.apk: the host file\n'
+     '    skiaDiskCachePath = winapk_host_path(env, skiaDiskCachePath);\n'),
+    ('hwui/jni/android_graphics_HardwareRenderer.cpp',
+     'ANW_fromSurface fromSurface;\n',
+     'ANW_fromSurface fromSurface;\njstring winapk_host_path(JNIEnv* env, jstring path);  // hwui_build/glue\n'),
+    # The caches' limits follow the display (CacheManager sizes them from DeviceInfo, AOSP's memory
+    # policy): computed when the render thread starts, before the window's process initializer
+    # has told DeviceInfo the display (Win.apk's Choreographer starts the thread first), they were
+    # a default 1080x1920 phone's. Again when the GL context is made, as the display is known then.
+    ('hwui/renderthread/CacheManager.cpp',
+     'void CacheManager::reset(sk_sp<GrDirectContext> context) {\n',
+     'void CacheManager::reset(sk_sp<GrDirectContext> context) {\n'
+     '    mMaxSurfaceArea = static_cast<size_t>((DeviceInfo::getWidth() * DeviceInfo::getHeight()) *\n'
+     '                                          mMemoryPolicy.initialMaxSurfaceAreaScale);  // Win.apk\n'
+     '    setupCacheLimits();\n'),
     # libutils' Looper on hwui_glue's emulated eventfd and epoll: sys/eventfd.h (its read, write
     # and close) before anything that closes a descriptor (unique_fd).
     ('system_core/libutils/Looper.cpp',

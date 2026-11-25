@@ -23,6 +23,7 @@
 #include <system/window.h>
 #include <utils/Timers.h>
 #include <windows.h>
+#include <psapi.h>
 
 #include <algorithm>
 #include <cstdarg>
@@ -46,12 +47,22 @@ namespace {
 struct Layer;
 void layer_unref(Layer* l);
 
+// The process's memory now (Windows' counters, as Task Manager shows them), in the run's log.
+void log_memory_now(const char* when) {
+    PROCESS_MEMORY_COUNTERS_EX m{};
+    m.cb = sizeof m;
+    if (!K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&m), sizeof m)) return;
+    ALOGW("graphics memory, %s: working set %.1f MB, private %.1f MB", when, m.WorkingSetSize / 1048576.0,
+          m.PrivateUsage / 1048576.0);
+}
+bool g_logged_first = false;
+
 // A window's layer. ANativeWindow first: HWUI holds it as one (sp<ANativeWindow>, refcounted
 // through common.incRef/decRef).
 struct Layer : ANativeWindow {
     std::atomic<int> refs{1};
     std::atomic<int> width{0}, height{0};  // the window's size, px (its SurfaceControl's)
-    std::atomic<int32_t> dataspace{0};
+    std::atomic<int32_t> dataspace{ADATASPACE_SRGB};  // a window's buffers are sRGB
     // Render thread only.
     EGLSurface pbuffer = EGL_NO_SURFACE;
     int pb_w = 0, pb_h = 0;
@@ -245,6 +256,7 @@ struct Gl {
     GLuint host_tex = 0;
     EGLSurface screen = EGL_NO_SURFACE;
     bool interval_set = false;  // eglSwapInterval(0) on the screen surface
+    bool flip_y = false;        // the screen surface is upside down (its first row is the top)
     HWND screen_hwnd = nullptr;
     int screen_w = 0, screen_h = 0;  // a headless pbuffer's size
     EGLConfig config = nullptr;
@@ -336,8 +348,16 @@ bool ensure_screen(EGLDisplay d, int frame_w, int frame_h) {
     EGLConfig config = screen_config(d);
     if (!config) return false;
     if (hwnd) {
-        g_gl.screen = eglCreateWindowSurface(d, config, hwnd, nullptr);
+        // Upside down (EGL_ANGLE_surface_orientation): ANGLE's Direct3D 11 swap chain then takes
+        // the frame in its back buffer itself. Upright, ANGLE keeps an offscreen colour buffer of
+        // the window's size and copies it into the back buffer at every present.
+        const EGLint orientation[] = {0x33A8 /*EGL_SURFACE_ORIENTATION_ANGLE*/,
+                                      0x0002 /*EGL_SURFACE_ORIENTATION_INVERT_Y_ANGLE*/, EGL_NONE};
+        g_gl.screen = eglCreateWindowSurface(d, config, hwnd, orientation);
+        g_gl.flip_y = g_gl.screen != EGL_NO_SURFACE;
+        if (g_gl.screen == EGL_NO_SURFACE) g_gl.screen = eglCreateWindowSurface(d, config, hwnd, nullptr);
     } else {
+        g_gl.flip_y = false;
         const EGLint pa[] = {EGL_WIDTH, frame_w, EGL_HEIGHT, frame_h, EGL_NONE};
         g_gl.screen = eglCreatePbufferSurface(d, config, pa);
     }
@@ -357,7 +377,11 @@ bool ensure_screen(EGLDisplay d, int frame_w, int frame_h) {
 // the bottom (GL's).
 void draw_tex(int x, int y, int w, int h, int cw, int ch, bool top_first, float alpha) {
     const float x0 = 2.0f * x / cw - 1.0f, x1 = 2.0f * (x + w) / cw - 1.0f;
-    const float y0 = 1.0f - 2.0f * (y + h) / ch, y1 = 1.0f - 2.0f * y / ch;
+    float y0 = 1.0f - 2.0f * (y + h) / ch, y1 = 1.0f - 2.0f * y / ch;
+    if (g_gl.flip_y) {
+        y0 = -y0;
+        y1 = -y1;
+    }
     glUseProgram(g_gl.tex_prog);
     glUniform4f(g_gl.tex_rect, x0, y0, x1, y1);
     glUniform1f(g_gl.tex_flip, top_first ? 1.0f : 0.0f);
@@ -368,7 +392,11 @@ void draw_tex(int x, int y, int w, int h, int cw, int ch, bool top_first, float 
 
 void draw_color(int x, int y, int w, int h, int cw, int ch, float r, float g, float b, float a) {
     const float x0 = 2.0f * x / cw - 1.0f, x1 = 2.0f * (x + w) / cw - 1.0f;
-    const float y0 = 1.0f - 2.0f * (y + h) / ch, y1 = 1.0f - 2.0f * y / ch;
+    float y0 = 1.0f - 2.0f * (y + h) / ch, y1 = 1.0f - 2.0f * y / ch;
+    if (g_gl.flip_y) {
+        y0 = -y0;
+        y1 = -y1;
+    }
     glUseProgram(g_gl.color_prog);
     glUniform4f(g_gl.color_rect, x0, y0, x1, y1);
     glUniform4f(g_gl.color_value, r * a, g * a, b * a, a);
@@ -531,6 +559,10 @@ void compose_now() {
         }
         g_host->pixels(argb.data(), dw, dh);
     }
+    if (!g_logged_first) {
+        g_logged_first = true;
+        log_memory_now("first composed frame");
+    }
     const int64_t swap_start = systemTime(SYSTEM_TIME_MONOTONIC);
     eglSwapBuffers(d, g_gl.screen);
     const int64_t end = systemTime(SYSTEM_TIME_MONOTONIC);
@@ -542,6 +574,7 @@ void compose_now() {
     // Once, a few seconds in: what Skia's GPU caches hold against their limit (HWUI's CacheManager).
     static int composed = 0;
     if (++composed == 600) {
+        log_memory_now("600 frames");
         if (GrDirectContext* gr = rt.getGrContext()) {
             int count = 0;
             size_t bytes = 0;
@@ -564,6 +597,8 @@ void request_compose() {
 
 namespace winapk::hwui {
 
+void log_memory(const char* when) { log_memory_now(when); }
+
 EGLDisplay eglDisplay() {
     if (g_display != EGL_NO_DISPLAY) return g_display;
     auto get_platform = reinterpret_cast<PFNEGLGETPLATFORMDISPLAYEXTPROC>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
@@ -576,6 +611,7 @@ EGLDisplay eglDisplay() {
         EGLint major = 0, minor = 0;
         if (d != EGL_NO_DISPLAY && eglInitialize(d, &major, &minor)) {
             g_display = d;
+            log_memory_now("EGL display up (ANGLE, Direct3D 11)");
             return d;
         }
     }
