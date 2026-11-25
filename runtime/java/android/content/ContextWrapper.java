@@ -284,4 +284,106 @@ public class ContextWrapper extends Context {
         if (baseContext != null) baseContext.updateServiceGroup(conn, group, importance);
         else super.updateServiceGroup(conn, group, importance);
     }
+
+    // ---- AOSP ContextWrapper: broadcasts and receivers are the base context's too.
+    @Override public void sendBroadcast(Intent intent) {
+        if (baseContext != null) baseContext.sendBroadcast(intent);
+        else super.sendBroadcast(intent);
+    }
+    @Override public void sendBroadcast(Intent intent, String receiverPermission) {
+        if (baseContext != null) baseContext.sendBroadcast(intent, receiverPermission);
+        else super.sendBroadcast(intent, receiverPermission);
+    }
+    @Override public void sendBroadcast(Intent intent, String receiverPermission, android.os.Bundle options) {
+        if (baseContext != null) baseContext.sendBroadcast(intent, receiverPermission, options);
+        else super.sendBroadcast(intent, receiverPermission, options);
+    }
+    @Override public void sendBroadcastAsUser(Intent intent, android.os.UserHandle user) {
+        if (baseContext != null) baseContext.sendBroadcastAsUser(intent, user);
+        else super.sendBroadcastAsUser(intent, user);
+    }
+    @Override public void sendBroadcastAsUser(Intent intent, android.os.UserHandle user, String receiverPermission) {
+        if (baseContext != null) baseContext.sendBroadcastAsUser(intent, user, receiverPermission);
+        else super.sendBroadcastAsUser(intent, user, receiverPermission);
+    }
+    @Override public void sendBroadcastWithMultiplePermissions(Intent intent, String[] receiverPermissions) {
+        if (baseContext != null) baseContext.sendBroadcastWithMultiplePermissions(intent, receiverPermissions);
+        else super.sendBroadcastWithMultiplePermissions(intent, receiverPermissions);
+    }
+    @Override public void sendStickyBroadcast(Intent intent) {
+        if (baseContext != null) baseContext.sendStickyBroadcast(intent);
+        else super.sendStickyBroadcast(intent);
+    }
+    @Override public void sendStickyBroadcast(Intent intent, android.os.Bundle options) {
+        if (baseContext != null) baseContext.sendStickyBroadcast(intent, options);
+        else super.sendStickyBroadcast(intent, options);
+    }
+    @Override public void sendStickyBroadcastAsUser(Intent intent, android.os.UserHandle user) {
+        if (baseContext != null) baseContext.sendStickyBroadcastAsUser(intent, user);
+        else super.sendStickyBroadcastAsUser(intent, user);
+    }
+    @Override public void removeStickyBroadcast(Intent intent) {
+        if (baseContext != null) baseContext.removeStickyBroadcast(intent);
+        else super.removeStickyBroadcast(intent);
+    }
+    @Override public void removeStickyBroadcastAsUser(Intent intent, android.os.UserHandle user) {
+        if (baseContext != null) baseContext.removeStickyBroadcastAsUser(intent, user);
+        else super.removeStickyBroadcastAsUser(intent, user);
+    }
+    @Override public void sendOrderedBroadcast(Intent intent, String receiverPermission) {
+        if (baseContext != null) baseContext.sendOrderedBroadcast(intent, receiverPermission);
+        else super.sendOrderedBroadcast(intent, receiverPermission);
+    }
+    @Override public void sendOrderedBroadcast(Intent intent, String receiverPermission, android.os.Bundle options) {
+        if (baseContext != null) baseContext.sendOrderedBroadcast(intent, receiverPermission, options);
+        else super.sendOrderedBroadcast(intent, receiverPermission, options);
+    }
+    @Override public void sendOrderedBroadcast(Intent intent, String receiverPermission, android.os.Bundle options, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        if (baseContext != null) baseContext.sendOrderedBroadcast(intent, receiverPermission, options, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+        else super.sendOrderedBroadcast(intent, receiverPermission, options, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    @Override public void sendOrderedBroadcast(Intent intent, String receiverPermission, String receiverAppOp, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        if (baseContext != null) baseContext.sendOrderedBroadcast(intent, receiverPermission, receiverAppOp, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+        else super.sendOrderedBroadcast(intent, receiverPermission, receiverAppOp, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    @Override public void sendOrderedBroadcast(Intent intent, int initialCode, String receiverPermission, String receiverAppOp, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, String initialData, android.os.Bundle initialExtras, android.os.Bundle options) {
+        if (baseContext != null) baseContext.sendOrderedBroadcast(intent, initialCode, receiverPermission, receiverAppOp, resultReceiver, scheduler, initialData, initialExtras, options);
+        else super.sendOrderedBroadcast(intent, initialCode, receiverPermission, receiverAppOp, resultReceiver, scheduler, initialData, initialExtras, options);
+    }
+    @Override public void sendOrderedBroadcast(Intent intent, String receiverPermission, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        if (baseContext != null) baseContext.sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+        else super.sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    @Override public void sendOrderedBroadcastAsUser(Intent intent, android.os.UserHandle user, String receiverPermission, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        if (baseContext != null) baseContext.sendOrderedBroadcastAsUser(intent, user, receiverPermission, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+        else super.sendOrderedBroadcastAsUser(intent, user, receiverPermission, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    @Override public void sendStickyOrderedBroadcast(Intent intent, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        if (baseContext != null) baseContext.sendStickyOrderedBroadcast(intent, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+        else super.sendStickyOrderedBroadcast(intent, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    @Override public void sendStickyOrderedBroadcastAsUser(Intent intent, android.os.UserHandle user, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        if (baseContext != null) baseContext.sendStickyOrderedBroadcastAsUser(intent, user, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+        else super.sendStickyOrderedBroadcastAsUser(intent, user, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    @Override public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter) {
+        if (baseContext != null) return baseContext.registerReceiver(receiver, filter);
+        else return super.registerReceiver(receiver, filter);
+    }
+    @Override public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter, int flags) {
+        if (baseContext != null) return baseContext.registerReceiver(receiver, filter, flags);
+        else return super.registerReceiver(receiver, filter, flags);
+    }
+    @Override public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler) {
+        if (baseContext != null) return baseContext.registerReceiver(receiver, filter, broadcastPermission, scheduler);
+        else return super.registerReceiver(receiver, filter, broadcastPermission, scheduler);
+    }
+    @Override public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler, int flags) {
+        if (baseContext != null) return baseContext.registerReceiver(receiver, filter, broadcastPermission, scheduler, flags);
+        else return super.registerReceiver(receiver, filter, broadcastPermission, scheduler, flags);
+    }
+    @Override public void unregisterReceiver(android.content.BroadcastReceiver receiver) {
+        if (baseContext != null) baseContext.unregisterReceiver(receiver);
+        else super.unregisterReceiver(receiver);
+    }
 }

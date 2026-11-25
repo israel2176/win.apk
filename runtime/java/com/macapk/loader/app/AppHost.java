@@ -92,6 +92,10 @@ public interface AppHost {
      *  a process that leaves now still owes, which the next process starts. */
     java.util.List<Intent> pendingStarts();
 
+    /** A broadcast another app sent (`fromOtherApp`: only exported receivers hear it) or the system
+     *  broker relayed, to this process's receivers. */
+    void deliverBroadcast(Intent intent, boolean fromOtherApp);
+
     /** A service of the app's bound for the host, which waits for its binder: one the system broker
      *  binds into this app for another, an account authenticator, the measurement service. The
      *  service is created if it was not and the binding held for the process's life; null when

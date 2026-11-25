@@ -3,7 +3,8 @@
 // (ActivityManagerService.attachApplicationLocked): the application is bound (bindApplication, with
 // the host's ApplicationInfo and configuration), then the activity task manager starts the launch
 // activity in it. Methods with no answer here return their type's zero
-// (com.winapk.aospapp.gen.IActivityManagerImpl logs each once). Services are ActiveServices'.
+// (com.winapk.aospapp.gen.IActivityManagerImpl logs each once). Services are ActiveServices',
+// broadcasts ActiveBroadcasts'.
 package com.winapk.aospapp;
 
 import android.app.IApplicationThread;
@@ -35,6 +36,47 @@ public final class ActivityManagerService {
     }
 
     public void finishAttachApplication(long startSeq) {}
+
+    // ---- Broadcasts (ActiveBroadcasts) ----
+
+    public android.content.Intent registerReceiverWithFeature(IApplicationThread caller, String callerPackage,
+            String callingFeatureId, String receiverId, android.content.IIntentReceiver receiver,
+            android.content.IntentFilter filter, String requiredPermission, int userId, int flags) {
+        return app.broadcasts.register(receiver, filter, flags);
+    }
+
+    public android.content.Intent registerReceiver(IApplicationThread caller, String callerPackage,
+            android.content.IIntentReceiver receiver, android.content.IntentFilter filter, String requiredPermission,
+            int userId, int flags) {
+        return app.broadcasts.register(receiver, filter, flags);
+    }
+
+    public void unregisterReceiver(android.content.IIntentReceiver receiver) {
+        app.broadcasts.unregister(receiver);
+    }
+
+    public int broadcastIntentWithFeature(IApplicationThread caller, String callingFeatureId,
+            android.content.Intent intent, String resolvedType, android.content.IIntentReceiver resultTo,
+            int resultCode, String resultData, Bundle resultExtras, String[] requiredPermissions,
+            String[] excludedPermissions, String[] excludedPackages, int appOp, Bundle options, boolean serialized,
+            boolean sticky, int userId) {
+        return app.broadcasts.broadcast(intent, resultTo, resultCode, resultData, resultExtras, serialized, sticky);
+    }
+
+    public int broadcastIntent(IApplicationThread caller, android.content.Intent intent, String resolvedType,
+            android.content.IIntentReceiver resultTo, int resultCode, String resultData, Bundle resultExtras,
+            String[] requiredPermissions, int appOp, Bundle options, boolean serialized, boolean sticky, int userId) {
+        return app.broadcasts.broadcast(intent, resultTo, resultCode, resultData, resultExtras, serialized, sticky);
+    }
+
+    public void unbroadcastIntent(IApplicationThread caller, android.content.Intent intent, int userId) {
+        app.broadcasts.removeSticky(intent);
+    }
+
+    public void finishReceiver(android.os.IBinder who, int resultCode, String resultData, Bundle resultExtras,
+            boolean resultAbort, int flags) {
+        app.broadcasts.finishReceiver(who, resultCode, resultData, resultExtras, resultAbort);
+    }
 
     // ---- Services (ActiveServices) ----
 

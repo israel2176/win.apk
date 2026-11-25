@@ -60,6 +60,7 @@ public class AospAppRewrite {
             "android/graphics/Compatibility.setTargetSdkVersion(I)V",
             "android/app/ActivityManager.isStartResultFatalError(I)Z",
             "android/text/TextUtils.formatSimple(Ljava/lang/String;[Ljava/lang/Object;)Ljava/lang/String;",
+            "android/app/AppOpsManager.toReceiverId(Ljava/lang/Object;)Ljava/lang/String;",
             "android/os/FileUtils.newFileOrNull(Ljava/lang/String;)Ljava/io/File;",
             "android/os/FileUtils.listOrEmpty(Ljava/io/File;)[Ljava/lang/String;",
             "android/os/FileUtils.listFilesOrEmpty(Ljava/io/File;Ljava/io/FilenameFilter;)[Ljava/io/File;",
@@ -243,26 +244,7 @@ public class AospAppRewrite {
             "checkCallingOrSelfPermission(Ljava/lang/String;)I",
             "enforcePermission(Ljava/lang/String;IILjava/lang/String;)V",
             "enforceCallingPermission(Ljava/lang/String;Ljava/lang/String;)V",
-            "enforceCallingOrSelfPermission(Ljava/lang/String;Ljava/lang/String;)V",
-            // Receivers and broadcasts: Win.apk's dispatch (its receiver registry, the host's
-            // broadcasts), until they are ActivityThread's over the in-process activity manager.
-            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;)Landroid/content/Intent;",
-            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;I)Landroid/content/Intent;",
-            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;)Landroid/content/Intent;",
-            "registerReceiver(Landroid/content/BroadcastReceiver;Landroid/content/IntentFilter;Ljava/lang/String;Landroid/os/Handler;I)Landroid/content/Intent;",
-            "unregisterReceiver(Landroid/content/BroadcastReceiver;)V",
-            "sendBroadcast(Landroid/content/Intent;)V",
-            "sendBroadcast(Landroid/content/Intent;Ljava/lang/String;)V",
-            "sendBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/os/Bundle;)V",
-            "sendOrderedBroadcast(Landroid/content/Intent;ILjava/lang/String;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;Ljava/lang/String;Landroid/os/Bundle;Landroid/os/Bundle;)V",
-            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;)V",
-            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
-            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/os/Bundle;)V",
-            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Landroid/os/Bundle;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
-            "sendOrderedBroadcast(Landroid/content/Intent;Ljava/lang/String;Ljava/lang/String;Landroid/content/BroadcastReceiver;Landroid/os/Handler;ILjava/lang/String;Landroid/os/Bundle;)V",
-            "sendStickyBroadcast(Landroid/content/Intent;)V",
-            "sendStickyBroadcast(Landroid/content/Intent;Landroid/os/Bundle;)V",
-            "removeStickyBroadcast(Landroid/content/Intent;)V");
+            "enforceCallingOrSelfPermission(Ljava/lang/String;Ljava/lang/String;)V");
 
     /** The in-process system services: AIDL interface -> the plain class that answers it
      *  (windows/java/aosp_app). */
