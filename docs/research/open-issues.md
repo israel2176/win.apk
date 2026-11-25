@@ -1035,8 +1035,9 @@ New bugs found with AOSP views:
   198/186). Under Wine, Jerboa: first start 586 MB = app 348 + dump wrapper
   34 + dump JVM 207; second 351. Fixed the way Android compiles before a
   start, not during one: the archive is made by Win.apk's installer
-  (`--cds-prepare`, hidden) or at the end of the first app install
-  (`cds_after_install`), from the shipped class list, refreshed from CI's
+  (`--cds-prepare`, hidden) or beside the first app install, in the
+  background since the install-time work below (`cds_dump_at_install`), from
+  the shipped class list, refreshed from CI's
   `framework-classlist` artifact (it was Java2D's); the dump at a start is
   the last resort, and the dump's JVM has `-Xms8m -Xmx96m` (207 -> 166-190
   MB: most of it is the classes and the archive, not the heap). After, under
@@ -1138,6 +1139,44 @@ Not verified on Windows: the high-resolution timer's precision (Wine has it; Win
 does). Seen while checking: LocalSend crashes under Wine after its first frame (`Internal Error
 (0xc06d007f)`, a delay-load failure in `kernelbase.dll`) with the build before this change too:
 not this change's; whether Windows shows it too is not checked; to look at on its own.
+
+## Install time in the the other runtime comparison (2026-11-25): fixed, to confirm on the next run
+
+`comparison` run 45520337431 (on 268c614, windows-latest, 4 vCPU, a fresh runner per
+app): Win.apk's `--install-only` took 4.3-12.8 s (Jerboa 7.6, Jellyfin 12.0, Jitsi 10.4,
+LocalSend 12.8, Editor 5.0, Tensy 4.3) against the other runtime's 2.5-4.1 s. From the run's install logs,
+the previous run (45513190823, before the archive moved to install time) and Wine:
+
+- **The framework archive's dump, once per Win.apk version, ~3.5 s** (Editor 1.6 -> 5.0 s,
+  Currency 1.1 -> 5.6, Tensy 1.6 -> 4.3 between the two runs; 15 s under Wine). In every row
+  only because each app had a fresh data folder; a second install logs nothing of it. Now
+  started in the background as the install begins, and not waited for; an app start that
+  finds it still running waits for it (30 s at most) and maps the archive
+  (`cds_dump_at_install`, `wait_for_running_dump`). Win.apk's installer still makes it first.
+- **The DEX conversion, the per-app bulk** (Jerboa 4.4 s, Jellyfin 6.9, LocalSend 7.0, Jitsi
+  5.1, Notes 3.3, by the converter's own line). Mostly HotSpot's warm-up: with one worker
+  Jerboa used 17 s of CPU for 6.6 s, four workers were barely faster; C1 alone halves it
+  (Jerboa 4.6 -> 2.3 s, Jellyfin 4.8 -> 2.6, Jitsi 3.3 -> 1.4, Notes 3.0 -> 1.4 on a 4-core
+  Linux JDK; under Wine with Temurin 21 11.2 -> 7.4 s), the same bytes out. C2 wins back its
+  warm-up past ~55 MB of DEX, so above 40 MB the tiered JIT stays (`dex_jit_options`).
+- **Three JVMs one after the other, ~1-1.3 s on Windows**: AppInstall's child, the framework
+  JVM for AppMeta (signature, framework-res, the icon), the converter's child. The converter
+  now runs beside AppMeta instead of after it. AppInstall's child stays (~0.2-0.3 s on
+  Windows): the installed APK must exist before either of the other two, and folding it into
+  the framework JVM would need `MACAPK_APK_PATH` before that JVM reads its environment.
+- **Found on the way: every install named the app by its package** (`AppMeta.resolve` built
+  Win.apk's own `AssetManager(String)`, which AOSP's lacks: "reading the app's name failed:
+  NoSuchMethodError" in every install log). Fixed through `ResBackend`; CI checks the label.
+
+Under Wine (this container, 4 cores), install process to exit, before -> after: Editor (first
+install, archive dumped) 21.6 -> 4.9 s, Jerboa 11.7 -> 7.0, Jellyfin 11.4 -> 6.9, Jitsi 10.2 ->
+6.1; a start right after the first install waited 12.9 s for the dump and mapped the archive.
+**On the next compare run:** the install column near the other runtime's for small apps (Editor, Tensy,
+Currency ~1.5 s), Jerboa/Jellyfin/LocalSend/Jitsi about half. `measure.ps1` waits for the
+background dump after each fresh runner's install (`cds_dump_after_install_s` in the JSON, apart
+from `install_s`), so the cold runs stay starts with the archive, as after Win.apk's setup.
+Left: LocalSend's 7.0 s conversion on Windows against 2.9 s on Linux for 3022 classes (its
+48 MB APK; Defender scanning the reads?), not looked at.
 
 ## Screen readers (UI Automation), to check
 
