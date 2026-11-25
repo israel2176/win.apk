@@ -27,11 +27,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: Assemble the site
         run: |
-          mkdir -p _site/images
+          mkdir -p _site/images/apps _site/images/he
           cp site/* _site/
           cp docs/images/library.png docs/images/store.png docs/images/dark.png _site/images/
-          # Hebrew screenshots, when there are any (docs/images/he/<same name>), for visitors reading in Hebrew.
-          if [ -d docs/images/he ]; then mkdir -p _site/images/he && cp docs/images/he/*.png _site/images/he/; fi
+          # Real screenshots of apps running in Win.apk (docs/images/apps/README.md).
+          cp docs/images/apps/*.png _site/images/apps/
+          # Hebrew screenshots, when there are any (docs/images/he/<same name>, docs/images/he/apps/<same name>), for
+          # visitors reading in Hebrew. shots.json lists them, so the page asks only for pictures that exist.
+          names=()
+          for f in docs/images/he/*.png docs/images/he/apps/*.png; do
+            [ -f "$f" ] || continue
+            rel="${f#docs/images/he/}"
+            mkdir -p "_site/images/he/$(dirname "$rel")"
+            cp "$f" "_site/images/he/$rel"
+            names+=("\"$rel\"")
+          done
+          (IFS=,; echo "[${names[*]}]") > _site/images/he/shots.json
           cp windows/launcher/winapk.png _site/images/icon.png
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
