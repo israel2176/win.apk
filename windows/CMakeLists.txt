@@ -161,6 +161,11 @@ target_include_directories(winapk-applink-test PRIVATE host)
 add_executable(winapk-webview-urls-test test/webview_file_urls_test.cpp)
 target_include_directories(winapk-webview-urls-test PRIVATE host)
 
+# Which URLs the runtime hands to Windows to open (host/host_url.h). No window.
+# test/host_url_test.cpp.
+add_executable(winapk-host-url-test test/host_url_test.cpp)
+target_include_directories(winapk-host-url-test PRIVATE host)
+
 # The frame-time record (host/frame_times.h): percentiles and the line logged at exit. No
 # window. test/frame_times_test.cpp.
 add_executable(winapk-frame-times-test test/frame_times_test.cpp)

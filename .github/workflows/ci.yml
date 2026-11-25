@@ -342,6 +342,8 @@ jobs:
         run: ./build/winapk-applink-test.exe
       - name: Run the WebView file URL test (the file origin both ways, which pages may read it)
         run: ./build/winapk-webview-urls-test.exe
+      - name: Run the host URL test (which URLs go to Windows' protocol handlers)
+        run: ./build/winapk-host-url-test.exe
       - name: Run the frame-time record test (percentiles, the line at exit)
         run: ./build/winapk-frame-times-test.exe
       - name: Run the machine load test (busy shares and the busiest others to the first frame)

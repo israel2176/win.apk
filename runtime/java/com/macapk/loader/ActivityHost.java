@@ -947,7 +947,8 @@ public final class ActivityHost {
 
     /** v1.0.849: the ONE policy choke point for handing a URL to the host.
      *  Everything that can open the macOS browser must come through here --
-     *  ActivityHost's implicit-intent resolution and URLSpan.onClick both do.
+     *  ActivityHost's implicit-intent resolution and the browser tab's mailto/
+     *  tel/geo links do (URLSpan.onClick starts an ACTION_VIEW, as AOSP's).
      *  Package-visible so framework shims reach it via this loader class. */
     public static boolean openHostUrlGated(String uri, String why) {
         return openHost(uri, why, null);
