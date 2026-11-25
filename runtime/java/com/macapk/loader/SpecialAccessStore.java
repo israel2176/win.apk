@@ -1490,7 +1490,7 @@ public final class SpecialAccessStore {
         }
         int level;
         try { level = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { level = 29; }
-        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        boolean resolved = m.targetSdk >= 0;
         return new GroupModel(level, m.targetSdk, declared, snap.perms, resolved).granted(perm);
     }
 

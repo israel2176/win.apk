@@ -74,8 +74,7 @@
 // and routes every bind, start, provider, job and receiver to the process its
 // manifest names -- including between two processes of the SAME package, which is
 // what lets Finsky's InstallerV2 jobs run in com.android.vending:background.
-// MACAPK_PROCESS_SPLIT=0 collapses a package back to one process (the pre-split
-// behaviour), for bisecting. See docs/process-model-per-android-process_2026-11-01.md.
+// See docs/process-model-per-android-process_2026-11-01.md.
 //
 // BOOT. The broker coming up is this device booting: the headless SYSTEM apps
 // that listen for BOOT_COMPLETED are started right away (bootSystemServices),
@@ -314,22 +313,16 @@ public final class SystemServer {
      *  Play launch takes minutes), so it waits BrokerIdle.firstAppGraceMs. */
     private volatile boolean sawOpenApp;
 
-    /** Whether a package's android:process components run in their own
-     *  processes. On by default; MACAPK_PROCESS_SPLIT=0 puts the whole package
-     *  back in one process named after it, as before the split. The same
-     *  variable the app side reads (SystemClient.splitConfigured), which the
-     *  broker passes to every process it spawns, so the two never disagree. */
-    static boolean split() { return !SystemClient.splitOff(); }
-
-    /** The process a package's components live in when they declare none. */
+    /** The process a package's components live in when they declare none: a
+     *  package's android:process components run in their own processes. */
     static String mainProcessOf(PackageRecord pr) {
-        return split() ? pr.manifest.defaultProcessName() : pr.pkg;
+        return pr.manifest.defaultProcessName();
     }
 
     /** ComponentInfo.processName for `cls` of `pr`: the process a bind, start,
      *  provider or receiver of that component must be served from. */
     static String processOf(PackageRecord pr, String cls) {
-        return split() ? pr.manifest.processNameOf(cls) : pr.pkg;
+        return pr.manifest.processNameOf(cls);
     }
 
     static void log(String m) { System.err.println("[system] " + m); }
@@ -533,13 +526,8 @@ public final class SystemServer {
         env.put("MACAPK_SYSTEM_NAME", sName);
         // The process this runtime is to BE (AMS startProcessLocked(processName)):
         // the legitimate source of ActivityThread.currentProcessName() in a spawned
-        // process. Unset for a collapsed package, whose one process is named after
-        // it. A stale value from the broker's own environment must not leak in, and
-        // the split switch is passed on so the app side agrees with this broker.
-        env.remove("MACAPK_PROCESS_NAME");
-        if (split()) env.put("MACAPK_PROCESS_NAME", proc);
-        String splitSwitch = System.getenv("MACAPK_PROCESS_SPLIT");
-        if (splitSwitch != null) env.put("MACAPK_PROCESS_SPLIT", splitSwitch);
+        // process.
+        env.put("MACAPK_PROCESS_NAME", proc);
         // A secondary process shares the package's data and its installed-app
         // identity: the stub must not treat it as a second COPY of the app.
         if (!proc.equals(mainProcessOf(pr))) env.put("MACAPK_SECONDARY_PROCESS", "1");
@@ -1424,10 +1412,9 @@ public final class SystemServer {
         // CHECKIN_COMPLETE: every nudge after that started one more check-in
         // (each answered with CHECKIN_COMPLETE again), so a device that had
         // checked in at boot checked in three more times, a minute apart.
-        // MACAPK_BROKER_TRIGGER_CHECKIN=0 disables it.
         // Follow-up (broader, not on the sign-in path): make the nts scheduler execute
         // scheduled tasks so this nudge is unnecessary and all GMS background tasks run.
-        if (!"0".equals(System.getenv("MACAPK_BROKER_TRIGGER_CHECKIN")) && "com.google.android.gms".equals(app.pkg)) {
+        if ("com.google.android.gms".equals(app.pkg)) {
             Thread t = new Thread(() -> {
                 try {
                     long base = Long.getLong("macapk.broker.checkinTriggerMs", 75_000L);
@@ -1466,8 +1453,7 @@ public final class SystemServer {
      *  must come up from its own launch instead -- it gets its boot broadcasts
      *  when it attaches, exactly as before. Restricted to system apps rather than
      *  every installed app because each Mac.apk process is a JVM, and starting
-     *  all of a user's apps at boot is a cost a phone pays and a Mac should not.
-     *  MACAPK_BROKER_BOOT_SYSTEM=0 turns it off. */
+     *  all of a user's apps at boot is a cost a phone pays and a Mac should not. */
     /** The file the broker writes once its boot has finished (every system app
      *  it started has attached or failed): the app stub for Google Play waits
      *  for it before opening Play, so the services Play needs are up first
@@ -1550,7 +1536,6 @@ public final class SystemServer {
     }
 
     void bootSystemServices() {
-        if ("0".equals(System.getenv("MACAPK_BROKER_BOOT_SYSTEM"))) { writeReady(""); bootDone = true; return; }
         java.util.List<String> bootNames = new ArrayList<>();
         java.util.List<Runnable> bootJobs = new ArrayList<>();
         final java.util.concurrent.CopyOnWriteArrayList<String> okNames = new java.util.concurrent.CopyOnWriteArrayList<>();
