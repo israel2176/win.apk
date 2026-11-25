@@ -28,7 +28,7 @@
 //   app start without an archive record
 //   the classes it loads, and 10 s after its first frame (or at its exit) a background
 //   `winapk-runtime --cds-dump` runs `java -Xshare:dump` over both lists: a second JVM of about
-//   200 MB beside the app (comparison run 45513190823: a first start's peak was twice the
+//   200 MB beside the app (measured on windows-latest: a first start's peak was twice the
 //   second's, all of it the dump), which is why it is the last resort. Every later start of
 //   every app maps it. `--cds-prepare` builds the one an app's start would map, at once. The
 //   dump's JVM has a heap of its own (cds::kDumpHeapOptions), not the app's.

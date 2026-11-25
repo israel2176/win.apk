@@ -4,7 +4,7 @@
 // A start that is slow because of the app or the runtime looks the same in the log as one that
 // is slow because something else had the CPU (an antivirus scan of files just written, Windows'
 // servicing, another program's own start): every step simply takes longer. The cold start of
-// Jellyfin in comparison run 45513190823 took 13.4 s against 1.5-3.3 s for every other app,
+// Jellyfin in a run on GitHub's windows-latest took 13.4 s against 1.5-3.3 s for every other app,
 // and steps no app's code touches were 15-18x slower there (the system fonts 4.6 s against
 // 0.1-0.4 s, the starting window 2.1 s against ~0.1 s); without a record of the machine's load
 // the log could not say why. So the runtime samples the system's CPU times and every process's

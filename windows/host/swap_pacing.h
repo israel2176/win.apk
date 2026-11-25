@@ -7,7 +7,7 @@
 // dequeueBuffer waiting for a free buffer, so a game loop runs at the display's rate. Win.apk's
 // window surface is a pbuffer read back and composed by the host (host/gl/guest_gl.cpp), which
 // nothing paces: before this, an SDL game sitting on its menu (Tensy) swapped as fast as the GPU
-// and the readback allowed, two cores busy at idle (comparison: 212% of a core, the other runtime 74%).
+// and the readback allowed, two cores busy at idle (212% of a core, measured on windows-latest).
 //
 // The pacer gives the swap the queue's effect: frame n returns no sooner than n vsync periods
 // (times the swap interval) after the stream began, so the steady rate is the display's

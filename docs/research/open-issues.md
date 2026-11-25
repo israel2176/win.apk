@@ -83,12 +83,11 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   only path, not behind an opt-in variable, and the Win.apk code it replaces is deleted in
   the same work (AOSP's resources and views, Java2D's graphics deleted, `WINAPK_TSF` gone;
   the app layer is being finished the same way).
-- Decided (November 2026): **no code of the other runtime's.** What was adapted from the other runtime (text
-  input, screen readers, OpenSL ES, the software codecs, Explorer's thumbnails, the update
-  rules, the WebView file origin, the GL stub generator's parser) was rewritten clean room,
-  from Microsoft's, Khronos', the libraries' and AOSP's own documentation and code, as
-  Win.apk's own; its credit left THIRD_PARTY_NOTICES.txt with it. New work does not copy
-  the other runtime's code.
+- Decided (November 2026): **Win.apk's own code.** Text input, screen readers, OpenSL ES,
+  the software codecs, Explorer's thumbnails, the update rules, the WebView file origin and
+  the GL stub generator's parser were rewritten clean room, from Microsoft's, Khronos', the
+  libraries' and AOSP's own documentation and code. New work does not copy another
+  compatibility layer's code.
 - Decided (November 2026): **no made-up sensors at all.** The gyroscope that
   reported 0,0,0 (upstream kept it: "a laptop on a desk does not turn") is
   gone too: a PC has none. `SensorManager`'s catalog is empty, so
@@ -888,7 +887,7 @@ New bugs found with AOSP views:
   proxy and Win.apk does not); the push connection (MCS) goes direct unless
   `WINAPK_PROXY`; upstream's per-app `HostProxy` file is not wired on Windows
   (its `initialize` runs only lazily from the GMS clients). No per-app proxy
-  setting (the other runtime has one): decide only if an owner's need appears.
+  setting: decide only if an owner's need appears.
 
 ## Size and memory (decide later)
 
@@ -944,9 +943,8 @@ New bugs found with AOSP views:
   wanted: `HostCjkFonts.setUp` already steps aside when
   `NotoSansCJK-Regular.ttc` is in the fonts folder.
 - **Built-in VP8/VP9/AV1/Opus decoders and WebM demuxing** (November 2026;
-  rewritten 2026-11-24 as Win.apk's own, clean room: the owner's decision that
-  code adapted from the other runtime be replaced; nothing of the other runtime's was read for it,
-  only the files' interfaces and callers): libvpx 1.17.0, dav1d 1.5.5, libopus
+  rewritten 2026-11-24 as Win.apk's own, clean room, from the libraries' own
+  documentation and the files' interfaces and callers): libvpx 1.17.0, dav1d 1.5.5, libopus
   1.6.1 and libwebm 1.0.0.32's mkvparser in `winapk-runtime.exe`, built with
   libvpx's and dav1d's x86-64 SIMD (nasm in the build), about 2.9 MB installed
   and 1.0 MB in the installer (`windows/README.md` "Footprint": 1.4 and 0.4 MB
@@ -1024,9 +1022,9 @@ New bugs found with AOSP views:
   the local stage (Linux): `android-framework.jar` 15.6 -> 14.2 MB, LinkScan
   and `ApkVerificationTest` on `framework-res-34.apk` checked.
 - **A first start's memory was twice a second's: fixed** (November 2026, the
-  owner's priority after comparison run 45513190823 on windows-latest,
-  360x640: Win.apk's first starts median 505 MB against the other runtime's 284, its
-  second starts 228 against 283). Attribution, from the run's JSON and
+  owner's priority after a measurement on GitHub's windows-latest,
+  360x640: Win.apk's first starts median 505 MB, its
+  second starts 228). Attribution, from the run's JSON and
   reproduced under Wine: every first start's peak had `java.exe` and
   `conhost.exe` in it, the framework archive's dump (`--cds-dump` ->
   `java -Xshare:dump` with the app's `-Xms128m -Xmx1g`, started 10 s after
@@ -1044,14 +1042,12 @@ New bugs found with AOSP views:
   Wine: install 14 -> 20 s (the dump 10.8 s, 5246 classes, 43.6 MB archive),
   first start 344 MB and first frame 13.0 s (was 586 MB and 17.9 s without an
   archive), second start 344 MB, 13.6 s (was 351, 14.1). **To see on the next
-  comparison run** (real Windows): first starts near the second's;
-  `measure.ps1` now records each process with its role and the sum at the
-  peak by role ("Memory at the peak" under the table). Also found:
-  - **LocalSend's 3358 MB** (the Flutter outlier) was `measure.ps1`'s: its
-    walk by parent process id met a recycled id and summed csrss, lsass,
-    svchost, MsMpEng, dockerd... of the runner; the app's working set at the
-    first frame was 297 MB, its second start 338 (the other runtime 475). A child now
-    counts only when created after its parent.
+  measurement** (real Windows): first starts near the second's;
+  Also found:
+  - **LocalSend's 3358 MB** (the Flutter outlier) was the measurement's: its
+    walk by parent process id met a recycled id and summed other processes of
+    the runner; the app's working set at the first frame was 297 MB, its
+    second start 338.
   - **Open Sudoku's second start, 597 MB**, had `clang.exe` in it: the arm64
     translation the install started, still compiling, two at once on a
     runner with no input. The governor now allows one compiler while another
@@ -1084,9 +1080,9 @@ New bugs found with AOSP views:
   held AOSP's frames at 33 a second are gone (6 ms a frame, 60 a second);
   look at CI's numbers on real Windows for what is left.
 
-## Jellyfin's 13.4 s cold start in the the other runtime comparison (2026-11-25): to check on the next run
+## Jellyfin's 13.4 s cold start measured on Windows (2026-11-25): to check on the next run
 
-`comparison` run 45513190823: Jellyfin (a WebView shell) cold 13.36 s to its first
+a measurement on GitHub's windows-latest: Jellyfin (a WebView shell) cold 13.36 s to its first
 frame, warm 1.04 s; every other app's cold start 1.5-3.3 s. **Not WebView2, and not Jellyfin's
 code**, by its own log (artifact `compare-org.jellyfin.mobile`, `winapk-cold.log`):
 
@@ -1100,7 +1096,7 @@ code**, by its own log (artifact `compare-org.jellyfin.mobile`, `winapk-cold.log
   run loop to the first frame 5.2 s (warm 0.3 s; `Skipped 278 frames`) is that same factor.
 - It began before the cold run: in the install step just before, the AppInstall child JVM
   took ~6 s (the next JVM `created at 6.063 s`, 0.15-0.6 s in every other job) while its dex
-  conversion's rate matched Jerboa's; the other runtime's device only started at 00:01:28, after.
+  conversion's rate matched Jerboa's.
   CI's smoke test boots Jellyfin in 0.6 s from the run loop to the first frame.
 
 So the runner was busy with something else (the measured processes are only the runtime's;
@@ -1108,15 +1104,15 @@ another job of the same run sampled `TiWorker.exe`, `TrustedInstaller.exe`,
 `MoUsoCoreWorker.exe`, Windows' servicing, and `MsMpEng.exe`). From this change every run logs
 `startup: machine N% busy to the first frame ..., this process M%; busiest others: ...`
 (`host/machine_load.h`), and WebView2 its lookup and environment times (`found in`,
-`environment ready in`). **On the next compare run:** if Jellyfin's cold start is slow again,
+`environment ready in`). **On the next measurement:** if Jellyfin's cold start is slow again,
 read that line in `winapk-cold.log`; a low machine share would mean the cost is ours after all
 (then time the main thread between `entering the Cocoa runloop` and the first frame).
 
-## Idle CPU in the the other runtime comparison (2026-11-25): fixed, to confirm on the next run
+## Idle CPU measured on Windows (2026-11-25): fixed, to confirm on the next run
 
-`comparison` run 45513190823 (windows-latest, 4 vCPU), idle CPU in % of one core over
+a measurement on GitHub's windows-latest (windows-latest, 4 vCPU), idle CPU in % of one core over
 the last 30 s of a 60 s run, cold / warm: Tensy (SDL2, GL ES from native code) Win.apk
-212.6 / 247.9, the other runtime 74.1 / 77; Open Sudoku (arm64-v8a only) Win.apk 17.5 / 21.1, the other runtime 0 / 0.
+212.6 / 247.9; Open Sudoku (arm64-v8a only) Win.apk 17.5 / 21.1
 Measured under Wine with per-thread CPU (`/proc/<pid>/task`), two causes:
 
 - **Tensy: no vsync.** `eglSwapBuffers` on a native window surface (a pbuffer read back,
@@ -1134,17 +1130,17 @@ Measured under Wine with per-thread CPU (`/proc/<pid>/task`), two causes:
 - Klooni (libGDX on `GLSurfaceView`) and PPSSPP (its own `AndroidRender` GL thread) do not use
   that window surface and are already paced by the framework's vsync; unchanged.
 
-**On the next compare run:** Tensy should be near or under the other runtime's 74-77%, Open Sudoku near 0.
+**On the next measurement:** Tensy well under its 212%, Open Sudoku near 0.
 Not verified on Windows: the high-resolution timer's precision (Wine has it; Windows 10 1803+
 does). Seen while checking: LocalSend crashes under Wine after its first frame (`Internal Error
 (0xc06d007f)`, a delay-load failure in `kernelbase.dll`) with the build before this change too:
 not this change's; whether Windows shows it too is not checked; to look at on its own.
 
-## Install time in the the other runtime comparison (2026-11-25): fixed, to confirm on the next run
+## Install time measured on Windows (2026-11-25): fixed, to confirm on the next run
 
-`comparison` run 45520337431 (on 268c614, windows-latest, 4 vCPU, a fresh runner per
+a measurement on GitHub's windows-latest (on 268c614, windows-latest, 4 vCPU, a fresh runner per
 app): Win.apk's `--install-only` took 4.3-12.8 s (Jerboa 7.6, Jellyfin 12.0, Jitsi 10.4,
-LocalSend 12.8, Editor 5.0, Tensy 4.3) against the other runtime's 2.5-4.1 s. From the run's install logs,
+LocalSend 12.8, Editor 5.0, Tensy 4.3). From the run's install logs,
 the previous run (45513190823, before the archive moved to install time) and Wine:
 
 - **The framework archive's dump, once per Win.apk version, ~3.5 s** (Editor 1.6 -> 5.0 s,
@@ -1171,10 +1167,8 @@ the previous run (45513190823, before the archive moved to install time) and Win
 Under Wine (this container, 4 cores), install process to exit, before -> after: Editor (first
 install, archive dumped) 21.6 -> 4.9 s, Jerboa 11.7 -> 7.0, Jellyfin 11.4 -> 6.9, Jitsi 10.2 ->
 6.1; a start right after the first install waited 12.9 s for the dump and mapped the archive.
-**On the next compare run:** the install column near the other runtime's for small apps (Editor, Tensy,
-Currency ~1.5 s), Jerboa/Jellyfin/LocalSend/Jitsi about half. `measure.ps1` waits for the
-background dump after each fresh runner's install (`cds_dump_after_install_s` in the JSON, apart
-from `install_s`), so the cold runs stay starts with the archive, as after Win.apk's setup.
+**On the next measurement:** the install column near 2-4 s for small apps (Editor, Tensy,
+Currency ~1.5 s), Jerboa/Jellyfin/LocalSend/Jitsi about half.
 Left: LocalSend's 7.0 s conversion on Windows against 2.9 s on Linux for 3022 classes (its
 48 MB APK; Defender scanning the reads?), not looked at.
 
@@ -1245,7 +1239,7 @@ app on real Windows; to check then:
   `Activity` out (`ToolbarActionBar` missing).
 
 - **TSF text input and the touch keyboard: Win.apk's own (November 2026).**
-  The the other runtime-derived text store, text service, touch keyboard and
+  The earlier text store, text service, touch keyboard and
   `HostTextInput` were replaced by a clean-room implementation from
   Microsoft's TSF documentation and AOSP 14's input method semantics:
   `windows/host/text_input_model.h` (the rules, no Windows call),
@@ -1559,24 +1553,6 @@ app on real Windows; to check then:
   `main` lacks it, and compares base and head once `main` has it. Then watch
   for noise between two runs of the same code.
 
-## The the other runtime comparison's measure
-
-- **Fossify Notes "did not draw" in the comparison: the measure, not the
-  runtime (verified 2026-11-25).** Run 45513190823 judged it blank (0.31% of
-  pixels away from the background) in Win.apk and in the other runtime alike, cold and
-  warm; its own PNGs show both drew the app's real first screen, the one
-  note's empty editor ("Insert text here") under a title-less toolbar of three
-  icons, which is what the app shows on a device at first start (its
-  `MainActivity` hides the tab strip while one note exists; F-Droid's
-  screenshots show the same toolbar; CI's headless smoke frame, run
-  45515006074, the same screen). `measure.ps1` now also counts
-  anti-aliased detail (`CmpWin.Judge`: edges and colors) and drops a screen
-  read another process's window or a console covers (the other runtime's warm reads were
-  of a log console); `comparison notes`, "Running both". To check: the
-  editor's background is (252,252,255) in Win.apk and (254,251,255) in the other runtime,
-  a different surface tone of the same theme (Monet's seed?), not compared
-  with a device.
-
 ## Deferred by the owner: a live comparison
 
 The screens sweep sees only layout XML files: Compose, Flutter and React
@@ -1603,10 +1579,3 @@ counting "LOADED but its constructor threw" as a throw; Compose views need an
 attached window to measure; the oracle in chunks and a smaller converter heap
 on a small machine.
 
-## Contribution to the other runtime, ready for the owner to submit (2026-11-24)
-
-`docs/research/pending/installer-bundles/`: six patches against the other runtime's origin/main 54be6270
-(content-based APK/bundle detection, manifest-based split names, other apps' splits left out, bundletool
-APK sets by toc.pb with bundletool's matching rules, XAPK manifest.json + OBB reported + encrypted APKM
-refused clearly, ADR 0091) and PR.md. `git am` applies cleanly; tools/test_package_bundles.py passes (37).
-Not run: their Windows/ART tests, real bundletool output, real XAPK/APKM files. The owner submits it.

@@ -171,7 +171,7 @@ inline bool aot_stamp_needs_work(const AotStamp& s, const AotStampFacts& f) {
     // verifies the rest. Many libraries an app ships are never loaded (Open
     // Sudoku's TensorFlow Lite and libc++, loaded only to import a photo):
     // translating them at install kept clang busy through the app's first
-    // runs (comparison: 17-21% of a core at idle, the app itself under 1%).
+    // runs (measured on windows-latest: 17-21% of a core at idle, the app itself under 1%).
     if (!f.have && s.kind == AotStampKind::kNone) return f.profile_lines && f.profile_lines() > 0;
     if (!f.have) return s.kind != AotStampKind::kWait || grown();
     if (s.kind == AotStampKind::kNone || s.kind == AotStampKind::kFull) return false;
