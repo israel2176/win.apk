@@ -392,6 +392,9 @@ int run_java(const Options& o, const fs::path& jar, const wchar_t* main_class, c
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(self, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        // The caller only sees -1 ("exit code -1"): the cause is here.
+        const DWORD err = GetLastError();
+        std::fprintf(stderr, "[win.apk] cannot start the Java tool %s (error %lu)\n", utf8(main_class).c_str(), err);
         return -1;
     }
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -409,7 +412,11 @@ int run_process(std::wstring cmdline) {
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) return -1;
+    if (!CreateProcessW(nullptr, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        const DWORD err = GetLastError();
+        std::fprintf(stderr, "[win.apk] cannot start %s (error %lu)\n", utf8(cmdline).c_str(), err);
+        return -1;
+    }
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
