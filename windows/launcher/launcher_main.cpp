@@ -9567,6 +9567,9 @@ const wchar_t* run_phase(const fs::path& log) {
 
 // Why the app did not come up, in a sentence: the log's own reason when it has a known one.
 std::wstring failure_reason(const fs::path& log, bool clean_exit) {
+    // No runtime started at all: "the app stopped with an error" would blame the app (as an install says).
+    std::error_code ec;
+    if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
     bool no_native_code = false;
     log_summary(log, &no_native_code);
     if (no_native_code) {
