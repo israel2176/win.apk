@@ -2270,7 +2270,10 @@ every such change is listed here:
   WebView, the occluder rects sent to the engine add that window's bounds
   after the whole-view rect, so an engine that shows the page over the canvas
   (Windows) can keep the dialog visible. The union, which the Mac's hit test
-  uses, is unchanged.
+  uses, is unchanged. A JS bridge call is matched against the annotated
+  methods themselves (`macapkBridgeExposes`), not their names, so an
+  unannotated overload of an annotated method stays out of a page's reach, as
+  in Chromium's `GinJavaBoundObject`.
 - `runtime/java/android/widget/TextView.java`: the protected `onTextChanged`
   hook is called on every text change (constructor, `setText`, typing,
   `append`, in-place edits), with or without `TextWatcher`s, as AOSP does. It

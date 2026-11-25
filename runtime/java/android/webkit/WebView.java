@@ -902,22 +902,34 @@ public class WebView extends android.widget.AbsoluteLayout
      *  java.lang.Object's. */
     private java.util.List<String> macapkBridgeMethodNames(Object obj) {
         java.util.ArrayList<String> out = new java.util.ArrayList<>();
-        boolean annotatedOnly = true;
+        boolean annotatedOnly = macapkBridgeAnnotatedOnly();
+        for (java.lang.reflect.Method m : obj.getClass().getMethods()) {
+            if (!macapkBridgeExposes(m, annotatedOnly)) continue;
+            if (!out.contains(m.getName())) out.add(m.getName());
+        }
+        return out;
+    }
+
+    /** API 17+: only @JavascriptInterface methods are reachable from JS. */
+    private boolean macapkBridgeAnnotatedOnly() {
         try {
             android.content.Context c = getContext();
             if (c != null && c.getApplicationInfo() != null
                     && com.macapk.loader.app.Apps.targetSdkKnown(c.getApplicationInfo().targetSdkVersion)
                     && c.getApplicationInfo().targetSdkVersion < 17) {
-                annotatedOnly = false;
+                return false;
             }
         } catch (Throwable ignored) {
         }
-        for (java.lang.reflect.Method m : obj.getClass().getMethods()) {
-            if (m.getDeclaringClass() == Object.class) continue;
-            if (annotatedOnly && !m.isAnnotationPresent(JavascriptInterface.class)) continue;
-            if (!out.contains(m.getName())) out.add(m.getName());
-        }
-        return out;
+        return true;
+    }
+
+    /** Whether JS may call this one method: per method, not per name, as Chromium's
+     *  GinJavaBoundObject keeps only the annotated methods, so an unannotated overload
+     *  of an annotated method's name is not callable. */
+    private static boolean macapkBridgeExposes(java.lang.reflect.Method m, boolean annotatedOnly) {
+        if (m.getDeclaringClass() == Object.class) return false;
+        return !annotatedOnly || m.isAnnotationPresent(JavascriptInterface.class);
     }
 
     /** Per-frame rect sync: ViewCanvasDriver calls rootView.draw(canvas) every
@@ -1704,10 +1716,10 @@ public class WebView extends android.widget.AbsoluteLayout
             }
             if (target == null) return "";
             int argc = args != null ? args.length() : 0;
-            java.util.List<String> allowed = macapkBridgeMethodNames(target);
+            boolean annotatedOnly = macapkBridgeAnnotatedOnly();
             for (java.lang.reflect.Method m : target.getClass().getMethods()) {
                 if (!m.getName().equals(method)) continue;
-                if (!allowed.contains(method)) continue;
+                if (!macapkBridgeExposes(m, annotatedOnly)) continue;
                 Class<?>[] params = m.getParameterTypes();
                 if (params.length != argc) continue;
                 Object[] coerced = new Object[argc];
