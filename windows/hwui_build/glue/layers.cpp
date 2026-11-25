@@ -235,11 +235,16 @@ std::vector<Placed> g_scene;  // each holds a reference
 int g_display_w = 0, g_display_h = 0;
 bool g_clear_below = false;  // nothing under the windows is black, unless a surface shows through
 
-// The host's frame under every window (a native GL or video surface read back).
+// The host's frames: under every window (a SurfaceView's surface, a native GL view read back) and
+// over them (a setZOrderOnTop surface, a native window on top), each stretched over the display.
+struct HostLayer {
+    std::vector<uint32_t> px;
+    int w = 0, h = 0;
+    bool dirty = false;
+    GLuint tex = 0;  // render thread
+};
 std::mutex g_host_lock;
-std::vector<uint32_t> g_host_px;
-int g_host_w = 0, g_host_h = 0;
-bool g_host_dirty = false;
+HostLayer g_host_below, g_host_above;
 
 const WinApkHwuiHost* g_host = nullptr;
 std::atomic<bool> g_compose_pending{false};
@@ -254,7 +259,6 @@ struct Gl {
     GLuint tex_prog = 0, color_prog = 0;
     GLint tex_rect = -1, tex_flip = -1, tex_alpha = -1, tex_sampler = -1;
     GLint color_rect = -1, color_value = -1;
-    GLuint host_tex = 0;
     EGLSurface screen = EGL_NO_SURFACE;
     bool interval_set = false;  // eglSwapInterval(0) on the screen surface
     bool flip_y = false;        // the screen surface is upside down (its first row is the top)
@@ -503,21 +507,20 @@ void compose_now() {
     }
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    // The host's own frame, under the windows.
-    {
+    // The host's frame under the windows.
+    auto draw_host = [&](HostLayer& l, bool opaque) {
         std::lock_guard<std::mutex> hold(g_host_lock);
-        if (g_host_w > 0 && g_host_h > 0) {
-            if (g_host_dirty) {
-                upload(&g_gl.host_tex, g_host_px.data(), g_host_w, g_host_h, true);
-                g_host_dirty = false;
-            }
-            glBindTexture(GL_TEXTURE_2D, g_gl.host_tex);
-            glDisable(GL_BLEND);
-            draw_tex(lay.x, lay.y, static_cast<int>(g_host_w * sx + 0.5), static_cast<int>(g_host_h * sy + 0.5), cw,
-                     ch, true, 1.0f);
-            glEnable(GL_BLEND);
+        if (l.w <= 0 || l.h <= 0) return;
+        if (l.dirty) {
+            upload(&l.tex, l.px.data(), l.w, l.h, true);
+            l.dirty = false;
         }
-    }
+        glBindTexture(GL_TEXTURE_2D, l.tex);
+        if (opaque) glDisable(GL_BLEND);
+        draw_tex(lay.x, lay.y, lay.w, lay.h, cw, ch, true, 1.0f);
+        if (opaque) glEnable(GL_BLEND);
+    };
+    draw_host(g_host_below, true);
     for (Placed& p : scene) {
         Layer* l = p.layer;
         if (p.dim > 0) draw_color(lay.x, lay.y, lay.w, lay.h, cw, ch, 0, 0, 0, p.dim / 255.0f);
@@ -546,6 +549,7 @@ void compose_now() {
             eglReleaseTexImage(d, l->pbuffer, EGL_BACK_BUFFER);
         }
     }
+    draw_host(g_host_above, false);  // straight alpha 0 or 255: the same premultiplied
     glDisableVertexAttribArray(0);
     if (!g_gl.screen_hwnd && g_host && g_host->wants_pixels && g_host->wants_pixels() && g_host->pixels) {
         std::vector<uint32_t> rgba(static_cast<size_t>(dw) * dh), argb(rgba.size());
@@ -612,6 +616,41 @@ void request_compose() {
 namespace winapk::hwui {
 
 void log_memory(const char* when) { log_memory_now(when); }
+
+bool readWindow(ANativeWindow* window, std::vector<uint32_t>* rgba, int* width, int* height) {
+    Layer* l = from(window);
+    if (!l->has_frame.load()) return false;
+    if (l->software.load()) {
+        std::lock_guard<std::mutex> hold(l->sw_lock);
+        if (l->sw_w <= 0 || l->sw_h <= 0) return false;
+        rgba->assign(l->sw_pixels.begin(), l->sw_pixels.end());
+        if (l->sw_bgra) {
+            for (uint32_t& v : *rgba) v = (v & 0xff00ff00u) | ((v & 0xffu) << 16) | ((v >> 16) & 0xffu);
+        }
+        *width = l->sw_w;
+        *height = l->sw_h;
+        return true;
+    }
+    if (l->pbuffer == EGL_NO_SURFACE || l->pb_w <= 0 || l->pb_h <= 0) return false;
+    EGLDisplay d = eglGetCurrentDisplay();
+    EGLContext ctx = eglGetCurrentContext();
+    EGLSurface prev_draw = eglGetCurrentSurface(EGL_DRAW), prev_read = eglGetCurrentSurface(EGL_READ);
+    if (!eglMakeCurrent(d, l->pbuffer, l->pbuffer, ctx)) return false;
+    const int w = l->pb_w, h = l->pb_h;
+    std::vector<uint32_t> up(static_cast<size_t>(w) * h);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, up.data());
+    eglMakeCurrent(d, prev_draw, prev_read, ctx);
+    if (GrDirectContext* gr = RenderThread::getInstance().getGrContext()) gr->resetContext();
+    rgba->resize(up.size());
+    for (int y = 0; y < h; y++) {  // GL's rows are bottom first
+        std::copy_n(&up[static_cast<size_t>(h - 1 - y) * w], w, &(*rgba)[static_cast<size_t>(y) * w]);
+    }
+    *width = w;
+    *height = h;
+    return true;
+}
 
 EGLDisplay eglDisplay() {
     if (g_display != EGL_NO_DISPLAY) return g_display;
@@ -851,20 +890,29 @@ void winapk_hwui_recompose(void) {
     if (RenderThread::hasInstance()) request_compose();
 }
 
-void winapk_hwui_host_layer(const uint32_t* argb, int w, int h) {
+static void set_host_layer(HostLayer& l, const uint32_t* argb, int w, int h) {
     {
         std::lock_guard<std::mutex> hold(g_host_lock);
         if (!argb || w <= 0 || h <= 0) {
-            g_host_w = g_host_h = 0;
-            g_host_px.clear();
+            l.w = l.h = 0;
+            l.px.clear();
         } else {
-            g_host_px.assign(argb, argb + static_cast<size_t>(w) * h);
-            g_host_w = w;
-            g_host_h = h;
-            g_host_dirty = true;
+            l.px.assign(argb, argb + static_cast<size_t>(w) * h);
+            l.w = w;
+            l.h = h;
+            l.dirty = true;
         }
     }
     if (RenderThread::hasInstance()) request_compose();
+}
+
+void winapk_hwui_host_layer(const uint32_t* argb, int w, int h) { set_host_layer(g_host_below, argb, w, h); }
+void winapk_hwui_host_layer_above(const uint32_t* argb, int w, int h) { set_host_layer(g_host_above, argb, w, h); }
+
+void winapk_hwui_display_size(int* w, int* h) {
+    std::lock_guard<std::mutex> hold(g_scene_lock);
+    *w = g_display_w;
+    *h = g_display_h;
 }
 
 void winapk_hwui_refresh_rate(double hz) { winapk::hwui::set_refresh_rate(hz); }
