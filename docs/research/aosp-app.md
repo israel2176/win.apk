@@ -354,7 +354,10 @@ lifecycle test passes.
 - **Configuration.** The display's changes (`DisplayConfig`: a resize, a
   turn, density) go to the process (`ConfigurationChangeItem`) and to each
   activity: relaunched (`ActivityRelaunchItem`) unless its `configChanges`
-  covers the change, else `ActivityConfigurationChangeItem`.
+  covers the change, else `ActivityConfigurationChangeItem`. A stopped
+  activity (behind another, or the task minimized) is told only when it
+  comes back, as `ensureActivityConfiguration` skips an invisible one: a
+  relaunch then carries its pending results and intents and resumes it.
 - **The host's hand-offs.** A start no activity of the app answers, or
   another package's, goes to the host (`ActivityHost.resolveImplicitToHost`:
   the camera, pickers, installs, URLs, the launcher); their results come back
