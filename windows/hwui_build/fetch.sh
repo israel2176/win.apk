@@ -44,4 +44,5 @@ get platform/hardware/libhardware libhardware_include include &
 get platform/external/vulkan-headers vulkan-headers &
 get platform/external/wuffs-mirror-release-c wuffs &
 get platform/frameworks/base androidfw libs/androidfw &
+get platform/external/skia skia14 &
 wait
