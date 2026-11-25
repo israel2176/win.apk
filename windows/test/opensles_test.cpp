@@ -13,6 +13,7 @@
 // ("/host/<path>" is <path>).
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -579,13 +580,15 @@ void test_queue_player() {
     check("queue: a third buffer does not fit in two",
           enqueue(bq, feed.bufs[2].data(), static_cast<SLuint32>(feed.bufs[2].size())) == kBufferInsufficient);
     check("queue: GetState before playing", queue_state(bq).count == 2 && queue_state(bq).index == 0);
-    const DWORD t0 = GetTickCount();
+    // steady_clock, not GetTickCount: the tick's 16 ms steps made the position look ahead of real time.
+    const auto t0 = std::chrono::steady_clock::now();
     set_play(play, kPlaying);
     check("queue: RegisterCallback while playing is a precondition violation",
           call<SLresult>(bq, 3, reinterpret_cast<void*>(&on_buffer), static_cast<void*>(&feed)) == kPreconditions);
     Sleep(600);
     const SLuint32 ms = position(play);
-    const DWORD elapsed = GetTickCount() - t0;
+    const auto elapsed = static_cast<SLuint32>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
     const QueueState qs = queue_state(bq);
     check("player: buffers come back as they are taken", feed.calls >= 5 && feed.calls <= 9,
           std::to_string(feed.calls.load()));
