@@ -185,8 +185,7 @@ bool wait_for_running_dump() {
 // start-up work, the first screens), and a below-normal priority dump of ~3.5 s of four cores would
 // still take memory and cache from it; an app closed sooner dumps at exit (cds_before_exit).
 DWORD WINAPI dump_later(void*) {
-    const std::wstring d = env(L"WINAPK_CDS_DUMP_DELAY_MS");
-    Sleep(d.empty() ? 10000 : static_cast<DWORD>(std::wcstoul(d.c_str(), nullptr, 10)));
+    Sleep(10000);
     spawn_dump();
     return 0;
 }
@@ -305,11 +304,6 @@ double startup_seconds() {
 
 void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::path& lib, const fs::path& data,
                const std::wstring& app) {
-    const std::wstring mode = env(L"WINAPK_CDS");
-    if (mode == L"0" || mode == L"off") {
-        std::fprintf(stderr, "[win.apk] cds: off (WINAPK_CDS=0)\n");
-        return;
-    }
     // The JRE's own archive: only when no module is patched.
     const auto baked = cds::read_baked(jdk / "lib" / "winapk-baked-patches");
     if (baked.empty()) {
@@ -341,17 +335,9 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         fs::create_directories(rd, ec);
         record_to = fs::path(rd) / (app + L".classlist");
     }
-    if (mode == L"base") {
-        std::fprintf(stderr, "[win.apk] cds: the Java runtime's archive only (WINAPK_CDS=base; checked in %.0f ms)\n",
-                     digest_ms);
-        if (!record_to.empty()) opts->push_back("-XX:DumpLoadedClassList=" + utf8(record_to.wstring()));
-        return;
-    }
 
     // The framework archive's key.
-    std::wstring shipped_w;
-    fs::path shipped = env_set(L"WINAPK_CDS_CLASSLIST", &shipped_w) ? fs::path(shipped_w)
-                                                                     : lib / "winapk-framework.classlist";
+    fs::path shipped = lib / "winapk-framework.classlist";
     if (!shipped.empty() && !fs::exists(shipped, ec)) shipped.clear();
     // The framework is in the key and in the file's name: AOSP's graphics alone, or with AOSP's
     // resources or views (their jars first on the class path, which the key has too), each keep
@@ -420,8 +406,8 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         opts->push_back("-XX:SharedArchiveFile=" + utf8(g.jsa.wstring()));
         // Its first use checks the whole file (a CRC): a damaged file is refused
         // instead of crashed on. Once it has mapped, .ok spares the rest, until
-        // a crash (on_crash). WINAPK_CDS_VERIFY=1 checks it at every start.
-        const bool verify = !fs::exists(g.ok, ec) || env(L"WINAPK_CDS_VERIFY") == L"1";
+        // a crash (on_crash).
+        const bool verify = !fs::exists(g.ok, ec);
         wcsncpy(g_ok_path, g.ok.c_str(), MAX_PATH * 4 - 1);
         set_crash_hook(on_crash);
         if (verify) opts->push_back("-XX:+VerifySharedSpaces");

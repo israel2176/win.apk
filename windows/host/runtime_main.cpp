@@ -343,8 +343,7 @@ bool resolve_paths(Options* o) {
         return false;
     }
     if (o->jdk.empty()) {
-        if (!env_var(L"WINAPK_JAVA_HOME").empty()) o->jdk = env_var(L"WINAPK_JAVA_HOME");
-        else if (fs::exists(root / "jre" / "bin" / "server" / "jvm.dll", ec)) o->jdk = root / "jre";
+        if (fs::exists(root / "jre" / "bin" / "server" / "jvm.dll", ec)) o->jdk = root / "jre";
         else o->jdk = env_var(L"JAVA_HOME");
     }
     if (!fs::exists(o->jdk / "bin" / "server" / "jvm.dll", ec)) {
@@ -582,12 +581,8 @@ bool complete_zip(const fs::path& path) {
 // 60-72 MB about 315 and 265 MB. 1 GB is three times the largest; the JVM's
 // default, a quarter of the RAM, grew the heap to 2.2 GB on a 16 GB PC for
 // the same work. An app that still runs out is converted once more on the
-// larger of 2 GB and the default (dex_retry_heap_mb). WINAPK_DEX_HEAP_MB sets
-// the first heap instead, for testing that retry.
-unsigned dex_heap_mb() {
-    const unsigned mb = static_cast<unsigned>(std::wcstoul(env_var(L"WINAPK_DEX_HEAP_MB").c_str(), nullptr, 10));
-    return mb ? mb : 1024;
-}
+// larger of 2 GB and the default (dex_retry_heap_mb).
+unsigned dex_heap_mb() { return 1024; }
 unsigned dex_retry_heap_mb() {
     MEMORYSTATUSEX m{};
     m.dwLength = sizeof(m);
@@ -726,18 +721,12 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
 // (com.winapk.tools.AppInstall). Done once per input file; a small record next
 // to the installs names the result. Afterwards the app is the installed
 // base.apk.
-//
-// WINAPK_ABIS overrides the ABI list (WINAPK_ABIS=arm64-v8a runs an app's
-// arm64 build although it has an x86_64 one, for comparing the two); an
-// override gets its own install.
 bool install_app(Options* o, const fs::path& android_root) {
     std::error_code ec;
     const fs::path apps = android_root / "data" / "app";
     fs::create_directories(apps, ec);
-    std::wstring abis = env_var(L"WINAPK_ABIS");
-    const std::wstring tag = abis.empty() ? L"" : L"." + abis;
-    if (abis.empty()) abis = L"x86_64,arm64-v8a";
-    const fs::path record = apps / (L"." + o->apk.stem().wstring() + tag + L".installed");
+    const std::wstring abis = L"x86_64,arm64-v8a";
+    const fs::path record = apps / (L"." + o->apk.stem().wstring() + L".installed");
     auto installed = [&]() -> fs::path {
         if (!fs::exists(record, ec) || fs::last_write_time(record, ec) < fs::last_write_time(o->apk, ec)) return {};
         FILE* f = _wfopen(record.c_str(), L"rb");
@@ -1234,8 +1223,7 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     while (!hash.empty() && std::isspace(static_cast<unsigned char>(hash.back()))) hash.pop_back();
     // -march=native: the CPU too, for a data folder that moves to another PC.
     const std::string id = hash + "|" + file_id(exe_dir() / "winapk-aot.exe") + "|" + file_id(clang) + "|" +
-                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS")) + "|" +
-                           hex64(winapk::arm64::aot_cpu_signature());
+                           utf8(kAotCompileFlags) + "|" + hex64(winapk::arm64::aot_cpu_signature());
     return hex64(fnv1a(id));
 }
 
@@ -1334,7 +1322,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
         // Each part's object is named by its C and how it is compiled, so a
         // part compiled before the pass was stopped is not compiled again.
         const std::string how =
-            file_id(clang) + "|" + utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
+            file_id(clang) + "|" + utf8(kAotCompileFlags);
         std::vector<Compile> compiles;
         for (int i = 0;; ++i) {
             const fs::path src = i == 0 ? c : fs::path(c.wstring() + L"." + std::to_wstring(i) + L".c");
@@ -1587,11 +1575,6 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     std::error_code ec;
     const fs::path libs = arm64_libs(o.apk);
     if (!fs::is_directory(libs, ec) || !fs::exists(exe_dir() / "winapk-aot.exe", ec)) return;
-    if (env_var(L"WINAPK_AOT") == L"0") {
-        winapk::arm64::aot_disable();
-        std::fprintf(stderr, "[win.apk] arm64 AOT: off (WINAPK_AOT=0); the JIT runs the app's arm64 code\n");
-        return;
-    }
     // Translation off for this start if the app crashed twice in a row with
     // translated code loaded (aot_guard.h). Then nothing is translated either:
     // the worker would only make what is not loaded.
@@ -2204,7 +2187,6 @@ DWORD WINAPI boot_thread(void* param) {
 // lower-cased), held until the process exits; a mutex left by a process that
 // died counts as free (WAIT_ABANDONED). Next to it, a named mapping holds the
 // holder's process id, so a second start can find the holder's window.
-// WINAPK_ALLOW_SECOND_INSTANCE=1 turns the check off.
 std::wstring instance_key(const fs::path& app_dir) {
     std::error_code ec;
     std::wstring key = fs::absolute(app_dir, ec).lexically_normal().wstring();
@@ -2227,7 +2209,6 @@ std::wstring instance_key(const fs::path& app_dir) {
 constexpr DWORD kHolderServiceHost = 1;
 
 bool claim_single_instance(const std::wstring& key) {
-    if (!env_var(L"WINAPK_ALLOW_SECOND_INSTANCE").empty()) return true;
     HANDLE m = CreateMutexW(nullptr, FALSE, key.c_str());
     if (!m) return true;  // no lock to be had: do not block the start
     const DWORD w = WaitForSingleObject(m, 0);
@@ -2334,23 +2315,17 @@ void aot_app_exiting() {
 // The volume's Download, Pictures, Documents, Music and Movies are the user's
 // Windows folders (user_folders.h). Only for the user's own library: a run
 // with --data (tests, the compat sweep, CI) must never touch real folders.
-// MACAPK_USER_FOLDERS decides when set (=0 changes nothing, as upstream);
-// otherwise the launcher's Settings switch (UserFolders, default on), whose
-// off undoes the junctions so it visibly does what it says.
+// The launcher's Settings switch (UserFolders, default on) decides; its off
+// undoes the junctions so it visibly does what it says.
 void map_shared_folders(const Options& o) {
     if (!o.default_data) return;
     using winapk::host::UserFolderMode;
     UserFolderMode mode = UserFolderMode::kMap;
-    const std::wstring forced = env_var(L"MACAPK_USER_FOLDERS");
-    if (!forced.empty()) {
-        if (forced[0] == L'0') mode = UserFolderMode::kKeep;
-    } else {
-        DWORD on = 1, size = sizeof on;
-        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"UserFolders", RRF_RT_REG_DWORD, nullptr, &on,
-                         &size) == ERROR_SUCCESS &&
-            on == 0) {
-            mode = UserFolderMode::kUnmap;
-        }
+    DWORD on = 1, size = sizeof on;
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"UserFolders", RRF_RT_REG_DWORD, nullptr, &on,
+                     &size) == ERROR_SUCCESS &&
+        on == 0) {
+        mode = UserFolderMode::kUnmap;
     }
     const fs::path android_root = o.data / "android";
     const auto mapped =

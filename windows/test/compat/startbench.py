@@ -98,7 +98,7 @@ def run(cfg, apk, data, out, label, args):
         cmd += ["--jdk", cfg["jdk"]]
     env = dict(os.environ)
     env.update({"WINAPK_HEADLESS": "1", "WINAPK_HEADLESS_EXIT_AFTER_FRAMES": str(args.frames),
-                "WINAPK_HEADLESS_FRAME": frame, "WINAPK_AOT": "0"})
+                "WINAPK_HEADLESS_FRAME": frame})
     env.update(cfg["env"])
     seen = {}
     start = time.perf_counter()

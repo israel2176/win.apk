@@ -235,9 +235,6 @@ bool java_io_open_init(JNIEnv* env) {
     } else {
         env->ExceptionClear();
     }
-    // WINAPK_JAVA_IO_SHARE_DELETE=0 keeps the JDK's own opens, for comparing.
-    wchar_t off[4] = {};
-    if (GetEnvironmentVariableW(L"WINAPK_JAVA_IO_SHARE_DELETE", off, 4) && off[0] == L'0') return true;
     jclass fdc = env->FindClass("java/io/FileDescriptor");
     if (fdc) {
         g_fd_handle = env->GetFieldID(fdc, "handle", "J");

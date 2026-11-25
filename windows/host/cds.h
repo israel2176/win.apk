@@ -48,12 +48,10 @@
 // whose archive did not map logs why, deletes it and counts the failure; after
 // two for the same key the archive is not made again for it.
 //
-// WINAPK_CDS=0 turns both layers off (the old flags); WINAPK_CDS=base keeps
-// only the JRE's archive. WINAPK_CDS_DIR moves the framework archive (tests
-// share one between data folders), WINAPK_CDS_CLASSLIST names another shipped
-// list ("" for none), WINAPK_CDS_RECORD_DIR=<dir> records each start's loaded
-// classes to <dir>\<app>.classlist (to make the shipped list), and
-// WINAPK_CDS_DUMP_DELAY_MS (default 10000) is the wait after the first frame.
+// For CI: WINAPK_CDS_DIR moves the framework archive (tests share one between
+// data folders), and WINAPK_CDS_RECORD_DIR=<dir> records each start's loaded
+// classes to <dir>\<app>.classlist (to make the shipped list). The dump waits
+// 10 s after the first frame.
 
 #pragma once
 

@@ -22,11 +22,6 @@ using GetVersionFn = HRESULT(STDAPICALLTYPE*)(PCWSTR, LPWSTR*);
 CreateEnvironmentFn g_create_environment = nullptr;
 std::wstring g_version;
 
-bool env_flag_off(const char* name) {
-    const char* e = std::getenv(name);
-    return e && e[0] == '0' && e[1] == '\0';
-}
-
 bool headless() {
     const char* e = std::getenv("WINAPK_HEADLESS");
     return e && *e && *e != '0';
@@ -55,11 +50,6 @@ std::string hex_hr(HRESULT hr) {
 }
 
 bool decide() {
-    if (env_flag_off("WINAPK_WEBVIEW2")) {
-        g_unavailable = "WEBVIEW2_OFF";
-        std::fprintf(stderr, "[win.apk] webview2: off (WINAPK_WEBVIEW2=0); web links open in the system browser\n");
-        return false;
-    }
     if (headless()) {
         g_unavailable = "HEADLESS";
         std::fprintf(stderr, "[win.apk] webview2: not used headless; web links open in the system browser\n");

@@ -8,7 +8,7 @@
 // size of the box the window shows the app in (the whole client area, or a
 // letterbox inside it), so a frame at the right size is copied pixel for
 // pixel; GDI scales only when the app is meant to draw at another size (a
-// monitor with another scale, WINAPK_RESIZABLE=0). Input goes back out through
+// monitor with another scale). Input goes back out through
 // WindowInput, already translated to Android's MotionEvent and KeyEvent terms:
 //
 //   the mouse's left button   one finger on the touchscreen (pointer)
@@ -106,21 +106,19 @@ public:
 
 // The box, in client pixels, that the app draws in, for a client area of cw by
 // ch pixels showing a phone of phone_w by phone_h (its aspect is all that
-// counts): the whole client area when the app follows the window; the largest
+// counts): the whole client area, as the app follows the window; the largest
 // box of the phone's aspect, centred, when the app fixed the other orientation
-// (lock: 0 any, 1 portrait, 2 landscape) or does not follow the window
-// (resizable false). With letterbox false the box is always the whole client
-// area (MACAPK_LETTERBOX=0). Pure; exposed for the window test.
+// (lock: 0 any, 1 portrait, 2 landscape). Pure; exposed for the window test.
 struct AppBox {
     int x = 0, y = 0, w = 0, h = 0;
 };
-AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool resizable, bool letterbox);
+AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock);
 
 // How a frame of fw by fh pixels is shown in a box of bw by bh when the app was
 // asked to draw sw by sh: copied pixel for pixel (the frame fills the box, up
 // to a pixel or two of rounding, centred), scaled to the box (the app draws at
 // the size it was asked to and the box has another: a monitor with another
-// scale, WINAPK_RESIZABLE=0), or copied unscaled at the box's top left (the
+// scale, a pinned density), or copied unscaled at the box's top left (the
 // frame is from before the last resize; the app has not drawn at the new size
 // yet, and a stretched frame would only pretend it has). A frame of ow by oh,
 // the size asked before the last density change, is rescaled: the same
@@ -134,8 +132,7 @@ FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh
 // that the whole window fits that monitor's work area (the screen without the
 // taskbar) with a small margin. Remembered for window_start. The runtime
 // makes the app's density from it (window_density_dpi), so the frames come at
-// the window's own pixel size. WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>], in
-// pixels, stands in for the work area (testing; see win32_window.cpp).
+// the window's own pixel size.
 float window_plan(int phone_w, int phone_h);
 // Before window_plan: the app's window opens maximized (it was when the app
 // last ran), so the plan is for the phone turned to fill the screen.

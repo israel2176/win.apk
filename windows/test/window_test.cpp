@@ -46,30 +46,24 @@ int main() {
 
     std::printf("the box the app draws in\n");
     // A 360x800 dp phone at 2 px/dp: the fitted window is the box.
-    check("a fitted window is the whole client area", is(window_app_box(720, 1600, 360, 800, 0, true, true), 0, 0, 720, 1600));
+    check("a fitted window is the whole client area", is(window_app_box(720, 1600, 360, 800, 0), 0, 0, 720, 1600));
     // The user made the window wide: the app follows, so the box is all of it.
-    check("a resized window is the whole client area", is(window_app_box(1300, 900, 360, 800, 0, true, true), 0, 0, 1300, 900));
+    check("a resized window is the whole client area", is(window_app_box(1300, 900, 360, 800, 0), 0, 0, 1300, 900));
     // A portrait-locked app in a wide (maximized) window: a centred column of
     // the phone's aspect, the client's full height.
     check("portrait lock, wide window: a centred column of the phone's aspect",
-          is(window_app_box(2560, 1392, 360, 800, 1, true, true), (2560 - 626) / 2, 0, 626, 1392));
-    check("portrait lock, tall window: the whole client area", is(window_app_box(500, 900, 360, 800, 1, true, true), 0, 0, 500, 900));
+          is(window_app_box(2560, 1392, 360, 800, 1), (2560 - 626) / 2, 0, 626, 1392));
+    check("portrait lock, tall window: the whole client area", is(window_app_box(500, 900, 360, 800, 1), 0, 0, 500, 900));
     // A landscape-locked app in a tall window: the full width.
     check("landscape lock, tall window: a centred row of the phone's aspect",
-          is(window_app_box(800, 1400, 800, 360, 2, true, true), 0, (1400 - 360) / 2, 800, 360));
-    check("landscape lock, wide window: the whole client area", is(window_app_box(1500, 800, 800, 360, 2, true, true), 0, 0, 1500, 800));
-    // WINAPK_RESIZABLE=0: the phone keeps its size, letterboxed, and a box a
-    // pixel or two off the client is the client.
-    check("not resizable: the largest box of the phone's aspect", is(window_app_box(1920, 1040, 360, 800, 0, false, true), (1920 - 468) / 2, 0, 468, 1040));
-    check("not resizable: a client a pixel off the aspect is the box", is(window_app_box(721, 1600, 360, 800, 0, false, true), 0, 0, 721, 1600));
-    check("MACAPK_LETTERBOX=0: always the whole client area", is(window_app_box(2560, 1392, 360, 800, 1, false, false), 0, 0, 2560, 1392));
-    check("an empty client area is an empty box", is(window_app_box(0, 0, 360, 800, 1, true, true), 0, 0, 0, 0));
+          is(window_app_box(800, 1400, 800, 360, 2), 0, (1400 - 360) / 2, 800, 360));
+    check("landscape lock, wide window: the whole client area", is(window_app_box(1500, 800, 800, 360, 2), 0, 0, 1500, 800));
+    check("an empty client area is an empty box", is(window_app_box(0, 0, 360, 800, 1), 0, 0, 0, 0));
 
     std::printf("how a frame is shown\n");
     check("a frame of the box's size is copied", window_frame_present(1300, 900, 1300, 900, 1300, 900) == FramePresent::kExact);
     check("a pixel of rounding is still copied, not scaled", window_frame_present(451, 1000, 450, 1000, 451, 1000) == FramePresent::kExact);
     check("the app's size on a monitor at another scale is scaled", window_frame_present(720, 1600, 540, 1200, 720, 1600) == FramePresent::kScaled);
-    check("the phone letterboxed (WINAPK_RESIZABLE=0) is scaled", window_frame_present(720, 1600, 468, 1040, 720, 1600) == FramePresent::kScaled);
     check("a frame from before a resize is not stretched", window_frame_present(720, 1600, 1300, 900, 1300, 900) == FramePresent::kStale);
     check("a frame from before a resize, smaller box", window_frame_present(1300, 900, 720, 1600, 720, 1600) == FramePresent::kStale);
     // Maximized at a new density: the last frame at the old one is the same
@@ -303,7 +297,7 @@ int main() {
         check("Ctrl+Enter is a chord too", plan(L"\n", false, false, false, true).ch == 0);
         check("Alt+A is a chord", plan(L"a", true, false, false, false, true).kind == Kind::kKey &&
                                       plan(L"a", true, false, false, false, true).ch == 0);
-        const KeyDownPlan at = plan(L"@", false, false, false, true, true);
+        const KeyDownPlan at = plan(L"@", false, false, false);
         check("AltGr+Q on a German layout types '@', without Ctrl and Alt", at.kind == Kind::kKey && at.ch == L'@' && at.altgr);
         check("a dead key sends nothing", plan(L"", false, true).kind == Kind::kNothing);
         check("the letter after it is text: e-acute", plan(L"\x00e9", false, false, true).kind == Kind::kText);

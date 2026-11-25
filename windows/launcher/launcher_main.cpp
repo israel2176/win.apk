@@ -927,24 +927,13 @@ int effective_orientation(const std::wstring& name) {
 
 // The settings' screen size and the app's orientation, in dp: what the runtime
 // started from here is told (apply_runtime_env), and what the starting window
-// is sized by. "Auto" leaves whatever WINAPK_PHONE_SIZE the user set
-// themselves, turned to the orientation; `name` empty (an install) takes the
-// settings' orientation.
+// is sized by. "Auto" is 360x800 dp, turned to the orientation; `name` empty
+// (an install) takes the settings' orientation.
 void runtime_phone_size(const std::wstring& name, int* pw, int* ph) {
     const DWORD i = setting(L"PhoneSize", 0);
     const bool landscape = (name.empty() ? landscape_default() : effective_orientation(name) == kLandscape);
     int w = 360, h = 800;
-    if (i == 0 || i >= std::size(kPhonePresets)) {
-        wchar_t own[64];
-        if (GetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", own, 64) > 0) {
-            int ow = 0, oh = 0;
-            wchar_t x = 0;
-            if (swscanf(own, L"%d%c%d", &ow, &x, &oh) == 3 && ow > 0 && oh > 0) {
-                w = ow;
-                h = oh;
-            }
-        }
-    } else {
+    if (i > 0 && i < std::size(kPhonePresets)) {
         w = kPhonePresets[i].w;
         h = kPhonePresets[i].h;
     }

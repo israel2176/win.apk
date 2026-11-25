@@ -20,7 +20,7 @@ RES="$(cygpath -u "$RES" 2>/dev/null || echo "$RES")"
 VER="$(basename "$RES")"
 
 # A Linux build (test/run_app_wine.sh) has no Windows clang to copy: the runtime it stages
-# then runs arm64 code on the JIT alone, as a user's does with WINAPK_AOT=0.
+# then runs arm64 code on the JIT alone, as on a PC with no clang.
 if [[ ! -f "$PREFIX/bin/clang.exe" ]]; then
     echo "[stage_clang] $CLANG is not a Windows clang: no clang/ staged, arm64 libraries are not translated" >&2
     exit 0
