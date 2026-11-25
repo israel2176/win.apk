@@ -317,6 +317,22 @@ for root, dirs, files in os.walk(hw):
         if '__ANDROID__' in s:
             open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s.replace('__ANDROID__', 'HWUI_DEVICE'))
 
+# minikin's private Locale.h sits on the module's include path (libs/minikin), and NTFS does not tell
+# it from the C library's <locale.h>: libc++'s <clocale> then finds minikin's header and loses lconv.
+# It becomes MinikinLocale.h, and minikin's own includes of it follow.
+mk = os.path.join(SRC, 'minikin', 'libs', 'minikin')
+if os.path.exists(os.path.join(mk, 'Locale.h')):
+    os.replace(os.path.join(mk, 'Locale.h'), os.path.join(mk, 'MinikinLocale.h'))
+for root, dirs, files in os.walk(os.path.join(SRC, 'minikin')):
+    for fn in files:
+        p = os.path.join(root, fn)
+        if not fn.endswith(('.h', '.cpp')):
+            continue
+        s = open(p, encoding='utf-8', errors='surrogateescape').read()
+        if '#include "Locale.h"' in s:
+            open(p, 'w', encoding='utf-8', errors='surrogateescape').write(
+                s.replace('#include "Locale.h"', '#include "MinikinLocale.h"'))
+
 bad = 0
 for e in EDITS:
     rel, old, new = e[:3]
