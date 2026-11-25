@@ -7,6 +7,36 @@ import sys
 SRC = os.path.abspath(sys.argv[1])
 
 EDITS = [
+    # 1UL is 32 bits wide on LLP64 Windows: the 64-bit usage flag needs 1ULL (clang 23 rejects the
+    # overflowing shift as an enumerator; Android's LP64 never sees it).
+    ('native_libs/nativewindow/include/android/hardware_buffer.h',
+     '    AHARDWAREBUFFER_USAGE_FRONT_BUFFER = 1UL << 32,\n',
+     '    AHARDWAREBUFFER_USAGE_FRONT_BUFFER = 1ULL << 32,\n'),
+    # clang 23 makes a template parameter that a member of the same name shadows an error
+    # (-Wstrict-primary-template-shadow): Buffer.h's align() takes a parameter called align.
+    ('minikin/include/minikin/Buffer.h', 'size_t align = sizeof(T)>', 'size_t alignment = sizeof(T)>', 9),
+    ('minikin/include/minikin/Buffer.h', '    template <typename T, size_t align>\n',
+     '    template <typename T, size_t alignment>\n'),
+    ('minikin/include/minikin/Buffer.h', 'static_assert(align <= kMaxAlignment);',
+     'static_assert(alignment <= kMaxAlignment);'),
+    ('minikin/include/minikin/Buffer.h', '__builtin_popcount(align) == 1', '__builtin_popcount(alignment) == 1'),
+    ('minikin/include/minikin/Buffer.h', 'mask = align - 1;', 'mask = alignment - 1;'),
+    ('minikin/include/minikin/Buffer.h', 'map<T, align>(', 'map<T, alignment>('),
+    ('minikin/include/minikin/Buffer.h', 'align<T, align>(', 'align<T, alignment>(', 7),
+    ('minikin/include/minikin/Buffer.h', 'sizeof(T) % align == 0', 'sizeof(T) % alignment == 0', 2),
+    ('minikin/include/minikin/Buffer.h', 'reserve<T, align>(', 'reserve<T, alignment>('),
+    # LLVM's libc++ forbids specializing its type traits (-Winvalid-specialization, an error);
+    # libstdc++ allows it. The specialization stays as Android has it, the diagnostic off.
+    ('native_libs/math/include/math/half.h',
+     'template<> struct is_floating_point<android::half> : public std::true_type {};\n',
+     '#pragma clang diagnostic push\n#pragma clang diagnostic ignored "-Winvalid-specialization"\n'
+     'template<> struct is_floating_point<android::half> : public std::true_type {};\n'
+     '#pragma clang diagnostic pop\n'),
+    # clang 23 dropped the __builtin_ia32_vcvtph2ps256 builtin; F16C's intrinsic is the same
+    # instruction (skcms upstream made the same change).
+    ('skia14/modules/skcms/src/Transform_inl.h',
+     '    typedef int16_t __attribute__((vector_size(16))) I16;\n    return __builtin_ia32_vcvtph2ps256((I16)half);\n',
+     '    return (F)_mm256_cvtph_ps((__m128i)half);\n'),
     # libstdc++'s allocator_traits rebinds through __replace_first_arg, which a non-type template
     # parameter defeats; libc++ falls back on the allocator itself. Spell the rebind out.
     ('native_libs/ui/include/ui/FatVector.h',
