@@ -21,7 +21,7 @@ public final class WindowsBroker {
 
     /** How long an app waits for a broker it started to answer. A cold broker
      *  is a JVM boot plus reading the installed apps' manifests. */
-    static final long START_WAIT_MS = Long.getLong("winapk.broker.startWaitMs", 30_000L);
+    static final long START_WAIT_MS = 30_000L;
 
     /** winapk-runtime with this process's --data, --jdk and --lib: what an app
      *  or the broker is started with (the caller adds --apk or --system). */

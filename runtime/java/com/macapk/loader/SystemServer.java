@@ -222,8 +222,7 @@ public final class SystemServer {
     static final int TX_ACQUIRE_PROVIDER = IBinder.FIRST_CALL_TRANSACTION + 11;
     static final int TX_SCHEDULE_START = IBinder.FIRST_CALL_TRANSACTION + 12;
 
-    private static final long START_TIMEOUT_MS =
-        Long.getLong("macapk.broker.startTimeoutMs", 180_000L);
+    private static final long START_TIMEOUT_MS = 180_000L;
 
     /** A package this broker can start. */
     static final class PackageRecord {
@@ -1417,7 +1416,7 @@ public final class SystemServer {
         if ("com.google.android.gms".equals(app.pkg)) {
             Thread t = new Thread(() -> {
                 try {
-                    long base = Long.getLong("macapk.broker.checkinTriggerMs", 75_000L);
+                    long base = 75_000L;
                     for (int attempt = 0; attempt < 3; attempt++) {
                         Thread.sleep(attempt == 0 ? base : 75_000L);
                         if (processesOf(app.pkg).isEmpty()) return;
