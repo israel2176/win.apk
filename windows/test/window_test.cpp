@@ -275,7 +275,7 @@ int main() {
               st.size() >= 2 && st[0].phase == 2 && st[1].phase == 0 && st[1].y == 300);
         st.clear();
         p.end(&st);
-        // The smallest window (240 dp at 1 px/dp) still has room.
+        // A small window (240 dp at 1 px/dp) still has room.
         st.clear();
         p.zoom(120, 120, 240, 240, 1, 1, &st);
         check("the smallest window still pinches", st.size() > 1 && st[0].phase == 0 && st.back().span > st[0].span &&
