@@ -223,10 +223,6 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_MAXIMIZE_TURNS=0` | A maximized window gives the app a display of the window's pixels at the normal scale and density (a tablet-sized one) instead of the phone turned, which is drawn pixel for pixel at the density at which the turned phone's dp fill the window, changed live as a configuration change (`win32_window.cpp`, "a maximized window is the phone turned"; `DisplayConfig`) |
 | `WINAPK_GL_ASYNC_READBACK=1` | A presenting swap (`eglSwapBuffers` on a window surface) reads the frame back asynchronously through a double pixel pack buffer (`host/gl/gl_surface.cpp`) instead of the default synchronous `glReadPixels`: the GL thread no longer stalls on the GPU->CPU copy, at a cost of one frame of latency. Off by default because an on-demand renderer (a Flutter UI) drops its final frame on this path; even when on, it engages only after a sustained run of continuous swaps (`guest_gl.cpp`). `winapk-runtime` logs `window surface frames N: readback X ms present Y ms (async\|sync)` every 120 frames so the two are comparable |
 | `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
-| `MACAPK_SCROLL_SCALE=<n>` | Scales the drag a wheel step becomes in an app whose views take no scroll event |
-| `MACAPK_WHEEL_SCROLL_EVENT=0` | Every wheel step is the finger drag; no `ACTION_SCROLL` is sent first |
-| `MACAPK_HOVER_EVENTS=0` | The pointer over the app sends no hover events |
-| `MACAPK_MOUSE_POINTER=0` | The right and the middle mouse button and the hovering pointer are not reported to the app |
 | `WINAPK_ARM64_ENGINE=interp` | Forces the arm64 interpreter instead of the JIT |
 | `WINAPK_ARM64_STATS=1` | Prints at exit where the guest's time went (host functions versus arm64 code, transitions, interpreter fallbacks), and the same for the eight busiest threads still running |
 | `WINAPK_AOT_EH_FRAME=0` | `winapk-aot` leaves out the functions `.eh_frame_hdr` lists (for comparing) |
@@ -252,7 +248,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
 | `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
 | `MACAPK_LAYOUT_SWEEP=1` | The screens sweep (`runtime/java/com/macapk/loader/LayoutSweep.java`, [Every screen against Android](#every-screen-against-android)): once `Application.onCreate` has returned, every layout resource of the app is inflated, measured, laid out and drawn at the screen's size, left to right and right to left, instead of the launcher activity starting; each view's place is printed as `PROBE <line>` on stdout, then `PROBE done`, and the process ends. `MACAPK_LAYOUT_SWEEP_THEME=<0x7f... or style/Name>` the theme (default the launcher activity's, else the application's), `MACAPK_LAYOUT_SWEEP_FILTER=<regex>` only the layouts whose name matches, `MACAPK_LAYOUT_SWEEP_PICTURES=<dir>` each case as a PNG |
-| `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0`, `MACAPK_LIFECYCLE_*=0`, `MACAPK_CONTEXT_MCLASSLOADER=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
+| `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
 
 The Java framework has many more `MACAPK_*` switches of upstream's; grep
 `runtime/java` for the one you need.
@@ -2320,15 +2316,16 @@ every such change is listed here:
   and `com/macapk/loader/ActivityHost.java`: an activity overriding a newer-API
   callback no longer fails every lifecycle call with `NoClassDefFoundError`;
   a class whose methods cannot be resolved is skipped in favour of the
-  superclass declaration, which still dispatches to the override
-  (`MACAPK_LIFECYCLE_SKIP_UNLINKABLE=0` turns that off). Not Windows-specific.
-- `runtime/java/android/app/Application.java`, `Activity.java` and
-  `com/macapk/loader/ActivityHost.java`: `onActivityPreCreated` goes out before
+  superclass declaration, which still dispatches to the override. Gone with
+  Win.apk's `Activity` (AOSP's `ActivityThread` calls the lifecycle now, and
+  its switch `MACAPK_LIFECYCLE_SKIP_UNLINKABLE` with it); the placeholders stay.
+- Gone with AOSP's app layer (`lib/aosp-app.jar`, whose `Activity` and
+  `Application` do this themselves), for the record: Win.apk's `Application.java`,
+  `Activity.java` and `com/macapk/loader/ActivityHost.java`: `onActivityPreCreated` goes out before
   `onCreate`, `onActivityCreated` from `Activity.onCreate` (or after it when
   the override skips super), and `onActivityPostCreated` before a `finish()` in
   `onCreate` tears the activity down, as AOSP does. Chromium's
-  `ApplicationStatus` depends on it. `MACAPK_LIFECYCLE_CREATED_ORDER=0` restores
-  the old order. Not Windows-specific. Upstream later split the three phases
+  `ApplicationStatus` depends on it. Not Windows-specific. Upstream later split the three phases
   the same way (for the Play Store); its `dispatchActivityPreCreated` /
   `dispatchActivityPostCreated` are used, the gate and the `finish()` handling
   stay Win.apk's.

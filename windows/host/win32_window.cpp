@@ -998,28 +998,21 @@ void touch_setup(HWND hwnd) {
 // A wheel step is a scroll event at the pointer, as a mouse's wheel is on a
 // device (ACTION_SCROLL with AXIS_VSCROLL / AXIS_HSCROLL; a notch is 1, scaled
 // by the user's "lines per notch" over the usual 3): scrolling views scroll by
-// it and a map zooms by it. An app whose views take no scroll event -- many
-// custom views do not -- gets what every wheel step was before: a short drag,
-// as upstream turns a wheel into DOWN, MOVE, UP (cocoa_bridge.mm scrollWheel:).
-// For the drag a line is 16 points, scaled by MACAPK_SCROLL_SCALE (default
-// 0.5); wheel up scrolls toward the top, so the finger moves down. A two-finger
-// scroll on a touchpad arrives as the same messages, in small steps.
+// it and a map zooms by it. A view that takes no scroll event gets nothing, as
+// on a device with a mouse: AOSP's input (`AospInput`) makes only the scroll
+// event, so no finger drag is made up for it (upstream's wheel-as-drag and its
+// MACAPK_SCROLL_SCALE are gone). A two-finger scroll on a touchpad arrives as
+// the same messages, in small steps.
 //
 // With Ctrl held the step is a zoom: a pinch around the pointer (PinchSynth),
 // which is also what a pinch on a precision touchpad is, because Windows
 // reports that as Ctrl+wheel to a program that does not read the pad itself.
 void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     if (g_pointer_down || g_mouse_buttons != 0 || g_touches.count() > 0) return;  // do not interleave
-    static const float scale = [] {
-        const char* e = std::getenv("MACAPK_SCROLL_SCALE");
-        const float v = e ? static_cast<float>(std::atof(e)) : 0.5f;
-        return (v >= 0.05f && v <= 4.0f) ? v : 0.5f;
-    }();
     UINT lines = 3;
     SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
     if (lines == WHEEL_PAGESCROLL || lines == 0) lines = 3;
     const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp)) / WHEEL_DELTA;
-    const float points = notches * static_cast<float>(lines) * 16.0f * scale;
     const RECT phone = client_app_rect(hwnd);
     if (phone.right <= phone.left || phone.bottom <= phone.top) return;
     POINT p{static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};  // screen coordinates
@@ -1038,27 +1031,8 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
         return;
     }
     end_pinch(hwnd);
-    // Client pixels per point, along the scroll axis.
-    const float per_point = horizontal ? w / static_cast<float>(g_phone_w) : h / static_cast<float>(g_phone_h);
-    // A scrolling view takes the gesture over on the first move past the touch
-    // slop (8 dp) and scrolls only on later moves, so the drag first steps just
-    // past the slop and then by the whole amount. Upstream's single move gets
-    // swallowed by that first step. The events share a timestamp, so there is
-    // no fling.
-    const float sign = horizontal ? (points > 0 ? -1.0f : 1.0f) : (points > 0 ? 1.0f : -1.0f);
-    const float slop = 10.0f * per_point * sign;
-    const float travel = std::fabs(points) * per_point * sign;
     const float steps = notches * static_cast<float>(lines) / 3.0f;
-    if (g_input->wheel(x0, y0, w, h, horizontal ? 0.0f : steps, horizontal ? steps : 0.0f, horizontal ? slop : 0.0f,
-                       horizontal ? 0.0f : slop, horizontal ? travel : 0.0f, horizontal ? 0.0f : travel)) {
-        return;
-    }
-    const float x1 = horizontal ? x0 + slop : x0, y1 = horizontal ? y0 : y0 + slop;
-    const float x2 = horizontal ? x1 + travel : x0, y2 = horizontal ? y0 : y1 + travel;
-    g_input->pointer(0, x0, y0, w, h);
-    g_input->pointer(2, x1, y1, w, h);
-    g_input->pointer(2, x2, y2, w, h);
-    g_input->pointer(1, x2, y2, w, h);
+    g_input->wheel(x0, y0, w, h, horizontal ? 0.0f : steps, horizontal ? steps : 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 }
 
 // ---- the keyboard -------------------------------------------------------------------
