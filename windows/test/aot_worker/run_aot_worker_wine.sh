@@ -4,6 +4,7 @@
 # with a stand-in for clang (fakeclang.cpp) that takes FAKECLANG_MS per part
 # and logs when each one runs. Checks, on generated arm64 libraries:
 #
+#   0. a library the app never ran code in (no profile): not translated;
 #   1. a whole translation: parts of kAotPartInsns, the stamp, the shared
 #      cache (one file with the app's DLL), the work folder gone;
 #   2. the worker killed half way: none of its compilers outlives it (the job
@@ -76,6 +77,9 @@ check() {  # check <what> <command...>
 win() { echo "Z:$1" | tr / '\\'; }
 setup() {  # setup <test dir> <library>: a library folder with that library
     rm -rf "$1" && mkdir -p "$1/lib/arm64" "$1/cache" && cp "$2" "$1/lib/arm64/"
+    # libguest.so as the app has loaded it: a profile of one line (a library the
+    # app never ran code in is not translated; libbig.so's scenario adds its own)
+    if [ "$2" = libguest.so ]; then printf 'winapk-aot-profile 1 0\n0\n' > "$1/lib/arm64/libguest.so.aot.profile"; fi
     : > "$1/clang.log"
     FAKECLANG_LOG="$(win "$PWD/$1/clang.log")"
     export FAKECLANG_LOG
@@ -89,6 +93,13 @@ count() { ps -eo comm | grep -c "^$1" || true; }
 WINAPK_AOT_CLANG="$(win "$PWD/fakeclang.exe")"
 export WINAPK_AOT_CLANG WINAPK_AOT_JOBS=3 WINAPK_AOT_FULL_BELOW=400000
 
+echo "== 0. a library the app never ran code in"
+setup t0 libguest.so
+rm t0/lib/arm64/libguest.so.aot.profile
+check "no profile: nothing to do" test "$(needs_work t0 libguest.so)" = 0
+FAKECLANG_MS=200 worker t0 > t0/log 2>&1
+check "nothing compiled, no stamp" test "$(compiles t0)" = 0 -a ! -e t0/lib/arm64/libguest.so.aot.stamp
+
 echo "== 1. a whole translation"
 setup t1 libguest.so
 FAKECLANG_MS=200 worker t1 > t1/log 2>&1
@@ -96,7 +107,7 @@ parts=$(compiles t1)
 check "several parts ($parts compiles)" test "$parts" -ge 4
 most=$(sort -k3,3n -k1,1r t1/clang.log | awk '$1 == "start" {n++} $1 == "end" || $1 == "fail" {n--} n > m {m = n} END {print m + 0}')
 check "at most WINAPK_AOT_JOBS at once ($most)" test "$most" -le 3
-check "stamp full ($(stamp t1 libguest.so))" grep -q '^full 0 ' t1/lib/arm64/libguest.so.aot.stamp
+check "stamp full ($(stamp t1 libguest.so))" grep -q '^full 1 ' t1/lib/arm64/libguest.so.aot.stamp
 check "the DLL in place" test -f t1/lib/arm64/libguest.so.aot.dll
 check "the shared cache has it" test "$(ls t1/cache | wc -l)" -eq 1
 check "as the same file as the app's DLL (a hard link)" test "$(stat -c %i t1/cache/*.aot.dll)" = \
@@ -124,7 +135,7 @@ FAKECLANG_MS=200 worker t2 > t2/log2 2>&1
 check "the next run goes on ($(grep -o '[0-9]* of [0-9]* parts were compiled before' t2/log2 || true))" \
     grep -q 'parts were compiled before' t2/log2
 check "and compiles fewer than all ($(compiles t2) of $parts)" test "$(compiles t2)" -lt "$parts"
-check "stamp full" grep -q '^full 0 ' t2/lib/arm64/libguest.so.aot.stamp
+check "stamp full" grep -q '^full 1 ' t2/lib/arm64/libguest.so.aot.stamp
 
 echo "== 3. a part that always fails"
 setup t3 libguest.so
@@ -156,7 +167,7 @@ hash=$("$WINE" ./winapk-aot.exe --hash "$SO" | tr -d '\r')
 grep -o '{0x[0-9a-f]*ull' all.c | sed 's/{0x//; s/ull//' > entries.txt  # every function the translator finds
 check "the stripped library's functions are found ($(wc -l < entries.txt))" test "$(wc -l < entries.txt)" -ge 3200
 FAKECLANG_MS=50 worker t4 > t4/log0 2>&1
-check "no profile yet: waits for one" grep -q 'waiting for its profile' t4/log0
+check "no profile yet: nothing done" test "$(compiles t4)" = 0 -a ! -e t4/lib/arm64/libbig.so.aot.stamp
 { echo "winapk-aot-profile 1 $hash"; head -1000 entries.txt; } > "$P"
 check "a profile: work to do" test "$(needs_work t4 libbig.so)" = 1
 FAKECLANG_MS=50 worker t4 > t4/log 2>&1
@@ -175,7 +186,8 @@ check "+30% after the hour: again" test "$(needs_work t4 libbig.so)" = 1
 echo "== 5. four apps' workers on one library at once"
 for mode in links copies; do
     rm -rf t5 && mkdir -p t5/cache
-    for a in 1 2 3 4; do mkdir -p "t5/app$a/lib/arm64" && cp libguest.so "t5/app$a/lib/arm64/"; done
+    for a in 1 2 3 4; do mkdir -p "t5/app$a/lib/arm64" && cp libguest.so "t5/app$a/lib/arm64/" &&
+        printf 'winapk-aot-profile 1 0\n0\n' > "t5/app$a/lib/arm64/libguest.so.aot.profile"; done
     : > t5/clang.log
     FAKECLANG_LOG="$(win "$PWD/t5/clang.log")"
     fault=""
@@ -188,7 +200,7 @@ for mode in links copies; do
     good=0
     for a in 1 2 3 4; do
         [ "$(check_dll "t5/app$a/lib/arm64/libguest.so.aot.dll")" = sealed ] &&
-            grep -q '^full 0 ' "t5/app$a/lib/arm64/libguest.so.aot.stamp" &&
+            grep -q '^full 1 ' "t5/app$a/lib/arm64/libguest.so.aot.stamp" &&
             [ "$(needs_work "t5/app$a" libguest.so)" = 0 ] && good=$((good + 1))
     done
     check "$mode: every app's DLL whole, stamped full, nothing left to do ($good of 4)" test "$good" -eq 4
@@ -210,7 +222,7 @@ for point in seal cache-put install installed write; do
         [ -e "$f" ] && check "kill:$point: the cache entry is whole" test "$(check_dll "$f")" = sealed
     done
     FAKECLANG_MS=20 worker t6 > t6/log2 2>&1
-    check "kill:$point: the next run finishes ($(stamp t6 libguest.so))" grep -q '^full 0 ' \
+    check "kill:$point: the next run finishes ($(stamp t6 libguest.so))" grep -q '^full 1 ' \
         t6/lib/arm64/libguest.so.aot.stamp
     check "kill:$point: with a whole DLL" test "$(check_dll t6/lib/arm64/libguest.so.aot.dll)" = sealed
     check "kill:$point: nothing left to do" test "$(needs_work t6 libguest.so)" = 0
@@ -220,7 +232,7 @@ echo "== 7. a DLL cut short under a full stamp"
 setup t7 libguest.so
 FAKECLANG_MS=20 worker t7 > t7/log 2>&1
 truncate -s -10 t7/lib/arm64/libguest.so.aot.dll  # a hard link: the cache's entry too
-check "the stamp says full" grep -q '^full 0 ' t7/lib/arm64/libguest.so.aot.stamp
+check "the stamp says full" grep -q '^full 1 ' t7/lib/arm64/libguest.so.aot.stamp
 check "work to do" test "$(needs_work t7 libguest.so)" = 1
 : > t7/clang.log
 FAKECLANG_MS=20 worker t7 > t7/log2 2>&1
@@ -269,7 +281,7 @@ check "off: says so" grep -q 'off in Settings' t11/log
 check "off: nothing compiled ($(compiles t11))" test "$(compiles t11)" -eq 0
 check "off: work is left" test "$(needs_work t11 libguest.so)" = 1
 FAKECLANG_MS=20 worker t11 > t11/log2 2>&1
-check "on again: translated" grep -q '^full 0 ' t11/lib/arm64/libguest.so.aot.stamp
+check "on again: translated" grep -q '^full 1 ' t11/lib/arm64/libguest.so.aot.stamp
 
 echo
 if [ "$failures" -eq 0 ]; then echo "OK"; else echo "FAILED: $failures"; fi

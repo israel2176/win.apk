@@ -50,6 +50,11 @@ Win.apk compiles it for your processor into a DLL next to the library.
 - **Nothing waits for it.** The app starts at once on an ARM64 JIT, and each
   library switches to its translation as soon as it is ready, even while the
   app is running.
+- **Only what the app uses is translated.** A library the app has never run
+  code in (many apps ship libraries for a feature you may never open) is not
+  translated at all, as Android compiles at install only what an app's
+  profile names. Once the app has run code in it, the translation starts when
+  the app has been quiet for a minute or is closed.
 - **Most libraries are translated whole, once.** A library of up to 1 million
   instructions is translated in one go. A larger one (a browser engine, a big
   app's own code) is translated only where the app's code actually ran, once
