@@ -6735,6 +6735,7 @@ void paint_play(Graphics& g) {
 using UpdateTracker = winapk::launcher::UpdateTracker<Release>;
 UpdateTracker g_update;
 size_t g_updates_section = 0;  // the Updates section's index in Settings, for the InfoBar's "What's new"
+size_t g_account_section = 0;  // the Google account section's index in Settings, for the pane's account item
 
 void show_settings();
 void save_window_size();
@@ -6791,6 +6792,13 @@ void auto_update_check() {
     if (setting(L"AutoUpdate", 1) && update_check_due()) start_update_check(true, false);
     else if (!read_kept) start_update_check(false, false);
     read_kept = true;
+}
+
+// The pane's account item: Settings, scrolled to the Google account (its sign-in row), as the
+// Microsoft Store's profile button opens the account's own place.
+void show_account() {
+    show_settings();
+    g_page.reveal = static_cast<int>(g_account_section);
 }
 
 // The InfoBar's "What's new": Settings, scrolled to Updates.
@@ -7072,6 +7080,7 @@ std::vector<Section> settings_sections() {
     }
     out.push_back({tr(L"Apps"), {size, orient, folders, aot, play, desktop, types}, L""});
 
+    g_account_section = out.size();
     out.push_back(google_account_section());
 
     std::vector<Row> trouble = {
@@ -10095,7 +10104,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case kHitAdd: add_from_dialog(); break;
                 case kHitPlayOpen: open_google_play(); break;
                 case kHitPlayLog: show_logs(run_log(g_play.name)); break;
-                case kHitAccount: show_settings(); break;
+                case kHitAccount: show_account(); break;
                 case kHitClear:
                     SetWindowTextW(g_search, L"");
                     SetFocus(g_search);

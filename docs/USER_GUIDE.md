@@ -508,7 +508,8 @@ phone's browser. Closing the window, or leaving it for 10 minutes, cancels the
 sign-in. One account serves every app, and the account's item at the foot
 of the navigation pane, above **Settings**, shows who is signed in (only the
 account's picture, or its initial when Google gave none, or the person icon when
-no one is; the address shows when you point at it) and opens Settings. **Use Google
+no one is; the address shows when you point at it) and opens Settings at the
+Google account section. **Use Google
 services (experimental)** runs Google's own Play services and Play Store,
 which you install through the **Google services setup** page; with it on,
 **Google Play** appears under **Store** in the navigation pane and opens the
