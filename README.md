@@ -21,7 +21,7 @@ Windows notifications. It is an unofficial Windows port of
 [Mac.apk](https://github.com/kksimp/Mac.apk).
 
 > [!NOTE]
-> **Public preview (v0.8).** Many apps run well; others run in part or not
+> **Version 1.0.** Many apps run well; others run in part or not
 > yet. Check [Compatibility](docs/APPS.md) before you rely on an app, and
 > please [report](docs/troubleshooting.md#reporting-a-problem) what you find.
 
@@ -102,7 +102,7 @@ administrator rights.
 1. Download **`Win.apk-Setup.exe`** from the
    [latest release](https://github.com/israel2176/win.apk/releases/latest)
    (or `Win.apk-windows-x64.zip` for a portable copy).
-2. Run it. **SmartScreen will warn** because the preview is not code-signed:
+2. Run it. **SmartScreen will warn** because Win.apk is not code-signed yet:
    click **More info**, then **Run anyway**.
 3. Open Win.apk and install an app from the **Store**, or double-click an APK.
 
@@ -139,7 +139,7 @@ Hebrew pages: [`docs/he/`](docs/he/).
 
 ## Status and limitations
 
-Win.apk is a preview. Expect apps that do not
+Win.apk does not run every app. Expect apps that do not
 start, missing features ([the list, by importance](docs/APPS.md#needs-improvement-by-importance))
 and changes between releases. Two things to know before you install apps:
 

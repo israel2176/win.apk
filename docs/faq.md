@@ -7,7 +7,7 @@ No. No Android system runs: each app runs as its own Windows program, on a
 re-creation of what Android apps need. [How it works](how-it-works.md)
 
 **Is it free? Is it safe?**
-It is free and open source (AGPL-3.0). The preview builds are not code-signed
+It is free and open source (AGPL-3.0). Win.apk's builds are not code-signed
 yet, so Windows warns when you run the installer. Apps run with your Windows
 account's rights and there is no sandbox between them, so install only apps
 you trust. Win.apk has no telemetry.

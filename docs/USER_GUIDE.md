@@ -212,13 +212,13 @@ or later with an error, the window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
-Starts get quicker after the first app start of each Win.apk version: in
-the background, Win.apk keeps the Java classes every app loads (the JDK's and
-the Android framework's) ready in a file it maps at the next starts, instead
-of reading and checking them again each time (class-data sharing): a fifth
-off a typical start, and about 30 MB less memory per running app. Making that
-file takes a few seconds of one core at low priority, once, and about 40 MB in
-`%LOCALAPPDATA%\Win.apk\cds`.
+Win.apk keeps the Java classes every app loads (the JDK's and the Android
+framework's) ready in a file every app start maps, instead of reading and
+checking them again each time (class-data sharing): a fifth off a typical
+start, and about 30 MB less memory per running app. The installer makes that
+file once per Win.apk version, before any app starts (else Win.apk makes it in
+the background at the first app install): a few seconds of one core at low
+priority, and about 40 MB in `%LOCALAPPDATA%\Win.apk\cds`.
 
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
@@ -571,7 +571,7 @@ on (the default), the library checks about once a day when it opens and every
 hour while it stays open, once a day has passed since the last check. The
 check downloads only GitHub's list of releases and sends nothing about you or
 your apps (the request names itself `Win.apk-updater`). Versions are compared
-by their numbers: `v0.3.0-preview` is newer than 0.2.0.
+by their numbers: `v1.1.0-rc1` is newer than 1.0.0.
 
 When a newer version is out, the InfoBar says so with **What's new**, which
 opens Settings at Updates: the new version's row with **Update**, and its
@@ -585,8 +585,7 @@ why. Win.apk's installers are not code-signed yet, and Settings > Updates
 says so; a code-signed build of Win.apk will take only an installer signed
 by the same signer. A release whose installer has no SHA-256 checksum on
 GitHub is not downloaded: its row opens the release page instead. Drafts are
-never offered, and pre-releases only while Win.apk has no full release (every
-release so far is a pre-release). An installer downloaded earlier is checked
+never offered, and pre-releases only while Win.apk has no full release. An installer downloaded earlier is checked
 again in the same way before it runs. Your apps and their data are kept. The
 update does not start while an app is running or an install is under way:
 close the app or wait, then press **Update** again. A downloaded installer is
