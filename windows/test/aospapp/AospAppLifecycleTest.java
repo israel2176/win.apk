@@ -321,7 +321,8 @@ public class AospAppLifecycleTest {
         System.load(new File(host).getAbsolutePath());
         // This plain JVM has Robolectric's native graphics, not the GPU DLL (no render thread): views
         // draw in software here, as Android's own tests disable hardware rendering.
-        android.view.ThreadedRenderer.disable(false);
+        // (reflection: the class is hidden API, not in the jar this test compiles against)
+        Class.forName("android.view.ThreadedRenderer").getMethod("disable", boolean.class).invoke(null, false);
         // AOSP's graphics, as winapk-runtime binds them (host/aosp_gfx.cpp): Robolectric's native
         // runtime onto AOSP's classes through the host's own redirect (plainjvm_host.cpp), ICU's data, then
         // the system fonts (AospGfx.materializeSystemFonts, what Boot does): an activity's decor
