@@ -87,6 +87,7 @@
 #include <jvmti.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 #include "winapk/aot_files.h"
 #include "winapk/aot_stamp.h"
@@ -745,8 +746,11 @@ bool install_app(Options* o, const fs::path& android_root) {
 //     core had made a few huge ones.
 //   - AotGovernor decides, every couple of seconds, how many clang run at
 //     once: up to half the logical processors while the user is away, one
-//     while the user is active, none on battery saver or under a full-screen
-//     program, never so many that free memory falls below kAotReserve, and
+//     while the user is active or an app of Win.apk runs (another
+//     winapk-runtime.exe: its memory comes first, as Android leaves its
+//     background compiling to when the device is idle; clang beside Open
+//     Sudoku made its second start's peak 597 MB, comparison run
+//     45513190823), none on battery saver or under a full-screen program, never so many that free memory falls below kAotReserve, and
 //     no new one while the whole machine is above 80% busy.
 //   - The worker and everything it starts run at idle priority, in
 //     background mode (low I/O and memory priority) and as EcoQoS, in a job
@@ -987,6 +991,19 @@ void background_child(HANDLE process) {
     SetProcessInformation(process, ProcessMemoryPriority, &memory, sizeof memory);
 }
 
+// Whether a winapk-runtime.exe other than this one runs: an app (or its archive's dump, an install).
+bool other_runtime_running() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W e{};
+    e.dwSize = sizeof e;
+    bool found = false;
+    for (BOOL more = Process32FirstW(snap, &e); more && !found; more = Process32NextW(snap, &e))
+        found = e.th32ProcessID != GetCurrentProcessId() && _wcsicmp(e.szExeFile, L"winapk-runtime.exe") == 0;
+    CloseHandle(snap);
+    return found;
+}
+
 // How many compilers may run at once, decided again each time one is about
 // to start (see the top of this section for the policy).
 class AotGovernor {
@@ -1028,6 +1045,10 @@ public:
         if (fixed == 0 && n > 1 && GetLastInputInfo(&li) && GetTickCount() - li.dwTime < 2 * 60 * 1000) {
             n = 1;
             why = "the user is active";
+        }
+        if (fixed == 0 && n > 1 && other_runtime_running()) {
+            n = 1;
+            why = "an app runs";
         }
         if (running > 0 && busy > 0.80 && n > running) {
             n = running;
