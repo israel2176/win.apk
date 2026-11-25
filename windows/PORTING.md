@@ -1173,7 +1173,7 @@ GDI+ program (`launcher/launcher_main.cpp`), not WinUI or WPF; the installer
 is Inno Setup (`package/winapk.iss`); each app gets Start menu and desktop
 shortcuts that start it through `Win.apk.exe --run` (no stub executable per
 app); the four file types are associated; apps can be updated from an APK,
-reinstalled and removed, and the library has a Store (F-Droid). Still
+reinstalled and removed, and the library has a Store (Win.apk's own store app, shown in the window). Still
 planned: an update check for the runtime itself.
 
 - A control panel (WinUI 3 or WPF).

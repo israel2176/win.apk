@@ -28,8 +28,9 @@ Windows. זו הסבה לא רשמית של [Mac.apk](https://github.com/kksimp/
   דרך בתפריט התחל ואייקון בשורת המשימות. ההתראות שלה מגיעות כהתראות של
   Windows.
 - **התקנה כמו שמצפים.** לחיצה כפולה או גרירה של קובץ `.apk` או חבילה מפוצלת
-  (`.apkm`, `.xapk`, `.apks`), או התקנה מהחנות המובנית של
-  [F-Droid](https://f-droid.org).
+  (`.apkm`, `.xapk`, `.apks`), או התקנה מהחנות המובנית: ה[חנות](https://github.com/israel2176/win.apk-store)
+  של Win.apk בסגנון Google Play, בתוך החלון של Win.apk, שמחפשת בקטלוג של
+  Google Play.
 - **החומרה של המחשב.** מצלמת רשת, מיקרופון, המיקום של Windows, התקני Bluetooth
   שצימדתם, מידע על ה-Wi-Fi, בקרי Xbox, תיקיות ההורדות והתמונות שלכם, והלוח
   (העתק-הדבק).
@@ -39,9 +40,9 @@ Windows. זו הסבה לא רשמית של [Mac.apk](https://github.com/kksimp/
   וחנות Play המקוריים של Google.
 - **עברית ואנגלית,** מצב בהיר וכהה. בעברית הכול מימין לשמאל, כולל ההתקנה.
 
-| החנות (F-Droid) | ערכת נושא כהה | אפליקציות מההרצה האוטומטית |
+| החנות | ערכת נושא כהה | אפליקציות מההרצה האוטומטית |
 |---|---|---|
-| ![לשונית החנות: אפליקציות F-Droid ככרטיסים עם כפתור התקנה](docs/images/store.png) | ![הספרייה בערכת הנושא הכהה](docs/images/dark.png) | ![המסכים הראשונים של שש אפליקציות F-Droid](docs/images/apps.png) |
+| ![החנות של Win.apk בתוך החלון של Win.apk: דף הבית עם שורות של אפליקציות](docs/images/store.png) | ![הספרייה בערכת הנושא הכהה](docs/images/dark.png) | ![המסכים הראשונים של שש אפליקציות F-Droid](docs/images/apps.png) |
 
 ## במה זה שונה מאמולטור
 
@@ -170,8 +171,8 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
   ‏[SQLite](https://sqlite.org/), ‏[stb_vorbis](https://github.com/nothings/stb)
   ו-[zlib](https://zlib.net/). הרישיון של כל אחד מהם ב-
   [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
-- ‏**[F-Droid](https://f-droid.org),** שהקטלוג שלו מוצג בחנות. האפליקציות
-  שייכות למפתחים שלהן.
+- ‏**[F-Droid](https://f-droid.org),** שאת האפליקציות החופשיות שלו מריצות
+  ההרצה האוטומטית והבדיקות. האפליקציות שייכות למפתחים שלהן.
 
 ## רישיון
 

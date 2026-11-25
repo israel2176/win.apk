@@ -32,9 +32,10 @@ Reports in these areas are welcome:
 - The permission store: a way for an app to grant itself a permission, or to
   forge or alter `appops\app-ops.json`, which the launcher signs and the
   runtime verifies.
-- The Store: a way to install an APK that does not match the SHA-256 in
-  F-Droid's index, or to make Win.apk fetch from somewhere other than
-  f-droid.org.
+- The Store: a way to make Win.apk install, as its Store app, an
+  `apk-store.apk` that is not the one GitHub's release lists (by size and
+  SHA-256), or to fetch it from anywhere but that release; or a way for
+  another app to get the Store's permission to install apps.
 - The Google sign-in window: anything that would expose the Google session or
   the stored tokens (`gms\gms_state.properties`) to an app or another user.
 - The install helper (`Win.apk.exe install` and the permission verbs): a way

@@ -24,8 +24,8 @@ and most Windows 10 PCs already have.
 
 Adding and running apps
 -----------------------
-- From the Store tab: F-Droid's free and open-source apps, the easiest place
-  to start. Search, then Install.
+- From the Store: Win.apk's own store, in the Win.apk window, that searches
+  Google Play's catalogue. Search, Download, then Install.
 - From a file: double-click an .apk, .apkm, .xapk or .apks in Explorer, drag
   it onto the library, or click "Install app". Prefer an x86_64 build of an app
   (or one with no native code), then arm64-v8a. An app with only 32-bit ARM

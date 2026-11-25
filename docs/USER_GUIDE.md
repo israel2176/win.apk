@@ -50,7 +50,7 @@ Any of these starts an install:
   Only the install window opens, not the library;
 - drag one or more files onto the library window;
 - click **Install app** in the library's toolbar (or press Ctrl+O) and choose files;
-- click **Install** on an app's card in the [Store](#the-store);
+- install it from the [Store](#the-store);
 - run `Win.apk.exe <file>` from a command line, which is the same as
   double-clicking it.
 
@@ -103,9 +103,9 @@ stops an app it updates.
 
 ### Apps that install apps
 
-An app store (F-Droid's app, Droid-ify, Aurora Store, any app that installs
-other apps) installs into the library through Win.apk, the way Android's
-package installer does it:
+An app store (the built-in [Store](#the-store), Droid-ify, Aurora Store, any
+app that installs other apps) installs into the library through Win.apk, the
+way Android's package installer does it:
 
 1. The first time, if the store is not allowed to install apps, Win.apk says
    so, as Android does: **For your security, your PC currently isn't allowed
@@ -113,7 +113,8 @@ package installer does it:
    **Install unknown apps** switch ("Allow ... to install other apps?");
    **Allow** goes on to the install, **Cancel** or **Don't allow** stops it.
    The answer is kept (see [Permissions](#permissions)), so this comes once
-   per store, and an update of the store keeps it.
+   per store, and an update of the store keeps it. The built-in Store is
+   allowed from the start, as a phone's own store is.
 2. **Do you want to install this app?** (or **Do you want to update this
    app?** when the library has the app): **Install** / **Update**, or
    **Cancel**.
@@ -153,39 +154,40 @@ settings and variables that control it.
 
 ## The Store
 
-![The Store: F-Droid's apps as cards with Install buttons, a search box and a category list](images/store.png)
+![The Store: Win.apk's own store app inside the library window, its home page with rows of apps by category](images/store.png)
 
-The **Store** tab is [F-Droid](https://f-droid.org)'s catalog of free and
-open-source apps, usually Java-only and a good place to start. It lists the
-apps that can run here: those without native code, with an x86_64 build, or
-with an arm64-v8a build (translated). Where F-Droid offers one build per CPU
-architecture, the x86_64 one is used. Type to search, or pick a category.
-The catalog is read from F-Droid's signed index (`index-v1.jar`): Win.apk
-uses it only when its signature verifies and was made by f-droid.org's own
-key, as F-Droid's app does, so the SHA-256 hashes the downloads are checked
-against are F-Droid's. An index that does not verify is not used: the Store
-keeps the catalog it had, or says it could not load.
+The **Store** item in the pane opens Win.apk's own store app
+([win.apk-store](https://github.com/israel2176/win.apk-store)) inside the
+library window, as **Google Play** opens there with Google services on. It is
+a Play-style store in Hebrew or English: search any app in Google Play's
+catalogue, see its page (screenshots, what's new, ratings and reviews, data
+safety and permissions), and download free apps, whose files come from
+APKPure. It is part of Win.apk, not an app of your library: it has no tile and
+no shortcut, and the Store item is its one way in.
 
-- **Install** downloads the APK from f-droid.org, checks it against the
-  SHA-256 hash in F-Droid's index (a file that does not match is not
-  installed) and installs it like a dropped file. The card shows the download
-  and the install; then it says **Installed**, and the app opens from the
-  library.
-- **Update** appears when F-Droid has a newer version (by version code) of an
-  app you have with the same package name, however you installed it. The
-  app's data stays.
-- Click a card for the app's details page: whether it is in your library, its
-  version, size, license and categories, and a link to its F-Droid page.
-  **Back** (the arrow, Esc or Alt+Left) returns to the Store.
+- **The first time** you open the Store, Win.apk downloads the store app from
+  its newest release on GitHub and installs it; the page says how far it is
+  (**Getting the Store…**, **Downloading the Store…**, **Installing the
+  Store…**). The file is installed only at the size and SHA-256 checksum
+  GitHub lists for it; one that does not match is deleted and not installed,
+  and the page says why, with **Try again**.
+- **Updates**: the daily update check (Settings > Updates, **Check for updates
+  automatically**) also looks for a newer release of the store app, and
+  installs it the same way, once the Store is not open.
+- **Installing an app** from the Store goes through Win.apk as for any store
+  (see [Apps that install apps](#apps-that-install-apps)): **Do you want to
+  install this app?**, the install window, then **App installed.** with
+  **Open** and **Done**. The Store is allowed to install apps from the start,
+  as a phone's own store is, and the apps it installs name it as their
+  installer.
+- Leaving for another item keeps the Store running, as a phone keeps an app
+  in the background; the Store item shows it again at once. Closing the
+  library window closes it. If it closes, the page says so, with **Open the
+  Store**.
 
-The first time, the Store downloads F-Droid's index (tens of megabytes) and
-keeps a summary of it in `%LOCALAPPDATA%\Win.apk\store\catalog.tsv`. After
-that it opens at once and checks for a newer index in the background when
-the saved one is more than six hours old; **F5** or the refresh button
-checks now.
-
-The Store needs an internet connection and reaches only f-droid.org. The
-downloaded APK is deleted after the install.
+The Store needs an internet connection. An older Win.apk's Store (F-Droid's
+catalog, `%LOCALAPPDATA%\Win.apk\store\`) is removed the first time this
+version starts.
 
 ## Running an app
 
@@ -284,13 +286,11 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 | Enter | Open the selected app |
 | Alt+Enter | The selected app's details |
 | Menu key, Shift+F10 | The selected app's right-click menu |
-| Typing, Ctrl+F | In the Store: search it; Esc shows everything again |
 | Ctrl+O | Add an app from a file |
 | Ctrl+1, Ctrl+2 | The Library and the Store |
 | Ctrl+, | Settings |
 | Ctrl+L | The log window, on the newest log |
 | Ctrl+T | The Threads window, on every running app (with **Debug mode** on) |
-| F5 | In the Store: check F-Droid for new apps |
 | Esc, Backspace, Alt+Left, the mouse's back button | On a details page: back |
 | Tab, Space, Enter | On a page: move between its controls and use them |
 
@@ -351,7 +351,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
 | Troubleshooting | **Clear library** | Uninstalls every app of the library and removes its shortcuts (app data is kept; Google's apps stay with Google services) |
 | Updates | **Check** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
-| Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar |
+| Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar. The same check updates the [Store](#the-store)'s app |
 | Updates | **Update** | Shown when a newer version is out, with **What's new in** that version below it. Downloads the installer, then runs it and closes Win.apk |
 | About | | The version, **Project page** (github.com/israel2176/win.apk) and **Credits and licenses**, which opens `THIRD_PARTY_NOTICES.txt` beside the program (Mac.apk, which Win.apk is built on, and every project the package ships, with their licences; `LICENSE.txt` is Win.apk's own, the GNU AGPL v3.0) |
 
@@ -653,7 +653,7 @@ and the launch window open the right log themselves when something fails.
 | `google-setup.log` | The checks of the Google services setup |
 | `system.log`, `services\` | With Google services on: the system broker (its `jobs:` lines: the apps' background jobs it keeps and starts, the Play Store's update checks among them), and the apps it starts for other apps |
 | `maintenance.log` | With **Update apps in the background** on: the last background window Win.apk opened |
-| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
+| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 
@@ -712,7 +712,7 @@ nothing is started in the apps: no agent, no pipe.
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
   Start menu shortcuts, the `.apk` association and the app files' thumbnails, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
-  the Store's catalog and the Google account.
+  the Store and the Google account.
 
 ## Where things are
 
@@ -724,7 +724,7 @@ nothing is started in the apps: no agent, no pipe.
 | Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
-| The Store's catalog and icons | `%LOCALAPPDATA%\Win.apk\store` |
+| The Store's app, as installed (no tile; its download and checksum) | `%LOCALAPPDATA%\Win.apk\library\app.apkstore.*`, `%LOCALAPPDATA%\Win.apk\store-app` |
 | The installed-apps registry | `%LOCALAPPDATA%\Win.apk\installed_apps.json` |
 | Permission grants | `%LOCALAPPDATA%\Win.apk\appops` |
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |

@@ -7,7 +7,7 @@
 - **`Win.apk-windows-x64.zip`**: portable; unzip it and run `Win.apk.exe`.
 
 ## Highlights
-- Install `.apk`, `.apkm`, `.xapk` and `.apks` files by double-click or drag and drop, or from the built-in F-Droid Store. An app installed from a bundle takes its space on disk once, not twice (apps installed before move over at the first start).
+- Install `.apk`, `.apkm`, `.xapk` and `.apks` files by double-click or drag and drop, or from the built-in Store: Win.apk's own Play-style store, inside the Win.apk window, that searches Google Play's catalogue and installs free apps. An app installed from a bundle takes its space on disk once, not twice (apps installed before move over at the first start).
 - Apps that ship only 64-bit ARM code are translated for your PC in the background, at the lowest priority.
 - Your PC's hardware for apps: webcam, microphone, location, Bluetooth, game controllers, and your Windows folders.
 - **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account); Google Play opens inside the Win.apk window.

@@ -243,9 +243,10 @@ Source: https://llvm.org/ , https://www.mingw-w64.org/ .
   inside robolectric-nativeruntime.dll (section 2).
 - The Microsoft Edge WebView2 Runtime, Media Foundation, WASAPI and the other
   Windows APIs: part of Windows.
-- F-Droid's catalog (index-v1.json) and app icons: downloaded from
-  https://f-droid.org when the Store opens. The apps, their names,
-  descriptions and icons belong to their authors.
+- The Store's app (https://github.com/israel2176/win.apk-store): not
+  shipped; downloaded from its GitHub releases when the Store first opens.
+  The apps it shows and installs, their names, descriptions and icons belong
+  to their authors.
 - Google's Play services, Services Framework and Play Store: never shipped or
   downloaded by Win.apk; installed by the user from Google-signed files.
 
