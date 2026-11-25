@@ -505,8 +505,8 @@ checked against its SHA-256.
   the window, and `eglSwapBuffers` reads it back and presents it.
 
 Each GL view renders into its own pbuffer; after a frame the pixels are read
-back and composited with the Java view tree, which is drawn in software.
-Vulkan is not implemented.
+back and become a layer under the app's windows (below). Vulkan is not
+implemented.
 
 ### The view tree's frames
 
@@ -515,22 +515,36 @@ AOSP's `PhoneWindow` added to AOSP's `WindowManagerGlobal`, and its
 `ViewRootImpl` measures, lays out and draws it on `Choreographer`'s frames, as on
 a phone: `requestLayout` and `invalidate` schedule a traversal, and a view that
 cannot be seen asks for nothing. The frames come from a Java vsync clock at the
-host display's rate (`NativeDisplayEventReceiver`). Each window draws in
-software (`ThreadedRenderer` is off for the process, as AOSP turns it off for a
-low-end process): its `Surface` is a `Canvas` on a frame `Bitmap` of AOSP's
-graphics, and posting it hands the bitmap to `Compositor`
-(`windows/java/aosp_views`), which puts the windows' layers together bottom to
-top as WindowManagerService orders them, with the dim layer under a
-`FLAG_DIM_BEHIND` window and the system bars' glyphs on top, into the one frame
-the host presents (`NativeCocoa.presentBitmap`, `host/native_cocoa.cpp`), which
-copies it and blits it in `WM_PAINT`. The window's size and insets come from an
-in-process window session (`IWindowSession.relayout` through AOSP's own
+host display's rate (`NativeDisplayEventReceiver`). Each window draws as on a
+phone with hardware acceleration: `ThreadedRenderer` records the views'
+`RenderNode` display lists, and HWUI's render thread replays them with Skia's
+GPU backend (`SkiaOpenGLPipeline`, Ganesh on GLES over ANGLE) into the window's
+surface. That is `bin\aosp-hwui.dll`, built from AOSP 14's own HWUI, Skia,
+minikin, HarfBuzz, FreeType, ICU 72 and their closure by
+`windows/hwui_build/` (`fetch.sh`, `build.sh`: Android.bp flattened to CMake,
+`patch_src.py`'s edits for clang on MinGW-w64, the `glue/`), with its own JNI
+on AOSP's classes. Each window's `SurfaceControl` is a layer in the DLL
+(`HwuiLayers`, `glue/layers.cpp`): HWUI draws into a pbuffer of the window's
+size, and the DLL's compositor, on the render thread, draws the layers bottom
+to top as `Compositor` (`windows/java/aosp_views`) orders them as
+WindowManagerService would, with the dim layer under a `FLAG_DIM_BEHIND`
+window, into the host window's ANGLE surface, placed where the window puts the
+phone (`host/hwui_host.cpp`, `window_gpu_layout`); SurfaceFlinger's part. A
+window drawn in software (`hardwareAccelerated="false"`) posts its bitmap to
+its layer. What the host has as pixels (a GL view read back, a SurfaceView's
+`lockCanvas`, an app's native window, a video frame) is a host layer under the
+windows, seen through the hole a SurfaceView punches, or over them for
+`setZOrderOnTop`. `PixelCopy` reads a window's layer back; a `HARDWARE` bitmap
+is a heap bitmap with its pixels. ANGLE's compiled programs and Skia's shaders
+are kept between runs in the app's cache folder (`EGL_ANDROID_blob_cache`,
+HWUI's shader cache). The window's size and insets come from an in-process
+window session (`IWindowSession.relayout` through AOSP's own
 `WindowLayout.computeFrames`). `docs/research/aosp-views.md`, "V1 as built" and
-"V2 as built", has the details and what is not there yet.
+"V2 as built", has the views' details and what is not there yet.
 
 Win.apk's own view classes, which apps ran before, drew the tree into one
-bitmap through `com.macapk.loader.ViewCanvasDriver`. It does not run in an app
-any more; AOSP's software renderer redraws the dirty area its own way.
+bitmap through `com.macapk.loader.ViewCanvasDriver`, and the window blitted
+frames with GDI; neither runs any more.
 
 ### The window and the display
 
