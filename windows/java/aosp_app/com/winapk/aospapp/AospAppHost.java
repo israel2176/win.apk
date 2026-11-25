@@ -71,7 +71,12 @@ public final class AospAppHost implements AppHost {
 
     @Override public void deliverBroadcast(android.content.Intent intent, boolean fromOtherApp) {
         AospApp app = AospApp.get();
-        if (app != null) app.broadcasts.deliverFromOutside(intent, fromOtherApp);
+        if (app != null) app.broadcasts.deliverFromOutside(intent, fromOtherApp, null);
+    }
+
+    @Override public void deliverBroadcast(android.content.Intent intent, boolean fromOtherApp, String sender) {
+        AospApp app = AospApp.get();
+        if (app != null) app.broadcasts.deliverFromOutside(intent, fromOtherApp, sender);
     }
 
     @Override public android.os.IBinder bindServiceNow(android.content.Intent intent) {

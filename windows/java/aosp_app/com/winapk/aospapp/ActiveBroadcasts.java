@@ -4,7 +4,11 @@
 // scheduleReceiver), the stickies, and ordered broadcasts one receiver at a time with their result
 // carried on (finishReceiver) to the final result receiver. Another app's receivers hear a broadcast
 // through the system broker (SystemClient.forwardBroadcast); one from another app arrives here with
-// deliver(intent, true), heard only by exported receivers. The system's own stickies and ticks a
+// deliver(intent, true), heard only by exported receivers, and by a receiver that requires a permission
+// (its android:permission, registerReceiver's broadcastPermission) only when the sender holds it, as
+// the system broker answers (SystemClient.senderHolds); a broadcast sent with required permissions
+// (sendBroadcast's receiverPermission) goes to this app's own receivers only when the app holds them,
+// and to another app's through the broker, which checks it the same way. The system's own stickies and ticks a
 // device's system_server sends are here too: ACTION_BATTERY_CHANGED from the host's battery, and
 // ACTION_TIME_TICK each minute to registered receivers only.
 package com.winapk.aospapp;
@@ -42,11 +46,14 @@ final class ActiveBroadcasts {
         final IIntentReceiver receiver;
         final IntentFilter filter;
         final int flags;
+        /** registerReceiver's broadcastPermission: what a sender must hold (null: none). */
+        final String permission;
 
-        Filter(IIntentReceiver receiver, IntentFilter filter, int flags) {
+        Filter(IIntentReceiver receiver, IntentFilter filter, int flags, String permission) {
             this.receiver = receiver;
             this.filter = filter;
             this.flags = flags;
+            this.permission = permission;
         }
     }
 
@@ -92,7 +99,7 @@ final class ActiveBroadcasts {
 
     // ---- Context.registerReceiver / unregisterReceiver ----
 
-    synchronized Intent register(IIntentReceiver receiver, IntentFilter filter, int flags) {
+    synchronized Intent register(IIntentReceiver receiver, IntentFilter filter, int flags, String permission) {
         if (filter == null) return null;
         if (filter.matchAction(Intent.ACTION_BATTERY_CHANGED)) stickies.put(Intent.ACTION_BATTERY_CHANGED, battery());
         // Every sticky the filter matches goes to the receiver; the first is the call's answer
@@ -101,7 +108,7 @@ final class ActiveBroadcasts {
         for (Intent s : stickies.values()) if (matches(filter, s)) matches.add(s);
         if (receiver != null) {
             registered.computeIfAbsent(receiver.asBinder(), k -> new ArrayList<>())
-                    .add(new Filter(receiver, filter, flags));
+                    .add(new Filter(receiver, filter, flags, permission));
             for (Intent s : matches) performReceive(receiver, s, 0, null, null, false, true);
             if (filter.matchAction(Intent.ACTION_TIME_TICK)) startTicking();
         }
@@ -122,21 +129,63 @@ final class ActiveBroadcasts {
     // ---- Context.sendBroadcast and its kin (broadcastIntentWithFeature) ----
 
     synchronized int broadcast(Intent intent, IIntentReceiver resultTo, int resultCode, String resultData,
-            Bundle resultExtras, boolean serialized, boolean sticky) {
+            Bundle resultExtras, boolean serialized, boolean sticky, String[] requiredPermissions) {
         intent = new Intent(intent);
         if (sticky && intent.getAction() != null) stickies.put(intent.getAction(), new Intent(intent));
         try {
-            com.macapk.loader.SystemClient.forwardBroadcast(intent);
+            com.macapk.loader.SystemClient.forwardBroadcast(intent, requiredPermissions);
         } catch (LinkageError e) {
             // a JVM without the loader (the plain-JVM test)
         }
-        deliver(intent, false, resultTo, resultCode, resultData, resultExtras, serialized);
+        if (!holdsAll(requiredPermissions)) {
+            // BroadcastQueue skips this app's receivers: the app lacks a permission the sender requires.
+            if (resultTo != null) performReceive(resultTo, intent, resultCode, resultData, resultExtras, false, false);
+            return ActivityManager.BROADCAST_SUCCESS;
+        }
+        deliver(intent, false, resultTo, resultCode, resultData, resultExtras, serialized, null);
         return ActivityManager.BROADCAST_SUCCESS;
     }
 
-    /** A broadcast another app (or the system broker) sent, to this process's receivers only. */
-    synchronized void deliverFromOutside(Intent intent, boolean fromOtherApp) {
-        deliver(new Intent(intent), fromOtherApp, null, 0, null, null, false);
+    /** Whether this app holds every one of a broadcast's required permissions. */
+    private static boolean holdsAll(String[] permissions) {
+        if (permissions == null) return true;
+        Context ctx = context();
+        for (String p : permissions) {
+            if (p == null) continue;
+            if (ctx == null || ctx.checkPermission(p, Process.myPid(), Process.myUid())
+                    != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /** A broadcast another app (or the system broker) sent, to this process's receivers only.
+     *  `sender`: the app that sent it, as the broker knows it (null: the system or this app). */
+    synchronized void deliverFromOutside(Intent intent, boolean fromOtherApp, String sender) {
+        deliver(new Intent(intent), fromOtherApp, null, 0, null, null, false, sender);
+    }
+
+    /** BroadcastQueue's receiver-side check (checkComponentPermission of the receiver's required
+     *  permission against the sender), answered by the system broker; each permission asked once per
+     *  broadcast. A null sender is the system or this app: it passes. */
+    private static boolean senderAllowed(String permission, String sender, Map<String, Boolean> asked, Intent intent,
+            String receiver) {
+        if (permission == null || permission.isEmpty() || sender == null) return true;
+        Boolean ok = asked.get(permission);
+        if (ok == null) {
+            try {
+                ok = com.macapk.loader.SystemClient.senderHolds(permission, sender);
+            } catch (LinkageError e) {
+                ok = false;
+            }
+            asked.put(permission, ok);
+        }
+        if (!ok) {
+            System.err.println("[aosp-app] Permission Denial: broadcasting " + intent + " from " + sender
+                    + " requires " + permission + " due to receiver " + receiver);
+        }
+        return ok;
     }
 
     synchronized Intent removeSticky(Intent intent) {
@@ -147,7 +196,8 @@ final class ActiveBroadcasts {
      *  the stickies a registration replays are (BroadcastRecord.initialSticky, which
      *  BroadcastReceiver.isInitialStickyBroadcast reports), so every delivery here says false. */
     private void deliver(Intent intent, boolean fromOtherApp, IIntentReceiver resultTo, int code, String data,
-            Bundle extras, boolean serialized) {
+            Bundle extras, boolean serialized, String sender) {
+        Map<String, Boolean> asked = new HashMap<>();
         String target = intent.getComponent() != null ? intent.getComponent().getPackageName() : intent.getPackage();
         if (target != null && !target.equals(app.info.packageName)) {
             // Aimed at another app: the broker's alone; a result receiver still hears the result.
@@ -161,7 +211,8 @@ final class ActiveBroadcasts {
             for (List<Filter> list : registered.values()) {
                 for (Filter f : list) {
                     if (fromOtherApp && (f.flags & Context.RECEIVER_NOT_EXPORTED) != 0) continue;
-                    if (matches(f.filter, intent)) {
+                    if (matches(f.filter, intent)
+                            && senderAllowed(f.permission, sender, asked, intent, "registered " + f.receiver.asBinder())) {
                         dynamic.add(f);
                         break;   // one delivery per receiver, as its ReceiverList has one
                     }
@@ -173,6 +224,10 @@ final class ActiveBroadcasts {
         if ((intent.getFlags() & Intent.FLAG_RECEIVER_REGISTERED_ONLY) == 0) {
             for (ResolveInfo ri : manifestReceivers(intent)) {
                 if (fromOtherApp && !ri.activityInfo.exported) continue;
+                if (!senderAllowed(ri.activityInfo.permission, sender, asked, intent,
+                        ri.activityInfo.packageName + "/" + ri.activityInfo.name)) {
+                    continue;
+                }
                 manifest.add(ri);
             }
         }
@@ -360,7 +415,7 @@ final class ActiveBroadcasts {
         tick[0] = () -> {
             Intent t = new Intent(Intent.ACTION_TIME_TICK).addFlags(Intent.FLAG_RECEIVER_REGISTERED_ONLY);
             synchronized (this) {
-                deliver(t, false, null, 0, null, null, false);
+                deliver(t, false, null, 0, null, null, false, null);
             }
             h.postDelayed(tick[0], toNextMinute());
         };

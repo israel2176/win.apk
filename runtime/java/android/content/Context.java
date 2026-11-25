@@ -2179,6 +2179,17 @@ public abstract class Context {
     }
     public int  checkPermission(String permission, int pid, int uid) {
         if (permission == null) throw new IllegalArgumentException("permission is null");
+        // Win.apk: another app's process (a caller of one of this app's binders) holds what the
+        // system says the package that process is holds (ActivityManagerService.checkPermission,
+        // the system broker's answer), never this app's own grants; the system holds everything.
+        if (uid == android.os.Process.SYSTEM_UID) return android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (pid > 0 && pid != android.os.Process.myPid() && uid != android.os.Process.myUid()) {
+            int answer = com.macapk.loader.SystemClient.checkPermissionOfPid(permission, pid);
+            if (answer >= 0) {
+                return answer == 1 ? android.content.pm.PackageManager.PERMISSION_GRANTED
+                                   : android.content.pm.PackageManager.PERMISSION_DENIED;
+            }
+        }
         android.content.pm.PackageManager pm = getPackageManager();
         if (pm != null) {
             try { return pm.checkPermission(permission, getPackageName()); }

@@ -277,11 +277,14 @@ public final class SystemClient {
                 data.enforceInterface(SystemServer.THREAD_DESCRIPTOR);
                 final Intent intent = data.readTypedObject(Intent.CREATOR);
                 final boolean fromSystem = data.readInt() != 0;
+                // The app that sent it (the broker's record of its process): the receivers'
+                // required permissions are checked against it.
+                final String sender = data.dataAvail() > 0 ? data.readString() : null;
                 // ActivityThread.handleReceiver / the receiver dispatcher: on
                 // this app's main looper, to its own receivers only.
                 try {
                     com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
-                    if (host != null) host.deliverBroadcast(intent, !fromSystem);
+                    if (host != null) host.deliverBroadcast(intent, !fromSystem, sender);
                 } catch (Throwable t) { NativeLog.w(TAG, "broadcast " + intent + " threw " + t); }
                 return true;
             }
@@ -596,6 +599,8 @@ public final class SystemClient {
             sSystem.transact(SystemServer.TX_STOP, d, r, 0);
             r.readException();
             return r.readInt() != 0;
+        } catch (SecurityException e) {
+            throw e;   // ContextImpl.stopServiceCommon: "Not allowed to stop service"
         } catch (Throwable t) {
             NativeLog.w(TAG, "remote stop " + intent + " failed: " + t);
             return false;
@@ -705,9 +710,9 @@ public final class SystemClient {
             return false;
         } finally { rd.recycle(); rr.recycle(); }
         if (answer == SystemServer.RESOLVE_NONE) return false;
-        if (answer == SystemServer.RESOLVE_NOT_EXPORTED) {
-            ComponentName cn = intent.getComponent();
-            throw new SecurityException("Not allowed to bind to service " + (cn != null ? cn : intent));
+        if (answer == SystemServer.RESOLVE_NOT_EXPORTED || answer == SystemServer.RESOLVE_NO_PERMISSION) {
+            // ContextImpl.bindServiceCommon: AMS answered -1 (not exported, or a permission the caller lacks).
+            throw new SecurityException("Not allowed to bind to service " + intent);
         }
         final Intent fi = new Intent(intent);
         final Handler main = new Handler(Looper.getMainLooper());
@@ -785,6 +790,10 @@ public final class SystemClient {
             sys.transact(SystemServer.TX_GET_PROVIDER, d, r, 0);
             r.readException();
             b = r.readStrongBinder();
+        } catch (SecurityException e) {
+            // ContentProviderHelper's denial reaches the caller (ContentResolver throws it), and is
+            // not remembered: a URI grant may open the provider later.
+            throw e;
         } catch (Throwable t) {
             NativeLog.w(TAG, "broker GET_PROVIDER " + authority + " failed: " + t);
         } finally { d.recycle(); r.recycle(); }
@@ -813,6 +822,11 @@ public final class SystemClient {
             rr.readException();
             answer = rr.readInt();
             cn = rr.readTypedObject(ComponentName.CREATOR);
+            if (answer == SystemServer.RESOLVE_NO_PERMISSION) {
+                // ContextImpl.startServiceCommon's message for ActiveServices' "!" answer.
+                throw new SecurityException("Not allowed to start service " + intent + " without permission "
+                        + rr.readString());
+            }
         } catch (RemoteException e) {
             return null;
         } finally { rd.recycle(); rr.recycle(); }
@@ -840,7 +854,11 @@ public final class SystemClient {
 
     /** sendBroadcast's cross-app half: hand the broadcast to the broker
      *  (oneway), unless it is aimed at this package or the broker is off. */
-    public static void forwardBroadcast(Intent intent) {
+    public static void forwardBroadcast(Intent intent) { forwardBroadcast(intent, null); }
+
+    /** forwardBroadcast with the sender's required permissions (sendBroadcast's receiverPermission),
+     *  which the broker checks against each receiving app. */
+    public static void forwardBroadcast(Intent intent, String[] requiredPermissions) {
         IBinder sys = sSystem;
         if (sys == null || intent == null) return;
         String target = intent.getComponent() != null ? intent.getComponent().getPackageName()
@@ -855,10 +873,127 @@ public final class SystemClient {
             d.writeString(sPackage);
             d.writeTypedObject(intent, 0);
             d.writeString(sProcess);
+            d.writeStringArray(requiredPermissions);
             sys.transact(SystemServer.TX_BROADCAST, d, null, IBinder.FLAG_ONEWAY);
         } catch (Throwable t) {
             NativeLog.w(TAG, "broadcast forward failed: " + t);
         } finally { d.recycle(); }
+    }
+
+    // ---- permissions the system decides (Win.apk: the broker's BrokerPermissions) -----------
+
+    /** ContentProvider.Transport's check of a caller from another process, asked of the broker:
+     *  {BrokerPermissions.OP_*, the denial's tail}. With no broker no other app reaches this process,
+     *  and the answer is the provider-wide allow. */
+    static Object[] checkProvider(int callingPid, android.net.Uri uri, boolean write) {
+        IBinder sys = sSystem;
+        if (sys == null) return new Object[] { BrokerPermissions.OP_ALLOWED, null };
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeInt(callingPid);
+            d.writeString(uri != null ? uri.toString() : null);
+            d.writeInt(write ? 1 : 0);
+            sys.transact(SystemServer.TX_CHECK_PROVIDER, d, r, 0);
+            r.readException();
+            return new Object[] { r.readInt(), r.readString() };
+        } catch (Throwable t) {
+            // The system cannot answer: refused, as a device fails closed.
+            return new Object[] { BrokerPermissions.OP_DENIED, " (the system did not answer: " + t + ")" };
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** PackageManager.checkPermission(permission, pkg) for another package, the broker's answer:
+     *  whether the app that sent a broadcast holds what a receiver here requires. */
+    public static boolean senderHolds(String permission, String pkg) {
+        IBinder sys = sSystem;
+        if (sys == null || permission == null || pkg == null) return false;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(permission);
+            d.writeString(pkg);
+            sys.transact(SystemServer.TX_CHECK_PERMISSION, d, r, 0);
+            r.readException();
+            return r.readInt() != 0;
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker CHECK_PERMISSION " + permission + " of " + pkg + " failed: " + t);
+            return false;
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.checkPermission(permission, pid, uid) for another app's process, the broker's answer
+     *  for the package that process is: 1 granted, 0 not, -1 no broker (the caller keeps its rule). */
+    public static int checkPermissionOfPid(String permission, int pid) {
+        IBinder sys = sSystem;
+        if (sys == null || permission == null) return -1;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(permission);
+            d.writeInt(pid);
+            sys.transact(SystemServer.TX_CHECK_PERMISSION_PID, d, r, 0);
+            r.readException();
+            return r.readInt() != 0 ? 1 : 0;
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker CHECK_PERMISSION_PID " + permission + " of pid " + pid + " failed: " + t);
+            return 0;
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.grantUriPermission(target, uri, mode) to another package; the broker's refusal is a
+     *  SecurityException, as UriGrantsManagerService throws it. */
+    public static void grantUri(String target, android.net.Uri uri, int mode) {
+        IBinder sys = sSystem;
+        if (sys == null || target == null || uri == null || target.equals(sPackage)) return;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(target);
+            d.writeString(uri.toString());
+            d.writeInt(mode);
+            sys.transact(SystemServer.TX_GRANT_URI, d, r, 0);
+            r.readException();
+        } catch (RemoteException e) {
+            NativeLog.w(TAG, "broker GRANT_URI " + uri + " failed: " + e);
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.revokeUriPermission([target,] uri, mode): the grants of a uri of this app's providers. */
+    public static void revokeUri(String target, android.net.Uri uri, int mode) {
+        IBinder sys = sSystem;
+        if (sys == null || uri == null) return;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(target);
+            d.writeString(uri.toString());
+            d.writeInt(mode);
+            sys.transact(SystemServer.TX_REVOKE_URI, d, r, 0);
+            r.readException();
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker REVOKE_URI " + uri + " failed: " + t);
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.checkUriPermission(uri, pid, uid, mode) as the broker answers it: SystemServer.URI_*,
+     *  or -1 when there is no broker. */
+    public static int checkUri(int pid, android.net.Uri uri, int mode) {
+        IBinder sys = sSystem;
+        if (sys == null || uri == null) return -1;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeInt(pid);
+            d.writeString(uri.toString());
+            d.writeInt(mode);
+            sys.transact(SystemServer.TX_CHECK_URI, d, r, 0);
+            r.readException();
+            return r.readInt();
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker CHECK_URI " + uri + " failed: " + t);
+            return SystemServer.URI_DENIED;
+        } finally { d.recycle(); r.recycle(); }
     }
 
     /** unbindService for a remote connection; true when it was one. */
