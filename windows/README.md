@@ -41,7 +41,7 @@ this repository.
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon), and its state machines, each a header the unit test drives (`app_runs.h`: an app's run; `installs.h`: an install; `updates.h`: the update check and download) |
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), `aosp_gfx/` (the stand-ins in `aosp-graphics.jar`: ART's, Robolectric's, and an `android.icu.text.Bidi` on `java.text.Bidi`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
-| `scripts/` | `build_java.sh`, `build_aosp_gfx.sh` (AOSP graphics' files; `redirect_decoders.sh`, its HEIF/AVIF step), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
+| `scripts/` | `build_java.sh`, `build_aosp_gfx.sh` (AOSP graphics' files; `redirect_decoders.sh`, its HEIF/AVIF step), `fetch_angle.sh`, `fetch_webview2.sh`, `fetch_apkeep.sh` (apkeep for the Google services setup's Download, built from source with cargo), `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
 | `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep and the screens crawl (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers and ANGLE's `gl2ext_angle.h` (build time only) |
@@ -66,6 +66,9 @@ cmake --build build
 windows/scripts/stage_runtime.sh build runtime
 windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
 ```
+
+`stage_runtime.sh` also needs Rust's `cargo` (rustup, with the Visual Studio
+build tools it asks for): `fetch_apkeep.sh` builds apkeep from source.
 
 - `-DWINAPK_JNI_INCLUDE=<jdk>/include` builds the JNI library, its tests,
   `winapk-jvm-run` and the runtime; without it only the loader, the shim and

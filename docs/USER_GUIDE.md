@@ -546,7 +546,8 @@ account's picture, or its initial when Google gave none, or the person icon when
 no one is; the address shows when you point at it) and opens Settings at the
 Google account section. **Use Google
 services (experimental)** runs Google's own Play services and Play Store,
-which you install through the **Google services setup** page; with it on,
+which the **Google services setup** page downloads and installs (**Download
+all**; a copy is installed only when Google signed it); with it on,
 **Google Play** appears under **Store** in the navigation pane and opens the
 Play Store inside the Win.apk window, where the library is. Google's three
 apps are system components: they have no tile in the library and no
@@ -650,6 +651,7 @@ and the launch window open the right log themselves when something fails.
 | `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
 | `google-setup.log` | The checks of the Google services setup |
+| `google-download.log` | The Google services setup's downloads (apkeep's output, from APKPure) |
 | `system.log`, `services\` | With Google services on: the system broker (its `jobs:` lines: the apps' background jobs it keeps and starts, the Play Store's update checks among them), and the apps it starts for other apps |
 | `maintenance.log` | With **Update apps in the background** on: the last background window Win.apk opened |
 | `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
