@@ -3838,7 +3838,7 @@ public final class MacApkPackageManager extends PackageManager {
         f.add("android.hardware.touchscreen");
         // ---- Camera ------------------------------------------------------
         // FEATURE_CAMERA (a camera facing away from the screen), _FRONT and
-        // _ANY. The owner's decision: a PC's camera serves both roles, so apps
+        // _ANY. By design a PC's camera serves both roles, so apps
         // that ask for the rear camera (cheque scanners) work. Every webcam is
         // offered as a back and a front camera (native_camera.cpp,
         // kRolesPerDevice; CameraBridge's virtual camera, with no webcam, is a
@@ -4278,7 +4278,7 @@ public final class MacApkPackageManager extends PackageManager {
      *
      * What it is: the real record when an app installed the package through PackageInstaller;
      * otherwise, for an app the user installed, Google Play while Settings > Apps > "Report Google
-     * Play as the installer" is on (the default, the owner's decision: bit and Bank Hapoalim refuse
+     * Play as the installer" is on (the default: some apps, banking apps among them, refuse
      * to run without a store as installer), as `adb install -i com.android.vending` leaves it; null
      * when it is off, as for an adb install. Play is reported only while getPackageInfo finds
      * com.android.vending (PlayServices.vendingPresent), so no app is told a missing store

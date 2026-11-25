@@ -768,7 +768,7 @@ slots      = clamp(min(cap, mem_slots, cpu_slots), 0, 16)
 **Why these numbers.**
 
 - **80% CPU and memory** is Windows' own idle threshold (Task Scheduler), and
-  what the owner asked for.
+  the one chosen.
 - **4 minutes** is Windows' "user absent" interval.
 - **Half the logical cores** when idle matches ART's separate, smaller
   background thread budget. It leaves the other half for whatever the user

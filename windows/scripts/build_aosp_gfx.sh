@@ -209,7 +209,7 @@ rm -rf "$OUT/bin/aosp/fonts" "$OUT/bin/aosp/hyphen-data"
 # /system/fonts either. The dist carries more, for Robolectric's older SDKs: NotoSansCJK's six other
 # weights (107 MB; a device has only the Regular, and minikin makes the bold), DroidSansFallback,
 # NanumGothic, Lato, Rubik, Arvo... 160 MB -> 47 MB.
-# Nor Noto CJK Regular (19 MB, the owner's decision: Hebrew and Latin stay Android's, CJK leaves the
+# Nor Noto CJK Regular (19 MB, left out for size: Hebrew and Latin stay Android's, CJK leaves the
 # install): fonts.xml still names it, and at run time its four families (zh-Hans, zh-Hant, ja, ko) are
 # Windows' own CJK fonts instead (AospGfx.materializeSystemFonts, HostCjkFonts). 47 MB -> 29 MB.
 WINDOWS_FALLBACK='NotoSansCJK-Regular.ttc'

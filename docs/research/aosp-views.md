@@ -565,7 +565,7 @@ not affected (they inflate and draw detached views). Both are fixed below.
   The relayout sizes a layer with AOSP's `WindowLayout.computeSurfaceSize`
   (a dialog's is its frame plus 64 px of surface insets each side).
 - **The system bars** (`Bars`). Which bars exist stays Win.apk's decision:
-  none by default (the owner's; `StatusBarDriver.systemBarsEnabled`), both with
+  none by default (`StatusBarDriver.systemBarsEnabled`), both with
   `MACAPK_SYSTEM_BARS=1`. Their sizes are AOSP's own: the status bar
   `SystemBarUtils.getStatusBarHeight` (`status_bar_height_default`, no cutout),
   the navigation bar `navigation_bar_height` at the bottom, `navigation_bar_width`
@@ -806,7 +806,7 @@ screen lays out landscape on its AMOLED theme.
 
 ### Making R1 and V1/V2 the default: disk, installer and memory (November 2026)
 
-Measured to prepare the switch, which stayed off until the owner decided (he did: "Made the default",
+Measured to prepare the switch, which stayed off until it was decided (it was: "Made the default",
 below).
 
 **On real Windows** (CI run 44734867981, the informational job and the smoke job of the same
@@ -900,7 +900,7 @@ counted.
 - Its three `default_wallpaper.png` (7.4 MB) are internal resources nothing in Win.apk or the
   AOSP jars reads (Win.apk's `WallpaperManager` has no built-in wallpaper; AOSP's, which reads
   `com.android.internal.R.drawable.default_wallpaper`, is in none of them); an app can reach them
-  only by name through `getIdentifier`. Done (the owner's call, November 2026): `build_aosp_res.sh`
+  only by name through `getIdentifier`. Done (November 2026): `build_aosp_res.sh`
   writes a 1x1 PNG over each, so the table and every id stay as they are and such a read gets a
   valid image instead of throwing; deleting the files would make it throw, and dropping their
   entries would move the ids after them. 21.2 -> 13.7 MB installed, 19.0 -> 11.6 MB under
@@ -908,7 +908,7 @@ counted.
 
 ### Made the default (November 2026)
 
-The owner's decision: AOSP's resources and views are the default, and the Win.apk code they replace is
+The decision: AOSP's resources and views are the default, and the Win.apk code they replace is
 deleted. What was done:
 
 - **The host** (`host/aosp_gfx.cpp`): `aosp_res_prepare` and `aosp_views_prepare` no longer read an

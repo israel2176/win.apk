@@ -20,7 +20,7 @@ import java.util.Properties;
  * AOSP only allows that for the installer of record: with no record the
  * SecurityException made Play report the install as failed (INSTALL_ERROR 6200).
  *
- * The default (Win.apk, owner's decision): an app the user installed with no
+ * The default (Win.apk): an app the user installed with no
  * record (from the library, an APK opened in Explorer) is reported as installed by
  * Google Play, as `adb install -i com.android.vending` leaves it on a device. Apps
  * such as bit and Bank Hapoalim read getInstallSourceInfo's installing/initiating

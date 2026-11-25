@@ -60,7 +60,7 @@ public final class Manifest {
      *  split_chrome.apk, so without the merge the package had no launchable
      *  activity. Config splits carry no components and are skipped. (Its
      *  switch back to the base manifest alone, MACAPK_MANIFEST_FEATURE_SPLITS=0,
-     *  is gone: the owner wants no switches.) */
+     *  is gone: Win.apk has no switches.) */
     static final boolean FEATURE_SPLITS = true;
     /** The split-application child tags AOSP parseSplitApplication keeps. */
     private static final java.util.Set<String> SPLIT_COMPONENT_TAGS =

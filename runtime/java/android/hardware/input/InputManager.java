@@ -216,7 +216,7 @@ public final class InputManager {
      *  physical device", 1 = the touchscreen). Always on: the environment
      *  switch that put back the old surface (no such device, keystrokes from -1
      *  with KEYBOARD|DPAD, Configuration KEYBOARD_NOKEYS / HARDKEYBOARDHIDDEN_YES)
-     *  is gone, as the owner wants no switches; a PC has a real keyboard. */
+     *  is gone, as Win.apk has no switches; a PC has a real keyboard. */
     public static final boolean MACAPK_HOST_KEYBOARD = true;
     /** The host keyboard's device id (see above). */
     public static final int HOST_KEYBOARD_ID = 2;
