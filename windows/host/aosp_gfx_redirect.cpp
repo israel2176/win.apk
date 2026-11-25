@@ -144,6 +144,15 @@ jclass JNICALL my_FindClass(JNIEnv* env, const char* name) {
     // whose lookups (below) answer an ID nothing uses.
     for (const char* p : kKeptByWinApk)
         if (std::strncmp(name, p, std::strlen(p)) == 0) return stand_in(env);
+    // AOSP's classes the library registers on (aosp-hwui.dll asks for them by their own names):
+    // loaded, not initialized, as ART's FindClass leaves them. HotSpot's runs the static
+    // initializer, which calls natives not yet registered (ColorSpace's named spaces).
+    if (allowed_slash(name)) {
+        if (jclass c = find_noinit(env, name)) return c;
+    }
+    // Win.apk's own classes the library binds (the window layers' natives) are looked up as they
+    // are: one that is not on the class path is not there (a run with no window manager).
+    if (std::strncmp(name, "com/winapk/", 11) == 0) return g_orig.FindClass(env, name);
     jclass r = g_orig.FindClass(env, name);
     if (!r && g_orig.ExceptionCheck(env) && !allowed_slash(name)) {
         // A class of Win.apk's framework the library wants and it lacks: an ID nothing

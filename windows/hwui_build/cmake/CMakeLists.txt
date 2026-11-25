@@ -59,7 +59,7 @@ add_custom_target(angle_imports DEPENDS ${ANGLE_IMPORTS})
 # The graphics DLL: HWUI, Skia and the rest, and the glue (hwui_build/glue): JNI_OnLoad, the window
 # layers and their compositor, the choreographer, libutils' Looper on emulated descriptors.
 add_library(aosp_hwui SHARED "${GLUE}/jni_onload.cpp" "${GLUE}/layers.cpp" "${GLUE}/choreographer.cpp"
-            "${GLUE}/fd_emul.cpp" "${GLUE}/stubs.cpp" "${AOSP}/system_core/libutils/Looper.cpp"
+            "${GLUE}/fd_emul.cpp" "${GLUE}/stubs.cpp" "${GLUE}/nio_fd.cpp" "${AOSP}/system_core/libutils/Looper.cpp"
             "${AOSP}/icu4c/source/stubdata/stubdata.cpp")
 set_target_properties(aosp_hwui PROPERTIES OUTPUT_NAME "aosp-hwui" PREFIX "" CXX_STANDARD 20)
 get_target_property(HWUI_INCLUDES aosp_libhwui INCLUDE_DIRECTORIES)
