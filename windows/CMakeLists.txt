@@ -161,6 +161,12 @@ target_include_directories(winapk-applink-test PRIVATE host)
 add_executable(winapk-webview-urls-test test/webview_file_urls_test.cpp)
 target_include_directories(winapk-webview-urls-test PRIVATE host)
 
+# DPAPI sealing of the Google account's tokens at rest (host/data_protection.h). No window.
+# test/data_protection_test.cpp.
+add_executable(winapk-data-protection-test test/data_protection_test.cpp)
+target_include_directories(winapk-data-protection-test PRIVATE host)
+target_link_libraries(winapk-data-protection-test PRIVATE crypt32)
+
 # Which URLs the runtime hands to Windows to open (host/host_url.h). No window.
 # test/host_url_test.cpp.
 add_executable(winapk-host-url-test test/host_url_test.cpp)
@@ -328,13 +334,13 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_location.cpp host/machine_load.cpp
                               host/native_signin.cpp host/native_notifications.cpp
                               host/native_accessibility.cpp host/uia_provider.cpp host/uia_tree.cpp
-                              host/binder_win.cpp
+                              host/binder_win.cpp host/native_data_protection.cpp
                               host/user_folders.cpp host/unix_socket_dir.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
                               host/debug_agent.cpp host/aosp_gfx.cpp host/aosp_gfx_redirect.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 oleaut32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi
-                        bthprops winmm bcrypt psapi winhttp)
+                        bthprops winmm bcrypt psapi winhttp crypt32)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
@@ -400,9 +406,10 @@ if(WINAPK_JNI_INCLUDE)
 
   # Cross-process Binder over named pipes (host/binder_win.cpp) between real
   # JVMs: test/binder_test.cpp runs test/java/com/macapk/loader/BinderTransportTest.
-  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp host/java_io_open.cpp)
+  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp host/java_io_open.cpp
+                                    host/native_data_protection.cpp)
   target_include_directories(winapk-binder-test PRIVATE host include "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
-  target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt)
+  target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt crypt32)
   target_link_options(winapk-binder-test PRIVATE -static -municode)
 
   # NativeAudio's backend on its own (test/audio_test.cpp).

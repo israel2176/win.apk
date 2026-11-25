@@ -50,6 +50,7 @@ const char* const kHostClasses[] = {
     "com.macapk.icu.HostIcu",
     "com.macapk.loader.AudioInputBridge",
     "com.macapk.loader.CameraBridge",
+    "com.macapk.loader.DataProtection",
     "com.macapk.loader.DocumentPickerHandler",
     "com.macapk.loader.FrameTimes",
     "com.macapk.loader.GamepadBridge",
@@ -119,6 +120,7 @@ const HostMethods kProviders[] = {
     native_binder_methods(),
     native_accessibility_methods(),
     native_text_input_methods(),
+    native_data_protection_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {
