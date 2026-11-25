@@ -254,9 +254,21 @@ jobs:
           windows/hwui_build/fetch.sh "$PWD/thirdparty/aosp-hwui"
           HWUI_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache" \
             windows/hwui_build/build.sh "$PWD/thirdparty/aosp-hwui" ci \
-            || { tail -n 100 thirdparty/aosp-hwui/b/ci.log; exit 1; }
+            || { echo "::group::Every compile error"
+                 grep -E '^([^ ]+:[0-9]+:[0-9]+: (fatal )?error:|.*lld: error:)' thirdparty/aosp-hwui/b/ci.log | sort -u
+                 echo "::endgroup::"
+                 tail -n 60 thirdparty/aosp-hwui/b/ci.log; exit 1; }
           ls -l thirdparty/aosp-hwui/b/aosp-hwui.dll
           ccache -s
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: aosp-hwui-build-log
+          path: |
+            thirdparty/aosp-hwui/b/ci.log
+            thirdparty/aosp-hwui/b/cfg.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Build (loader, thunks, JNI wrapper, runtime, launcher, tests)
         run: |
           ccache -z
