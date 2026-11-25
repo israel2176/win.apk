@@ -334,53 +334,26 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     if (eglGetCurrentSurface(EGL_DRAW) != ws.real) return EGL_TRUE;
     int w = 0, h = 0;
     live_size(ws, &w, &h);
-    // The readback hands the frame to the CPU for the window's GDI compositor.
-    // Synchronous by default (glReadPixels, as since the window surface was
-    // added): the GL thread stalls on the GPU->CPU copy, but every app draws.
-    //
-    // WINAPK_GL_ASYNC_READBACK=1 opts into the asynchronous double pixel pack
-    // buffer, which hides that stall at a cost of one frame of latency. It is
-    // not the default because an on-demand renderer (a Flutter UI that draws a
-    // burst then idles, e.g. localsend) swaps too rarely for a one-frame
-    // pipeline -- its final frame is left in a buffer, never presented, and the
-    // window stays blank, with no later tick on the app's own GL thread to flush
-    // it. Even opted in, async engages only once the app has proven it renders
-    // continuously (a long run of swaps under 40 ms apart); any pause reverts to
-    // synchronous at once, so an on-demand UI keeps drawing. Timed on the GL
-    // thread so the two are comparable.
+    // The readback hands the frame to the CPU for the window's GDI compositor:
+    // glReadPixels, which stalls the GL thread on the GPU->CPU copy. An
+    // asynchronous double pixel pack buffer was tried behind an opt-in switch
+    // (WINAPK_GL_ASYNC_READBACK) and removed: its one frame of latency left an
+    // on-demand renderer's last frame (a Flutter UI that draws a burst, then
+    // idles) in a buffer, never presented. Timed on the GL thread.
     using clock = std::chrono::steady_clock;
     thread_local std::vector<uint32_t> argb;
     thread_local long long frames = 0, read_ns = 0, present_ns = 0;
-    thread_local clock::time_point last_swap{};
-    thread_local bool have_last = false;
-    thread_local int fast_streak = 0;
     const auto t0 = clock::now();
-    const double gap_ms = have_last ? std::chrono::duration<double, std::milli>(t0 - last_swap).count() : 1e9;
-    last_swap = t0;
-    have_last = true;
-    constexpr int kAsyncAfter = 90;  // ~1.5 s of unbroken 60 fps before trusting the stream
-    if (gap_ms < 40.0) {
-        if (fast_streak <= kAsyncAfter) ++fast_streak;
-    } else {
-        fast_streak = 0;
-    }
-    const bool use_async = gl_async_readback_enabled() && fast_streak >= kAsyncAfter;
-    int pw = w, ph = h;
-    bool present = true;
-    if (use_async) {
-        present = gl_read_current_async(&argb, w, h, &pw, &ph);
-    } else {
-        gl_read_current(&argb, w, h);
-    }
+    gl_read_current(&argb, w, h);
     const auto t1 = clock::now();
-    if (present) guest_frame_present(argb.data(), pw, ph);
+    guest_frame_present(argb.data(), w, h);
     const auto t2 = clock::now();
     read_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
     present_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
     if (++frames % 120 == 0) {
         std::fprintf(stderr,
-                     "[win.apk] GL: window surface frames %lld: readback %.2f ms present %.2f ms (%s, avg of 120)\n",
-                     frames, read_ns / 120.0 / 1e6, present_ns / 120.0 / 1e6, use_async ? "async" : "sync");
+                     "[win.apk] GL: window surface frames %lld: readback %.2f ms present %.2f ms (avg of 120)\n",
+                     frames, read_ns / 120.0 / 1e6, present_ns / 120.0 / 1e6);
         read_ns = present_ns = 0;
     }
     // The frame is out; the producer waits for its next vsync slot, as a full

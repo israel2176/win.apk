@@ -121,23 +121,6 @@ int main() {
     }
     check("no GL error", glGetError() == GL_NO_ERROR);
 
-    // The asynchronous readback (double pixel pack buffer): the first swap
-    // buffers this frame and presents nothing; the next presents the previous
-    // frame, one behind. The pbuffer still holds the red/blue frame, so the
-    // first async read issues it; then draw green, and the second async read
-    // should hand back that earlier red/blue frame, not the green one.
-    std::vector<uint32_t> apx;
-    int pw = 0, ph = 0;
-    const bool first = winapk::host::gl_read_current_async(&apx, 64, 32, &pw, &ph);
-    glClearColor(0.0f, 1.0f, 0.0f, 1.0f);  // green: the frame the async read must NOT hand back yet
-    glClear(GL_COLOR_BUFFER_BIT);
-    const bool second = winapk::host::gl_read_current_async(&apx, 64, 32, &pw, &ph);
-    check("async readback presents a frame at the pbuffer size", second && pw == 64 && ph == 32);
-    if (!first && second) {  // first == false means the PBO path is active (not the sync fallback)
-        check("async readback is one frame behind: top row still red", apx[0] == 0xffff0000u, apx[0]);
-    }
-    check("no GL error after async readback", glGetError() == GL_NO_ERROR);
-
     std::printf("\nThe extensions an app's native code is told of\n");
     check_guest_extensions();
 
