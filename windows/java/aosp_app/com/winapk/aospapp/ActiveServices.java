@@ -69,11 +69,17 @@ final class ActiveServices {
         }
     }
 
-    /** IntentBindRecord: one intent's binding of a service, and the binder its onBind returned. */
+    /** IntentBindRecord: one intent's binding of a service, and the binder its onBind returned. The
+     *  binder outlives its connections while the service lives: onBind runs once per intent, a later
+     *  client gets the same binder, and onRebind runs only when onUnbind asked for it. */
     static final class IntentBinding {
         final Intent intent;
         boolean requested;
         boolean received;
+        /** onBind (or onRebind) ran and onUnbind has not: the last connection's going calls it. */
+        boolean hasBound;
+        /** onUnbind returned true: the next client gets onRebind (unbindFinished). */
+        boolean doRebind;
         IBinder binder;
         final List<Connection> connections = new ArrayList<>();
         final List<CountDownLatch> waiting = new ArrayList<>();
@@ -249,9 +255,12 @@ final class ActiveServices {
         if ((flags & Context.BIND_AUTO_CREATE) != 0) bringUp(r);
         if (r.created) {
             if (b.received) {
+                // ActiveServices.bindServiceLocked: the published binder at once; onRebind only for
+                // the first client after an onUnbind that returned true.
                 connected(c, b.binder);
+                if (b.connections.size() == 1 && b.doRebind) requestBind(r, b, true);
             } else if (!b.requested) {
-                requestBind(r, b);
+                requestBind(r, b, false);
             }
         }
         return 1;
@@ -268,17 +277,16 @@ final class ActiveServices {
         for (Connection c : list) {
             IntentBinding b = c.binding;
             b.connections.remove(c);
-            if (b.connections.isEmpty() && b.requested && c.service.created) {
+            if (b.connections.isEmpty() && b.hasBound && c.service.created) {
                 // ActiveServices.removeConnectionLocked: the last connection of this intent gone,
-                // onUnbind runs.
+                // onUnbind runs; the binder stays published for the next client.
+                b.hasBound = false;
+                b.doRebind = false;
                 try {
                     thread().scheduleUnbindService(c.service.token, b.intent);
                 } catch (RemoteException e) {
                     throw new IllegalStateException(e);
                 }
-                b.requested = false;
-                b.received = false;
-                b.binder = null;
             }
             maybeStop(c.service);
         }
@@ -295,6 +303,17 @@ final class ActiveServices {
         for (Connection c : new ArrayList<>(b.connections)) connected(c, service);
         for (CountDownLatch l : b.waiting) l.countDown();
         b.waiting.clear();
+    }
+
+    /** onUnbind returned true (ActiveServices.unbindFinishedLocked): a client that bound since gets
+     *  onRebind now, else the next one will. */
+    synchronized void unbindFinished(IBinder token, Intent intent, boolean doRebind) {
+        ServiceRecord r = byToken.get(token);
+        if (r == null || !doRebind) return;
+        IntentBinding b = r.bindings.get(new Intent.FilterComparison(intent));
+        if (b == null) return;
+        if (!b.connections.isEmpty() && r.created) requestBind(r, b, true);
+        else b.doRebind = true;
     }
 
     synchronized IBinder peekService(Intent intent) {
@@ -354,14 +373,17 @@ final class ActiveServices {
         });
         // requestServiceBindingsLocked: what clients bound before it existed.
         for (IntentBinding b : r.bindings.values()) {
-            if (!b.requested && !b.connections.isEmpty()) requestBind(r, b);
+            if (!b.requested && !b.connections.isEmpty()) requestBind(r, b, false);
         }
     }
 
-    private void requestBind(ServiceRecord r, IntentBinding b) {
+    /** ActiveServices.requestServiceBindingLocked: onBind, or onRebind when `rebind`. */
+    private void requestBind(ServiceRecord r, IntentBinding b, boolean rebind) {
         b.requested = true;
+        b.hasBound = true;
+        if (rebind) b.doRebind = false;
         try {
-            thread().scheduleBindService(r.token, b.intent, false, PROCESS_STATE_SERVICE, 0);
+            thread().scheduleBindService(r.token, b.intent, rebind, PROCESS_STATE_SERVICE, 0);
         } catch (RemoteException e) {
             throw new IllegalStateException(e);
         }
@@ -374,11 +396,22 @@ final class ActiveServices {
         if (r.created) {
             try {
                 for (IntentBinding b : r.bindings.values()) {
-                    if (b.requested) thread().scheduleUnbindService(r.token, b.intent);
+                    if (b.hasBound) thread().scheduleUnbindService(r.token, b.intent);
                 }
                 thread().scheduleStopService(r.token);
             } catch (RemoteException e) {
                 throw new IllegalStateException(e);
+            }
+            // bringDownServiceLocked: a connection still there (made without BIND_AUTO_CREATE) is
+            // told the service is gone (onServiceDisconnected, onBindingDied).
+            for (IntentBinding b : r.bindings.values()) {
+                for (Connection c : b.connections) {
+                    try {
+                        c.conn.connected(r.name, null, true);
+                    } catch (RemoteException | RuntimeException e) {
+                        System.err.println("[aosp-app] the connection to " + r.name.getClassName() + " threw " + e);
+                    }
+                }
             }
         }
         // A connection made without BIND_AUTO_CREATE stays registered and waits for the next start.
@@ -389,6 +422,8 @@ final class ActiveServices {
         for (IntentBinding b : r.bindings.values()) {
             b.requested = false;
             b.received = false;
+            b.hasBound = false;
+            b.doRebind = false;
             b.binder = null;
         }
         if (!keep) {
@@ -422,6 +457,7 @@ final class ActiveServices {
                 createInPlace(r);
                 if (!b.requested) {
                     b.requested = true;
+                    b.hasBound = true;
                     Access.bind(ActivityThread.currentActivityThread(), r.token, b.intent);
                 }
             }

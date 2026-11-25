@@ -183,7 +183,9 @@ public final class ActivityManagerService {
     /** What the client says it finished (onCreate, onStartCommand, onBind...): nothing waits here. */
     public void serviceDoneExecuting(android.os.IBinder token, int type, int startId, int res) {}
 
-    public void unbindFinished(android.os.IBinder token, android.content.Intent service, boolean doRebind) {}
+    public void unbindFinished(android.os.IBinder token, android.content.Intent service, boolean doRebind) {
+        app.services.unbindFinished(token, service, doRebind);
+    }
 
     public void updateServiceGroup(android.app.IServiceConnection connection, int group, int importance) {}
 }
