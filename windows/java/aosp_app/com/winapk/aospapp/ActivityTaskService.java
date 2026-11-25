@@ -17,6 +17,10 @@ import android.os.IBinder;
 public final class ActivityTaskService {
     private final AospApp app;
 
+    /** ActivityManager.START_FORWARD_AND_REQUEST_CONFLICT (hidden): Instrumentation
+     *  .checkStartActivityResult throws AndroidRuntimeException for it. */
+    private static final int START_FORWARD_AND_REQUEST_CONFLICT = -93;
+
     ActivityTaskService(AospApp app) { this.app = app; }
 
     /** ActivityTaskManagerService.startActivity: START_INTENT_NOT_RESOLVED (-92) when nothing
@@ -34,11 +38,15 @@ public final class ActivityTaskService {
         if (info == null || !app.info.packageName.equals(info.packageName)) {
             return startOnHost(intent, resultTo, resultWho, requestCode);
         }
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && resultTo != null && requestCode >= 0) {
+            // ActivityStarter.executeRequest: a result both forwarded and asked for.
+            return START_FORWARD_AND_REQUEST_CONFLICT;
+        }
         Intent copy = new Intent(intent);
         copy.setComponent(new android.content.ComponentName(info.packageName, info.name));
         app.tasks.handler.post(() -> {
-            Tasks.Record from = resultTo != null ? app.tasks.find(resultTo) : null;
-            app.tasks.start(info, copy, callingPackage, from, resultWho, from != null ? requestCode : -1);
+            Tasks.Record source = resultTo != null ? app.tasks.find(resultTo) : null;
+            app.tasks.startFrom(info, copy, callingPackage, source, resultWho, requestCode);
         });
         return ActivityManager.START_SUCCESS;
     }

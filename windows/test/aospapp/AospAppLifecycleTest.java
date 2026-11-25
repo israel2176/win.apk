@@ -222,7 +222,9 @@ public class AospAppLifecycleTest {
                     }
                     @Override public void onServiceDisconnected(android.content.ComponentName n) {}
                 }, BIND_AUTO_CREATE);
-                startActivityForResult(new Intent(this, Second.class).putExtra("x", 7), 42);
+                // Through a trampoline that forwards First's request to Second
+                // (FLAG_ACTIVITY_FORWARD_RESULT) and finishes in its onCreate.
+                startActivityForResult(new Intent(this, Trampoline.class), 42);
             }
         }
 
@@ -234,6 +236,21 @@ public class AospAppLifecycleTest {
         @Override protected void onActivityResult(int request, int result, Intent data) {
             super.onActivityResult(request, result, data);
             note("First.onActivityResult " + request + " " + result + " " + (data != null ? data.getStringExtra("r") : null));
+        }
+    }
+
+    /** Started for a result, it starts Second with FLAG_ACTIVITY_FORWARD_RESULT and finishes: Second
+     *  gets First as its caller and its result goes to First; the trampoline itself no longer has a
+     *  caller. Not in the callback order (a finish in onCreate skips its onStart and onResume). */
+    static final List<String> tramp = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    public static class Trampoline extends Activity {
+        @Override protected void onCreate(Bundle b) {
+            super.onCreate(b);
+            tramp.add("calling " + (getCallingActivity() != null ? getCallingActivity().getShortClassName() : null));
+            startActivity(new Intent(this, Second.class).putExtra("x", 7).addFlags(Intent.FLAG_ACTIVITY_FORWARD_RESULT));
+            tramp.add("after forwarding, calling " + getCallingActivity());
+            finish();
         }
     }
 
@@ -325,7 +342,8 @@ public class AospAppLifecycleTest {
 
         Map<String, ActivityInfo> activities = Map.of(
                 First.class.getName(), activity(ai, First.class),
-                Second.class.getName(), activity(ai, Second.class));
+                Second.class.getName(), activity(ai, Second.class),
+                Trampoline.class.getName(), activity(ai, Trampoline.class));
         Configuration config = new Configuration();
         config.setToDefaults();
         config.screenWidthDp = 360;
@@ -451,6 +469,11 @@ public class AospAppLifecycleTest {
         List<String> want = SVC_EXPECTED;
         if (!started.equals(want.subList(0, 3)) || !bound.equals(want.subList(3, want.size()))) {
             System.out.println("FAILED: the services gave " + svc + ", Android gives " + want);
+            System.exit(1);
+        }
+        if (!tramp.equals(List.of("calling AospAppLifecycleTest$First", "after forwarding, calling null"))) {
+            System.out.println("FAILED: the trampoline gave " + tramp + ", Android gives [calling AospAppLifecycleTest$First,"
+                    + " after forwarding, calling null]");
             System.exit(1);
         }
         if (!kept.equals(KEPT_EXPECTED)) {
