@@ -59,18 +59,15 @@ bool init() {
         std::fprintf(stderr, "[win.apk] GL: ANGLE (libEGL.dll, libGLESv2.dll) is not next to the runtime\n");
         return false;
     }
-    const char* backend = std::getenv("WINAPK_ANGLE_BACKEND");
-    const bool want_sw = backend && std::strcmp(backend, "swiftshader") == 0;
-    const bool want_hw = backend && std::strcmp(backend, "d3d11") == 0;
     // A GPU first, then Direct3D's software rasterizer (WARP, part of every
     // Windows), then ANGLE's own (SwiftShader).
     const char* used = "Direct3D 11";
-    if (!want_sw) g_display = open_display(kTypeD3D11, 0);
-    if (g_display == EGL_NO_DISPLAY && !want_sw && !want_hw) {
+    g_display = open_display(kTypeD3D11, 0);
+    if (g_display == EGL_NO_DISPLAY) {
         g_display = open_display(kTypeD3D11, kDeviceWarp);
         used = "Direct3D 11 WARP (software)";
     }
-    if (g_display == EGL_NO_DISPLAY && !want_hw) {
+    if (g_display == EGL_NO_DISPLAY) {
         g_display = open_display(kTypeVulkan, kDeviceSwiftShader);
         used = "SwiftShader (software Vulkan)";
     }

@@ -91,7 +91,7 @@ void register_va_list_function(const void* host_fn, unsigned index);
 // The engine that runs guest code. kAot, the default: the code translated at
 // install time (arm64_aot.h) where a library has it, and for the rest the JIT
 // (dynarmic, arm64_jit.h) when the build has it, else the interpreter.
-// WINAPK_ARM64_ENGINE=interp, =jit or =aot chooses. set_engine returns false
+// Tests choose another with set_engine, which returns false
 // if the JIT is not built in. Threads pick the engine up the next time they
 // enter guest code; code the JIT has already translated stays as it is.
 enum class Engine { kInterpreter, kJit, kAot };

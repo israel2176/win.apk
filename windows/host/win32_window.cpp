@@ -222,21 +222,12 @@ int g_orientation_lock = 0;    // 0 any, 1 portrait, 2 landscape (window_set_ori
 // brings the phone's own size and density back. The next start opens it
 // maximized at that density at once (window_set_start_maximized).
 // An app whose activity is fixed to portrait gets its portrait column, as large
-// as the screen is high. WINAPK_MAXIMIZE_TURNS=0: a maximized window is just a
-// large one, as before.
+// as the screen is high.
 int g_normal_w = 0, g_normal_h = 0;  // the phone, in dp, in the window when it is not maximized
 bool g_start_maximized = false;
 // The window opens maximized and has not been yet: the sizes it passes through
 // on the way are not the app's.
 bool g_awaiting_maximize = false;
-
-bool maximize_turns() {
-    static const bool on = [] {
-        const char* e = std::getenv("WINAPK_MAXIMIZE_TURNS");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
 
 // px per dp a maximized window shows the phone at in a box of bw by bh pixels.
 float zoomed_scale(int bw, int bh, float normal) {
@@ -266,56 +257,12 @@ void adjust_for_dpi(RECT* r, UINT dpi) {
 
 int margin_px(UINT dpi) { return MulDiv(4, static_cast<int>(dpi), 96); }
 
-// "<w>x<h>", optionally followed by "+<x>+<y>" (from the left and top edge of
-// the real work area) or "-<x>-<y>" (from the right and bottom edge).
-bool parse_geometry(const wchar_t* s, const RECT& real, RECT* out) {
-    int w = 0, h = 0, n = 0;
-    if (swscanf(s, L"%dx%d%n", &w, &h, &n) < 2 || w < 100 || h < 100) return false;
-    s += n;
-    int offs[2] = {0, 0};
-    bool from_end[2] = {false, false};
-    for (int i = 0; i < 2 && (*s == L'+' || *s == L'-'); ++i) {
-        from_end[i] = *s == L'-';
-        int v = 0, m = 0;
-        if (swscanf(s + 1, L"%d%n", &v, &m) < 1) return false;
-        offs[i] = v;
-        s += 1 + m;
-    }
-    const LONG x = from_end[0] ? real.right - offs[0] - w : real.left + offs[0];
-    const LONG y = from_end[1] ? real.bottom - offs[1] - h : real.top + offs[1];
-    *out = RECT{x, y, x + w, y + h};
-    return true;
-}
-
-// WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y> | -<x>-<y>], in pixels, stands in for
-// every monitor's work area, so that fitting can be tried on a big screen.
-// "@<file>" reads that text from the file at every fit, so a test can change
-// the work area while the app runs (then send WM_SETTINGCHANGE).
-bool test_work_area(const RECT& real, RECT* out) {
-    wchar_t buf[1024];
-    const DWORD n = GetEnvironmentVariableW(L"WINAPK_TEST_WORKAREA", buf, 1024);
-    if (n == 0 || n >= 1024) return false;
-    if (buf[0] != L'@') return parse_geometry(buf, real, out);
-    char text[128] = {};
-    HANDLE f = CreateFileW(buf + 1, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                           OPEN_EXISTING, 0, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return false;
-    DWORD got = 0;
-    ReadFile(f, text, sizeof(text) - 1, &got, nullptr);
-    CloseHandle(f);
-    wchar_t wtext[128] = {};
-    for (DWORD i = 0; i < got; ++i) wtext[i] = static_cast<unsigned char>(text[i]);
-    return parse_geometry(wtext, real, out);
-}
-
 RECT work_area(HMONITOR mon) {
     RECT wa{};
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     if (mon && GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
     else SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    RECT test;
-    if (test_work_area(wa, &test)) wa = test;
     return wa;
 }
 
@@ -351,15 +298,14 @@ SIZE outer_size(UINT dpi, float scale) {
     return {r.right - r.left, r.bottom - r.top};
 }
 
-bool resizable_enabled();
 bool follow_client(HWND hwnd);
 
 // Sizes the window for monitor `mon` at `dpi`, at `at` (its current place when
 // null); with `keep_inside`, moved as needed to lie wholly in the work area.
-// An app that follows the window keeps its surface: the client area is the
+// The app follows the window and keeps its surface: the client area is the
 // surface at the kept scale (pixel for pixel on the launch monitor), made
 // smaller when that does not fit the work area, and the app then follows the
-// smaller window. One that does not follow is shown smaller instead.
+// smaller window.
 void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_inside) {
     if (g_embed_parent) {  // the launcher sizes the window: the app follows the box it has
         g_fit_monitor = mon;
@@ -368,12 +314,10 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
     }
-    const bool follows = resizable_enabled();
     if (IsIconic(hwnd) || IsZoomed(hwnd)) {
-        // A maximized window the app follows has nothing to fit: the box is
-        // the screen, at this monitor's scale. Only one it does not follow
-        // takes the phone's shape on restore.
-        g_refit_pending = IsIconic(hwnd) || !follows;
+        // A maximized window has nothing to fit: the box is the screen, at
+        // this monitor's scale.
+        g_refit_pending = IsIconic(hwnd);
         if (IsZoomed(hwnd)) {
             g_fit_monitor = mon;
             g_shown_scale = keep_scale(dpi);
@@ -384,13 +328,10 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
     g_fit_monitor = mon;
     const RECT wa = work_area(mon);
     const float keep = keep_scale(dpi), fit = fit_scale(wa, dpi, g_phone_w, g_phone_h);
-    const float scale = follows ? keep : std::min(keep, fit);
-    SIZE client{client_px(g_phone_w, scale), client_px(g_phone_h, scale)};
-    if (follows) {
-        const double r = static_cast<double>(keep) / static_cast<double>(g_surface_scale) *
-                         (fit < keep ? static_cast<double>(fit) / static_cast<double>(keep) : 1.0);
-        client = SIZE{static_cast<LONG>(std::lround(g_surface.cx * r)), static_cast<LONG>(std::lround(g_surface.cy * r))};
-    }
+    const float scale = keep;
+    const double r = static_cast<double>(keep) / static_cast<double>(g_surface_scale) *
+                     (fit < keep ? static_cast<double>(fit) / static_cast<double>(keep) : 1.0);
+    const SIZE client{static_cast<LONG>(std::lround(g_surface.cx * r)), static_cast<LONG>(std::lround(g_surface.cy * r))};
     RECT outer{0, 0, client.cx, client.cy};
     adjust_for_dpi(&outer, dpi);
     const SIZE s{outer.right - outer.left, outer.bottom - outer.top};
@@ -421,7 +362,7 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
     // Too big for this work area: the app follows the smaller window. At a
     // scale of another density (another monitor's): the app gets it.
     const bool new_density = g_live_density && window_density_dpi(scale) != g_density_dpi;
-    if (follows && (fit < keep || new_density)) follow_client(hwnd);
+    if (fit < keep || new_density) follow_client(hwnd);
 }
 
 void refit(HWND hwnd) {
@@ -434,11 +375,10 @@ void refit(HWND hwnd) {
 // The mirroring stops at the frame: the app draws its own right-to-left
 // layout, so painting turns the DC's mirroring off, and mouse positions,
 // which Windows then measures from the right edge, are measured from the
-// left again. WINAPK_WINDOW_RTL=1 or =0 overrides the locale.
+// left again.
 bool g_rtl_window = false;
 
 bool rtl_user() {
-    if (const char* e = std::getenv("WINAPK_WINDOW_RTL")) return e[0] == '1';
     DWORD layout = 0;
     return GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_IREADINGLAYOUT | LOCALE_RETURN_NUMBER,
                            reinterpret_cast<LPWSTR>(&layout), sizeof(layout) / sizeof(wchar_t)) > 0 &&
@@ -455,36 +395,15 @@ int client_x(HWND hwnd, int x) {
 
 // ---- the box the app draws in ---------------------------------------------
 //
-// The app draws in a box inside the client area: the whole client area when
-// the app follows the window (below), else the largest box of the phone's
-// aspect, centred, with black around it (black is AOSP's letterbox
-// background): for an app that fixed the other orientation, as Android
-// letterboxes a fixed-orientation app on a large screen, and for the whole
-// phone with WINAPK_RESIZABLE=0, as upstream's letterbox container does
-// (cocoa_bridge.mm, MacApkAspectFitRect). Stretching the frame over the client
-// area instead squashed a portrait app across a wide screen. Mouse input and
-// child windows (WebView) use the same box. MACAPK_LETTERBOX=0 makes the box
-// the whole client area always.
-
-bool letterbox_enabled() {
-    static const bool on = [] {
-        const char* e = std::getenv("MACAPK_LETTERBOX");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
-
-bool resizable_enabled() {
-    static const bool on = [] {
-        const char* e = std::getenv("WINAPK_RESIZABLE");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
+// The app draws in a box inside the client area: the whole client area, as
+// the app follows the window (below), except for an app that fixed the other
+// orientation, which gets the largest box of the phone's aspect, centred, with
+// black around it (black is AOSP's letterbox background), as Android
+// letterboxes a fixed-orientation app on a large screen. Mouse input and child
+// windows (WebView) use the same box.
 
 RECT app_rect(const RECT& client) {
-    const AppBox b = window_app_box(client.right, client.bottom, g_phone_w, g_phone_h, g_orientation_lock,
-                                    resizable_enabled(), letterbox_enabled());
+    const AppBox b = window_app_box(client.right, client.bottom, g_phone_w, g_phone_h, g_orientation_lock);
     return RECT{b.x, b.y, b.x + b.w, b.y + b.h};
 }
 
@@ -509,8 +428,7 @@ RECT client_app_rect(HWND hwnd) {
 // follows every step of a drag, as it does on Android; until it has drawn at
 // a new size its last frame is shown unscaled (paint). Only the user's own
 // size counts: the window's fits (another monitor, the work area, the app
-// turning the phone) keep the app's size. WINAPK_RESIZABLE=0 keeps the
-// phone's size for good, letterboxed.
+// turning the phone) keep the app's size.
 //
 // The density follows the scale the window shows the phone at. A drag keeps
 // that scale (more or fewer dp, same density); maximizing (the phone turned,
@@ -539,7 +457,7 @@ ULONGLONG g_followed_at = 0;
 // The app follows the box the client area gives it. True when the size
 // changed.
 bool follow_client(HWND hwnd) {
-    if (!resizable_enabled() || g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return false;
+    if (g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return false;
     if (g_awaiting_maximize) {
         if (!IsZoomed(hwnd)) return false;
         g_awaiting_maximize = false;
@@ -552,7 +470,7 @@ bool follow_client(HWND hwnd) {
     // maximized window shows the phone turned, at the scale that takes. With
     // a pinned density (WINAPK_DENSITY) the surface is the box times the
     // ratio of the density to that scale, resampled to the box.
-    const bool turned = IsZoomed(hwnd) && !g_embed_parent && maximize_turns();
+    const bool turned = IsZoomed(hwnd) && !g_embed_parent;
     const float shown = turned ? zoomed_scale(bw, bh, g_shown_scale) : g_shown_scale;
     if (g_live_density) g_surface_scale = static_cast<float>(window_density_dpi(shown)) / 160.0f;
     const float per_dp = g_live_density ? g_surface_scale : shown;
@@ -1691,7 +1609,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // move): the app followed every step; the size it ends at is kept.
             RECT c{};
             GetClientRect(hwnd, &c);
-            if ((c.right != g_move_start.cx || c.bottom != g_move_start.cy) && resizable_enabled()) {
+            if (c.right != g_move_start.cx || c.bottom != g_move_start.cy) {
                 follow_client(hwnd);
                 std::fprintf(stderr, "[win.apk] window resized: the app's display is %dx%d dp, %dx%d px\n",
                              g_phone_w, g_phone_h, static_cast<int>(g_surface.cx), static_cast<int>(g_surface.cy));
@@ -1703,7 +1621,6 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         // The smallest window: kMinDp a side at the scale it shows the app at.
         case WM_GETMINMAXINFO: {
-            if (!resizable_enabled()) break;
             const int px = client_px(kMinDp, g_shown_scale);
             RECT r{0, 0, px, px};
             adjust_for_dpi(&r, window_dpi(hwnd));
@@ -1747,7 +1664,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 // SW_SHOWNORMAL would take a maximized window out of it. The
                 // first show of an app that was maximized when it last ran
                 // is maximized.
-                ShowWindow(hwnd, first && g_start_maximized && resizable_enabled() ? SW_SHOWMAXIMIZED
+                ShowWindow(hwnd, first && g_start_maximized ? SW_SHOWMAXIMIZED
                                  : IsZoomed(hwnd) ? SW_SHOW : SW_SHOWNORMAL);
                 SetForegroundWindow(hwnd);
             } else if (!IsWindowVisible(hwnd)) {
@@ -1775,11 +1692,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case kMsgResize:
             // The app turned the phone or set its size. A maximized window
-            // that the app follows stays maximized: the box takes the new
-            // shape (a portrait column becomes the full width for landscape)
-            // and the app follows it. Otherwise the window takes the phone's
-            // shape.
-            if (resizable_enabled() && IsZoomed(hwnd)) {
+            // stays maximized: the box takes the new shape (a portrait column
+            // becomes the full width for landscape) and the app follows it.
+            // Otherwise the window takes the phone's shape.
+            if (IsZoomed(hwnd)) {
                 follow_client(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
             } else {
@@ -1860,7 +1776,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 static bool was_maximized = false;
                 if (follow_client(hwnd) && !g_in_size_move && wp == SIZE_RESTORED) remember_size();
                 const bool maximized = wp == SIZE_MAXIMIZED;
-                if (maximized != was_maximized && !g_embed_parent && resizable_enabled() && g_normal_w > 0) {
+                if (maximized != was_maximized && !g_embed_parent && g_normal_w > 0) {
                     was_maximized = maximized;
                     g_input->remember_maximized(maximized, g_normal_w, g_normal_h);
                 }
@@ -1985,7 +1901,7 @@ float window_plan(int phone_w, int phone_h) {
     const float natural = static_cast<float>(g_plan.dpi) / 96.0f;
     g_plan.scale = parent ? natural
                           : std::min(natural, fit_scale(work_area(g_plan.monitor), g_plan.dpi, phone_w, phone_h));
-    if (!parent && g_start_maximized && maximize_turns() && resizable_enabled()) {
+    if (!parent && g_start_maximized) {
         // The window opens maximized, showing the phone turned: the scale at
         // which the phone's short side is the height of a maximized window's
         // client area (the work area less the title bar), so the app's density
@@ -2009,12 +1925,12 @@ void window_set_start_maximized(bool maximized) { g_start_maximized = maximized;
 
 int window_density_dpi(float scale) { return window_density_for(scale); }
 
-AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool resizable, bool letterbox) {
+AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock) {
     AppBox whole{0, 0, std::max(cw, 0), std::max(ch, 0)};
-    if (!letterbox || cw <= 0 || ch <= 0 || phone_w <= 0 || phone_h <= 0) return whole;
-    // An app that follows the window gets all of it, unless it fixed the
+    if (cw <= 0 || ch <= 0 || phone_w <= 0 || phone_h <= 0) return whole;
+    // The app follows the window and gets all of it, unless it fixed the
     // other orientation.
-    if (resizable && !((lock == 1 && cw > ch) || (lock == 2 && ch > cw))) return whole;
+    if (!((lock == 1 && cw > ch) || (lock == 2 && ch > cw))) return whole;
     // The largest box of the phone's aspect: the client's full width, or its
     // full height when that is the tighter side.
     int w = cw, h = MulDiv(cw, phone_h, phone_w);
@@ -2022,9 +1938,6 @@ AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool r
         h = ch;
         w = MulDiv(ch, phone_w, phone_h);
     }
-    // A fitted window has the phone's aspect up to rounding; bars a pixel or
-    // two wide would only show as a dark edge.
-    if (!resizable && cw - w <= 2 && ch - h <= 2) return whole;
     return AppBox{(cw - w) / 2, (ch - h) / 2, w, h};
 }
 

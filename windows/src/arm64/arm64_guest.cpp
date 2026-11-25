@@ -319,16 +319,7 @@ struct ThreadState {
     }
 };
 
-// WINAPK_ARM64_ENGINE=interp, =jit or =aot, for comparing the engines on an app.
-Engine initial_engine() {
-    char buf[16];
-    const DWORD n = GetEnvironmentVariableA("WINAPK_ARM64_ENGINE", buf, sizeof buf);
-    if (n > 0 && n < sizeof buf && std::strcmp(buf, "interp") == 0) return Engine::kInterpreter;
-    if (n > 0 && n < sizeof buf && std::strcmp(buf, "jit") == 0 && jit_built()) return Engine::kJit;
-    return Engine::kAot;
-}
-
-std::atomic<Engine> g_engine{initial_engine()};
+std::atomic<Engine> g_engine{Engine::kAot};
 
 // Runs ts.cpu from its pc until it returns to its stop_pc.
 void execute(ThreadState& ts) {

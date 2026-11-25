@@ -54,7 +54,7 @@ std::string aosp_gfx_locale();
 //                                    (-Dwinapk.aosp.res.framework), the only platform table shipped
 // They run with AOSP's graphics only (AOSP's Resources inflates AOSP's drawables). With those off,
 // or a file missing, this logs that an app cannot start (a broken stage) and adds nothing. Pure
-// Java: nothing to load here. WINAPK_AOSP_RES, the switch while they were new, is ignored.
+// Java: nothing to load here.
 struct AospResFiles {
     std::filesystem::path jar, framework;
 };
@@ -67,7 +67,7 @@ const AospResFiles* aosp_res_files();
 // windows/scripts/build_aosp_views.sh stages lib\aosp-views.jar (AOSP 14's android.view,
 // android.widget, com.android.internal.{view,widget,policy} + windows/java/aosp_views: the
 // ViewHost, the in-process window manager), put first on the class path, before the resources'.
-// They run with AOSP's resources only (and so with its graphics). WINAPK_AOSP_VIEWS is ignored.
+// They run with AOSP's resources only (and so with its graphics).
 // Decides, once, after aosp_res_prepare, for the same JVMs; logs one line.
 bool aosp_views_prepare(const std::filesystem::path& lib);
 // The jar, once aosp_views_prepare said yes; null otherwise.

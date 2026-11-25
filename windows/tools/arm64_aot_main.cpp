@@ -194,9 +194,7 @@ bool read_image(const char* path, Image* img, std::string* error) {
             if (s.size > size) size = s.size;
         }
     }
-    // WINAPK_AOT_EH_FRAME=0 leaves them out, for comparing.
-    if (const char* off = std::getenv("WINAPK_AOT_EH_FRAME"); !off || std::strcmp(off, "0") != 0)
-        img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
+    img->unwind_starts = eh_frame_starts(*img, eh_frame_hdr);
     for (const uint64_t va : img->unwind_starts) img->symbols.emplace(va, 0);
     return true;
 }
@@ -290,8 +288,8 @@ constexpr size_t kMaxInsns = 100000;
 // guest registers in stack slots runs about 11x slower than native, slower
 // than the JIT (3-6x; docs/research/aot-measurements.md). So the JIT runs
 // them: the few functions above this size cost most of a library's compile
-// time and memory and gave nothing back. WINAPK_AOT_MAX_INSNS overrides it.
-size_t g_max_insns = 4000;
+// time and memory and gave nothing back.
+constexpr size_t g_max_insns = 4000;
 
 // Follows the branches of the function at f->entry. BL targets go to `calls`.
 bool discover(const Image& img, const std::set<uint64_t>& entries, Function* f, std::set<uint64_t>* calls) {
@@ -2271,7 +2269,6 @@ int main(int argc, char** argv) {
             return 2;
         }
     }
-    if (const char* t = std::getenv("WINAPK_AOT_MAX_INSNS")) g_max_insns = std::strtoull(t, nullptr, 10);
     Image img;
     std::string error;
     if (!read_image(argv[1], &img, &error)) {

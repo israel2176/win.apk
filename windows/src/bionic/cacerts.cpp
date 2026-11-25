@@ -29,8 +29,6 @@
 // root added to or removed from Windows yields a new one on the next launch.
 // It is written under a temporary name and renamed into place, so a
 // concurrent app never sees half of it, and older sets are removed.
-//
-// WINAPK_SYSTEM_CACERTS=0: the paths stay absent.
 
 #include "bionic_internal.h"
 
@@ -385,8 +383,7 @@ std::wstring android_cacerts_dir(const std::wstring& android_root) {
     static std::once_flag once;
     static std::wstring dir;
     std::call_once(once, [&] {
-        const char* e = std::getenv("WINAPK_SYSTEM_CACERTS");
-        if ((e && e[0] == '0') || android_root.empty()) return;
+        if (android_root.empty()) return;
         dir = build_store(android_root);
     });
     return dir;

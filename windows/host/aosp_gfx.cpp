@@ -75,12 +75,6 @@ bool g_res_on = false;
 
 bool aosp_res_prepare(const fs::path& lib, const fs::path& bin) {
     g_res_on = false;
-    // The switch is gone (aosp_gfx.h): say so to whoever still sets it, once.
-    if (GetEnvironmentVariableW(L"WINAPK_AOSP_RES", nullptr, 0) > 0 ||
-        GetEnvironmentVariableW(L"WINAPK_AOSP_VIEWS", nullptr, 0) > 0) {
-        std::fprintf(stderr, "[win.apk] WINAPK_AOSP_RES and WINAPK_AOSP_VIEWS are ignored: AOSP's resources and views "
-                             "are the only ones\n");
-    }
     if (!g_on) {
         std::fprintf(stderr, "[win.apk] AOSP resources: off, they need AOSP's graphics: an app cannot start "
                              "without them\n");
