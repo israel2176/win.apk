@@ -238,9 +238,11 @@ public final class SpecialAccessStore {
         return s;
     }
 
-    private static Snapshot build() {
+    private static Snapshot build() { return build(selfIdentity()); }
+
+    /** The store's verified entry for the install `self` ({dirName, package, installedAt}) names. */
+    private static Snapshot build(String[] self) {
         java.util.Map<String, Integer> none = java.util.Collections.emptyMap();
-        String[] self = selfIdentity();
         if (self == null) {
             return new Snapshot(null, null, null, none,
                     "no registry row owns android root " + SharedStorage.androidRoot()
@@ -442,11 +444,18 @@ public final class SpecialAccessStore {
      *  this process is running: a row for some other app that happens to share
      *  the root is not us. dirName is only for the logs; the grant is keyed by
      *  the other two (storeKey). */
-    static String[] selfIdentity() {
+    static String[] selfIdentity() { return identityOf(runningPackage()); }
+
+    /** Win.apk's system broker: the registry identity of an installed package, the row the launcher
+     *  keeps for it (one per package), or null. */
+    static String[] identityFor(String pkg) {
+        return windowsHost() && pkg != null ? identityOf(pkg) : null;
+    }
+
+    private static String[] identityOf(String running) {
         File reg = registryFile();
         if (!reg.isFile()) return null;
         String root = normalizeDir(SharedStorage.androidRoot());
-        String running = runningPackage();
         // Win.apk: every app shares one android root and the registry keeps one
         // row per package (the launcher's write_registry), so the row is the
         // running package's; without a known package there is no identity.
@@ -1453,6 +1462,36 @@ public final class SpecialAccessStore {
     public static Boolean holds(String perm) {
         Boolean s = storagePermissionGranted(perm);
         return s != null ? s : trackedPermissionGranted(perm);
+    }
+
+    /** Win.apk's system broker: snapshots of other packages' entries, each rebuilt when a file changes. */
+    private static final java.util.Map<String, Object[]> sOthers = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether the user granted `perm`, a dangerous permission `m` (package `pkg`) requests: the
+     *  checkPermission answer that app's own process gives (GroupModel over its verified entry), asked
+     *  by the system broker when another app's component requires the permission. */
+    public static boolean runtimeGrantedFor(String pkg, Manifest m, String perm) {
+        if (pkg == null || m == null || perm == null) return false;
+        long[] key = statKey();
+        Object[] c = sOthers.get(pkg);
+        Snapshot snap;
+        if (c != null && java.util.Arrays.equals((long[]) c[0], key)) {
+            snap = (Snapshot) c[1];
+        } else {
+            String[] id = identityFor(pkg);
+            snap = id == null ? new Snapshot(null, pkg, null, java.util.Collections.<String, Integer>emptyMap(),
+                    pkg + ": no registry row") : build(id);
+            sOthers.put(pkg, new Object[] { key, snap });
+        }
+        java.util.List<String> declared = new java.util.ArrayList<>();
+        for (Manifest.UsesPermissionEntry e : m.usesPermissions) if (e.name != null) declared.add(e.name);
+        if (isStoragePermission(perm) && !RuntimePermissionGroups.isTracked(perm)) {
+            return declared.contains(perm) && (m.targetSdk > 0 && m.targetSdk < 23 || tokGranted(snap.perms.get(perm)));
+        }
+        int level;
+        try { level = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { level = 29; }
+        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        return new GroupModel(level, m.targetSdk, declared, snap.perms, resolved).granted(perm);
     }
 
     /** The stored token for `perm` (for logs and the handler's revoke check). */
