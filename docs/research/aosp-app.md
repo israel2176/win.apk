@@ -1,16 +1,15 @@
 # AOSP's app layer in Win.apk: plan and first step
 
-Status: steps A0 and A1 built ("A1 as built", after section 4), A2 built
-("A2 as built"), A3 begun (receivers, broadcasts and services reach Win.apk's
-dispatch through AOSP's `ContextImpl`): every
+Status: steps A0 to A4 built ("A1 as built" after section 4, "A2 as built",
+"A3 as built", "A4 as built"): every
 app's process starts on AOSP 14's own `ActivityThread` (`lib/aosp-app.jar`,
 staged by `stage_runtime.sh` and shipped), through the `AppHost` seam, with no
 switch (the owner's decision: a layer lands as the only path). A4 built ("A4
 as built"): Win.apk's own `Activity`, `Application`, `ActivityThread`,
 `Instrumentation`, `LoadedApk` and framework `Fragment` classes are deleted,
 the framework is compiled against AOSP's, `ActivityHost` keeps only the host's
-side, and `Boot`'s own start is gone. Left: A3's second part (services,
-receivers and providers run by `ActivityThread` itself).
+side, and `Boot`'s own start is gone. Services, broadcasts and the app's
+providers run through `ActivityThread` over the in-process activity manager.
 
 The model is `aosp-views.md` (resources and views). This layer comes after
 them and assumes AOSP's graphics, resources and views are all on, as they are
@@ -374,20 +373,69 @@ lifecycle test passes.
   `java.io.tmpdir` on the app's cache, then pairip's gate; before its
   `onCreate`: a SoLoader superpack's libraries exposed, the providers, the
   FCM channel when Win.apk's push backend is on, the broker attached.
-- **Receivers, broadcasts and services** (A3, the first part): AOSP's
-  `ContextImpl` hands `registerReceiver`, `sendBroadcast` and its ordered and
-  sticky kinds, `startService`, `bindService` and their overloads to Win.apk's
-  `Context` (its receiver registry, the broker's broadcasts, `ServiceRegistry`),
-  as it already did for system services and permission checks. The lifecycle
-  test checks a receiver of the application's context hearing an activity's
-  broadcast. The system broker (`--system`) and a service host
-  (`MACAPK_SERVICE_HOST`, no activity) start on the same path.
+- **Receivers, broadcasts and services** at first went to Win.apk's own
+  dispatch through `ContextImpl` (A3's first part); "A3 as built" below has
+  them on `ActivityThread`.
 
 Checked under Wine: the ten smoke apps draw, Open Sudoku resized to landscape
 is relaunched and redrawn, `--install-only`, `--gms`, `--verify-apk` and
 `--system` answer as before. Not yet: `ActivityThread`'s own services,
 receivers and providers over the in-process activity manager (A3's second
 part), and the deletions (A4).
+
+## A3 as built
+
+- **Services** (`com.winapk.aospapp.ActiveServices`, as ActivityManagerService's
+  ActiveServices): `Service` and `IntentService` are AOSP's; `ContextImpl`'s
+  `startService`, `stopService`, `bindService` and their kin reach the
+  in-process activity manager, which keeps a record per component (started or
+  not, its bindings per intent and the connections on each) and runs the
+  app's service through `ActivityThread`'s create, args, bind, unbind and
+  stop; `Service.stopSelf` is `stopServiceToken` (only the newest start
+  stops it). A create goes to the main queue running `handleCreateService`,
+  in order with the client transactions after it. Another app's service is
+  the system broker's (`SystemClient`), as before. The binds the host waits
+  for (one the broker makes into this app for another, a job's, an account
+  authenticator's, the measurement service) are `AppHost.bindServiceNow` and
+  `jobBind`: `handleCreateService` and `handleBindService` on the main thread,
+  waited for from another. Win.apk's `Service`, `IntentService` and
+  `ServiceRegistry` are deleted.
+- **Broadcasts** (`ActiveBroadcasts`, as the broadcast queue):
+  `BroadcastReceiver` is AOSP's; registered receivers through their
+  `LoadedApk.ReceiverDispatcher` (`scheduleRegisteredReceiver`), the
+  manifest's through `ActivityThread.handleReceiver` (`scheduleReceiver`),
+  stickies, ordered broadcasts one receiver at a time, the result carried by
+  `finishReceiver` to the result receiver. Other apps hear a broadcast through
+  the broker; one from another app (`AppHost.deliverBroadcast`) reaches
+  exported receivers only. The battery sticky and the minute's `TIME_TICK`,
+  which a device's system_server sends, are sent from there. Win.apk's
+  receiver registry and `BroadcastReceiver` are deleted.
+- **Providers**: `Boot.appProviders` lists the app's providers for the
+  process (enabled, with authorities, of this process, in initOrder),
+  `bindApplication` carries them and `ActivityThread.installContentProviders`
+  creates, attaches and publishes them before `Application.onCreate`; the
+  activity manager registers what is published in `ContentProviderRegistry`
+  (which Win.apk's `ContentResolver` reads) and answers `getContentProvider`.
+  `ContentProvider` stays Win.apk's, with AOSP's `Transport` shape
+  (`getIContentProvider` over `ContentProviderNative`): its in-process checks
+  also stand in for providers of another package that live in the app's
+  process (the system's media, documents, settings, installed by `Boot`),
+  which AOSP's `Transport`, deciding by the calling uid, would not check in
+  one process. `attachInfo` runs `onCreate`, as AOSP's does.
+- **Contexts**: Win.apk's `ContextWrapper` hands starts, services, binds,
+  broadcasts and receivers to its base context as AOSP's does (an
+  `Application`'s `startActivity` had nowhere to go after A4).
+
+The lifecycle test checks a started service that stops itself, a bound one
+through connect, unbind and destroy, a receiver of the application's
+context, a manifest receiver's ordered broadcast and its result, and a
+manifest provider created before `Application.onCreate` and queried through
+the app's `ContentResolver`. Checked under Wine: the ten smoke apps draw with
+the error lines of before, the service host step, `--install-only`, `--gms`,
+`--verify-apk`, `--system`, and `BinderTransportTest` in
+`winapk-binder-test.exe`. Not checked: an app attached to a running broker
+under the harness (the broker answers "not" an app the launcher did not
+register).
 
 ## A4 as built
 

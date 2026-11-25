@@ -1676,6 +1676,30 @@ every such change is listed here:
   `StatusBarDriver.java` holds the navigation bar colour rule it took from
   `Activity.java`. Entries below that name these files describe what Win.apk
   changed in them before (docs/research/aosp-app.md).
+- Win.apk's services and receivers, deleted (docs/research/aosp-app.md, "A3
+  as built"): `android/app/Service.java`, `IntentService.java`,
+  `ServiceRegistry.java` and `android/content/BroadcastReceiver.java` (AOSP's,
+  from `lib/aosp-app.jar`), with `Context.java`'s receiver registry, stickies,
+  broadcast dispatch and service binding (its service and broadcast methods
+  hand over to the application's context; `ContextWrapper.java` hands starts,
+  services, binds, broadcasts and receivers to its base context, as AOSP's);
+  the activity manager's `ActiveServices` and `ActiveBroadcasts` run them
+  through `ActivityThread`. `android/content/ContentProvider.java`:
+  `getIContentProvider` (a `Transport` over AOSP's `ContentProviderNative`,
+  with its own checks), `coerceToLocalContentProvider`,
+  `getAuthorityWithoutUserId`, and `attachInfo` runs `onCreate` as AOSP's
+  does. `com/macapk/loader/Boot.java`: `appProviders` lists the app's
+  providers for `bindApplication` (`installAutoInitProviders` is gone);
+  `SystemClient.java` starts, stops and binds a service the broker asks for
+  through the activity manager (`AppHost.bindServiceNow`) and hands it a
+  broadcast from another app (`AppHost.deliverBroadcast`);
+  `android/app/job/MacApkJobScheduler.java` binds a job's service through
+  `AppHost.jobBind`; `android/accounts/AccountManager.java` and
+  `com/macapk/gms/MeasurementBrokerService.java` bind through
+  `AppHost.bindServiceNow`; `android/net/VpnService.java`,
+  `android/speech/RecognitionService.java` and
+  `android/speech/tts/TextToSpeechService.java` answer `onBind` with null
+  where they called the base one (AOSP's is abstract).
 
 - Win.apk's Java2D graphics, deleted: upstream's `android.graphics` and the
   `android.text` classes AOSP's jar replaces (Canvas, Paint, Bitmap,
