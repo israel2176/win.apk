@@ -805,7 +805,39 @@ the user installed run as apps, as upstream runs them on the Mac:
   `FILE_FLAG_FIRST_PIPE_INSTANCE`, connect with `SECURITY_IDENTIFICATION`, and
   each end checks that the other is the same user's process of the same
   executable (the broker also takes the launcher's package changes, above).
-  `android:exported` is enforced as upstream does.
+- **What a caller may reach** (`BrokerPermissions`, as AOSP 14's
+  system_server decides it, against the package the caller's pid is). A
+  service, provider or receiver of another app must be exported, and its
+  `android:permission` held (`checkComponentPermission`; the same app, or a
+  package sharing its uid, always passes). A package holds a permission it
+  requests when it is normal; dangerous, when the user granted it in the
+  signed app-ops store (or it targets API 22 or lower); signature, when its
+  verified signer (or its rotation lineage) is the declaring package's
+  (`ApkVerification`); `signature|privileged` and its kin also when it is one
+  of Google's three apps verified as Google's. The platform's own permissions
+  and their levels come from `bin\aosp\framework-res-34.apk`'s manifest; no
+  app has the platform key. A permission nobody declares is nobody's. A
+  provider opens only with its read or write permission, a path-permission's,
+  or a URI grant under its authority (else AOSP's `SecurityException`); then
+  every query (read), insert, update, delete (write) and `openFile` (by its
+  mode) is checked by `RemoteProviders.Transport` in the provider's process,
+  which asks the broker (`CHECK_PROVIDER`, the caller by the pid the OS gives
+  that pipe): its permission, path-permissions, URI grants. URI grants
+  (`FLAG_GRANT_READ/WRITE_URI_PERMISSION`, prefix grants, an intent's data
+  and ClipData) are made as the broker hands an intent to another app's
+  service or an explicit broadcast, and by `Context.grantUriPermission`, when
+  the provider allows granting and the granter has access; they last while
+  the broker runs. A broadcast's required permissions (`sendBroadcast`'s
+  `receiverPermission`) leave out a package that lacks them; a receiver's own
+  permission, manifest or registered, is checked in its process against the
+  sender the broker names (`CHECK_PERMISSION`). An app's own check of a
+  caller (`checkCallingPermission`, `Context.checkPermission` for another
+  process) is the broker's answer for that process too. Failures are what Android
+  gives: `SecurityException` with AOSP's message for a bind, start, stop or
+  provider, a broadcast skipped with a `Permission Denial` line in
+  `logs\system.log`. Google Play services' `com.google.android.c2dm.permission.SEND`
+  (signature) is held by Google's apps because their signers match, which
+  is how FCM messages reach an app's receiver.
 - **Google's packages.** `com.google.android.gms`, `.gsf` and
   `com.android.vending` get the system-app treatment (`FLAG_SYSTEM`, started
   at the broker's boot) only when their APKs' signature verifies and Google's
@@ -849,7 +881,8 @@ the user installed run as apps, as upstream runs them on the Mac:
   from passing itself off as another app; they are not a sandbox.
 
 `windows/test/binder_test.cpp` with `test/java/com/macapk/loader/BinderTransportTest.java`
-tests the transport and the broker's checks across three processes, and the
+tests the transport and the broker's checks across three processes
+(`BrokerPermissionsTest.java` the permission rules on APKs it signs), and the
 package changes with a copy of the test program as `Win.apk.exe` above a
 `bin\` copy: a package added while the broker runs, replaced, removed, and
 the change refused from anyone but the launcher.
