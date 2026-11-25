@@ -329,15 +329,22 @@ final class ActiveBroadcasts {
             int level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
             int status = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_STATUS);
             boolean charging = bm.isCharging();
+            // A desktop PC has no battery: reported as Android's battery-less devices (a TV box)
+            // report it, not present, health and technology unknown, always on mains; it was
+            // a made-up healthy Li-ion battery. BatteryManager says 100 % for the level.
+            Boolean has = com.macapk.loader.HostPower.hasBattery();
+            boolean present = has == null || has;
             if (level < 0) level = 100;
             i.putExtra(android.os.BatteryManager.EXTRA_LEVEL, level);
             i.putExtra(android.os.BatteryManager.EXTRA_SCALE, 100);
             i.putExtra(android.os.BatteryManager.EXTRA_STATUS, status);
-            i.putExtra(android.os.BatteryManager.EXTRA_PRESENT, true);
-            i.putExtra(android.os.BatteryManager.EXTRA_HEALTH, 2 /* BATTERY_HEALTH_GOOD */);
+            i.putExtra(android.os.BatteryManager.EXTRA_PRESENT, present);
+            i.putExtra(android.os.BatteryManager.EXTRA_HEALTH,
+                    present ? 2 /* BATTERY_HEALTH_GOOD */ : 1 /* BATTERY_HEALTH_UNKNOWN */);
             i.putExtra(android.os.BatteryManager.EXTRA_PLUGGED, charging ? 1 /* BATTERY_PLUGGED_AC */ : 0);
-            i.putExtra(android.os.BatteryManager.EXTRA_BATTERY_LOW, level <= 15);
-            i.putExtra(android.os.BatteryManager.EXTRA_TECHNOLOGY, "Li-ion");
+            // BatteryService's low level is config_lowBatteryWarningLevel; 15 % kept from before (not checked).
+            i.putExtra(android.os.BatteryManager.EXTRA_BATTERY_LOW, present && level <= 15);
+            i.putExtra(android.os.BatteryManager.EXTRA_TECHNOLOGY, present ? "Li-ion" : "");
         } catch (RuntimeException e) {
             // no battery service: the intent with no extras, as an unknown battery
         }
