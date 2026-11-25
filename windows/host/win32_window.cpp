@@ -527,7 +527,10 @@ RECT client_app_rect(HWND hwnd) {
 // pins the density for good: the frames are then resampled to the window
 // instead.
 
-constexpr int kMinDp = 240;  // the smallest display the window gives an app
+// The smallest display the window gives an app, a side: Android's smallest resizable task
+// (default_minimal_size_resizable_task, 220dp: what a freeform window is held to when the
+// activity's <layout> names no minWidth / minHeight; Win.apk does not read those yet).
+constexpr int kMinDp = 220;
 
 // When the user last resized the window, for the log line that times the
 // app's re-layout (paint); 0 when the app has drawn at the current size.
