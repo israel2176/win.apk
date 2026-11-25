@@ -2114,6 +2114,8 @@ DWORD WINAPI boot_thread(void* param) {
     HMODULE jvm = load_jvm(o.jdk);
     if (!jvm) return 1;
     std::vector<std::string> opts = jvm_options(*b);
+    // An install on a Win.apk with no framework archive yet starts its dump now, in the background (cds.h).
+    if (o.install_only) winapk::host::cds_dump_at_install();
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
     if (!create_vm(jvm, opts, &vm, &env)) return 1;
@@ -2583,11 +2585,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         convert.join();
         const int code = t && b.result == 0 && converted ? 0 : 1;
-        // The framework archive, when this Win.apk has none yet: here, after the conversion (one JVM
-        // child at a time), and not 10 s into the app's first start (cds.h).
-        if (code == 0) winapk::host::cds_after_install();
         // Not a return: the JVM is still up, and framework threads the icon render started must not keep
-        // the process alive.
+        // the process alive. A framework archive's dump this install started (cds_dump_at_install) is a
+        // process of its own and goes on.
         std::fflush(stderr);
         TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     }

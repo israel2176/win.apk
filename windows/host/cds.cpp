@@ -155,6 +155,30 @@ void spawn_dump() {
     std::fflush(stderr);
 }
 
+// How long an app start waits for a dump another process is making (an install's,
+// cds_dump_at_install) before it goes on without the archive. The dump took ~3.5 s on a 4-core
+// runner and 15 s under Wine; a start that maps the archive is worth the wait, one that waits
+// for a dump stuck behind a busy machine is not.
+constexpr DWORD kDumpWaitMs = 30000;
+
+// When another process is dumping the archive (it holds Local\WinApk-cds-dump, run_dump), waits
+// for it to finish, at most kDumpWaitMs. True when it finished in time.
+bool wait_for_running_dump() {
+    HANDLE one = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, L"Local\\WinApk-cds-dump");
+    if (!one) return false;  // no dump running
+    const double t0 = startup_seconds();
+    std::fprintf(stderr, "[win.apk] cds: the framework archive is being made (by an install); this start waits "
+                         "for it\n");
+    std::fflush(stderr);
+    const DWORD w = WaitForSingleObject(one, kDumpWaitMs);
+    const bool done = w == WAIT_OBJECT_0 || w == WAIT_ABANDONED;
+    if (done) ReleaseMutex(one);
+    CloseHandle(one);
+    std::fprintf(stderr, "[win.apk] cds: %s after %.1f s\n",
+                 done ? "the dump ended" : "still dumping; going on without it", startup_seconds() - t0);
+    return done;
+}
+
 DWORD WINAPI dump_later(void*) {
     const std::wstring d = env(L"WINAPK_CDS_DUMP_DELAY_MS");
     Sleep(d.empty() ? 10000 : static_cast<DWORD>(std::wcstoul(d.c_str(), nullptr, 10)));
@@ -372,6 +396,9 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         g.shared = false;
         return;
     }
+    // An app's start while an install makes the archive: it is moments away, and mapping it beats
+    // both a start without it and a second dump of its own after the first frame.
+    if (!app.empty() && !fs::exists(g.jsa, ec)) wait_for_running_dump();
     if (fs::exists(g.jsa, ec)) {
         opts->push_back("-XX:SharedArchiveFile=" + utf8(g.jsa.wstring()));
         // Its first use checks the whole file (a CRC): a damaged file is refused
@@ -470,13 +497,14 @@ int cds_prepare() {
     return rc;
 }
 
-void cds_after_install() {
+void cds_dump_at_install() {
     std::error_code ec;
     if (!g.shared || fs::exists(g.jsa, ec) || read_count(g.fails) >= 2) return;
-    std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk yet: made now, at install, so that "
-                         "the app's first start maps it\n");
-    std::fflush(stderr);
-    cds_prepare();
+    std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk yet: made from the shipped class "
+                         "list beside this install, so that the app's first start maps it\n");
+    g.recorded.clear();  // nothing recorded: the shipped list alone
+    g.dump_owed = true;
+    spawn_dump();
 }
 
 int cds_dump_main(int argc, wchar_t** argv) {

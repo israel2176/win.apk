@@ -585,6 +585,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Converting the app's code. This happens once.", L"ממיר את קוד האפליקציה. זה קורה פעם אחת."},
         {L"Getting the app's name and icon…", L"קורא את שם האפליקציה והסמל שלה…"},
         {L"Getting the app ready. This happens once.", L"מכין את האפליקציה. זה קורה פעם אחת."},
+        {L"Getting Win.apk ready. This happens once.", L"מכין את Win.apk. זה קורה פעם אחת."},
         {L"Windows' location settings apply too.", L"גם הגדרות המיקום של Windows חלות."},
         {L"Windows' camera settings apply too.", L"גם הגדרות המצלמה של Windows חלות."},
         {L"Windows' microphone settings apply too.", L"גם הגדרות המיקרופון של Windows חלות."},
@@ -9353,6 +9354,10 @@ const wchar_t* run_phase(const fs::path& log) {
         tail.find("host natives:") == std::string::npos) {
         return L"Getting the app ready. This happens once.";
     }
+    // The first start after a new Win.apk's first install waits for the framework archive that install
+    // started (host/cds.cpp, wait_for_running_dump).
+    if (tail.find("this start waits for it") != std::string::npos && tail.find("host natives:") == std::string::npos)
+        return L"Getting Win.apk ready. This happens once.";
     return nullptr;
 }
 
