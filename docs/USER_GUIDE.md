@@ -101,6 +101,36 @@ it with no window (started in the background for another app, with Google
 services on, and Google's own apps) is stopped for the update, as Android
 stops an app it updates.
 
+### Apps that install apps
+
+An app store (F-Droid's app, Droid-ify, Aurora Store, any app that installs
+other apps) installs into the library through Win.apk, the way Android's
+package installer does it:
+
+1. The first time, if the store is not allowed to install apps, Win.apk says
+   so, as Android does: **For your security, your PC currently isn't allowed
+   to install unknown apps from this source.** **Settings** opens the store's
+   **Install unknown apps** switch ("Allow ... to install other apps?");
+   **Allow** goes on to the install, **Cancel** or **Don't allow** stops it.
+   The answer is kept (see [Permissions](#permissions)), so this comes once
+   per store, and an update of the store keeps it.
+2. **Do you want to install this app?** (or **Do you want to update this
+   app?** when the library has the app): **Install** / **Update**, or
+   **Cancel**.
+3. The install window shows the install as for a file you opened: the app's
+   icon and name, a moving bar, its steps, and **Cancel** until it is too late
+   to undo.
+4. At the end, **App installed.** (or **App updated.**) with **Open**, which
+   starts the app (apps with no launcher icon have none), and **Done**; or
+   **App not installed.** with the reason, **Show log**, **Copy details** and
+   **Report a problem**.
+
+The store learns the outcome when the install ends, as on a phone, not when
+you close the window: it can show the app as installed while the window still
+says so. A cancelled install is reported to the store as cancelled. The Play
+Store (Google's own, with Google services on) installs and updates with
+nothing shown, as it does on a phone.
+
 ### Native code and CPU architectures
 
 Android phones use ARM processors; a PC uses x86-64. An app's native code
