@@ -58,7 +58,7 @@ def exported(name, seen=None):
 # Where an AOSP tree path lives in the fetched sources.
 TREE_MAP = [('external/skia', 'skia14'), ('frameworks/base/libs/hwui', 'hwui'), ('frameworks/base/core/jni', 'core_jni'),
             ('frameworks/base/libs/androidfw', 'androidfw'), ('frameworks/native/libs', 'native_libs'),
-            ('frameworks/native/include', 'native_include'), ('external/', ''), ('system/core', 'system_core'),
+            ('frameworks/native/include', 'native_include'), ('frameworks/native/opengl/libs', 'native_opengl'), ('external/', ''), ('system/core', 'system_core'),
             ('frameworks/minikin', 'minikin'), ('system/incremental_delivery', 'incremental_delivery')]
 
 
@@ -81,7 +81,7 @@ def expand(srcs, excl):
     ex = set()
     for e in excl:
         ex |= set(glob.glob(e, recursive=True)) if any(c in e for c in '*?') else {e}
-    return [s for s in out if s not in ex and s.endswith(('.c', '.cc', '.cpp', '.S', '.cxx'))]
+    return [s for s in out if s not in ex and s.endswith(('.c', '.cc', '.cpp', '.S', '.cxx', '.asm'))]
 
 
 lines = []
@@ -126,7 +126,12 @@ for name in WANT:
     lines.append(')')
     q = lambda xs: ' '.join('"%s%s"' % ('SHELL:' if ' ' in x.strip() else '', x.strip().replace('"', '\\"')) for x in xs)
     if cflags:
-        lines.append('target_compile_options(%s PRIVATE %s)' % (lib, q(cflags)))
+        # C and C++ only: a module's NASM sources take the flags CMakeLists.txt sets for NASM.
+        lines.append('target_compile_options(%s PRIVATE $<$<COMPILE_LANGUAGE:C,CXX>:%s>)' %
+                     (lib, ';'.join(c.strip().replace('"', '\\"') for c in cflags if ' ' not in c.strip())))
+        spaced = [c for c in cflags if ' ' in c.strip()]
+        if spaced:
+            lines.append('target_compile_options(%s PRIVATE %s)' % (lib, q(spaced)))
     if f.get('cppflags'):
         lines.append('target_compile_options(%s PRIVATE $<$<COMPILE_LANGUAGE:CXX>:%s>)' %
                      (lib, ';'.join(c.replace('"', '\\"') for c in f['cppflags'])))

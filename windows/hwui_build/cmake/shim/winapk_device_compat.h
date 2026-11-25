@@ -79,6 +79,13 @@ static inline int pthread_gettid_np(pthread_t t) {
     return pthread_equal(t, pthread_self()) ? (int)GetCurrentThreadId() : -1;
 }
 static inline int gettid(void) { return (int)GetCurrentThreadId(); }
+// The shader cache's file: POSIX modes mean nothing to NTFS here; mkdir takes no mode.
+#include <direct.h>
+#include <sys/stat.h>
+static inline int fchmod(int, int) { return 0; }
+#ifdef __cplusplus
+static inline int mkdir(const char* path, int) { return _mkdir(path); }
+#endif
 #include <sys/mman.h>
 
 #ifdef __cplusplus

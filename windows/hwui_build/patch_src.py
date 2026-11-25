@@ -29,6 +29,121 @@ EDITS = [
     ('hwui/renderthread/RenderThread.cpp',
      'bool RenderThread::threadLoop() {\n',
      'bool RenderThread::threadLoop() {\n    mTid = gettid();\n'),
+
+    # The window's EGL surface (hwui_glue/window_surface.h): on Android eglCreateWindowSurface
+    # takes the ANativeWindow and SurfaceFlinger composes its buffers. Here ANGLE's
+    # EGLNativeWindowType is an HWND, and every Android window is a layer of the one host window:
+    # HWUI draws each window into a pbuffer the size of its window, which the compositor (in the
+    # same EGL context, on the render thread) samples as a texture when the window posts a frame.
+    ('hwui/renderthread/EglManager.h',
+     '    Result<EGLSurface, EGLint> createSurface(EGLNativeWindowType window, ColorMode colorMode,\n',
+     '    Result<EGLSurface, EGLint> createSurface(ANativeWindow* window, ColorMode colorMode,\n'),
+    ('hwui/renderthread/EglManager.cpp',
+     'Result<EGLSurface, EGLint> EglManager::createSurface(EGLNativeWindowType window,\n',
+     'Result<EGLSurface, EGLint> EglManager::createSurface(ANativeWindow* window,\n'),
+    ('hwui/renderthread/EglManager.cpp',
+     '    EGLSurface surface = eglCreateWindowSurface(mEglDisplay, config, window, attribs);\n',
+     '    EGLSurface surface = winapk::hwui::createWindowSurface(mEglDisplay, config, window, attribs);\n'),
+    ('hwui/renderthread/EglManager.cpp',
+     '    mEglDisplay = eglGetDisplay(EGL_DEFAULT_DISPLAY);\n',
+     '    mEglDisplay = winapk::hwui::eglDisplay();\n'),
+    # Windows' surfaces are pbuffers the compositor binds as textures.
+    ('hwui/renderthread/EglManager.cpp',
+     '                        EGL_WINDOW_BIT | eglSwapBehavior,\n',
+     '                        EGL_WINDOW_BIT | EGL_PBUFFER_BIT | eglSwapBehavior,\n'
+     '                        EGL_BIND_TO_TEXTURE_RGBA,\n                        EGL_TRUE,\n', 4),
+    ('hwui/renderthread/EglManager.cpp',
+     '    if (!eglDestroySurface(mEglDisplay, surface)) {\n',
+     '    winapk::hwui::windowSurfaceDestroyed(surface);\n    if (!eglDestroySurface(mEglDisplay, surface)) {\n'),
+    ('hwui/renderthread/EglManager.cpp',
+     '#include "EglManager.h"\n',
+     '#include "EglManager.h"\n#include "window_surface.h"\n'),
+    # A window whose size changed gets a pbuffer of its new size before its next frame (on
+    # Android the next buffer dequeued has it).
+    ('hwui/pipeline/skia/SkiaOpenGLPipeline.cpp',
+     '        "drawRenderNode called on a context with no surface!");\n    return mEglManager.beginFrame(mEglSurface);\n',
+     '        "drawRenderNode called on a context with no surface!");\n'
+     '    if (winapk::hwui::windowResized(mNativeWindow.get(), mEglSurface)) setSurface(mNativeWindow.get(), mSwapBehavior);\n'
+     '    return mEglManager.beginFrame(mEglSurface);\n'),
+    # The window posted a frame: the compositor composes the host window.
+    ('hwui/pipeline/skia/SkiaOpenGLPipeline.cpp',
+     '    if (*requireSwap && (CC_UNLIKELY(!mEglManager.swapBuffers(frame, screenDirty)))) {\n        return false;\n    }\n',
+     '    if (*requireSwap && (CC_UNLIKELY(!mEglManager.swapBuffers(frame, screenDirty)))) {\n        return false;\n    }\n'
+     '    if (*requireSwap) {\n'
+     '        winapk::hwui::windowPosted(mNativeWindow.get(), mEglSurface,\n'
+     '                                   currentFrameInfo->get(FrameInfoIndex::IntendedVsync));\n'
+     '    }\n'),
+    ('hwui/pipeline/skia/SkiaOpenGLPipeline.cpp',
+     '#include "SkiaOpenGLPipeline.h"\n',
+     '#include "SkiaOpenGLPipeline.h"\n#include "window_surface.h"\n'),
+    # ANativeWindow_fromSurface is Win.apk's (hwui_glue), not libandroid's.
+    ('hwui/jni/android_graphics_HardwareRenderer.cpp',
+     '    void* handle_ = dlopen("libandroid.so", RTLD_NOW | RTLD_NODELETE);\n'
+     '    fromSurface = (ANW_fromSurface)dlsym(handle_, "ANativeWindow_fromSurface");\n',
+     '    fromSurface = &ANativeWindow_fromSurface;\n'),
+    ('hwui/jni/android_graphics_HardwareRenderer.cpp',
+     'ANW_fromSurface fromSurface;\n',
+     'ANW_fromSurface fromSurface;\nextern "C" ANativeWindow* ANativeWindow_fromSurface(JNIEnv* env, jobject surface);\n'),
+    # Hardware bitmaps: none (AImageReader never gives an image here, nor a Bitmap a buffer).
+    ('hwui/jni/android_graphics_HardwareRenderer.cpp',
+     '    sk_sp<Bitmap> bitmap = Bitmap::createFrom(buffer, cs);\n',
+     '    sk_sp<Bitmap> bitmap;\n    return nullptr;  // Win.apk: no hardware bitmaps\n'),
+    ('hwui/apex/android_bitmap.cpp',
+     '    AHardwareBuffer* buffer = bitmap->hardwareBuffer();\n',
+     '    AHardwareBuffer* buffer = nullptr;  // Win.apk: no hardware bitmaps\n    (void)bitmap;\n'),
+    ('hwui/apex/android_bitmap.cpp',
+     '    if (buffer) {\n        AHardwareBuffer_acquire(buffer);\n    }\n',
+     '    // (no buffer to acquire)\n'),
+    # HardwareBufferRenderer (API 34, rendering into an AHardwareBuffer): none here.
+    ('hwui/pipeline/skia/SkiaPipeline.cpp',
+     '        mBufferSurface = SkSurface::MakeFromAHardwareBuffer(\n'
+     '                mRenderThread.getGrContext(), mHardwareBuffer, kTopLeft_GrSurfaceOrigin,\n'
+     '                bufferColorSpace, nullptr, true);\n',
+     '        mBufferSurface = nullptr;\n'),
+    ('hwui/apex/jni_runtime.cpp',
+     '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
+     '            REG_JNI(register_android_graphics_pdf_PdfEditor),\n'
+     '            REG_JNI(register_android_graphics_pdf_PdfRenderer),\n',
+     '            // Win.apk: no PdfDocument, PdfEditor, PdfRenderer (libpdfium).\n'),
+    # The compositor (hwui_build/glue) posts to the render thread.
+    ('hwui/renderthread/RenderThread.h',
+     '    static bool hasInstance();\n    static RenderThread& getInstance();\n',
+     'public:\n    static bool hasInstance();\n    static RenderThread& getInstance();\nprivate:\n'),
+    # The Vulkan pipeline is not built (no Vulkan here; the GL pipeline is the one chosen).
+    ('hwui/renderthread/CanvasContext.cpp',
+     '                                     std::make_unique<skiapipeline::SkiaVulkanPipeline>(thread),\n',
+     '                                     std::make_unique<skiapipeline::SkiaOpenGLPipeline>(thread),'
+     '  // Win.apk: no Vulkan\n'),
+    ('hwui/renderthread/CanvasContext.cpp',
+     '            skiapipeline::SkiaVulkanPipeline::invokeFunctor(thread, functor);\n',
+     '            skiapipeline::SkiaOpenGLPipeline::invokeFunctor(thread, functor);  // Win.apk: no Vulkan\n'),
+    ('hwui/pipeline/skia/SkiaRecordingCanvas.cpp',
+     '        functorDrawable = mDisplayList->allocateDrawable<VkFunctorDrawable>(functor, asSkCanvas());\n',
+     '        functorDrawable = mDisplayList->allocateDrawable<GLFunctorDrawable>(functor, asSkCanvas());'
+     '  // Win.apk: no Vulkan\n'),
+    ('hwui/renderthread/RenderThread.cpp',
+     '            return skiapipeline::SkiaVulkanPipeline::allocateHardwareBitmap(*this, skBitmap);\n',
+     '            return nullptr;  // Win.apk: no Vulkan\n'),
+    # eglBeginFrame is Android libEGL's (frame timing hints); ANGLE has none.
+    ('hwui/renderthread/EglManager.cpp',
+     '    eglBeginFrame(mEglDisplay, surface);\n',
+     '    // (eglBeginFrame: Android libEGL\'s, not ANGLE\'s)\n'),
+    # Vulkan's queue ownership hand-off (the Vulkan pipeline's only; it is not built).
+    ('hwui/AutoBackendTextureRelease.cpp',
+     '    if (mBackendTexture.isValid()) {\n        // Passing in VK_IMAGE_LAYOUT_UNDEFINED means we keep the old layout.\n',
+     '    if ((false)) {\n        // Passing in VK_IMAGE_LAYOUT_UNDEFINED means we keep the old layout.\n'),
+    ('hwui/AutoBackendTextureRelease.cpp',
+     '        GrBackendSurfaceMutableState newState(VK_IMAGE_LAYOUT_UNDEFINED,\n'
+     '                                              VK_QUEUE_FAMILY_FOREIGN_EXT);\n',
+     '        GrBackendSurfaceMutableState newState;\n'),
+    # libutils' Looper on hwui_glue's emulated eventfd and epoll: sys/eventfd.h (its read, write
+    # and close) before anything that closes a descriptor (unique_fd).
+    ('system_core/libutils/Looper.cpp',
+     '#include <utils/Looper.h>\n',
+     '#include <sys/eventfd.h>\n#include <utils/Looper.h>\n'),
+    ('hwui/apex/jni_runtime.cpp',
+     '            REG_JNI(register_android_graphics_HardwareBufferRenderer),\n',
+     '            // Win.apk: no HardwareBufferRenderer (AHardwareBuffer).\n'),
 ]
 
 # HWUI says "has the render thread and the GPU pipeline" as __ANDROID__ (Layoutlib, its host build,
@@ -44,6 +159,8 @@ HOST_KEEP = {
     'jni/Gainmap.cpp', 'effects/GainmapRenderer.cpp', 'Tonemapper.cpp',  # libtonemap, Parcel
     'hwui/Bitmap.h', 'hwui/Bitmap.cpp',  # hardware bitmaps: AHardwareBuffer, gralloc
     'HardwareBitmapUploader.h',
+    'jni/Bitmap.cpp', 'jni/Region.cpp', 'jni/ScopedParcel.h', 'jni/ScopedParcel.cpp',  # Parcel: Win.apk's own
+    'apex/android_bitmap.cpp',       # AndroidBitmap_getHardwareBuffer
 }
 hw = os.path.join(SRC, 'hwui')
 for root, dirs, files in os.walk(hw):
@@ -51,20 +168,24 @@ for root, dirs, files in os.walk(hw):
         if not fn.endswith(('.h', '.cpp')):
             continue
         p = os.path.join(root, fn)
-        if os.path.relpath(p, hw) in HOST_KEEP:
-            continue
         s = open(p, encoding='utf-8', errors='surrogateescape').read()
+        if os.path.relpath(p, hw) in HOST_KEEP:
+            if 'HWUI_DEVICE' in s:  # a file added to the list after an earlier run
+                open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s.replace('HWUI_DEVICE', '__ANDROID__'))
+            continue
         if '__ANDROID__' in s:
             open(p, 'w', encoding='utf-8', errors='surrogateescape').write(s.replace('__ANDROID__', 'HWUI_DEVICE'))
 
 bad = 0
-for rel, old, new in EDITS:
+for e in EDITS:
+    rel, old, new = e[:3]
+    times = e[3] if len(e) > 3 else 1  # how many times the text is there
     p = os.path.join(SRC, rel)
     s = open(p, encoding='utf-8').read()
     if new in s:
         continue
-    if s.count(old) != 1:
-        print('patch_src: %s: the text to replace is not there once' % rel)
+    if s.count(old) != times:
+        print('patch_src: %s: the text to replace is not there %d time(s): %r' % (rel, times, old[:60]))
         bad += 1
         continue
     open(p, 'w', encoding='utf-8').write(s.replace(old, new))

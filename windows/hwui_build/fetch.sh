@@ -36,4 +36,10 @@ wait
 get platform/libnativehelper libnativehelper &
 get platform/frameworks/native native_libs libs &
 get platform/frameworks/native native_include include &
+get platform/frameworks/native native_opengl opengl/libs &
+get platform/system/incremental_delivery incremental_delivery &
+get platform/hardware/libhardware libhardware_include include &
+get platform/external/vulkan-headers vulkan-headers &
+get platform/external/wuffs-mirror-release-c wuffs &
+get platform/frameworks/base androidfw libs/androidfw &
 wait
