@@ -83,6 +83,24 @@ agents' work folders were `/opt/uip/il-work/<app>/`, gone with the container).
   only path, not behind an opt-in variable, and the Win.apk code it replaces is deleted in
   the same work (AOSP's resources and views, Java2D's graphics deleted, `WINAPK_TSF` gone;
   the app layer is being finished the same way).
+- Decided and done (November 2026): **the inherited switches removed.** Every variable
+  and property the runtime read to change behaviour is gone, each kept at its default
+  and its other branch deleted with what only it used: about 565 names (the host's
+  window, WebView2, ANGLE, CA store, class-data sharing and arm64 ones; upstream's
+  `MACAPK_*` kill switches and opt-ins in the framework, the loader, the broker and
+  the Google services layer; every read in the classes AOSP's jars shadow). Gone with
+  them: `KeyBindProfiles`, `TiltControl`, `ArrowPad`, `SpaceTap` (upstream's Controls
+  menu, and one game's key profile), `ComposeViewFallback` (it branched on one app's
+  class names), `GlideRescue`, `TvMode`, `FwGapNewClasses`, `WheelScroll`,
+  `ViewCanvasDriver`'s per-app layout "hacks", and `DamageRectTest`. The window always
+  follows the user's size (no `WINAPK_RESIZABLE`, `MACAPK_LETTERBOX`,
+  `WINAPK_MAXIMIZE_TURNS`), and `WINAPK_AOT=0`, `WINAPK_CDS=0`, `WINAPK_WEBVIEW2=0`,
+  `WINAPK_ANGLE_BACKEND`, `WINAPK_SYSTEM_CACERTS=0` are no longer there to fall back
+  on. What remains is plumbing from the launcher or the broker, test hooks CI uses,
+  and diagnostics: `windows/README.md` "Environment variables" lists every one.
+  Left, not behaviour: comments in the loader and the framework still name about 600
+  times switches that are gone (they describe the history of a fix), and the dead old
+  view and input classes are still compiled (below, "Size and memory").
 - Decided (November 2026): **Win.apk's own code.** Text input, screen readers, OpenSL ES,
   the software codecs, Explorer's thumbnails, the update rules, the WebView file origin and
   the GL stub generator's parser were rewritten clean room, from Microsoft's, Khronos', the
@@ -126,43 +144,16 @@ owner's decisions" and delete the item.
 - **A camera when the PC has none.** With no webcam, `CameraBridge` reports a
   virtual back camera that gives dark-grey frames, so screens built around a
   preview open (WhatsApp's "link a device" hides its phone-number button
-  otherwise); `MACAPK_VIRTUAL_CAMERA=0` turns it off. This is a made-up
+  otherwise); its switch is gone (the decision above). This is a made-up
   device, which the owner's "no made-up sensors" rule forbids for sensors.
   Options: (a) keep it (those screens work); (b) none, as Android on a device
   without a camera (`FEATURE_CAMERA*` not declared, those screens refuse to
-  open), and remove the switch either way.
-- **Window behaviours the user guide offers only as variables.**
-  `WINAPK_RESIZABLE=0` (the window letterboxes the phone instead of resizing
-  the app), `MACAPK_LETTERBOX=0` (with it, stretches instead) and
-  `WINAPK_MAXIMIZE_TURNS=0` (a maximized window is a tablet-sized display, not
-  the phone turned) change what the user sees, with no setting in the
-  launcher. The same for the troubleshooting ones `WINAPK_WEBVIEW2=0`,
-  `WINAPK_ANGLE_BACKEND`, `WINAPK_CDS=0`, `WINAPK_AOT=0`,
-  `WINAPK_SYSTEM_CACERTS=0`. Options: (a) remove the three window ones (one
-  behaviour, as Android's freeform windows), keep the troubleshooting ones
-  documented as such; (b) keep all as they are; (c) make the window ones
-  settings.
-- **Upstream's switches still in the loaded framework.** About 390
-  `MACAPK_*` variables are read by framework classes that still load (not
-  shadowed by AOSP's jars), about 310 of them not traces or dumps: kill
-  switches of fixes (`=0` puts the old behaviour back) and opt-ins (`=1`).
-  Many sit in Win.apk's old view and input code that no app runs any more
-  (`ViewCanvasDriver` is never constructed; `TouchDispatcher`'s own delivery,
-  replaced by `AospInput`; `KeyBindProfiles`, `TiltControl`, `ArrowPad`,
-  `SpaceTap`; `ComposeViewFallback`, which branches on one app's class names,
-  `com.reddit.*`). The QA sweep removed the ones the documents listed as live
-  (the permission, resources, keyboard, wheel, readback, manifest and
-  SurfaceView switches) and the README's dead entries. Options: (a) a removal
-  pass: delete the dead old view and input code (with "Size and memory"'s
-  Win.apk views item), then make each remaining switch's default the only
-  path, file by file, under the UI gate; (b) keep the diagnostics (`*_TRACE`,
-  `*_DUMP`) and remove only behaviour switches; (c) leave them.
+  open).
 - **Google's certificate reported for Play services and the Play Store**
-  (`GoogleGmsCertificate`, upstream's; `MACAPK_GMS_GOOGLE_CERT=0` reports the
-  platform's instead, and apps then call Play services invalid). It is a
-  claim no signature backs, made so apps accept the layer. Options: keep (with
-  or without the switch), or report the real signer (apps refuse Play
-  services). Its comments, and upstream's whole Google services layer
+  (`GoogleGmsCertificate`, upstream's; its switch `MACAPK_GMS_GOOGLE_CERT` is
+  gone with the others, so it always does). It is a claim no signature backs,
+  made so apps accept the layer. Options: keep, or report the real signer
+  (apps refuse Play services). Its comments, and upstream's whole Google services layer
   (`runtime/java/com/macapk/gms/`), name another Play services
   reimplementation as their protocol reference dozens of times; the owner's
   rule says no other compatibility project is named.
@@ -1212,16 +1203,21 @@ a message, an APK only installed, a downloaded file Explorer looks at) can do.
     InputDevice, which stay Win.apk's); `ViewCanvasDriver` is named by
     `Activity`, `Looper`, `Handler`, `MessageQueue`, `SurfaceView`,
     `TextureView` and the GL classes, which are not shadowed.
-  - **The plain-JVM tests** (`DamageRectTest`, `FrameworkStubsTest`'s view
+  - **The plain-JVM tests** (`FrameworkStubsTest`'s view
     half, `DateTimeViewTest`, `WindowsTextInputTest`,
     run by CI on `build/java/android-framework.jar`, the jar as compiled):
     they still test Win.apk's own views, which no app runs. To move onto
     AOSP's classes they need AOSP's natives outside `winapk-runtime`, as
     `AccessibilityTreeTest` did (`windows/test/accessibility`: an activity on
     `windows/test/aospapp`'s harness, AOSP's app layer, views and graphics); or
-    retire the ones whose subject is gone (`DamageRectTest`: AOSP's
-    `ViewRootImpl` does its own dirty area; `DateTimeViewTest`: AOSP's
-    `DateTimeView` is in `aosp-views.jar`).
+    retire the ones whose subject is gone (`DateTimeViewTest`: AOSP's
+    `DateTimeView` is in `aosp-views.jar`; `DamageRectTest` went with the
+    switches, November 2026).
+  - **The old view and input drivers** (`ViewCanvasDriver`, `TouchDispatcher`'s own
+    delivery, `WindowOverlayStack`, `StatusBarDriver`'s painting, and `Bars`' sizes,
+    which report no bars since `MACAPK_SYSTEM_BARS` went): no app reaches them, but
+    some forty framework classes name them. Their switches are gone; deleting them
+    is the same build change as the sources above.
   - **The framework class list** (`windows/java/winapk-framework.classlist`)
     was recorded with Win.apk's views: refresh it from CI's
     `framework-classlist` artifact so the archive holds AOSP's view classes.
@@ -1662,12 +1658,6 @@ Left, being a matter of direction:
   a user's data folder keeps `cache\android-system-fonts\` and
   `cache\fonts\`, which nothing reads any more (not cleaned up; a
   `framework-java2d-*.jsa` is deleted by the next archive dump).
-- **Win.apk's views' partial frames do not work on AOSP's graphics**
-  (`MACAPK_FRAMESPEED_DAMAGE=1`, off by default): `DamageRectTest` in
-  `--java-test` (Win.apk's views from `build/java`) finds every damage empty
-  and every frame drawn whole (34 checks fail); it passed only on the Java2D
-  classes (`GfxBackend.deviceOrigin` is false on AOSP's). No app runs
-  Win.apk's views any more, so CI runs it informational; it goes with them.
 - **Before Java2D was deleted** (kept for the record), what had to hold first: CI's smoke test
   green on AOSP's graphics over a few runs, and the UI gate's lines no
   further from Android than Java2D's (or each exception understood); the

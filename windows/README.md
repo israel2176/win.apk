@@ -20,7 +20,7 @@ this repository.
 - [Build on Windows](#build-on-windows)
 - [Build on Linux and run under Wine](#build-on-linux-and-run-under-wine)
 - [Run an app from a build](#run-an-app-from-a-build)
-- [Environment variables for development](#environment-variables-for-development)
+- [Environment variables](#environment-variables)
 - [Tests](#tests)
   - [The UI gate: only closer to Android](#the-ui-gate-only-closer-to-android)
 - [The compatibility sweep](#the-compatibility-sweep)
@@ -92,7 +92,7 @@ windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
   as compiled is kept in `<build dir>/java/` for the plain-JVM tests) and
   `clang/` (from
   `stage_clang.sh`, the compiler the arm64 translation uses). The JDK is not
-  copied: the runtime uses `<out>/jre` if present, else `WINAPK_JAVA_HOME` or
+  copied: the runtime uses `<out>/jre` if present, else
   `JAVA_HOME`. A plain JDK works, but without class-data sharing (the run log
   says `cds: off`): the patch classes need `--patch-module` there.
 - `bake_jre.sh <jdk> <lib dir> <out>` makes the JRE releases ship (`<out>/jre`):
@@ -194,65 +194,65 @@ later), which is how the JVM gets such paths whole. Older Windows ignores the
 manifest; there the runtime passes the JVM 8.3 short names, which covers the
 app data, but the runtime's own folder needs plain letters.
 
-## Environment variables for development
+## Environment variables
 
-The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
-`WINAPK_AOT_CLANG`, `WINAPK_AOT`, `WINAPK_ABIS`, `WINAPK_WEBVIEW2`, `WINAPK_PROXY`,
-`WINAPK_ALLOW_SECOND_INSTANCE`, the headless ones) are in the
-[user guide](../docs/USER_GUIDE.md#command-line). For development and tests:
+There are no switches: a change is a change, and the runtime has one behaviour
+(the owner's decision, November 2026; `docs/research/open-issues.md`). What the
+runtime still reads from its environment is only one of three kinds, and this
+table lists every one (`windows/host`, `windows/src`, `runtime/java`,
+`windows/java`):
 
-| Variable | Effect |
-|---|---|
-| `WINAPK_HEADLESS=1` | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too). stderr is unbuffered, and a log line of the framework's or of a guest library's goes out in one write (`include/winapk/log_line.h`), so the probe's and the layout sweep's `PROBE` lines on stdout never land inside one |
-| `WINAPK_DEX_HEAP_MB=<n>` | The DEX converter's first heap, in MB, instead of 1024 (`host/runtime_main.cpp`, `dex_heap_mb`): a small one tests the retry, which converts again on the larger of 2 GB and a quarter of the RAM once the Java heap ran out (`--java-main` exits 77 then, also when the converter caught the error) |
-| `WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>]` | Stands in for the monitor's work area, in pixels; `@file` reads the value from a file at every fit |
-| `MACAPK_BROKER=1` or `0` | Overrides the "Use Google services" setting for this run (the system broker and the real Google apps); `MACAPK_BROKER_IDLE_GRACE_S`, `MACAPK_BROKER_IDLE_EXIT=0` tune the broker's idle exit |
-| `WINAPK_TEST_ANDROID_ROOT=<dir>` | `winapk-binder-test` only: the android root its JVM gets (the broker checks' scratch data folder) |
-| `WINAPK_TEST_JAVA_BASE_PATCH=<dir>` | `winapk-binder-test` only: the java.base overlay its JVM runs with (`stage\lib\java_base_patch`) |
-| `WINAPK_JAVA_IO_SHARE_DELETE=0` | java.io opens files as the JDK does, without `FILE_SHARE_DELETE` (`host/java_io_open.cpp`), for comparing |
-| `WINAPK_DUMP_VIEWS=1` | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
-| `WINAPK_PLAY_INSTALLER=0`/`1` | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of an app the user installed with no installer of record, `0` reports none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
-| `MACAPK_BROKER_MAINTENANCE=1` | Set by `winapk-runtime --system --maintenance` (the background updates' window, which the launcher opens every 4 hours while it runs, `launcher/maintenance.h`): the broker boots the Play Store too, runs the jobs that are due and stops `MACAPK_BROKER_MAINTENANCE_GRACE_S` (default 180) seconds after the last |
-| `WINAPK_TEST_INSTALLER=<package>` | Debugging only: `getInstallerPackageName` and `getInstallSourceInfo` answer that installer for every app, over the record and `WINAPK_PLAY_INSTALLER`; nothing in Win.apk sets it (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
-| `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
-| `MACAPK_APK_PATH` | Set by the runtime, not by hand: the installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk); `MACAPK_SDK_INT=<n>` forces a level, `MACAPK_SDK_FROM_TARGET=0` presents 29 (still never below the minSdk) |
-| `MACAPK_BROKER_TRIGGER_CHECKIN=0` | The broker does not nudge Play services to check in at boot (it nudges at most three times, and not at all once Play services has broadcast `CHECKIN_COMPLETE`) |
-| `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launcher's starting window waits for it) |
-| `WINAPK_START_WINDOW=<hwnd>` | Set by the launcher, not by hand: its starting window for the app, as a decimal number. The app's window opens on that window's monitor, at its top and centred on it (the same rectangle, since both are sized by `host/window_fit.h`), and so takes its place. Ignored when it is no window, hidden or minimized |
-| `WINAPK_EMBED_PARENT=<hwnd>` | Set by the launcher, not by hand: a window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (Google Play inside the library window); not a window, or the child cannot be made: a window of its own |
-| `WINAPK_DENSITY=<dpi>` | Pins the density the app sees: it no longer follows the scale the window shows the phone at (maximized, restored, another monitor's scale), and the frames are resampled to the window instead |
-| `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
-| `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
-| `WINAPK_MAXIMIZE_TURNS=0` | A maximized window gives the app a display of the window's pixels at the normal scale and density (a tablet-sized one) instead of the phone turned, which is drawn pixel for pixel at the density at which the turned phone's dp fill the window, changed live as a configuration change (`win32_window.cpp`, "a maximized window is the phone turned"; `DisplayConfig`) |
-| `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
-| `WINAPK_ARM64_ENGINE=interp` | Forces the arm64 interpreter instead of the JIT |
-| `WINAPK_ARM64_STATS=1` | Prints at exit where the guest's time went (host functions versus arm64 code, transitions, interpreter fallbacks), and the same for the eight busiest threads still running |
-| `WINAPK_AOT_EH_FRAME=0` | `winapk-aot` leaves out the functions `.eh_frame_hdr` lists (for comparing) |
-| `WINAPK_ARM64_FP=exact` | Keeps the arm64 JIT's floating point bit-exact (it uses the host's FMA otherwise) |
-| `WINAPK_AOT_MAX_INSNS=<n>` | The function size (arm64 instructions, default 4000) above which a function is left to the JIT instead of translated |
-| `WINAPK_AOT_FAULT=<point>[,<point>...]` | Tests only (`include/winapk/aot_files.h`): `nolink` makes the translation's files copies instead of hard links; `kill:<step>` ends the process at once at that step of a write: `seal` (half a DLL's seal), `cache-put` (a cache entry under its temporary name), `install` / `installed` (before and after a DLL is renamed into place), `write` (half a stamp) |
-| `WINAPK_AOT_FULL_BELOW=<n>` | The library size (arm64 instructions, default 1,000,000) up to which the background translation translates a library whole; a larger one is translated from its profile (the worker's test sets it to make a small library count as large) |
-| `HKCU\Software\Win.apk\AotBackground=0` | No background translation: no worker starts, and a running one stops before its next compile (the launcher's Settings > Apps switch). Translations already made still load; `WINAPK_AOT=0` turns those off |
-| `WINAPK_AOT_JOBS=<n>` | The background translation runs up to n compilers at once even while the user is active (otherwise one then, and half the logical processors while the user is away); free memory, battery saver and full-screen programs still count |
-| `WINAPK_SYSTEM_CACERTS=0` | Does not build Android's CA store from the Windows roots |
-| `WINAPK_USER_FOLDER_TARGETS` | Names the Windows folders the shared-storage junctions point at (tests) |
-| `HKCU\Software\Win.apk\UserFolders=0`, `MACAPK_USER_FOLDERS=0` | The setting (what the launcher writes) turns the shared-storage mapping off: each junction Win.apk made becomes an empty folder again. The variable, for tests, changes nothing on disk: the junctions already there are only reported (`UserFolderMode::kKeep`, `host/user_folders.h`) |
-| `MACAPK_JVM_OPTS` | Extra JVM options, passed through after Win.apk's own (`-XX:TieredStopAtLevel=4` brings back the C2 compiler, which the runtime leaves out for a faster start) |
-| `WINAPK_LOCALES=he-IL[,en-US]` | The device's system languages for this run, ranked, BCP-47 tags separated by commas, instead of Windows' locale: what a phone's Settings > System > Languages sets. The first becomes the process's default locale (`-Duser.language`, `-Duser.script`, `-Duser.country`: `Locale.getDefault()`) and ICU's starting one (`-Dicu.locale.default`); the whole list is `LocaleList.getDefault()` and the system `Configuration`'s locales (`-Dwinapk.locales`, `runtime/java/android/os/LocaleList.java`), so the resources, the layout direction and the app's own locale checks follow it. For headless runs and tests (the sweep's `--locales`); unset, Windows' locale stands |
-| `WINAPK_SHORT_DATA_DIR=0` | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
-| `WINAPK_DEBUG=1` or `0` | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
-| `WINAPK_AOSP_GFX_VERBOSE=1` | AOSP's graphics, the only graphics the framework has (`host/aosp_gfx.h`; Win.apk's Java2D graphics and `WINAPK_AOSP_GFX=0` are gone): each skipped native and each class routed to the stand-in, listed. Every JVM with the framework (an app's run, the install's icon render `--install-only`, `--gms`, `--verify-apk`, `--system`, `--cds-prepare`, `--java-test`) has `lib\aosp-graphics.jar` before `android-framework.jar` on the class path (AOSP's views' and resources' jars before it, but in `--java-test`), `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen`, and once the host's natives are bound loads `bin\robolectric-nativeruntime.dll` through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on: ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (6 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading or not binding, and the process stops before (or right after) its JVM with `[win.apk] error: AOSP graphics: <file> is missing ...` / `does not load` and `cannot start: AOSP's graphics are not usable`, exit code 1 (the launcher shows its Show log). The processes without the framework (the DEX conversion's `java`, `--package-to`, `--aot-translate`, the archive's dump) need none |
-| `WINAPK_AOSP_RES`, `WINAPK_AOSP_VIEWS` | Gone (November 2026): ignored, with the log line `WINAPK_AOSP_RES and WINAPK_AOSP_VIEWS are ignored: AOSP's resources and views are the only ones`. Every JVM the runtime makes with AOSP's graphics (an app's run, `--cds-prepare`'s key, the install's icon render, `--gms`, `--system`, `--verify-apk`) runs AOSP 14's own `android.content.res` (step R1 of `docs/research/aosp-views.md`, "R1 as built": `lib\aosp-resources.jar`, Resources, ResourcesImpl, AssetManager over ApkAssets, TypedArray, Theme, ColorStateList inflation, their natives on Robolectric's Java port of libandroidfw; `-Dwinapk.aosp.res=1`, `-Dwinapk.aosp.res.framework=bin\aosp\framework-res-34.apk`, `ResBackend` is `com.winapk.aospres.AospRes`) and `android.view` / `android.widget` (V1 and V2, "V1 as built", "V2 as built": `lib\aosp-views.jar` (View, ViewGroup, LayoutInflater, the layouts and widgets, PhoneWindow, DecorView, ViewRootImpl, Choreographer, WindowManagerGlobal, `com.android.internal.{view,widget,policy}`) goes first on the class path, `-Dwinapk.aosp.views=1` is set and `ViewHost` is `com.winapk.aospviews.AospViewHost` (`windows/java/aosp_views`): an Activity's window is AOSP's `PhoneWindow`, added to AOSP's `WindowManagerGlobal` on resume, and AOSP's `ViewRootImpl` lays it out and draws it in software on Choreographer's frames over an in-process window manager and session. Android 15's members of these classes that AOSP 14 lacks (`View.setRequestedFrameRate` and 44 more, `aosp_views/Api35.java`) are added to them at build time, as the graphics' are. Dialogs are AOSP's too (`Dialog`, `AlertDialog`, `AlertController`, the picker dialogs, `Presentation`): each window is its own `ViewRootImpl`, and an in-process compositor (`Compositor`) puts their layers into the one frame the host presents, in the window manager's order, with the dim layer under a `FLAG_DIM_BEHIND` window; text and custom toasts go through an in-process `INotificationManager` and AOSP's `ToastPresenter`. The system bars are `InsetsState` sources from the window session (none by default, as Win.apk paints none; both with `MACAPK_SYSTEM_BARS=1`, sized from AOSP's own dimens, shown or hidden as the top full-screen window asks), and Win.apk paints their glyphs over AOSP's `DecorView` (`StatusBarDriver.paintStatusGlyphs`/`paintNavGlyphs`). Input (step V2, "V2 as built") goes into the windows' own input path: the host's touch, mouse, wheel, keys and gamepad are made into events as Android's InputReader makes them (`AospInput`) and an in-process dispatcher (`InputRouter`) hands each to the right window's `ViewRootImpl` in the compositor's order (a dialog takes every touch, `ACTION_OUTSIDE` to a popup, keys to the focused window); an in-process `IInputMethodManager` (`ImeService`) binds the focused editor, so Windows' IME composes and commits into it (Hebrew too), and keys are typed by AOSP's own key listeners; `IAccessibilityManager` answers as with no service on until a screen reader reads the app (then as with one on: `HostAccessibility`), `ITextServicesManager` with no spell checker. A `SurfaceView`'s GL frames show under the windows (the host composites the frame over them, the SurfaceView punching AOSP's hole). Windows' text services work on the bound editor through a TSF document and Windows' touch keyboard stands for the soft keyboard (`ImeService` tells `WindowsTextInput`, `host/tsf_store.h`; TSF is set up at the first focused editor, IMM32 only where Windows has no TSF. Log lines: `text input: Windows' text services work on the focused editor (TSF)` or `text input: no TSF (0x...): input methods compose through IMM32`, `Win.apk.TextInput: editor <n>: <connection class>, inputType 0x...` (`, not watched` for an editor with no `Editable`), `touch keyboard: shown` / `Windows declined (...)` / `not available (0x...)`). Not yet: an Android on-screen keyboard, drag and drop, pointer icons. `WINAPK_AOSP_VIEWS_TRACE=1` logs each relayout, each window's first frame and each new window order (with `WINAPK_AOSP_VIEWS_TRACE_DIR=<dir>` also as PNGs). Win.apk's own name-based resource index (`ResourceIndex`) is not opened: the lookups Win.apk still makes by name are answered from AOSP's Resources and AssetManager (`com.winapk.aospres.AospIndex`)). Win.apk's own classes of those packages are not in the shipped `android-framework.jar` (`stage_runtime.sh` drops them; their sources stay, as the rest of the framework compiles against them), so there is no way back. They share the graphics' class-data sharing archive, `framework-aosp-<key>.jsa` (the dump deletes the `framework-aospres-*` and `framework-aospviews-*` ones of the switches' days). Log lines: `AOSP resources: on: ...`, `[aosp-res] the framework's resources (framework-res-34.apk) up in N ms`, `AOSP views: on: ...`, `AOSP views: AOSP 14's android.view and android.widget, ...`, and `[aosp-views] <Service>.<method>: no answer in this process` once for each service call answered empty; `AOSP resources: off, ... is missing` / `AOSP views: off, ...` (with "an app cannot start without them") is a broken stage, as is the graphics being off |
-| `WINAPK_CDS=0` or `base` | Class-data sharing (`host/cds.h`): `0` back to the old flags (`--patch-module`, no archive), `base` the JRE's archive without the framework archive. `WINAPK_CDS_DIR=<dir>` puts the framework archive elsewhere (tests share one), `WINAPK_CDS_CLASSLIST=<file>` dumps from another class list (`none`: only the start's own), `WINAPK_CDS_RECORD_DIR=<dir>` writes every app start's loaded classes to `<dir>\<app>.classlist` (for `scripts/merge_classlists.py`), `WINAPK_CDS_VERIFY=1` checks the archive whole at every start, `WINAPK_CDS_DUMP_DELAY_MS` (default 10000) is the wait after the first frame before the background dump |
-| `MACAPK_FRAMESPEED_DAMAGE=1` | Partial redraw (off by default): a frame that only invalidations asked for draws the view tree clipped to the area they damaged and hands the window only that rectangle, instead of redrawing and copying the whole window (`docs/ARCHITECTURE.md`, "The view tree's frames"). Unset or anything else, every frame is whole. `MACAPK_DAMAGE_VALIDATE=1` with it draws every frame whole but compares what changed with the area claimed: `[damage-validate] under-damage` names a frame that changed outside it, and the `M6:` line counts `validate: claimed= clean= under=`. `MACAPK_TRACE_DAMAGE=1` logs every 5 s what the frames' damage was (`[damage]`), `MACAPK_FRAME_PHASE_TRACE=1` a frame's time by phase (`[frame-phase]`, every 300 frames; the run's whole summary is the `frame times` line at exit, [Frame time](#frame-time)) |
-| `MACAPK_QUIET_CLASSLOAD=0` | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
-| `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
-| `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
-| `MACAPK_LAYOUT_SWEEP=1` | The screens sweep (`runtime/java/com/macapk/loader/LayoutSweep.java`, [Every screen against Android](#every-screen-against-android)): once `Application.onCreate` has returned, every layout resource of the app is inflated, measured, laid out and drawn at the screen's size, left to right and right to left, instead of the launcher activity starting; each view's place is printed as `PROBE <line>` on stdout, then `PROBE done`, and the process ends. `MACAPK_LAYOUT_SWEEP_THEME=<0x7f... or style/Name>` the theme (default the launcher activity's, else the application's), `MACAPK_LAYOUT_SWEEP_FILTER=<regex>` only the layouts whose name matches, `MACAPK_LAYOUT_SWEEP_PICTURES=<dir>` each case as a PNG |
-| `MACAPK_VIRTUAL_CAMERA=0` | No virtual camera when the PC has no webcam: apps see no camera, as on a device without one (`CameraBridge`; for the owner to decide which is the default, `docs/research/open-issues.md`) |
+- **Plumbing**: what the launcher, the runtime or the system broker sets for
+  the process it starts, carrying a setting or a handle. Not set by hand.
+- **Test hooks**: what CI or a test in this repository sets.
+- **Diagnostics**: logs, traces and dumps that change nothing for the app.
 
-The Java framework has many more `MACAPK_*` switches of upstream's; grep
-`runtime/java` for the one you need.
+| Variable | Kind | Effect |
+|---|---|---|
+| `WINAPK_PHONE_SIZE=WxH` | Plumbing | The phone's size in dp, from Settings > Screen size and the app's orientation (`launcher_main.cpp` `apply_runtime_env`) |
+| `WINAPK_READY_EVENT=<handle>` | Plumbing | An inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launcher's starting window waits for it) |
+| `WINAPK_START_WINDOW=<hwnd>` | Plumbing | The launcher's starting window for the app, as a decimal number: the app's window opens on that window's monitor, at its top and centred on it |
+| `WINAPK_EMBED_PARENT=<hwnd>` | Plumbing | A window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (the Store and Google Play inside the library window) |
+| `WINAPK_PLAY_INSTALLER=0`/`1` | Plumbing | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of an app the user installed with no installer of record, `0` reports none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
+| `MACAPK_BROKER=1` or `0` | Plumbing | Set by the runtime from Settings > Google account > "Use Google services" (`GoogleServices`): the system broker and the real Google apps; also the broker's own and the processes it starts |
+| `MACAPK_BROKER_MAINTENANCE=1` | Plumbing | Set by `winapk-runtime --system --maintenance` (the background updates' window, which the launcher opens every 4 hours while it runs, `launcher/maintenance.h`): the broker boots the Play Store too, runs the jobs that are due and stops 180 seconds after the last |
+| `MACAPK_BROKER_LOGDIR`, `MACAPK_BROKER_RUNTIME`, `MACAPK_BROKER_ROOT`, `MACAPK_BROKER_APKS`, `MACAPK_BROKER_READY_FILE` | Plumbing | The broker's log folder (set by `winapk-runtime --system`), and upstream's development launch of a broker (its runtime, android root, package list and ready file; `BinderTransportTest` sets `MACAPK_BROKER_ROOT`) |
+| `MACAPK_SERVICE_HOST=1`, `MACAPK_SYSTEM_NAME`, `MACAPK_PROCESS_NAME`, `MACAPK_SECONDARY_PROCESS=1` | Plumbing | Set by the broker on a process it starts: a headless service host, the broker's name, the android:process the runtime is to be, and that it is a second process of a running package (CI's "Start an app the broker runs as a service host" sets the first) |
+| `MACAPK_APK_PATH` | Plumbing | The installed APK, which `PresentedSdk` reads the app's targetSdk and minSdk from to choose the API level the app is presented (its targetSdk within 29..36, never below its minSdk) |
+| `MACAPK_LAUNCH_ACTIVITY`, `MACAPK_LAUNCH_ACTION`, `MACAPK_LAUNCH_DATA`, `MACAPK_LAUNCH_EXTRAS` | Plumbing | The activity an app with no launcher activity opens (the launcher's `.activity`), and the intent a start delivers, as `am start` does (`windows/test/compat/screens_crawl.py` uses all four) |
+| `MACAPK_INSTALLHELPER`, `MACAPK_PM_REGISTRY_FILE`, `MACAPK_STAGING_DIR`, `MACAPK_INSTALLER_RECORD_FILE`, `MACAPK_GMS_DIR` | Plumbing | Set by the runtime unless already set (tests set their own): the launcher's path for its helper verbs, the installed-apps registry, the install staging folder, the installers of record, the Google account's folder |
+| `WINAPK_USER_FOLDER_TARGETS` | Plumbing | Set by the runtime: the Windows folders the shared-storage junctions point at, so the Java side knows the host owns the mapping |
+| `WINAPK_RELAUNCH_AFTER=<pid>` | Plumbing | Set by the runtime for the copy that replaces it (`Process.killProcess` on a restart): wait for that process first |
+| `WINAPK_AOT_CLANG=<clang.exe>` | Plumbing | The clang the arm64 translation compiles with; the launcher sets it when it finds one outside Win.apk's own `clang\` and the PATH |
+| `MACAPK_APPDATA_ROOT` | Plumbing | Upstream's folder of the Play Store's install ledger (`InstallerOfRecord.playLedger`; the macOS layout when unset) |
+| `WINAPK_PROXY=<host:port>` | Plumbing | The proxy the Google services layer's push connection (`McsClient`) goes through, for a network that has one |
+| `WINAPK_LOCALES=he-IL[,en-US]` | Plumbing and test hook | The device's system languages for this run, ranked, BCP-47 tags separated by commas, instead of Windows' locale: what a phone's Settings > System > Languages sets. The first becomes the process's default locale (`-Duser.language`, `-Duser.script`, `-Duser.country`: `Locale.getDefault()`) and ICU's starting one (`-Dicu.locale.default`); the whole list is `LocaleList.getDefault()` and the system `Configuration`'s locales (`-Dwinapk.locales`). The sweep's `--locales`; unset, Windows' locale stands |
+| `WINAPK_DEBUG=1` or `0` | Plumbing and diagnostic | Debug mode for this run, over the launcher's Settings > Troubleshooting > Debug mode (`HKCU\Software\Win.apk\DebugMode`): the runtime starts its thread agent (`host/debug_agent.cpp`), which answers the launcher's Threads window on `\\.\pipe\winapk-debug-<pid>` (`include/winapk/debug_protocol.h`): `threads` lists every Windows thread of the process with its kind (java, guest, jvm, runtime, system), Java name and state and where it started; `stack <tid> <jid>` gives one thread's Java frames, contended monitor and native stack. Only for a run of an app and the system broker, not an install |
+| `WINAPK_SHORT_DATA_DIR=0` | Test hook | The app's data directory by its long name, not the 8.3 one (`-Dwinapk.data.dir`). For Wine, which makes short names up and does not find a new file by one: without it every save through a temporary file fails there. `run_app_wine.sh` and the sweep under `--launcher wine` set it |
+| `WINAPK_HEADLESS=1` | Test hook | No window; `WINAPK_HEADLESS_FRAME=<file.bmp>` saves the last frame and `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=<n>` exits after that many presented frames (an idle app counts too). stderr is unbuffered, and a log line of the framework's or of a guest library's goes out in one write (`include/winapk/log_line.h`), so the probe's and the layout sweep's `PROBE` lines on stdout never land inside one |
+| `WINAPK_DENSITY=<dpi>` | Test hook | Pins the density the app sees, so a run's lines compare with Android's at that density (the UI gate's `uiprobe/run_ours*.sh` and `screens/screens.sh`); the frames are resampled to the window |
+| `WINAPK_TEST_RESIZE=<w>x<h>` | Test hook | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
+| `MACAPK_JVM_OPTS` | Test hook | Extra JVM options, after Win.apk's own (the Wine runs' security properties: `run_app_wine.sh`, `screens.sh`, `uiprobe/run_ours_wine.sh`, the sweep) |
+| `MACAPK_LAYOUT_SWEEP=1` | Test hook | The screens sweep (`runtime/java/com/macapk/loader/LayoutSweep.java`, [Every screen against Android](#every-screen-against-android)): once `Application.onCreate` has returned, every layout resource of the app is inflated, measured, laid out and drawn at the screen's size, left to right and right to left, instead of the launcher activity starting; each view's place is printed as `PROBE <line>` on stdout, then `PROBE done`, and the process ends. `MACAPK_LAYOUT_SWEEP_THEME=<0x7f... or style/Name>` the theme (default the launcher activity's, else the application's), `MACAPK_LAYOUT_SWEEP_FILTER=<regex>` only the layouts whose name matches, `MACAPK_LAYOUT_SWEEP_PICTURES=<dir>` each case as a PNG |
+| `MACAPK_INJECT_FILE=<file>`, `MACAPK_DEBUG_AUTOCLICK`, `MACAPK_DEBUG_AUTOKEY` | Test hook | Input a test writes to a file for the app to receive (`windows/java/aosp_views/.../InjectInput.java`; the sweep and the screens crawl) |
+| `WINAPK_CDS_DIR=<dir>`, `WINAPK_CDS_RECORD_DIR=<dir>` | Test hook | CI's: the framework archive's folder (tests share one), and each start's loaded classes recorded to `<dir>\<app>.classlist` (to make `winapk-framework.classlist`, `merge_classlists.py`) |
+| `WINAPK_AOT_FAULT=<point>[,<point>...]` | Test hook | Tests of `include/winapk/aot_files.h`: `nolink` makes the translation's files copies instead of hard links; `kill:<step>` ends the process at once at that step of a write: `seal` (half a DLL's seal), `cache-put` (a cache entry under its temporary name), `install` / `installed` (before and after a DLL is renamed into place), `write` (half a stamp) |
+| `WINAPK_AOT_FULL_BELOW=<n>`, `WINAPK_AOT_JOBS=<n>` | Test hook | The background translation's worker test (`test/aot_worker/run_aot_worker_wine.sh`): the library size (arm64 instructions, default 1,000,000) up to which a library is translated whole, and how many compilers run at once |
+| `WINAPK_ARM64_FP=exact` | Test hook | The arm64 JIT's floating point bit-exact (it uses the host's FMA otherwise), for `arm64_test`'s comparisons |
+| `WINAPK_TEST_ANDROID_ROOT=<dir>`, `WINAPK_TEST_JAVA_BASE_PATCH=<dir>` | Test hook | `winapk-binder-test` only: the android root and the java.base overlay its JVM gets |
+| `WINAPK_TEST_HTTP_BASE` | Test hook | `opensles_test` only: the URL its http player reads |
+| `MACAPK_LOG_LEVEL=<n>` | Diagnostic | The framework's log level (`host/native_log.cpp`; 7 silences it) |
+| `MACAPK_QUIET_CLASSLOAD=0` | Diagnostic | Logs a line for every class the app's class loader loads (the runtime sets it to 1, as upstream's launcher does: thousands of lines cost up to 0.4 s of a start) |
+| `WINAPK_DUMP_VIEWS=1` | Diagnostic | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
+| `WINAPK_AOSP_GFX_VERBOSE=1` | Diagnostic | AOSP's graphics, the only graphics the framework has (`host/aosp_gfx.h`; Win.apk's Java2D graphics and `WINAPK_AOSP_GFX=0` are gone): each skipped native and each class routed to the stand-in, listed. Every JVM with the framework (an app's run, the install's icon render `--install-only`, `--gms`, `--verify-apk`, `--system`, `--cds-prepare`, `--java-test`) has `lib\aosp-graphics.jar` before `android-framework.jar` on the class path (AOSP's views' and resources' jars before it, but in `--java-test`), `-Dicu.data.path`, `-Dicu.locale.default`, `-Dwinapk.aosp.fonts` and `-Dwinapk.aosp.hyphen`, and once the host's natives are bound loads `bin\robolectric-nativeruntime.dll` through `host/aosp_gfx_redirect.cpp`: its natives go onto the jar's classes, only `android.graphics.**`, `android.text.**`, `android.util.PathParser` and two helpers (an allowlist); those for `android.database(.sqlite)`, `android.view.Surface`, `android.media.ImageReader` and `PropertyValuesHolder` are refused, Win.apk's stay. Log lines: `AOSP graphics: on: ...`, then `AOSP graphics: robolectric-nativeruntime.dll loaded in N ms: natives bound N (6 through API 34 adapters), skipped N, refused N ...`. A file missing, or the DLL not loading or not binding, and the process stops before (or right after) its JVM with `[win.apk] error: AOSP graphics: <file> is missing ...` / `does not load` and `cannot start: AOSP's graphics are not usable`, exit code 1 (the launcher shows its Show log). The processes without the framework (the DEX conversion's `java`, `--package-to`, `--aot-translate`, the archive's dump) need none |
+| `WINAPK_ARM64_STATS=1`, `WINAPK_ARM64_FAULTS`, `WINAPK_ARM64_STACKWATCH`, `WINAPK_AOT_LIST` | Diagnostic | Where the guest's time went, printed at exit; each guest fault; guest stack use; each function `winapk-aot` leaves to the interpreter |
+| `WINAPK_AOSP_VIEWS_TRACE`, `WINAPK_AOSP_VIEWS_TRACE_DIR` | Diagnostic | AOSP's views' window and input traces (`windows/java/aosp_views`) |
+| `MACAPK_*_TRACE`, `MACAPK_TRACE_*`, `MACAPK_*_DUMP*`, `MACAPK_DUMP_*` | Diagnostic | Upstream's traces and dumps in `runtime/java` (log lines, a bitmap or a tree written to a file); grep for the one you need |
+| `MACAPK_RECORD_INPUT`, `MACAPK_OVERLAY_DIAG`, `MACAPK_TASK_DIAG`, `MACAPK_LOUD_CATCH`, `MACAPK_GFX_HARVEST`, `MACAPK_MEDIA_PROBE`, `MACAPK_DEBUG_PROBE`, `MACAPK_DEBUG_REWRITER`, `MACAPK_REWRITER_PRESCAN_STATS`, `MACAPK_PAIRIP_POOLDUMP`, `MACAPK_PAIRIP_POOLDUMP_LIST` | Diagnostic | Upstream's input recording, overlay and task diagnostics, swallowed exceptions logged, graphics call counts, media statistics, the class rewriter's log and statistics, a protection library's string pool written out |
+
+Build-time variables (`WINAPK_VERSION`, `WINAPK_JNI_INCLUDE`, `WINAPK_ARM64_JIT`,
+`WINAPK_WIN_JDK`, `WINAPK_AOSP_GFX_DEPS`, `WINAPK_JRE_*`...) belong to CMake and
+the scripts, documented where they are read.
 
 ## Tests
 
@@ -302,7 +302,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-gl-test` | ANGLE makes a context, clears a pbuffer and the read-back frame has the right colors (WARP or SwiftShader on CI); the extension list an app's native code is told (`host/gl/guest_gl_extensions.h`) is a subset of ANGLE's in its order, exactly the declared extensions whose every function ANGLE resolves, `GL_CHROMIUM_bind_uniform_location` among them when ANGLE reports it |
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
 | `test/java/android/net/HostNetworkTest.java` | Run by hand against the built jars (`MACAPK_LOG_LEVEL=7`, no natives): what `ConnectivityManager` makes of the host's default network (`MacApkHostNetwork.fromHost`: the transport for each adapter type, addresses with prefix lengths, DNS servers, no default route, junk in the answer), and that `NsdManager`'s three failures are `FAILURE_INTERNAL_ERROR`, delivered after the call from its own thread |
-| `test/java/FrameworkStubsTest.java` | Framework methods that were stubs (`test/apicheck/Completeness.java` lists them) against what Android's do: `AnimatorSet`'s interpolator, `View`'s clip bounds and the drawing cut to them. One check per stub given a body. Like `Camera2StillTest` and `DamageRectTest`, it runs in `winapk-runtime --data <scratch> --java-test "<build>\java\android-framework.jar;<classes>" <class>`: the framework's JVM with AOSP's graphics bound (which a plain JVM lacks, the framework having no graphics of its own) and AOSP's resources and views left off, so the framework as compiled brings Win.apk's own back, which these tests exercise (`DamageRectTest` is informational: Win.apk's views' partial frames never worked on AOSP's graphics) |
+| `test/java/FrameworkStubsTest.java` | Framework methods that were stubs (`test/apicheck/Completeness.java` lists them) against what Android's do: `AnimatorSet`'s interpolator, `View`'s clip bounds and the drawing cut to them. One check per stub given a body. Like `Camera2StillTest`, it runs in `winapk-runtime --data <scratch> --java-test "<build>\java\android-framework.jar;<classes>" <class>`: the framework's JVM with AOSP's graphics bound (which a plain JVM lacks, the framework having no graphics of its own) and AOSP's resources and views left off, so the framework as compiled brings Win.apk's own back, which these tests exercise |
 | `test/java/com/macapk/icu/IcuCalendarTest.java` | Run by hand against the built jars: `android.icu.util.Calendar` against the values Android 14's own ICU gives (week data per region, the weekend, the ICU-only fields and limits, set/clear, add/roll, `fieldDifference`, equality, `getInstance`'s class) |
 | `test/java/com/macapk/loader/BrokerPermissionsTest.java` (CI) | The system broker's permission checks (`BrokerPermissions`) on APKs it signs with two keys: a signature permission held by the declarer's signer and not another's (Play services' `c2dm.permission.SEND`: Play services and the Play Store hold it and may send to an app's FCM receiver; another app may not), a normal one held when requested only, one nobody declares held by nobody, the platform's from `framework-res-34.apk` (normal, signature, signature\|privileged, dangerous granted or by a legacy target), the same app always; a provider opened with its read or write permission and AOSP's denial, read and write per operation, path-permissions; URI grants: made by the provider's app, refused when the provider does not allow them or the granter has no access, the one uri only, read not write, passed on, a prefix, ClipData, revoked, gone with the package |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
@@ -1974,9 +1974,7 @@ every such change is listed here:
   installer of record, and with Google services on the per-package uids and
   the broker's state) live in the data folder, `%LOCALAPPDATA%\Win.apk`,
   beside `installed_apps.json`, not in a `Library\Application Support` folder
-  under the user profile. On the Mac nothing changes. `InstallerOfRecord.get`
-  also answers `WINAPK_TEST_INSTALLER`, a debugging override (see the
-  environment table). `InstallerOfRecord.reported` (new) is what
+  under the user profile. On the Mac nothing changes. `InstallerOfRecord.reported` (new) is what
   `MacApkPackageManager.getInstallerPackageName` and `getInstallSourceInfo`
   answer: the record when there is one, else Google Play for an app the user
   installed (the running app, or a registry app the caller may see) while
@@ -2021,7 +2019,7 @@ every such change is listed here:
   `IntentFilter` does (beside upstream's `autoVerify`).
 - `runtime/java/com/macapk/loader/ClassFileRewriter.java`, `AppClassLoader.java`,
   `NativeLoadBridge.java` (new): in guest classes, `File.separator(Char)` reads
-  Android's `/` (Pattern S; `MACAPK_ANDROID_FILE_SEPARATOR=0` turns it off) and
+  Android's `/` (Pattern S) and
   `System.mapLibraryName` / `load` go through the on-demand native loader
   (Pattern N); beside upstream's Patterns L and J.
 - `runtime/java/com/macapk/loader/AppClassLoader.java`: `findLibrary` asked by
@@ -2066,8 +2064,7 @@ every such change is listed here:
   invalidation asks for a frame only when the view can be drawn, that is no
   view from it up to its window's root is hidden without a View animation and
   its tree is in a window (AOSP's `skipInvalidate` and `mAttachInfo` tests;
-  `MACAPK_INVALIDATE_SKIP_UNDRAWN=0` turns it off, and
-  `MACAPK_TRACE_INVALIDATE=1` lists such invalidations as `skipped`); and
+  `MACAPK_TRACE_INVALIDATE=1` listed such invalidations as `skipped`); and
   `onVisibilityAggregated`, plus `onWindowVisibilityChanged` and
   `onVisibilityChanged` at attach and detach, are called as AOSP calls them,
   with `ProgressBar` stopping an animated indeterminate drawable while it is
@@ -2076,7 +2073,7 @@ every such change is listed here:
   of a row that had left its list. Not Windows-specific.
 - `runtime/java/android/view/View.java`, `ViewGroup.java`,
   `ViewRootImpl.java` and `com/macapk/loader/ViewCanvasDriver.java` (partial
-  redraw, behind `MACAPK_FRAMESPEED_DAMAGE=1`): the view half ("S1") of
+  redraw, an opt-in of Win.apk's own views, removed with the switches in November 2026): the view half ("S1") of
   upstream's damage-clipped frames, which the driver ("S2") had waited for.
   `ViewGroup.drawChild` records the clip each child is drawn under on the
   frame; an invalidation damages that rectangle (its parent's when the view
@@ -2085,9 +2082,7 @@ every such change is listed here:
   union to the driver. In the driver the flag is read through `ViewRootImpl`
   (on only at `1`), the draw is bracketed by `macapkBeginDraw` /
   `macapkEndDraw`, damage raised during a frame is kept for the next one
-  instead of dropped, and `MACAPK_DAMAGE_VALIDATE=1` compares frames in Java
-  (the Windows host has no diffing present). Checked by
-  `windows/test/java/DamageRectTest.java`. Not Windows-specific.
+  instead of dropped. Not Windows-specific (its test, `DamageRectTest`, went with it).
 - `runtime/java/android/database/sqlite/SQLiteDatabase.java`: `BEGIN`,
   `COMMIT` and `ROLLBACK` given to `execSQL` nest in the transaction stack, as
   AOSP's `SQLiteSession.executeSpecial` does. Not Windows-specific.
@@ -2195,7 +2190,7 @@ every such change is listed here:
   Windows privacy settings; the webcams themselves come from
   `windows/host/native_camera.cpp`), one virtual back camera delivers
   dark-grey frames, so screens built around a preview open and their other
-  controls work. `MACAPK_VIRTUAL_CAMERA=0` turns it off. A real camera always
+  controls work. A real camera always
   wins.
 - `runtime/java/android/hardware/camera2/` (`JpegStill.java` new,
   `CameraCaptureSessionImpl.java`, `CameraBackend.java`,
@@ -2529,7 +2524,7 @@ every such change is listed here:
   play-services-basement compares the two with the copy it embeds before it
   uses Play services at all; with ours it answered `SERVICE_INVALID`, so
   "Sign in with Google" failed at once (BuyMe, Waze) and the location and
-  sign-in providers were never asked. `MACAPK_GMS_GOOGLE_CERT=0` goes back.
+  sign-in providers were never asked.
 - `runtime/java/com/macapk/loader/PlayServices.java` and
   `MacApkPackageManager.java`: the Play services version is 26.44
   (`264400000`); app clients of 2026 want more than 24.44 for some APIs
@@ -2615,7 +2610,6 @@ every such change is listed here:
   over the native window, and `nativeSwapSurfaceViewWindow` presents it as
   the guest layer (`windows/host/gl/egl10_window.cpp`, `guest_gl.cpp`). It
   was refused and the thread parked (Google Maps' map stayed white).
-  `WINAPK_GL_VIEW_WINDOW=0` restores the refusal.
 - `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`:
   `eglGetCurrentContext` / `eglGetCurrentDisplay` / `eglGetCurrentSurface`
   answer `EGL_NO_CONTEXT` / `EGL_NO_DISPLAY` / `EGL_NO_SURFACE` on a thread
@@ -2999,7 +2993,7 @@ every such change is listed here:
   7 days, an unreachable site 1 hour, the whole file dropped when the APK's
   versionCode, update time or certificate changes. `DomainVerificationManager`
   answers from it without waiting (a domain not checked yet is
-  `DOMAIN_STATE_NONE`). `MACAPK_APP_LINKS=0` still turns it all off. Test:
+  `DOMAIN_STATE_NONE`). Test:
   `windows/test/java/com/macapk/loader/AppLinksTest.java`.
   `NativeCocoa.openAppLinkWindow`, the sign-in window AppLinks asks for (a
   stub answering false before), is now Windows' own
@@ -3103,8 +3097,7 @@ every such change is listed here:
   `nativeCapture`): the JPEG goes to `EXTRA_OUTPUT` (or the intent's ClipData)
   through the app's own `ContentResolver`, or a thumbnail comes back in the
   `data` extra; RESULT_CANCELED when the user cancels. Nothing resolved them
-  before, so "take a photo" buttons were dead. `MACAPK_IMAGE_CAPTURE=0` leaves
-  them unresolved.
+  before, so "take a photo" buttons were dead.
 - `runtime/java/android/view/LayoutInflater.java`: a bare `<ImageView>`,
   `<TextView>`, `<Button>`... becomes AppCompat's subclass only where Android's
   AppCompat factory would make it: when the inflater has a factory, or inside an
@@ -3113,7 +3106,7 @@ every such change is listed here:
   `app:srcCompat` (AppCompat's attributes) no longer apply to the framework's
   `ImageView` / `ImageButton` there. Before, any app that bundled AppCompat got
   AppCompat's classes, tints and default styles on every inflater (found by
-  the UI probe). `MACAPK_APPCOMPAT_REWRITE_ANY=1` restores that.
+  the UI probe).
 - `runtime/java/android/view/View.java`, `ViewGroup.java`: `setClipBounds` keeps
   the rect and the parent cuts the child's drawing to it where it clips the
   child to its bounds (all three child-draw paths), whatever the parent's
@@ -3146,7 +3139,6 @@ every such change is listed here:
   stretched across the parent and kept on the left under RTL. Screens sweep:
   Fossify Gallery's grid items and empty labels now match Android's (363
   differing lines to 335, none new); UI probe 227 to 219.
-  `MACAPK_RL_MATCH_FILLS=1` restores the old placement.
 - `runtime/java/android/content/res/Resources.java` (`Theme.resolveDefStyleName`),
   `android/view/LayoutInflater.java` (the default-style tier): a framework
   widget's default-style attribute (`com.android.internal.R.attr.checkboxStyle`
@@ -3157,7 +3149,7 @@ every such change is listed here:
   bare, it did: a plain `CheckBox` in a Material theme was 48x48 where Android
   has 32x32. AppCompat's and Material's widgets still ask their library's
   attribute. Screens sweep: Fossify Gallery 335 to 333, Open Sudoku 316 to 309
-  lines, none new. `MACAPK_DEFSTYLE_BARE=1` asks the bare name again.
+  lines, none new.
 - `runtime/java/android/widget/ImageButton.java`: the constructors chain to
   `android.R.attr.imageButtonStyle` as AOSP's do (`ImageButton(Context)` through
   `this(context, null)`), so a plain `ImageButton` takes
@@ -3165,7 +3157,6 @@ every such change is listed here:
   style, which went unseen while every bare `<ImageButton>` became
   `AppCompatImageButton` (UI probe `lib_images`: 48 dp and unpadded where
   Android has 72 dp and 12,10,12,10; found by `test/uiprobe/regress.py`).
-  `MACAPK_IMAGEBUTTON_NO_DEFSTYLE=1` restores the old chain.
 - `runtime/java/com/macapk/loader/AppCaller.java` (new), `BinaryXmlParser.java`,
   `DomXmlResourceParser.java`, `android/view/LayoutInflater.java`: an app that
   reads an attribute's text (`AttributeSet.getAttributeValue`) gets Android's
@@ -3177,27 +3168,24 @@ every such change is listed here:
   from the app's class loader; Win.apk's own framework keeps the names it
   resolves by. Markor's settings (`GsFontPreferenceCompat`) parsed the text as
   a number and threw `NumberFormatException` (found by
-  `test/compat/screens_crawl.py`). `MACAPK_ATTR_TEXT_FOR_APPS=1` gives apps the
-  names again.
+  `test/compat/screens_crawl.py`).
 - Found by the Israeli-app screens checks (Maccabi, Cal), each read against AOSP:
   - `android/view/LayoutInflater.java`: `android:weightSum` is read (it was set
     only by `setWeightSum`, so a search field took half its row); a widget's
     default style no longer installs an attribute the element sets itself, so an
     element's own `android:background` leaves no padding of the default one behind
-    (12,10,12,10 on a button Android pads 0). `MACAPK_DEFSTYLE_UNDER_ELEMENT=1`
-    restores the old order.
+    (12,10,12,10 on a button Android pads 0).
   - `com/macapk/loader/BinaryXmlParser.java`: a newline, return or tab in an
     attribute is written as a character reference, so a two-line `android:text`
     stays two lines (attribute-value normalization made it one).
   - `android/widget/TextView.java`: `android:includeFontPadding` is read in the
-    constructor, from every tier (it was never applied from XML;
-    `MACAPK_IGNORE_INCLUDE_FONT_PADDING=1` skips it), and `getBaseline` takes the
+    constructor, from every tier (it was never applied from XML), and `getBaseline` takes the
     first line's ascent as `onDraw` places it, widened for a fallback font, so a
     Hebrew line without font padding is not 2 dp high.
   - `android/content/res/Resources.java`: a `<selector>` of colours under
     `res/drawable` is a ColorStateList, as AOSP takes any file-backed value by
     its root tag (a textColor of `@drawable/x` came out black: Cal's white
-    buttons were black on black). `MACAPK_NO_DRAWABLE_CSL=1` turns it off.
+    buttons were black on black).
   - `android/security/MacApkTrustProvider.java`: `KeyManagerFactory` "PKIX",
     alias "X509", as Conscrypt names it, over the JDK's NewSunX509; an app that
     loads its client certificate with `getInstance("X509")` got
@@ -3216,27 +3204,24 @@ every such change is listed here:
     "GmsCore_OpenSSL" no longer throws IllegalAccessException.
   - From bit: `RelativeLayout` keeps a wrap_content child that measured 0 at 0
     (AOSP's `mBottom = mTop + getMeasuredHeight()`; it took the parent's whole
-    height and pushed the PIN screen off the window; `MACAPK_RL_ZERO_FILLS=1`
-    restores that), and `android.os.Build` and `CheckinClient` tell Windows by
+    height and pushed the PIN screen off the window), and `android.os.Build` and `CheckinClient` tell Windows by
     the path separator, since Boot sets `os.name` to "Linux" first (a Windows run
     reported BRAND "Apple", MODEL "Mac").
   - From Bank Hapoalim and Waze: `LayoutInflater.inflate(res, root, true)` returns
     `root`, as AOSP's does (it returned the child: a custom view that inflates into
-    itself and casts the result threw, and became an empty FrameLayout;
-    `MACAPK_INFLATE_RETURNS_CHILD=1` restores that); `android:orientation` given as
+    itself and casts the result threw, and became an empty FrameLayout); `android:orientation` given as
     a number or an `@integer` reference is read (it was horizontal unless the
     literal "vertical").
   - From Mercantile: `TextView`'s constructor already reads textStyle,
     fontFamily, typeface and textFontWeight from every tier, as AOSP's does, so
     the inflater no longer applies them again after construction, which replaced
-    a typeface a subclass set in its constructor with the default family
-    (`MACAPK_INFLATE_TYPEFACE_AGAIN=1` restores that); `LayoutInflater` applies
+    a typeface a subclass set in its constructor with the default family;
+    `LayoutInflater` applies
     `android:contentDescription` and `android:importantForAccessibility` (a
     view that read its description in its constructor threw and became an empty
     FrameLayout); and `MacApkJobScheduler` calls the service's `onBind` once,
     as JobServiceContext's bind does, before looking for a JobServiceEngine the
-    service makes there (IBM Trusteer's job was dropped; `MACAPK_JOB_NO_ONBIND=1`
-    skips it).
+    service makes there (IBM Trusteer's job was dropped).
 - `runtime/java/com/macapk/loader/LayoutSweep.java` (new), `Boot.java`: the
   screens sweep's Win.apk side, a debug mode off unless `MACAPK_LAYOUT_SWEEP=1`
   (see [Every screen against Android](#every-screen-against-android)). Boot

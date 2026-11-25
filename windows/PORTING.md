@@ -758,8 +758,8 @@ How the display path works now, after a review of resizing and presentation
   pixel; a frame from before a resize is shown unscaled at the top left, with
   the window background where it does not reach, until the app draws the new
   one (`window_frame_present`); a frame is scaled only when the app is meant to
-  draw at another size (`WINAPK_RESIZABLE=0`, a density pinned by
-  `WINAPK_DENSITY`), or for the moments after a density change (below).
+  draw at another size (a density pinned by `WINAPK_DENSITY`, a test hook),
+  or for the moments after a density change (below).
   Touch goes to Java as the surface in points (pixels over the density), so a
   click lands on the pixel it was made on.
 - The app follows every step of a drag, as an Android freeform window does,
@@ -837,11 +837,9 @@ Still open:
   and the stale-frame rule would move into it.
 - An invalidation costs a redraw, a copy and a blit of the whole window: one
   small animating view (a spinner, a caret, a pulsing hint) is a whole-window
-  frame 60 times a second. Partial redraw (`MACAPK_FRAMESPEED_DAMAGE=1`;
-  `docs/ARCHITECTURE.md`, "The view tree's frames") draws, copies and blits
-  only the damaged rectangle. It is off by default until a sweep with
-  `MACAPK_DAMAGE_VALIDATE=1` reports no `under-damage` and the app probe shows
-  what it saves; frames of GL or surface content are still read back whole.
+  frame 60 times a second. Win.apk's own views had a partial redraw behind a
+  switch, removed with them; AOSP's software renderer redraws its dirty area,
+  but the frame is still read back and blitted whole.
 - An app that fixed its orientation and runs in a maximized window gets a
   centred box; Android also offers a user-aspect-ratio override there, which
   the record's own orientation stands in for (`windowOverrideOrientation`).
@@ -1019,7 +1017,7 @@ and `egl*` calls land in forwarders generated from the Khronos headers
 on first use, so the runtime still starts without it.
 
 The framework context is ANGLE on Direct3D 11, falling back to WARP and then
-to SwiftShader (`WINAPK_ANGLE_BACKEND=d3d11|swiftshader` forces one). Each GL
+to SwiftShader. Each GL
 view renders into its own pbuffer; after a frame the pixels are read back and
 shown, with the Java UI composited on top as the overlay layer. A swap chain
 on the window would skip the copy; that is left for later.

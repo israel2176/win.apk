@@ -338,7 +338,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 |---|---|---|
 | Appearance | **Theme** | Follow Windows (the default), Light or Dark. Applies at once |
 | Appearance | **Language** | Follow Windows (the default), Hebrew (עברית) or English. Applies at once; see [Hebrew and right-to-left](#hebrew-and-right-to-left) |
-| Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
+| Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
 | Apps | **Default orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen. Apps that require an orientation always open in it; an app's details page changes it for that app |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
 | Apps | **Report Google Play as the installer** (on) | Apps you install are told Google Play installed them, as `adb install -i com.android.vending` does on a phone; some apps (banks such as bit and Bank Hapoalim) otherwise stop at "reinstall the app from the store". An app another store installed (F-Droid, Aurora) still names that store. Off: apps installed from Win.apk name no installer, as a sideloaded app. Takes effect the next time an app opens |
@@ -765,7 +765,7 @@ bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <
 |---|---|
 | `--apk` | The app to install and run |
 | `--data` | The data folder (default `%LOCALAPPDATA%\Win.apk`) |
-| `--jdk` | The Java runtime (default: the `jre` folder next to `bin`, else `WINAPK_JAVA_HOME` or `JAVA_HOME`) |
+| `--jdk` | The Java runtime (default: the `jre` folder next to `bin`, else `JAVA_HOME`) |
 | `--lib` | The folder with the framework jars (default: `lib` next to `bin`) |
 | `--install-only` | Install and convert the app, write its icon and name, and exit |
 | `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `device-id` (`DEVICE_ID`, the Services Framework's `android_id` from its `gservices.db` as a signed decimal, else the layer's own checkin's, and `gsf` or `checkin`; no line when there is none), `license <package> <versionCode>`, `gcmtoken <package>`, `token-service` (the Google token service apps ask for their tokens, started by the first app that needs one; it exits when idle) and the rest of `com.macapk.gms.GmsCli` |
@@ -780,24 +780,17 @@ Environment variables the launcher and the runtime read:
 
 | Variable | Effect |
 |---|---|
-| `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; set it yourself for the **Auto** preset or a direct run |
-| `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
-| `WINAPK_MAXIMIZE_TURNS=0` | A maximized window is a large display at the window's scale, not the phone turned |
-| `WINAPK_DENSITY=<dpi>` | Pins the density the app sees; a maximized window or another monitor's scale then enlarges or shrinks the picture instead of giving the app a new density |
+| `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; a direct run of `winapk-runtime` takes it from here |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |
-| `WINAPK_AOT=0` | Run ARM-only apps' code on the JIT only: no translation is loaded or made |
-| `WINAPK_ABIS=arm64-v8a` | Install an app's ARM64 build although it has an x86_64 one (for comparing the two) |
-| `WINAPK_ALLOW_SECOND_INSTANCE=1` | Allow a second copy of a running app |
-| `WINAPK_WEBVIEW2=0` | Do not use WebView2; web links open in the system browser |
-| `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Force a graphics backend |
 | `WINAPK_PROXY=socks5://host:port` | A SOCKS proxy for the push (Firebase Cloud Messaging) connection |
-| `WINAPK_CDS=0` | Start the Java runtime without class-data sharing, as Win.apk 0.8 did (slower; for comparing, or if a start fails with `[cds]` lines in its log) |
 | `WINAPK_HEADLESS=1` | Run without a window, for tests |
 | `WINAPK_HEADLESS_FRAME=frame.bmp` | Save the last frame the app drew |
 | `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30` | Exit that many frames after the first |
 
-[`windows/README.md`](../windows/README.md) lists the variables meant for
-development and testing.
+There are no switches that change how Win.apk behaves: what the runtime reads
+from its environment carries a setting from the launcher, serves a test, or
+turns on a log. [`windows/README.md`](../windows/README.md#environment-variables)
+lists every one.
 
 ## Troubleshooting
 
