@@ -521,7 +521,7 @@ final class AccountsService extends Binder {
                                     // the attestation gate, hand back a placeholder so Phenotype falls
                                     // through to its baked/cached flags instead of failing on absence.
                                     // REMOVAL CONDITION: the real DroidGuard VM run mints this token.
-                                    if (minted == null && "1".equals(System.getenv("MACAPK_PLAY_TOKEN_BYPASS"))) {
+                                    if (minted == null && false) {
                                         minted = "macapk.stub.firstparty." + Integer.toHexString(service.hashCode());
                                         expiry = null;
                                         SystemServer.log("accounts: TEMP BYPASS placeholder token for refused first-party scope " + service);

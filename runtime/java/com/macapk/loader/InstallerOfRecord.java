@@ -67,11 +67,6 @@ public final class InstallerOfRecord {
     /** The package that installed `pkg` through PackageInstaller, or null. */
     public static String get(String pkg) {
         if (pkg == null) return null;
-        // Win.apk, debugging only: WINAPK_TEST_INSTALLER=<package> (e.g. com.android.vending) answers that
-        // installer for every app but itself, to see how an app behaves once it believes a store installed
-        // it. Never set by the launcher or the installer; no setting shows it.
-        String test = env.apply("WINAPK_TEST_INSTALLER");
-        if (test != null && !test.isEmpty() && !test.equals(pkg)) return test;
         String v = load().getProperty(pkg);
         if ((v == null || v.isEmpty()) && backfill) v = backfillFromPlay(pkg);
         return (v == null || v.isEmpty()) ? null : v;
@@ -84,7 +79,7 @@ public final class InstallerOfRecord {
 
     /**
      * The installer PackageManager reports for `pkg` (getInstallerPackageName and every name of
-     * getInstallSourceInfo): the record (or WINAPK_TEST_INSTALLER) when there is one, else Google Play
+     * getInstallSourceInfo): the record when there is one, else Google Play
      * for an app the user installed while the setting is on, else null. `installed`: `pkg` is the
      * running app, or one the installed-apps registry has and the caller may see.
      */
@@ -116,8 +111,7 @@ public final class InstallerOfRecord {
         if (PLAY.equals(pkg) || !backfillTried.add(pkg)) return null;
         java.io.File tmp = null;
         try {
-            long installedAt = MacApkPackageManager.InstalledRegistry.enabled()
-                    ? rowInstalledAt(pkg) : 0L;
+            long installedAt = rowInstalledAt(pkg);
             if (installedAt <= 0L) return null;
             java.io.File db = playLedger();
             if (db == null) return null;

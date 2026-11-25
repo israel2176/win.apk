@@ -14,7 +14,6 @@ package com.macapk.loader;
 public final class AppCaller {
     private AppCaller() {}
 
-    static final boolean OFF = "1".equals(System.getenv("MACAPK_ATTR_TEXT_FOR_APPS"));
 
     private static final StackWalker WALKER =
         StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
@@ -23,7 +22,6 @@ public final class AppCaller {
      *  `framesAbove` counts the framework frames between this call and that
      *  method's caller (0: the method calling isApp is the one the app called). */
     public static boolean isApp(int framesAbove) {
-        if (OFF) return false;
         try {
             Class<?> c = WALKER.walk(s -> s.skip(2 + framesAbove).findFirst()
                 .map(StackWalker.StackFrame::getDeclaringClass).orElse(null));

@@ -2262,7 +2262,6 @@ java/nio/HeapCharBuffer
 java/nio/charset/CoderResult
 com/macapk/loader/UnverifiedClasses
 java/nio/file/InvalidPathException
-com/macapk/loader/FwGapNewClasses
 android/content/res/ApkAssets
 com/winapk/aospres/NativeApkAssets
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial LLJLLI3_J
@@ -2599,7 +2598,6 @@ java/util/Date
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial LLIILI_J
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial LLIILI_L
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.Invokers$Holder linkToTargetMethod IILIL_L
-com/macapk/loader/TvMode
 android/content/res/Resources
 android/content/res/Resources$NotFoundException
 android/util/AttributeSet
@@ -2775,7 +2773,6 @@ java/nio/charset/CharsetDecoder
 sun/nio/cs/UnicodeDecoder
 sun/nio/cs/UTF_16LE$Decoder
 sun/nio/cs/UTF_8$Decoder
-com/macapk/loader/KeyBindProfiles
 java/net/URLConnection
 java/net/JarURLConnection
 sun/net/www/protocol/jar/JarURLConnection
@@ -2804,11 +2801,6 @@ jdk/internal/math/FloatingDecimal$1
 jdk/internal/math/FloatingDecimal$ASCIIToBinaryConverter
 jdk/internal/math/FloatingDecimal$PreparedASCIIToBinaryBuffer
 jdk/internal/math/FloatingDecimal$ASCIIToBinaryBuffer
-com/macapk/loader/KeyBindProfiles$Binding
-com/macapk/loader/KeyBindProfiles$Profile
-com/macapk/loader/TiltControl
-com/macapk/loader/ArrowPad
-com/macapk/loader/SpaceTap
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial LLJLLJJ_J
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial L3JJ_J
 @lambda-form-invoker [LF_RESOLVE] java.lang.invoke.DirectMethodHandle$Holder invokeSpecial L3JJ_L

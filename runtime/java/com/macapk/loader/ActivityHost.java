@@ -20,45 +20,6 @@ public final class ActivityHost {
     // start-design_2026-09-26.md stages 2a/2b/2d/2e). Each is read ONCE (the JDK
     // caches the environment at startup, so this is the value a per-call read
     // returns) and "0" restores the exact pre-change start path.
-    /** Stage 2a: an IMPLICIT start resolves through the ONE resolver
-     *  (MacApkPackageManager.queryIntentActivities, MATCH_DEFAULT_ONLY) instead
-     *  of going straight to the host handoff, so an app's OWN implicit targets
-     *  launch (they were silently dropped) and setPackage / the selector are
-     *  honoured because the resolver already honours them. */
-    static final boolean START_RESOLVE =
-        !"0".equals(System.getenv("MACAPK_START_RESOLVE"));
-    /** Stage 2b: a start nothing resolves throws ActivityNotFoundException with
-     *  Instrumentation.checkStartActivityResult's two message shapes (android14
-     *  :2232-2240), which is what every app's fallback path is written against
-     *  (ACRA's email report, "no browser installed" toasts). Public: Activity
-     *  reads it to drop, not settle, a startActivityForResult pairing. */
-    public static final boolean START_ANF =
-        !"0".equals(System.getenv("MACAPK_START_ANF"));
-    /** An activity that never installs a content view gets its window's OWN
-     *  decor, empty, at the end of its resume, as AOSP
-     *  ActivityThread.handleResumeActivity adds `r.window.getDecorView()`
-     *  (android14-release :5019-5041). It replaces the framework-built empty
-     *  GLSurfaceView that ensureFallbackContentView installed after onCreate:
-     *  no device ever shows one, it painted black over the starting window's
-     *  windowBackground and hid any views the app had added to
-     *  android.R.id.content. See addEmptyWindowIfNeeded and
-     *  docs/fallback-glsurfaceview-content-retired_2026-09-27.md.
-     *  MACAPK_EMPTY_WINDOW_DECOR=0 restores the fallback GLSurfaceView (and its
-     *  renderer-bearing guard in GLSurfaceView) byte for byte. Public: Activity
-     *  and GLSurfaceView read it. */
-    public static final boolean EMPTY_WINDOW_DECOR =
-        !"0".equals(System.getenv("MACAPK_EMPTY_WINDOW_DECOR"));
-    /** Stage 2d: an explicit start of an <activity-alias> instantiates its
-     *  targetActivity; getIntent().getComponent() stays the alias
-     *  (ActivityThread.performLaunchActivity). Class.forName(alias) used to miss
-     *  and the start was dropped. */
-    static final boolean START_ALIAS =
-        !"0".equals(System.getenv("MACAPK_START_ALIAS"));
-    /** Stage 2e: a caller whose targetSdk is KNOWN and >= 34, starting an intent
-     *  with no package and no component, matches only EXPORTED components, its
-     *  own included (ResolveIntentHelper.java:114-148, android14). */
-    static final boolean START_EXPORTED_ONLY =
-        !"0".equals(System.getenv("MACAPK_START_EXPORTED_ONLY"));
 
     private static android.app.Application app;
     private static ClassLoader appCl;
@@ -119,8 +80,7 @@ public final class ActivityHost {
         sTerminateTopPaused = false;
         java.util.concurrent.CountDownLatch done = h.terminate(() -> sTerminateTopPaused = true);
         try {
-            if (QUIT_PUMPS_RENDER) return awaitTeardownPumping(done, timeoutMs, processExits);
-            return done.await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+            return awaitTeardownPumping(done, timeoutMs, processExits);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;
@@ -160,9 +120,6 @@ public final class ActivityHost {
     // Java-only apps finish in 3-8 ms).
     //
     // MACAPK_QUIT_PUMPS_RENDER=0 restores the plain await (the old path, byte
-    // for byte). Default ON.
-    static final boolean QUIT_PUMPS_RENDER =
-        !"0".equals(System.getenv("MACAPK_QUIT_PUMPS_RENDER"));
     /** One render-tick interval, well under a 60 Hz frame; a tick is itself
      *  paced by the swap it does. */
     private static final long QUIT_SLICE_MS = 8L;
@@ -197,9 +154,6 @@ public final class ActivityHost {
     // activity a restart idiom starts next.
     //
     // MACAPK_QUIT_HIDE_AFTER_PAUSE=0: the window stays until the teardown
-    // returns (the old path, byte for byte). Default ON.
-    static final boolean QUIT_HIDE_AFTER_PAUSE =
-        !"0".equals(System.getenv("MACAPK_QUIT_HIDE_AFTER_PAUSE"));
     /** Set on the Android main thread once the visible activity of a task being
      *  removed (sTerminating) has returned from onPause. */
     static volatile boolean sTerminateTopPaused;
@@ -276,7 +230,7 @@ public final class ActivityHost {
                     // Keep flushing: the ordering reaches the window server only
                     // through a transaction commit this blocked thread must make.
                     sHostHideWindows.getAsBoolean();
-                } else if (QUIT_HIDE_AFTER_PAUSE && processExits && sTerminateTopPaused
+                } else if (processExits && sTerminateTopPaused
                         && sHostHideWindows.getAsBoolean()) {
                     hidden = true;
                     NativeLog.i(TAG, "macapkTerminate: top activity paused; window off screen"
@@ -348,9 +302,6 @@ public final class ActivityHost {
     //
     // MACAPK_ONE_MAIN_THREAD=0 restores the old behaviour for bisecting: start()
     // registers its caller again, and the decisions below go back to set
-    // membership. Default ON.
-    static final boolean ONE_MAIN_THREAD =
-        !"0".equals(System.getenv("MACAPK_ONE_MAIN_THREAD"));
 
     /** Is the calling thread THE Android main thread? With the real looper and a
      *  registered main thread that is the one Boot designated, by identity
@@ -368,8 +319,7 @@ public final class ActivityHost {
      *  macapkTerminate from that thread waits out its timeout for nothing.
      *  Package-private: MacApkProcessExit asks the same question. */
     static boolean macapkOnMainThread() {
-        if (ONE_MAIN_THREAD && android.os.Looper.MACAPK_REAL_LOOPER
-                && android.os.Looper.macapkHasMainThread()
+        if (android.os.Looper.macapkHasMainThread()
                 && !android.os.Looper.macapkMainLooperQuit()) {
             return android.os.Looper.macapkIsActivityThread();
         }
@@ -378,9 +328,7 @@ public final class ActivityHost {
 
     private static android.os.Handler ownerHandler() {
         android.os.Looper main = android.os.Looper.getMainLooper();
-        return android.os.Looper.MACAPK_REAL_LOOPER
-            ? android.os.Handler.macapkCreateOwnerOnly(main)
-            : new android.os.Handler(main);
+        return android.os.Handler.macapkCreateOwnerOnly(main);
     }
 
     /** Win.apk: the host's window was minimized by the user (the title bar's button, the taskbar,
@@ -588,7 +536,7 @@ public final class ActivityHost {
             // ChooserActivity.onCreate (android12-release :619-623) finishes the
             // whole chooser with "Target is not an intent" when EXTRA_INTENT is
             // missing or not an Intent, before it looks at the initial intents.
-            if (CHOOSER_INITIAL && wrapped != null
+            if (wrapped != null
                     && !Intent.ACTION_CHOOSER.equals(wrapped.getAction())
                     && hostActionForDirect(wrapped) == null) {
                 Intent initial = firstServableInitialIntent(cur);
@@ -600,10 +548,6 @@ public final class ActivityHost {
         return null;
     }
 
-    /** MACAPK_CHOOSER_INITIAL (labelled bisect gate, default ON): a chooser's
-     *  EXTRA_INITIAL_INTENTS are candidate targets too. =0 resolves a chooser
-     *  for its EXTRA_INTENT alone, byte-for-byte the pre-v1.0.1658 path. */
-    static final boolean CHOOSER_INITIAL = !"0".equals(System.getenv("MACAPK_CHOOSER_INITIAL"));
 
     /** ChooserActivity.MAX_EXTRA_INITIAL_INTENTS (android12-release :286). */
     private static final int MAX_EXTRA_INITIAL_INTENTS = 2;
@@ -895,8 +839,7 @@ public final class ActivityHost {
     private static Boolean s_allowHostUrlAtLaunch = null;
     private static boolean allowHostUrlAtLaunch() {
         if (s_allowHostUrlAtLaunch == null) {
-            String v = System.getenv("MACAPK_ALLOW_HOST_URL_AT_LAUNCH");
-            s_allowHostUrlAtLaunch = (v != null && !v.isEmpty() && !v.equals("0"));
+            s_allowHostUrlAtLaunch = false;
         }
         return s_allowHostUrlAtLaunch;
     }
@@ -916,10 +859,6 @@ public final class ActivityHost {
     private static long hostUrlGraceMs() {
         if (s_hostUrlGraceMs == null) {
             long v = 10_000L;
-            String e = System.getenv("MACAPK_HOST_URL_GRACE_MS");
-            if (e != null && !e.isEmpty()) {
-                try { v = Long.parseLong(e); } catch (NumberFormatException ignored) {}
-            }
             s_hostUrlGraceMs = v;
         }
         return s_hostUrlGraceMs;
@@ -932,18 +871,12 @@ public final class ActivityHost {
     private static Boolean s_externalUrlsOff = null;
     private static boolean externalUrlsOff() {
         if (s_externalUrlsOff == null) {
-            s_externalUrlsOff = "0".equals(System.getenv("MACAPK_EXTERNAL_URLS"));
+            s_externalUrlsOff = false;
         }
         return s_externalUrlsOff;
     }
 
-    /** MACAPK_HOST_URL_DRY_RUN=1 (test hook, default off): openHost logs the
-     *  URL it would hand the host (NSWorkspace / ShellExecute) and reports it
-     *  opened, instead of opening it, so an unattended run never pops the
-     *  user's browser. Checked on the Java side, before the native call. */
-    private static final boolean HOST_URL_DRY_RUN =
-            "1".equals(System.getenv("MACAPK_HOST_URL_DRY_RUN"));
-    static boolean hostUrlDryRun() { return HOST_URL_DRY_RUN; }
+    static boolean hostUrlDryRun() { return false; }
 
     /** v1.0.849: the ONE policy choke point for handing a URL to the host.
      *  Everything that can open the macOS browser must come through here --
@@ -981,7 +914,7 @@ public final class ActivityHost {
         // the open. debug/urlscheme_gate.sh P5-P8 guard this ordering.
         final boolean claim = HostUrlIntake.shouldClaim(allowHostUrlAtLaunch(),
                 TouchDispatcher.lastUserInputMillis(), System.currentTimeMillis(),
-                hostUrlGraceMs(), externalUrlsOff(), HostUrlIntake.CLAIM_ON_REFUSAL);
+                hostUrlGraceMs(), externalUrlsOff(), false);
         if (externalUrlsOff()) {
             if (claim) HostUrlIntake.claimRedirectSchemes(uri);   // harness opt-in only
             NativeLog.w(TAG, "REFUSED " + action + " -> host open(" + uri
@@ -1078,8 +1011,7 @@ public final class ActivityHost {
             // The platform package installer, pinned by the caller (a store
             // picks InstallStart out of queryIntentActivities and setClassName()s
             // it): performed by the installer surface, as the implicit start is.
-            if (MacApkPackageManager.macapkInstallerComponent()
-                    && MacApkPackageManager.macapkIsInstallerPackage(pkg)
+            if (MacApkPackageManager.macapkIsInstallerPackage(pkg)
                     && InstallIntentHandler.isInstallIntent(intent)
                     && resolveImplicitToHost(intent)) {
                 return null;
@@ -1092,10 +1024,9 @@ public final class ActivityHost {
             }
             // Stage 3a: a component of ANOTHER installed Mac.apk app is handed to
             // that app (resolveForStart: not narrowed by package visibility).
-            if (CrossAppLauncher.XAPP_START && macapkCrossAppStart(own, intent, null)) return null;
+            if (macapkCrossAppStart(own, intent, null)) return null;
             if (macapkPackageInstalled(pkg)) return intent;
-            if (START_ANF) throw macapkAnf(intent);
-            return intent;
+            throw macapkAnf(intent);
         }
         java.util.List<android.content.pm.ResolveInfo> rows = java.util.Collections.emptyList();
         try {
@@ -1117,8 +1048,7 @@ public final class ActivityHost {
         // "open in browser" for its own site would route straight back into it,
         // because the PM lists the app's row before the host browser row.
         final boolean web = macapkIsWebIntent(intent) && intent.getPackage() == null;
-        final boolean exportedOnly = START_EXPORTED_ONLY
-                && intent.getPackage() == null && macapkCallerTargetsU();
+        final boolean exportedOnly = intent.getPackage() == null && macapkCallerTargetsU();
         android.content.pm.ResolveInfo pick = null;
         for (android.content.pm.ResolveInfo ri : rows) {
             if (ri == null || ri.activityInfo == null) continue;
@@ -1132,10 +1062,7 @@ public final class ActivityHost {
             // The host still performs what the PM does not list (the package
             // uninstaller's surface); only after that is the start unresolved.
             if (resolveImplicitToHost(intent)) return null;
-            if (START_ANF) throw macapkAnf(intent);
-            NativeLog.w(TAG, "startActivity implicit intent unresolved (action="
-                    + intent.getAction() + " data=" + intent.getDataString() + ") -- ignored");
-            return null;
+            throw macapkAnf(intent);
         }
         if (own != null && own.equals(pick.activityInfo.packageName)) {
             Intent copy = new Intent(intent);
@@ -1158,7 +1085,7 @@ public final class ActivityHost {
         }
         // Stage 3a: a row owned by ANOTHER installed Mac.apk app (the query was
         // scoped to it with setPackage): hand the start to that app.
-        if (CrossAppLauncher.XAPP_START && macapkCrossAppStart(own, intent, pick.activityInfo)) {
+        if (macapkCrossAppStart(own, intent, pick.activityInfo)) {
             return null;
         }
         // A host or Settings row: perform it. A POLICY refusal (the recency

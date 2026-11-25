@@ -113,17 +113,13 @@ import android.content.Intent;
 public final class MacApkProcessExit {
     private MacApkProcessExit() {}
     private static final String TAG = "Mac.apk.Process";
-    private static final boolean LEGACY = "legacy".equals(System.getenv("MACAPK_GUEST_EXIT"));
 
     public static void systemExit(int status)            { exit(status, "System.exit"); }
     public static void runtimeExit(Runtime r, int status) { exit(status, "Runtime.exit"); }
     public static void runtimeHalt(Runtime r, int status) { exit(status, "Runtime.halt"); }
 
-    /** Bisect gate for the calling-thread attribution; see the class comment. */
-    static final boolean THREAD_OWNER = !"0".equals(System.getenv("MACAPK_EXIT_THREAD_OWNER"));
 
     private static void exit(int status, String api) {
-        if (LEGACY) { Runtime.getRuntime().exit(status); return; }
         boolean onMain = onMainThread();
         Owner contained = exitLocked(status, api, onMain);
         // Only rule (a) returns here; rules (b) and (c) end this process. Park
@@ -334,7 +330,7 @@ public final class MacApkProcessExit {
      *  {@code topActivity} the class name of the top activity, or null. */
     static Owner exitingProcess(Manifest m, ClassLoader appCl, boolean onMain,
                                 String topActivity) {
-        if (THREAD_OWNER && !onMain && m != null && appCl != null) {
+        if (!onMain && m != null && appCl != null) {
             Entry entry = outermostGuestFrame(appCl);
             if (entry != null) {
                 String p = componentProcessOf(m, entry.cls);

@@ -1635,8 +1635,6 @@ public final class PackageInstallerBackend {
      *  app finds both here. */
     public static java.util.List<File> canonicalAppCandidates() {
         java.util.List<File> out = new java.util.ArrayList<>();
-        String env = System.getenv("MACAPK_CANONICAL_APP");
-        if (env != null && !env.isEmpty()) out.add(new File(env));
         out.add(new File("/Applications/Mac.apk.app"));
         String home = System.getProperty("user.home");
         if (home != null && !home.isEmpty()) out.add(new File(home, "Applications/Mac.apk.app"));

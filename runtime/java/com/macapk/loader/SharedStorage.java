@@ -44,17 +44,13 @@ public final class SharedStorage {
      *  whole pre-S0 behaviour for a bisect: here that means
      *  Environment.getExternalStoragePublicDirectory creating its directory
      *  again and ensureDefaultFolders doing nothing. */
-    public static boolean unifyEnabled() {
-        String e = System.getenv("MACAPK_SDCARD_UNIFY");
-        return e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
 
     /** The android root: -Dmacapk.android.root, then MACAPK_ANDROID_ROOT, then
      *  the dev scratch default; a leading "~" is expanded. */
     public static String androidRoot() {
         String root = System.getProperty("macapk.android.root");
         if (root == null || root.isEmpty()) {
-            root = System.getenv("MACAPK_ANDROID_ROOT");
+            root = null;
         }
         if (root == null || root.isEmpty()) {
             // Last-ditch dev default. The runtime ALWAYS hands us
@@ -128,7 +124,7 @@ public final class SharedStorage {
     private static volatile File sCanonicalVolume;
 
     public static boolean onePathEnabled() {
-        String e = System.getenv("MACAPK_STORAGE_ONE_PATH");
+        String e = null;
         return e == null || e.isEmpty() || e.charAt(0) != '0';
     }
 
@@ -443,7 +439,7 @@ public final class SharedStorage {
      *  removing one would hide the files it reaches). When the variable is not
      *  set, the Settings switch decides (userFoldersOffFile). */
     public static boolean userFoldersEnabled() {
-        String e = System.getenv("MACAPK_USER_FOLDERS");
+        String e = null;
         if (e != null && !e.isEmpty()) return e.charAt(0) != '0';
         return !userFoldersSettingOff();
     }
@@ -463,9 +459,8 @@ public final class SharedStorage {
      *  MACAPK_USER_FOLDERS (gates pin it), or MACAPK_USER_FOLDERS_SETTING=0,
      *  which ignores the switch (the gate's positive control). */
     static boolean userFoldersSettingOff() {
-        String e = System.getenv("MACAPK_USER_FOLDERS");
+        String e = null;
         if (e != null && !e.isEmpty()) return false;
-        if ("0".equals(System.getenv("MACAPK_USER_FOLDERS_SETTING"))) return false;
         return userFoldersOffFile().exists();
     }
 
@@ -769,7 +764,6 @@ public final class SharedStorage {
      *          done, MACAPK_SDCARD_UNIFY=0, or the volume root is unusable).
      *          Never throws. */
     public static synchronized int ensureDefaultFolders() {
-        if (!unifyEnabled()) return -1;
         try {
             File marker = defaultFoldersMarker();
             if (marker.exists()) return -1;
@@ -833,7 +827,7 @@ public final class SharedStorage {
     static final String SHARED_VOLUME_DIR = "sdcard";
 
     public static boolean sharedVolumeEnabled() {
-        String e = System.getenv("MACAPK_SHARED_SDCARD");
+        String e = null;
         return e == null || e.isEmpty() || e.charAt(0) != '0';
     }
 
@@ -843,7 +837,7 @@ public final class SharedStorage {
      *  every move journalled. MACAPK_SHARED_SDCARD_MIGRATE=0 keeps them the
      *  app's own. */
     static boolean sharedVolumeMigrate() {
-        String e = System.getenv("MACAPK_SHARED_SDCARD_MIGRATE");
+        String e = null;
         return e == null || e.isEmpty() || e.charAt(0) != '0';
     }
 

@@ -36,9 +36,6 @@ import java.util.regex.Pattern;
 public final class CrossAppLauncher {
     private static final String TAG = "Mac.apk.XAPP";
 
-    /** MACAPK_XAPP_START (default ON). =0: a registry-resolved start falls
-     *  through to the pre-change path (performLaunch misses and logs). */
-    static final boolean XAPP_START = !"0".equals(System.getenv("MACAPK_XAPP_START"));
 
     /** Where an openable bundle must live: the two folders the installer
      *  generates bundles in (InstallCore.swift Paths.bundleDirs). A parameter

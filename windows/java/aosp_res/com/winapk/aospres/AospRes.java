@@ -651,10 +651,10 @@ public final class AospRes implements ResBackend {
         c.densityDpi = DisplayMetrics.DENSITY_DEVICE_STABLE;
         c.uiMode = Configuration.UI_MODE_TYPE_NORMAL | Configuration.UI_MODE_NIGHT_NO;
         c.touchscreen = Configuration.TOUCHSCREEN_FINGER;
-        boolean keys = hostKeyboard();
-        c.keyboard = keys ? Configuration.KEYBOARD_QWERTY : Configuration.KEYBOARD_NOKEYS;
+        // The PC's keyboard is the app's (Win.apk's InputManager reports it as a physical one).
+        c.keyboard = Configuration.KEYBOARD_QWERTY;
         c.keyboardHidden = Configuration.KEYBOARDHIDDEN_NO;
-        c.hardKeyboardHidden = keys ? Configuration.HARDKEYBOARDHIDDEN_NO : Configuration.HARDKEYBOARDHIDDEN_YES;
+        c.hardKeyboardHidden = Configuration.HARDKEYBOARDHIDDEN_NO;
         c.navigation = Configuration.NAVIGATION_NONAV;
         c.navigationHidden = Configuration.NAVIGATIONHIDDEN_YES;
         c.colorMode = 0;
@@ -672,16 +672,6 @@ public final class AospRes implements ResBackend {
         }
         if (!locales.isEmpty()) c.setLocales(new android.os.LocaleList(locales.toArray(new java.util.Locale[0])));
         return c;
-    }
-
-    /** Win.apk's InputManager.MACAPK_HOST_KEYBOARD (whether the PC's keyboard is the app's), by
-     *  reflection: this class is compiled against AOSP's InputManager, which has no such field. */
-    private static boolean hostKeyboard() {
-        try {
-            return android.hardware.input.InputManager.class.getField("MACAPK_HOST_KEYBOARD").getBoolean(null);
-        } catch (ReflectiveOperationException e) {
-            return false;
-        }
     }
 
     private static int defaultLayoutDir() {

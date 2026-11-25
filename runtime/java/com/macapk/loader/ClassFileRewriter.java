@@ -172,22 +172,20 @@ public final class ClassFileRewriter {
      *  rewritten bytes. Never throws -- on any parse error the
      *  original input is returned unchanged. */
     public static Result maybeRewrite(byte[] raw, String className) {
-        if (PRESCAN_ENABLED) {
-            boolean needsParse = needsFullParse(raw, className);
-            if (PRESCAN_STATS) {
-                long seen = prescanSeen.incrementAndGet();
-                if (needsParse) prescanFullParsed.incrementAndGet();
-                if (seen % 500 == 0) {
-                    long fp = prescanFullParsed.get();
-                    System.err.println("[rewriter] prescan stats: seen=" + seen
-                        + " full-parsed=" + fp + " skipped=" + (seen - fp)
-                        + " skip-ratio=" + String.format(java.util.Locale.ROOT,
-                            "%.2f%%", 100.0 * (seen - fp) / seen));
-                }
+        boolean needsParse = needsFullParse(raw, className);
+        if (PRESCAN_STATS) {
+            long seen = prescanSeen.incrementAndGet();
+            if (needsParse) prescanFullParsed.incrementAndGet();
+            if (seen % 500 == 0) {
+                long fp = prescanFullParsed.get();
+                System.err.println("[rewriter] prescan stats: seen=" + seen
+                    + " full-parsed=" + fp + " skipped=" + (seen - fp)
+                    + " skip-ratio=" + String.format(java.util.Locale.ROOT,
+                        "%.2f%%", 100.0 * (seen - fp) / seen));
             }
-            if (!needsParse) {
-                return new Result(raw, false, "prescan: no rewrite markers present");
-            }
+        }
+        if (!needsParse) {
+            return new Result(raw, false, "prescan: no rewrite markers present");
         }
         try {
             ClassFile cf = new ClassFile(raw);
@@ -257,7 +255,7 @@ public final class ClassFileRewriter {
             // with a compatible constructor + DataFetcher interface.
             String dotted = className == null ? "" : className.replace('/', '.');
             if (dotted.equals("org.fdroid.download.glide.DownloadRequestLoader")
-                && "1".equals(System.getenv("MACAPK_GLIDE_HTTPFETCHER_SHIM"))) {
+                && false) {
                 // v1.0.111: opt-in until the matching com.macapk.loader.HttpFetcher_Macdr
                 // shim ships in an AppClassLoader-visible location (currently
                 // blocked on cross-classloader visibility -- the shim
@@ -452,7 +450,7 @@ public final class ClassFileRewriter {
             // stack effect (Class, String -> Field), so no PC / branch /
             // StackMapTable shift. Rationale and the name table:
             // LibcoreFields.java. Gate MACAPK_LIBCORE_FIELD_NAMES.
-            if (LIBCORE_FIELD_NAMES && containsNeedle(raw, NEEDLE_GET_DECLARED_FIELD)
+            if (containsNeedle(raw, NEEDLE_GET_DECLARED_FIELD)
                     && containsNeedle(raw, NEEDLE_LIBCORE_FIELD)) {
                 int patchedL = 0;
                 for (MethodEntry m : cf.methods) {
@@ -571,16 +569,6 @@ public final class ClassFileRewriter {
     // four witnessed/live string patterns (A, B, F, G) independent of
     // the one pattern that genuinely requires positional parsing (D).
 
-    /** MACAPK_REWRITER_PRESCAN=0 disables the gate below and restores
-     *  the pre-2026-07-24 behavior of always doing the full structured
-     *  parse. Default on. Kept as a rollback escape hatch, and as the
-     *  mechanism used to verify zero false negatives: a DEBUG-logged
-     *  (MACAPK_DEBUG_REWRITER=1) rewritten-class run with PRESCAN=0
-     *  (baseline -- always full-parse, i.e. the exact pre-change
-     *  behavior) must produce a BYTE-IDENTICAL set of rewritten
-     *  classes to a run with the default PRESCAN=1. */
-    private static final boolean PRESCAN_ENABLED =
-        !"0".equals(System.getenv("MACAPK_REWRITER_PRESCAN"));
 
     /** MACAPK_REWRITER_PRESCAN_STATS=1 logs a running skip/full-parse
      *  tally every 500 classes seen. Off by default (an
@@ -635,7 +623,7 @@ public final class ClassFileRewriter {
         try {
             String dotted = className == null ? "" : className.replace('/', '.');
             if (dotted.equals("org.fdroid.download.glide.DownloadRequestLoader")
-                && "1".equals(System.getenv("MACAPK_GLIDE_HTTPFETCHER_SHIM"))) {
+                && false) {
                 return true;
             }
             // Pattern H: a component the manifest puts in another
@@ -672,7 +660,7 @@ public final class ClassFileRewriter {
             }
             // Pattern L: a getDeclaredField call AND a libcore field name
             // literal in the same class (an over-match costs one parse).
-            if (LIBCORE_FIELD_NAMES && containsNeedle(raw, NEEDLE_GET_DECLARED_FIELD)
+            if (containsNeedle(raw, NEEDLE_GET_DECLARED_FIELD)
                     && containsNeedle(raw, NEEDLE_LIBCORE_FIELD)) {
                 return true;
             }
@@ -1064,10 +1052,6 @@ public final class ClassFileRewriter {
     // Pattern L -- libcore private-field names (see LibcoreFields)
     // -----------------------------------------------------------------
 
-    /** Gate for Pattern L (default ON); MACAPK_LIBCORE_FIELD_NAMES=0 leaves
-     *  every getDeclaredField call site alone. */
-    static final boolean LIBCORE_FIELD_NAMES =
-        !"0".equals(System.getenv("MACAPK_LIBCORE_FIELD_NAMES"));
     private static final byte[] NEEDLE_GET_DECLARED_FIELD =
         "getDeclaredField".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
     /** The libcore field names LibcoreFields maps; any one is enough to parse. */
@@ -1260,7 +1244,6 @@ public final class ClassFileRewriter {
 
     private static boolean androidFileSeparatorEnabled() {
         try {
-            if ("0".equals(System.getenv("MACAPK_ANDROID_FILE_SEPARATOR"))) return false;
             return System.mapLibraryName("x").endsWith(".dll") && java.io.File.separatorChar != '/';
         } catch (Throwable t) {
             return false;
@@ -1381,7 +1364,6 @@ public final class ClassFileRewriter {
 
     private static boolean onDemandNativeEnabled() {
         try {
-            if ("0".equals(System.getenv("MACAPK_ONDEMAND_NATIVE"))) return false;
             return System.mapLibraryName("x").endsWith(".dll");
         } catch (Throwable t) {
             return false;

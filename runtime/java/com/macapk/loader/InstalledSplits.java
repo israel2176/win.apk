@@ -185,11 +185,6 @@ public final class InstalledSplits {
         File inst = installDirOf(apkPath);
         if (inst == null) return null;
         File libRoot = new File(inst, "lib");
-        String forced = System.getenv("MACAPK_FORCE_ABI");
-        if (forced != null && !forced.isEmpty()) {
-            String isa = isaOf(forced);
-            if (isa != null) return new File(libRoot, isa);
-        }
         // The runtime installs ONE isa dir; prefer one that holds files, so
         // an empty sibling (the shim's install-dir materialiser mkdirs
         // lib/arm64 for a guest that opens /data/app, even on an arm app)

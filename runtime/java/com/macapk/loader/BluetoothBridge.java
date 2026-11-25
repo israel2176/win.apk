@@ -11,7 +11,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * the address-shaped key is only an Android API handle, never a radio MAC. */
 public final class BluetoothBridge {
     private BluetoothBridge() {}
-    private static final boolean ON = "1".equals(System.getenv("MACAPK_BLUETOOTH_HOST"));
     private static final ExecutorService EVENTS = Executors.newSingleThreadExecutor(r -> {
         Thread t=new Thread(r,"macapk-bluetooth-events");t.setDaemon(true);return t;
     });
@@ -31,7 +30,7 @@ public final class BluetoothBridge {
     private static native boolean nativeConnect(String identifier,long token);
     private static native void nativeDisconnect(long token,boolean close);
     private static native boolean nativeOperation(long token,int operation,String service,String characteristic,String descriptor,byte[] data,int value);
-    public static boolean available() { try{return ON && nativeAvailable();}catch(UnsatisfiedLinkError e){return false;} }
+    public static boolean available() { try{return false;}catch(UnsatisfiedLinkError e){return false;} }
     public static int state() {
         if(!available())return 10;
         try {

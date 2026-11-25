@@ -54,12 +54,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class DocumentPickerHandler {
     private static final String TAG = "Mac.apk.Documents";
 
-    static final boolean DOC_PICKER = !"0".equals(System.getenv("MACAPK_DOC_PICKER"));
-    /** MACAPK_DOC_TREE, default ON (v1.0.1654). */
-    static final boolean TREE = !"0".equals(System.getenv("MACAPK_DOC_TREE"));
-    /** MACAPK_DOC_INITIAL_URI, default ON (v1.0.1654). */
-    static final boolean INITIAL_URI = !"0".equals(System.getenv("MACAPK_DOC_INITIAL_URI"));
-    private static final String TEST_PATHS = System.getenv("MACAPK_DOCPICK_TEST_PATHS");
 
     /** nativePickEx modes (document_picker.mm). */
     static final int MODE_OPEN = 0, MODE_SAVE = 1, MODE_TREE = 2;
@@ -81,12 +75,12 @@ public final class DocumentPickerHandler {
 
     /** OPEN_DOCUMENT_TREE is served: its gate, and the dispatch its children need. */
     static boolean treeOn() {
-        return TREE && DocumentsProvider.macapkDispatch();
+        return DocumentsProvider.macapkDispatch();
     }
 
     /** Is this a document-picker intent (the PURE predicate; no extras)? */
     static boolean isPickerIntent(Intent intent) {
-        if (!DOC_PICKER || intent == null) return false;
+        if (intent == null) return false;
         String a = intent.getAction();
         return Intent.ACTION_GET_CONTENT.equals(a)
             || Intent.ACTION_OPEN_DOCUMENT.equals(a)
@@ -95,19 +89,9 @@ public final class DocumentPickerHandler {
             || isPhotoPicker(intent);
     }
 
-    /** MACAPK_PHOTO_PICKER (labelled bisect gate, default ON; =0 leaves
-     *  PICK_IMAGES unresolved exactly as before v1.0.1658): the system photo
-     *  picker's action, served by the same macOS open panel filtered to what
-     *  PhotoPickerActivity shows. AOSP: MediaProvider's PhotoPickerActivity
-     *  filters android.provider.action.PICK_IMAGES with no type, image/* or
-     *  video/* (packages/providers/MediaProvider AndroidManifest.xml). androidx
-     *  ActivityResultContracts.PickVisualMedia launches exactly this action on
-     *  API 33+, so with it unresolved every app using the modern photo picker
-     *  got ActivityNotFoundException. */
-    static final boolean PHOTO_PICKER = !"0".equals(System.getenv("MACAPK_PHOTO_PICKER"));
 
     static boolean isPhotoPicker(Intent intent) {
-        return PHOTO_PICKER && intent != null
+        return intent != null
             && android.provider.MediaStore.ACTION_PICK_IMAGES.equals(intent.getAction());
     }
 
@@ -168,7 +152,7 @@ public final class DocumentPickerHandler {
      * cannot load (AbstractActionHandler :830-835). We have no roots, so a root URI is never ours.
      */
     static String initialDirFor(Intent real) {
-        if (!INITIAL_URI || real == null) return null;
+        if (real == null) return null;
         Uri u = null;
         try { u = real.getParcelableExtra(DocumentsContract.EXTRA_INITIAL_URI, Uri.class); }
         catch (Throwable ignored) {}
@@ -216,12 +200,6 @@ public final class DocumentPickerHandler {
                 + (title != null ? " title=" + title : "") + (initialDir != null ? " initial=" + initialDir : "")
                 + " forResult=" + (token != null));
         if (c != null) c.cover();
-        if (TEST_PATHS != null && !TEST_PATHS.isEmpty()) {
-            NativeLog.w(TAG, "picker: MACAPK_DOCPICK_TEST_PATHS answers without a panel (harness seam)");
-            final String[] paths = TEST_PATHS.split(":");
-            ActivityHost.macapkPostOnOwner(() -> finish(id, paths));
-            return true;
-        }
         boolean shown = false;
         try {
             if (tree || initialDir != null) {
@@ -287,7 +265,7 @@ public final class DocumentPickerHandler {
         // GET_CONTENT hands out a READ grant only (onPickFinished :516-517), and
         // so does the photo picker (its result carries FLAG_GRANT_READ_URI_PERMISSION).
         final boolean grantWrite = !Intent.ACTION_GET_CONTENT.equals(action)
-            && !(PHOTO_PICKER && android.provider.MediaStore.ACTION_PICK_IMAGES.equals(action));
+            && !(android.provider.MediaStore.ACTION_PICK_IMAGES.equals(action));
         java.util.List<Uri> uris = new java.util.ArrayList<>();
         if (paths != null) {
             for (String path : paths) {

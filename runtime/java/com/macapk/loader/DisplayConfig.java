@@ -63,8 +63,6 @@ public final class DisplayConfig {
 
     private DisplayConfig() {}
 
-    static final boolean RESIZE_ON =
-        !"0".equals(System.getenv("MACAPK_RESIZE_CONFIG"));
 
     // ---- the committed display ------------------------------------------------
 
@@ -77,7 +75,7 @@ public final class DisplayConfig {
     /** The display's density now, in dpi: DENSITY_DEVICE_STABLE (the launch density) until the
      *  host window shows the phone at another scale. */
     public static int densityDpi() {
-        int d = RESIZE_ON ? sDensityDpi : 0;
+        int d = sDensityDpi;
         return d > 0 ? d : android.util.DisplayMetrics.DENSITY_DEVICE_STABLE;
     }
 
@@ -100,11 +98,11 @@ public final class DisplayConfig {
     public static int realWidthPx() {
         // Gate off = the pre-v1.0.1637 answer exactly: the LIVE canvas globals
         // (which Cmd+R / setRequestedOrientation move and a drag does not).
-        int w = RESIZE_ON ? sRealW : 0;
+        int w = sRealW;
         return w > 0 ? w : Math.round(NativeCocoa.phoneWidth() * pxPerPoint());
     }
     public static int realHeightPx() {
-        int h = RESIZE_ON ? sRealH : 0;
+        int h = sRealH;
         return h > 0 ? h : Math.round(NativeCocoa.phoneHeight() * pxPerPoint());
     }
 
@@ -248,15 +246,7 @@ public final class DisplayConfig {
      *  at densityDpi (0: the density does not change). One display change, committed as one
      *  configuration change; answers as macapkNoteSurfaceSize. */
     public static boolean macapkNoteDisplay(int w, int h, int densityDpi) {
-        if (!RESIZE_ON || w <= 0 || h <= 0) return true;
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            // The legacy looper has no owner thread to serialize on; a post
-            // there lands in GLOBAL_QUEUE, which a renderer-path frame never
-            // drains, so the flag below could stick. Commit inline instead.
-            synchronized (sLock) { sPendingW = w; sPendingH = h; sPendingDpi = densityDpi; }
-            commitPending();
-            return true;
-        }
+        if (w <= 0 || h <= 0) return true;
         android.os.Handler hd;
         synchronized (sLock) {
             sPendingW = w;
@@ -287,9 +277,7 @@ public final class DisplayConfig {
             // OWNER-ONLY on the real-looper path: the commit mutates Resources
             // and the view tree, so it must never run on the OS-main drain
             // (v1.0.1636). The legacy path has no owner distinction.
-            sOwnerHandler = android.os.Looper.MACAPK_REAL_LOOPER
-                ? android.os.Handler.macapkCreateOwnerOnly(main)
-                : new android.os.Handler(main);
+            sOwnerHandler = android.os.Handler.macapkCreateOwnerOnly(main);
         }
         return sOwnerHandler;
     }
@@ -307,7 +295,7 @@ public final class DisplayConfig {
             sApplying = true;
         }
         try {
-            if (!RESIZE_ON || w <= 0 || h <= 0) return;
+            if (w <= 0 || h <= 0) return;
             if (w == sRealW && h == sRealH && dpi == densityDpi()) return;
             apply(w, h, dpi);
         } catch (Throwable t) {
@@ -364,9 +352,7 @@ public final class DisplayConfig {
         appHost.configurationChanged(next);
         try { android.hardware.display.DisplayManager.macapkNotifyDisplayChanged(0); }
         catch (Throwable t) { NativeLog.w(TAG, "display listener dispatch threw: " + t); }
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
-        }
+        try { ViewHost.get().scheduleLayout(); } catch (Throwable ignored) {}
     }
 
     /** Copy the DISPLAY-derived fields of `from` into `to` (dp sizes,

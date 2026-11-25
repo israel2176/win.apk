@@ -60,7 +60,6 @@ public final class AppLinks {
     private AppLinks() {}
 
     private static final String TAG = "Mac.apk.AppLinks";
-    static final boolean ON = !"0".equals(System.getenv("MACAPK_APP_LINKS"));
     static final String RELATION = "delegate_permission/common.handle_all_urls";
     private static final int TIMEOUT_MS = 8000;
     private static final int MAX_BYTES = 512 * 1024;
@@ -245,7 +244,7 @@ public final class AppLinks {
     /** The declared hosts, computed once. */
     private static List<String> hosts() {
         synchronized (LOCK) {
-            if (sHosts == null) sHosts = ON ? autoVerifyHosts(sManifest) : Collections.<String>emptyList();
+            if (sHosts == null) sHosts = autoVerifyHosts(sManifest);
             return sHosts;
         }
     }
@@ -438,7 +437,7 @@ public final class AppLinks {
      *  Answers from the cache and never waits on the network: a domain not
      *  checked yet is DOMAIN_STATE_NONE. */
     public static Map<String, Integer> stateMapFor(String pkg) {
-        if (!ON || pkg == null || !pkg.equals(sPkg)) return null;
+        if (pkg == null || !pkg.equals(sPkg)) return null;
         if (hosts().isEmpty()) return null;
         return Collections.unmodifiableMap(knownStates());
     }
@@ -511,14 +510,6 @@ public final class AppLinks {
         return prefix;
     }
 
-    /** MACAPK_SIGNIN_WINDOW_SCHEMES (default ON; owner's choice, 2026-10-19): a
-     *  sign-in whose redirect_uri is one of the app's OWN link schemes (Rocket
-     *  League's EOS login returns at eos.<client id>://epic/auth) also opens in
-     *  the sign-in window. On a device that login runs in a Custom Tab, which
-     *  closes when the app takes the redirect back; in Safari the tab stayed
-     *  open. Trade-off the owner accepted: the window has no Safari saved
-     *  passwords or passkeys. =0: those logins go to the Mac's browser again. */
-    static final boolean SCHEMES_ON = !"0".equals(System.getenv("MACAPK_SIGNIN_WINDOW_SCHEMES"));
 
     /** Google refuses OAuth in embedded browsers ("disallowed_useragent",
      *  developers.google.com/identity/protocols/oauth2/policies#embedded-webviews),
@@ -552,7 +543,7 @@ public final class AppLinks {
      *  (`redirectIsOwn`, its exported BROWSABLE activity), or the provider
      *  refuses embedded sign-in. */
     static String schemeReturnPrefix(String signInUrl, String redirect, boolean redirectIsOwn) {
-        if (!SCHEMES_ON || !redirectIsOwn || redirect == null || embeddedRefused(signInUrl)) return null;
+        if (!redirectIsOwn || redirect == null || embeddedRefused(signInUrl)) return null;
         int colon = redirect.indexOf(':');
         if (colon <= 0) return null;
         int cut = redirect.length();
@@ -567,7 +558,7 @@ public final class AppLinks {
     /** ActivityHost.openHost: open `url` in the sign-in window when it is a
      *  sign-in that returns to one of our verified links. True when it did. */
     static boolean maybeOpenSignInWindow(String url) {
-        if (!ON || url == null) return false;
+        if (url == null) return false;
         if (!url.regionMatches(true, 0, "https:", 0, 6) && !url.regionMatches(true, 0, "http:", 0, 5)) {
             return false;
         }

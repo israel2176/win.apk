@@ -25,11 +25,9 @@
 //   javac -cp "<runtime>/lib/macapk-loader.jar;<runtime>/lib/android-framework.jar" \
 //         -d out windows/test/java/OnDemandNativeLoadTest.java
 //   java  -cp "<runtime>/lib/macapk-loader.jar;<runtime>/lib/android-framework.jar;out" \
-//         OnDemandNativeLoadTest out/stub/macapk-translator.exe [off]
+//         OnDemandNativeLoadTest out/stub/macapk-translator.exe
 //
-// "off": the run has MACAPK_ONDEMAND_NATIVE=0 set, and guest code must then
-// see the JDK's behaviour. Needs a JDK (it compiles the guest class). Exits 0
-// when every check passes.
+// Needs a JDK (it compiles the guest class). Exits 0 when every check passes.
 
 import com.macapk.loader.AppClassLoader;
 import com.macapk.loader.ClassFileRewriter;
@@ -160,14 +158,13 @@ public final class OnDemandNativeLoadTest {
 
     public static void main(String[] args) throws Throwable {
         File translator = new File(args[0]).getAbsoluteFile();
-        boolean off = args.length > 1 && args[1].equals("off");
         if (!System.mapLibraryName("x").endsWith(".dll")) {
             System.out.println("OnDemandNativeLoadTest: not a Windows host; Pattern N is Windows-only. FAIL");
             System.exit(1);
         }
         byte[] elf = tinyElf();
         Path tmp = Files.createTempDirectory("ondemand-test").toAbsolutePath();  // System.load takes absolute paths only
-        System.out.println("work dir " + tmp + ", switch " + (off ? "off" : "on"));
+        System.out.println("work dir " + tmp);
 
         // NativeLog.print for the loader's log lines, from the fixture.
         System.load(new File(translator.getParentFile(), "winapk-guest-stub.dll").getPath());
@@ -182,11 +179,9 @@ public final class OnDemandNativeLoadTest {
 
         byte[] raw = Files.readAllBytes(guestDir.resolve("OnDemandGuest.class"));
         ClassFileRewriter.Result r = ClassFileRewriter.maybeRewrite(raw.clone(), "OnDemandGuest");
-        check("rewritten (" + r.reason + ")", r.rewritten, !off);
-        if (!off) {
-            check("a second pass finds nothing to rewrite",
-                    ClassFileRewriter.maybeRewrite(r.bytes.clone(), "OnDemandGuest").rewritten, false);
-        }
+        check("rewritten (" + r.reason + ")", r.rewritten, true);
+        check("a second pass finds nothing to rewrite",
+                ClassFileRewriter.maybeRewrite(r.bytes.clone(), "OnDemandGuest").rewritten, false);
 
         File appDir = Files.createDirectories(tmp.resolve("app")).toFile();
         AppClassLoader loader = new AppClassLoader(new URL[] {guestDir.toUri().toURL()},
@@ -195,7 +190,7 @@ public final class OnDemandNativeLoadTest {
         check("guest class is the app loader's", g.getClassLoader() == loader, true);
 
         // ---- System.mapLibraryName ----
-        check("guest System.mapLibraryName(\"foo\")", call(g, "mapped", "foo"), off ? "foo.dll" : "libfoo.so");
+        check("guest System.mapLibraryName(\"foo\")", call(g, "mapped", "foo"), "libfoo.so");
         check("host System.mapLibraryName(\"foo\")", System.mapLibraryName("foo"), "foo.dll");
 
         // ---- ReLinker: lib/x86_64/<mapped name> out of the APK, System.load ----
@@ -209,16 +204,6 @@ public final class OnDemandNativeLoadTest {
         File foo = new File(appLib, "libfoo.so");
         int mark = logMark();
         Object relinked = call(g, "relink", apk.getPath(), "x86_64", "foo", appLib.getPath());
-        if (off) {
-            check("ReLinker lookup (JDK name)", relinked, "no lib/x86_64/foo.dll");
-            Files.write(foo.toPath(), elf);
-            String t = thrown(g, "systemLoad", foo.getPath());
-            check("System.load(ELF) fails as before", t.startsWith("UnsatisfiedLinkError"), true);
-            check("no on-demand stub", logSince(0, "on-demand native:").size(), 0);
-            check("no stub file", new File(appDir, "lib_native").exists(), false);
-            finish(tmp);
-            return;
-        }
         check("ReLinker lookup", relinked, "loaded libfoo.so");
         File fooStub = new File(appDir, "lib_native/libfoo.dylib");
         check("stub made in findLibrary's slot", fooStub.isFile(), true);

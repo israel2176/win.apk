@@ -168,13 +168,13 @@ public final class HostBrowserTab {
     /** Does this app take `url` from its browser? HostUrlIntake's own
      *  resolution, so the tab hands off exactly what the intake delivers. */
     static boolean macapkClaims(String url) {
-        if (!HostUrlIntake.ON || url == null) return false;
+        if (url == null) return false;
         try {
             android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) return false;
             String own = app.getPackageName();
             PackageManager pm = app.getPackageManager();
-            Intent browser = HostUrlIntake.hostIntentFor(url, own, HostUrlIntake.INTENT_HANDOFF);
+            Intent browser = HostUrlIntake.hostIntentFor(url, own, true);
             return HostUrlIntake.resolveOwn(browser, own, pm) != null;
         } catch (Throwable t) {
             NativeLog.w(TAG, "claim check failed for " + HostUrlIntake.redact(url) + ": " + t);

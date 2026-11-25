@@ -67,24 +67,7 @@ public final class Monet {
 
     /** MACAPK_MONET_WALLPAPER_SEED, default ON. =0 restores the pre-change fixed palette
      *  exactly: ResourceIndex never asks, WallpaperManager.getWallpaperColors answers null. */
-    public static boolean enabled() {
-        String e = System.getenv("MACAPK_MONET_WALLPAPER_SEED");
-        return e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
 
-    /** Boot.macapkFollowSystemAppearance()'s exact test, restated because that method is
-     *  package-private to com.macapk.loader: KEEP THE TWO IN STEP. Boot documents
-     *  MACAPK_FOLLOW_SYSTEM_APPEARANCE=0 as "does this process track the macOS appearance at
-     *  all" -> no. The desktop picture is part of how the host looks, exactly as the dark-mode
-     *  setting is, and every capture harness that compares us against a fixed reference sets
-     *  this variable (debug/recap_mac.sh -> recap_fleet.sh / recap_ab.sh, canvas_ab.sh,
-     *  capture_all.sh, fleet_ab.sh, fdroid_drive.sh, ime_gate.sh ...) precisely so its
-     *  pictures do not depend on the machine's look. Honouring it here keeps every one of those
-     *  measurements what it was before this landed (the pre-change fixed table), whatever is on
-     *  the owner's desktop. A pinned MACAPK_MONET_SEED still wins: it is host-independent. */
-    static boolean followsHostAppearance() {
-        return !"0".equals(System.getenv("MACAPK_FOLLOW_SYSTEM_APPEARANCE"));
-    }
 
     private static final AtomicBoolean sPrefetchStarted = new AtomicBoolean();
 
@@ -95,7 +78,7 @@ public final class Monet {
      *  and the first system_* read joins it through state()'s monitor. Gate off: no thread.
      *  Must NOT synchronize on Monet.class (state() holds that for the whole resolve). */
     public static void prefetch() {
-        if (!enabled() || !sPrefetchStarted.compareAndSet(false, true)) return;
+        if (!sPrefetchStarted.compareAndSet(false, true)) return;
         try {
             Thread t = new Thread(Monet::state, "macapk-monet");
             t.setDaemon(true);
@@ -162,24 +145,6 @@ public final class Monet {
     }
 
     private static State resolve() {
-        if (!enabled()) {
-            // Recorded, not logged: the gate-off path stays the pre-change one, log included.
-            sOutcome = "gate off (MACAPK_MONET_WALLPAPER_SEED=0); fixed palette";
-            return null;
-        }
-        String pin = System.getenv("MACAPK_MONET_SEED");
-        if (pin != null && !pin.isEmpty()) {
-            int seed = parseSeed(pin);
-            State s = new State(seed, new int[] {seed}, 0,
-                    MonetOverlay.overlayFor(seed, CONTRAST), "MACAPK_MONET_SEED");
-            note("Material You seed #" + hex6(seed) + " pinned by MACAPK_MONET_SEED");
-            return s;
-        }
-        if (!followsHostAppearance()) {
-            note("Material You: MACAPK_FOLLOW_SYSTEM_APPEARANCE=0, the host look is not followed;"
-                    + " fixed palette");
-            return null;
-        }
         HostWallpaper.Desktop d;
         try {
             d = HostWallpaper.query();

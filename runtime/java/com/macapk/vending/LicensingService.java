@@ -293,8 +293,6 @@ public final class LicensingService extends android.app.Service {
             }
         } catch (Throwable ignored) {}
         try {
-            String p = System.getenv("MACAPK_PACKAGE");
-            if (p != null && !p.isEmpty()) return p;
         } catch (Throwable ignored) {}
         return null;
     }

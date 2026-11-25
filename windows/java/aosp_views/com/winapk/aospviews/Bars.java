@@ -3,9 +3,8 @@
 // window, so AOSP's InsetsController, ViewRootImpl, DecorView and the app's own
 // fitsSystemWindows / WindowInsets code compute what they do on a phone.
 //
-// Which bars exist is Win.apk's decision, and stays so: none by default (the owner's, Win.apk's
-// StatusBarDriver.systemBarsEnabled; a Windows app has no phone status bar), both with
-// MACAPK_SYSTEM_BARS=1. Their sizes are AOSP's own: the status bar
+// Which bars exist is Win.apk's decision, and stays so: none (the owner's, Win.apk's
+// StatusBarDriver.systemBarsEnabled; a Windows app has no phone status bar). Their sizes are AOSP's own: the status bar
 // SystemBarUtils.getStatusBarHeight (R.dimen.status_bar_height_default, no cutout), the
 // three-button navigation bar R.dimen.navigation_bar_height at the bottom, navigation_bar_width
 // on the side where Win.apk puts it (StatusBarDriver.navBarPosition). Whether each is shown is

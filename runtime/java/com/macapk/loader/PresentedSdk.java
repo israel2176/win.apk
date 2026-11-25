@@ -139,12 +139,7 @@ public final class PresentedSdk {
 
     private static int ceilingFromEnv(int compiled) {
         try {
-            String v = System.getenv("MACAPK_SDK_CEILING");
-            if (v == null || v.trim().isEmpty()) return compiled;
-            int n = Integer.parseInt(v.trim());
-            if (n < FLOOR) n = FLOOR;
-            if (n > MAX_KNOWN_SDK) n = MAX_KNOWN_SDK;
-            return n;
+            return compiled;
         } catch (Throwable t) {
             return compiled;   // a bad value must never change the presentation
         }
@@ -153,11 +148,6 @@ public final class PresentedSdk {
     /** The newest API level this build can NAME a release string for.
      *  MUST equal the highest `case` in releaseString(int). */
     static final int MAX_KNOWN_SDK = 37;
-    /** AOSP's own bounds: VERSION_CODES.BASE (1) .. CUR_DEVELOPMENT (10000,
-     *  the preview sentinel). Used to sanity-check MACAPK_SDK_INT; the level
-     *  we will actually PRESENT is additionally capped at MAX_KNOWN_SDK. */
-    private static final int ABS_MIN_SDK = 1;
-    private static final int ABS_MAX_SDK = 10000;
 
     private static final int PRESENTED;
     private static final boolean EXPLICIT;
@@ -173,139 +163,95 @@ public final class PresentedSdk {
         boolean explicit = false;
         String source = "default";
         try {
-            String forced = System.getenv("MACAPK_SDK_INT");
-            if (forced != null && !forced.isEmpty()) {
-                try {
-                    int v = Integer.parseInt(forced.trim());
-                    // AOSP's own bounds, not ours. The old test was [21,36],
-                    // which SILENTLY presented 29 for anything outside it -- so
-                    // MACAPK_SDK_INT=16 and =37 both reported "no change",
-                    // a false no-difference at BOTH ends of the very campaign
-                    // this override exists to run. Measured 2026-08-20 with
-                    // debug/levelprobe.sh, which reads the level back out of
-                    // Build and flagged the skew.
-                    if (v >= ABS_MIN_SDK && v <= ABS_MAX_SDK) {
-                        // Cap at what we can NAME. Presenting a level whose
-                        // release string we cannot source would put a
-                        // fabricated Android into Build.FINGERPRINT, which
-                        // crash reporters and WebView UA strings PARSE.
-                        sdk = Math.min(v, MAX_KNOWN_SDK);
-                        if (sdk != v) {
-                            logw("MACAPK_SDK_INT=" + v + " is above MAX_KNOWN_SDK="
-                                + MAX_KNOWN_SDK + "; presenting " + sdk);
-                        }
-                        explicit = true;
-                        source = "MACAPK_SDK_INT";
-                    } else {
-                        logw("MACAPK_SDK_INT=" + forced + " outside ["
-                            + ABS_MIN_SDK + "," + ABS_MAX_SDK
-                            + "]; presenting default " + DEFAULT_SDK);
-                    }
-                } catch (NumberFormatException nfe) {
-                    logw("MACAPK_SDK_INT="
-                        + forced + " unparseable; presenting default " + DEFAULT_SDK);
-                }
-            } else if (!"0".equals(System.getenv("MACAPK_SDK_FROM_TARGET"))) {
-                // ⚠ DEFAULT-ON since v1.0.1012, on measurement rather than
-                // on optimism. KILL SWITCH: MACAPK_SDK_FROM_TARGET=0 restores
-                // the flat DEFAULT_SDK in one run.
-                //
-                // The 2026-08-20 revert was undiagnosed. Two causes were then
-                // found and fixed (values-night invisible to colours/styles;
-                // system_* not resolving by integer id), and a THIRD, which was
-                // the one that mattered: android.window.OnBackInvokedDispatcher
-                // was declared a CLASS where AOSP declares an INTERFACE, so at
-                // SDK >= 33 androidx.activity's Api33Impl hit
-                // IncompatibleClassChangeError, lifecycle delivery died and the
-                // app rendered NOTHING. unciv went RICH/26,667 colours at 31 to
-                // BLANK/distinct=1 at 33, 34 and 35 alike.
-                //
-                // Measured with the flag ON after that fix:
-                //   protected sweep      PASS=11 REGRESS=0  (was PASS=8 REGRESS=3)
-                //   fleet, flag-off vs flag-on, same build:
-                //     12 of 16 apps >= 99.9% identical
-                //     mastodon 10.14% -> 99.98%
-                //   the four movers, against a same-build churn control:
-                //     anuto 88.78% vs 88.42% churn -> churn
-                //     sfsolitaire 99.26% vs 99.26% churn -> churn
-                //     newpipe 93.16% vs 98.86% churn -> flat vs emulator (78.19 -> 78.02)
-                //     bouncy DETERMINISTIC both ways (100.00 / 99.99) and 92.94%
-                //       between them -- a REAL change, and it moves TOWARD the
-                //       emulator: 65.53% -> 66.89%
-                //
-                // ⚠ RESIDUAL RISK, stated not hidden: sweep + fleet exercise
-                // about 28 of the 62 corpus apps, and the CODE half of this flip
-                // touches every `if (SDK_INT >= N)` in every app and its bundled
-                // AndroidX. A green result narrows the risk; it does not remove
-                // it. The other changes in this campaign each got a dedicated
-                // instrument (nightaudit, propgate, cam-gate); this one has no
-                // equivalent and no claim to one.
-                //
-                // Historical note on the original revert: The original revert was undiagnosed; that cause
-                // (values-night invisible to colours/styles, plus system_* not
-                // resolving by integer id) is fixed and verified. But running
-                // the protected sweep and the fleet WITH this flag on shows it
-                // is still not safe: PASS=8 REGRESS=3 against PASS=11 REGRESS=0
-                // on the same build. unciv 26,726 -> 296 colours, subway
-                // 84,006 -> 341, mastodon's whole content area from its brand
-                // green to #fefbff with an INK IMBALANCE over 1.3M px.
-                //
-                // EVERY app that broke targets 35 and is presented 34; apps
-                // targeting 34 EXACTLY are all fine, and the three span libGDX,
-                // Unity and views/AndroidX, so it is not a Compose or Material
-                // problem. The premise of this clamp is "present the level the
-                // app was DESIGNED against", and for a 35-targeting app 34 is
-                // not that level -- it is one we invented. The flat DEFAULT_SDK
-                // is at least Android's most-tested compat direction. Evaluate
-                // clamping only when targetSdk <= CEILING, and leaving apps
-                // above the ceiling at DEFAULT_SDK, before flipping again.
-                //
-                // Historical note on the original revert: Presenting each app its own targetSdk (clamped
-                // [29,34]) rendered Aurora Store ALL WHITE -- owner-observed,
-                // immediately after the flip, on an otherwise-working build.
-                // Not diagnosed: the flip changes SDK_INT for nearly every app
-                // AND flips isExplicit(), which switches the CONFIG_DIRS
-                // force-serve and MACAPK_ARSC_RES_SDK carve-outs from a pinned
-                // 34 to level-derived behaviour -- so it moves resource
-                // selection and code branches at once. That coupling is
-                // exactly why it needs a per-level campaign rather than a
-                // default flip. Opt in with MACAPK_SDK_FROM_TARGET=1.
-                //
-                // The owner still wants this: "we are
-                // supposed to use the highest the app supports by default."
-                // Presenting a flat 29 to every app tells a modern app it is on
-                // Android 10 and steers it onto compat paths it does not ship
-                // for -- and drops its own -v31/-v34 resource variants, which we
-                // already serve fleet-wide. The clamp bounds below are unchanged
-                // and are what keeps this honest: never below FLOOR (an ancient
-                // level would steer old apps onto 2012-era code nothing has
-                // tested), never above CEILING (the level our framework can
-                // actually stand behind -- 35 forces edge-to-edge and our
-                // WindowInsets dispatch is deliberately absent).
-                // Kill switch: MACAPK_SDK_FROM_TARGET=0 restores the flat 29.
-                int[] sdks = readSdks();
-                int target = sdks[0];
-                if (target > 0) {
-                    sdk = presentedFor(target, sdks[1], CEILING);
-                    explicit = true;
-                    source = "MACAPK_SDK_FROM_TARGET(targetSdk=" + target
-                        + (sdks[1] > 0 ? ", minSdk=" + sdks[1] : "") + ")";
-                    logi("per-app presentation: "
-                        + "targetSdk=" + target + " minSdk=" + sdks[1] + " -> presenting " + sdk
-                        + " (clamp [" + FLOOR + "," + CEILING + "], never below minSdk)");
-                }
-                // readSdks already logged why it could not answer.
-            } else {
-                // The flat default, but never below the app's minSdkVersion:
-                // a device below it would not have installed the app, and an
-                // app told so takes branches its developers removed (Play
-                // services 26.x requires 31 and refused to run on 29).
-                int min = System.getenv("MACAPK_APK_PATH") != null ? readSdks()[1] : 0;
-                if (min > sdk) {
-                    sdk = Math.min(min, MAX_KNOWN_SDK);
-                    source = "default(minSdk=" + min + ")";
-                }
+            // ⚠ DEFAULT-ON since v1.0.1012, on measurement rather than
+            // on optimism. KILL SWITCH: MACAPK_SDK_FROM_TARGET=0 restores
+            // the flat DEFAULT_SDK in one run.
+            //
+            // The 2026-08-20 revert was undiagnosed. Two causes were then
+            // found and fixed (values-night invisible to colours/styles;
+            // system_* not resolving by integer id), and a THIRD, which was
+            // the one that mattered: android.window.OnBackInvokedDispatcher
+            // was declared a CLASS where AOSP declares an INTERFACE, so at
+            // SDK >= 33 androidx.activity's Api33Impl hit
+            // IncompatibleClassChangeError, lifecycle delivery died and the
+            // app rendered NOTHING. unciv went RICH/26,667 colours at 31 to
+            // BLANK/distinct=1 at 33, 34 and 35 alike.
+            //
+            // Measured with the flag ON after that fix:
+            //   protected sweep      PASS=11 REGRESS=0  (was PASS=8 REGRESS=3)
+            //   fleet, flag-off vs flag-on, same build:
+            //     12 of 16 apps >= 99.9% identical
+            //     mastodon 10.14% -> 99.98%
+            //   the four movers, against a same-build churn control:
+            //     anuto 88.78% vs 88.42% churn -> churn
+            //     sfsolitaire 99.26% vs 99.26% churn -> churn
+            //     newpipe 93.16% vs 98.86% churn -> flat vs emulator (78.19 -> 78.02)
+            //     bouncy DETERMINISTIC both ways (100.00 / 99.99) and 92.94%
+            //       between them -- a REAL change, and it moves TOWARD the
+            //       emulator: 65.53% -> 66.89%
+            //
+            // ⚠ RESIDUAL RISK, stated not hidden: sweep + fleet exercise
+            // about 28 of the 62 corpus apps, and the CODE half of this flip
+            // touches every `if (SDK_INT >= N)` in every app and its bundled
+            // AndroidX. A green result narrows the risk; it does not remove
+            // it. The other changes in this campaign each got a dedicated
+            // instrument (nightaudit, propgate, cam-gate); this one has no
+            // equivalent and no claim to one.
+            //
+            // Historical note on the original revert: The original revert was undiagnosed; that cause
+            // (values-night invisible to colours/styles, plus system_* not
+            // resolving by integer id) is fixed and verified. But running
+            // the protected sweep and the fleet WITH this flag on shows it
+            // is still not safe: PASS=8 REGRESS=3 against PASS=11 REGRESS=0
+            // on the same build. unciv 26,726 -> 296 colours, subway
+            // 84,006 -> 341, mastodon's whole content area from its brand
+            // green to #fefbff with an INK IMBALANCE over 1.3M px.
+            //
+            // EVERY app that broke targets 35 and is presented 34; apps
+            // targeting 34 EXACTLY are all fine, and the three span libGDX,
+            // Unity and views/AndroidX, so it is not a Compose or Material
+            // problem. The premise of this clamp is "present the level the
+            // app was DESIGNED against", and for a 35-targeting app 34 is
+            // not that level -- it is one we invented. The flat DEFAULT_SDK
+            // is at least Android's most-tested compat direction. Evaluate
+            // clamping only when targetSdk <= CEILING, and leaving apps
+            // above the ceiling at DEFAULT_SDK, before flipping again.
+            //
+            // Historical note on the original revert: Presenting each app its own targetSdk (clamped
+            // [29,34]) rendered Aurora Store ALL WHITE -- owner-observed,
+            // immediately after the flip, on an otherwise-working build.
+            // Not diagnosed: the flip changes SDK_INT for nearly every app
+            // AND flips isExplicit(), which switches the CONFIG_DIRS
+            // force-serve and MACAPK_ARSC_RES_SDK carve-outs from a pinned
+            // 34 to level-derived behaviour -- so it moves resource
+            // selection and code branches at once. That coupling is
+            // exactly why it needs a per-level campaign rather than a
+            // default flip. Opt in with MACAPK_SDK_FROM_TARGET=1.
+            //
+            // The owner still wants this: "we are
+            // supposed to use the highest the app supports by default."
+            // Presenting a flat 29 to every app tells a modern app it is on
+            // Android 10 and steers it onto compat paths it does not ship
+            // for -- and drops its own -v31/-v34 resource variants, which we
+            // already serve fleet-wide. The clamp bounds below are unchanged
+            // and are what keeps this honest: never below FLOOR (an ancient
+            // level would steer old apps onto 2012-era code nothing has
+            // tested), never above CEILING (the level our framework can
+            // actually stand behind -- 35 forces edge-to-edge and our
+            // WindowInsets dispatch is deliberately absent).
+            // Kill switch: MACAPK_SDK_FROM_TARGET=0 restores the flat 29.
+            int[] sdks = readSdks();
+            int target = sdks[0];
+            if (target > 0) {
+                sdk = presentedFor(target, sdks[1], CEILING);
+                explicit = true;
+                source = "MACAPK_SDK_FROM_TARGET(targetSdk=" + target
+                    + (sdks[1] > 0 ? ", minSdk=" + sdks[1] : "") + ")";
+                logi("per-app presentation: "
+                    + "targetSdk=" + target + " minSdk=" + sdks[1] + " -> presenting " + sdk
+                    + " (clamp [" + FLOOR + "," + CEILING + "], never below minSdk)");
             }
+            // readSdks already logged why it could not answer.
         } catch (Throwable t) {
             // Presentation must never take the process down; fall back to
             // the historical constant.

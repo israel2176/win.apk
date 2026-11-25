@@ -99,8 +99,6 @@ public final class DomXmlResourceParser
         }
     }
 
-    static final boolean MACAPK_DOM_BUILDER_REUSE =
-        !"0".equals(System.getenv("MACAPK_DOM_BUILDER_REUSE"));
 
     private static DocumentBuilder newBuilder() throws javax.xml.parsers.ParserConfigurationException {
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
@@ -149,8 +147,8 @@ public final class DomXmlResourceParser
             // TextCtorCheck cost, 2026-09-26. DocumentBuilder is not
             // thread-safe, hence ThreadLocal; reset() returns it to the
             // factory configuration.
-            DocumentBuilder db = MACAPK_DOM_BUILDER_REUSE ? REUSED.get() : newBuilder();
-            if (MACAPK_DOM_BUILDER_REUSE) db.reset();
+            DocumentBuilder db = REUSED.get();
+            db.reset();
             Document doc = db.parse(in);
             buildEvents(doc);
         } catch (Throwable t) {
@@ -698,8 +696,6 @@ public final class DomXmlResourceParser
         // machine was a stub, so MaterialShapeDrawable resolved the FAB's tint
         // against an empty state (see Drawable.setState). These are ONE change --
         // the state fix is a near-no-op alone, because with all-zero specs every
-        // row matches anyway, and real ids alone are the regression.
-        if ("0".equals(System.getenv("MACAPK_ATTR_NAME_RESOURCE"))) return 0;
         Node n = nthAttr(index);
         if (n == null) return 0;
         String local = n.getLocalName();

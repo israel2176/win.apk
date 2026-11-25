@@ -44,15 +44,6 @@ import java.nio.file.Paths;
 public final class Boot {
     private static final String TAG = "Mac.apk.Boot";
 
-    /** MACAPK_TMPDIR_CACHE -- default ON; "0" restores the pre-2026-09-26 bind
-     *  path exactly (no java.io.tmpdir change, no TMPDIR). See
-     *  {@link #macapkSetupGraphicsSupportTmpdir}.
-     *  THE PRE-CHANGE A/B is this AND MACAPK_GUEST_ENV_MUTABLE=0. The two gates are
-     *  independent: with MACAPK_GUEST_ENV_MUTABLE=0 alone this mirror still runs, and
-     *  its Os.setenv then takes the pre-change route (host setenv(3)), so the HOST
-     *  TMPDIR moves to the app cache dir at bind -- a state the old tree never had.
-     *  debug/guestenv_gate.sh runs all three combinations. */
-    private static final boolean TMPDIR_CACHE = !"0".equals(System.getenv("MACAPK_TMPDIR_CACHE"));
 
     // ---- BOOTSPEED (v1.0.1650): the boot-time lane. Three default-ON gates,
     // each "0" restoring the exact pre-change path. Evidence and the measured
@@ -60,46 +51,8 @@ public final class Boot {
     // debug/bootspeed_gate.sh (AWT-free overlap, icon stamp, jar read), each
     // with a positive control.
 
-    /** MACAPK_BOOTSPEED_CLOCK -- default ON; "0" prints nothing. One
-     *  `[boot-clock] +<ms> ms <phase>` line per boot phase, in ms since the
-     *  PROCESS started (the kernel's p_starttime, the same epoch main.cpp's
-     *  native lines use), so any log -- a fleet run.log, a stub log, a user's
-     *  bug report -- carries its own boot timeline. Before this no Mac.apk log
-     *  carried a single timestamp, and every boot-time question needed a live
-     *  debug/boottime.sh run with its poll-cadence sidecar.
-     *  debug/bootspeed_clock.py digests the lines. Observational only. */
-    static final boolean BOOTSPEED_CLOCK = !"0".equals(System.getenv("MACAPK_BOOTSPEED_CLOCK"));
 
-    /** MACAPK_BOOTSPEED_OVERLAP -- default ON; "0" restores the pre-change order
-     *  exactly (AWT initialised first thing in run(), the app's ResourceIndex
-     *  built later on the main thread).
-     *
-     *  The main thread did two long, INDEPENDENT things back to back before the
-     *  starting window: the AWT/Java2D init (runtime-logged 229-1767 ms, median
-     *  ~270 ms across 62 fleet logs of 2026-09-25) and the app's ResourceIndex
-     *  (resources.arsc ingest + the platform view; 60-480 ms offline across 10
-     *  corpus apps, debug/bootspeed_bench.sh stages). With this on, the index is
-     *  built on "macapk-resindex" WHILE the main thread initialises AWT, which
-     *  takes min(AWT, index) off the critical path to the starting window, the
-     *  Application and the first frame.
-     *
-     *  Win.apk's Java2D graphics, and with them the AWT init, are gone: AOSP's
-     *  graphics bring no AWT up, so the index now builds beside nothing on this
-     *  thread; the gate stays for the self-tests' order (Boot.run). */
-    static final boolean BOOTSPEED_OVERLAP = !"0".equals(System.getenv("MACAPK_BOOTSPEED_OVERLAP"));
 
-    /** MACAPK_BOOTSPEED_ICON -- default ON; "0" restores the render on every
-     *  launch. writeLauncherIcon re-rendered, re-compressed and re-WROTE the
-     *  launcher icon on every boot of every app whose icon is adaptive/vector
-     *  (47 of 61 fleet apps, 2026-09-25 logs), on the main thread before the
-     *  Application exists, and into the installed .app bundle -- to produce the
-     *  byte-identical file it already had (same SHA-1 across repeated renders on
-     *  all 9 such corpus apps measured). The render is a pure function of the
-     *  installed apk set, the framework + loader jars and the resource
-     *  configuration, so a stamp of exactly those inputs (plus icon.png's own
-     *  size and mtime) lets a warm launch skip it. Any input change, a missing
-     *  or rewritten icon.png, or a stamp from another build re-renders once. */
-    static final boolean BOOTSPEED_ICON = !"0".equals(System.getenv("MACAPK_BOOTSPEED_ICON"));
 
     /** Process start (epoch ms) for the boot clock; resolved on first use. */
     private static volatile long sBootT0Ms = Long.MIN_VALUE;
@@ -107,7 +60,6 @@ public final class Boot {
     /** One boot-clock line. Never throws, never blocks on anything but a
      *  sysctl the first time. */
     static void bootClock(String phase) {
-        if (!BOOTSPEED_CLOCK) return;
         try {
             long t0 = sBootT0Ms;
             if (t0 == Long.MIN_VALUE) {
@@ -218,7 +170,6 @@ public final class Boot {
     }
 
     private static void macapkSetupGraphicsSupportTmpdir(String packageName, File cacheDir) {
-        if (!TMPDIR_CACHE) return;
         // The system package has no real data directories (AOSP's own guard).
         if ("android".equals(packageName)) return;
         if (cacheDir == null) {
@@ -352,7 +303,6 @@ public final class Boot {
      *  later finds it ready, or waits on the same monitor for the parse already in flight.
      *  MACAPK_FWRES_PREFETCH=0 turns it off (A/B). */
     private static void prefetchFrameworkResources() {
-        if ("0".equals(System.getenv("MACAPK_FWRES_PREFETCH"))) return;
         try {
             Thread t = new Thread(() -> ResBackend.get().prefetchFrameworkTable(), "macapk-fwres-prefetch");
             t.setDaemon(true);
@@ -383,8 +333,6 @@ public final class Boot {
      *  Theme resolves differently still ends up exactly as before.
      *  MACAPK_EARLY_STARTING_WINDOW=0 restores paint-at-construction (A/B). */
     private static void paintStartingWindowFromManifest(Resources res, Manifest manifest) {
-        if ("0".equals(System.getenv("MACAPK_STARTING_WINDOW"))) return;
-        if ("0".equals(System.getenv("MACAPK_EARLY_STARTING_WINDOW"))) return;
         // A diagnostic launch override names a different activity; the
         // construction-time paint covers it.
         if (System.getenv("MACAPK_LAUNCH_ACTIVITY") != null) return;
@@ -419,24 +367,7 @@ public final class Boot {
     }
 
     private static void prewarmInvokeDynamic() {
-        if (!"1".equals(System.getenv("MACAPK_PREWARM_INDY"))) return;
-        try {
-            // string-concat bootstrap -> StringConcatFactory + LambdaForm + MethodHandle
-            String s = ("macapk" + System.nanoTime() + Boot.class.getName()).trim();
-            if (s.isEmpty()) s = "x";
-            // lambda bootstrap -> LambdaMetafactory + LambdaForm
-            Runnable r = () -> { };
-            r.run();
-            // bound method-ref bootstrap (instance receiver)
-            java.util.function.Supplier<Integer> len = s::length;
-            int ignore1 = len.get();
-            // unbound method-ref bootstrap (static/first-arg receiver)
-            java.util.function.Function<String, Integer> fn = String::length;
-            int ignore2 = fn.apply(s);
-            if (ignore1 + ignore2 == Integer.MIN_VALUE) System.out.print("");  // keep, no DCE
-        } catch (Throwable ignore) {
-            // java.lang.invoke pre-warm is best-effort; never block boot on it.
-        }
+        return;
     }
 
     /** DIAGNOSTIC (default ON; opt out {@code MACAPK_SHUTDOWN_DUMP=0}).
@@ -763,45 +694,7 @@ public final class Boot {
      *  A timeout (MACAPK_AWAIT_SYSTEM_READY_TIMEOUT_S, default 180) is a warning,
      *  never fatal: binds into a service still wait for it to attach. */
     private static void awaitSystemReady() {
-        String path = System.getenv("MACAPK_AWAIT_SYSTEM_READY");
-        if (path == null || path.isEmpty()) return;
-        long timeoutMs = 180_000L;
-        try {
-            String t = System.getenv("MACAPK_AWAIT_SYSTEM_READY_TIMEOUT_S");
-            if (t != null && !t.isEmpty()) timeoutMs = Long.parseLong(t.trim()) * 1000L;
-        } catch (NumberFormatException ignored) {
-            // keep the default
-        }
-        final long start = System.currentTimeMillis();
-        final long deadline = start + timeoutMs;
-        bootClock("waiting for the system broker's services");
-        while (System.currentTimeMillis() < deadline) {
-            try {
-                java.util.List<String> lines = java.nio.file.Files.readAllLines(new File(path).toPath());
-                if (!lines.isEmpty()
-                        && ProcessHandle.of(Long.parseLong(lines.get(0).trim())).isPresent()) {
-                    String failed = lines.size() > 2 ? lines.get(2).trim() : "";
-                    if (failed.isEmpty()) {
-                        NativeLog.i(TAG, "system services ready (" + (lines.size() > 1 ? lines.get(1) : "")
-                            + ") after " + (System.currentTimeMillis() - start) + " ms");
-                    } else {
-                        NativeLog.w(TAG, "system services ready, but did not start: " + failed);
-                    }
-                    bootClock("system broker's services ready");
-                    return;
-                }
-            } catch (Throwable notYet) {
-                // no file yet, or one being written: look again
-            }
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return;
-            }
-        }
-        NativeLog.w(TAG, "system services not reported ready in " + (timeoutMs / 1000)
-            + " s; starting the app anyway (binds wait for them)");
+        return;
     }
 
     public static void run(String apkPath, String appJar, String appDir, String manifestPath) {
@@ -813,10 +706,6 @@ public final class Boot {
         // Win.apk's old Java2D graphics; AOSP's graphics bring no AWT up, so
         // nothing runs beside it now. The diagnostic self-tests, which return or
         // spawn threads before the index exists, keep the index on this thread.
-        final boolean awtDeferred = BOOTSPEED_OVERLAP
-            && System.getenv("MACAPK_AUDIO_SELFTEST") == null
-            && !"1".equals(System.getenv("MACAPK_MEDIA_SELFTEST"))
-            && !"1".equals(System.getenv("MACAPK_VIDEO_IMAGE_SELFTEST"));
         prewarmInvokeDynamic();
         installShutdownDump();
         // MACAPK_TRACE_JNI: patch the process-wide JNIEnv vtable to log JNI
@@ -826,19 +715,9 @@ public final class Boot {
             try { NativeLog.nativeInstallJniTrace(); } catch (Throwable ignore) {}
         }
         // Gated end-to-end audio-decode self-test (MediaExtractor->MediaCodec->
-        // NativeMedia->AudioToolbox). Runs + returns without launching the APK.
-        if ("1".equals(System.getenv("MACAPK_MEDIA_SELFTEST"))) {
-            MediaSelfTest.run();
-            return;
-        }
         // Gated end-to-end video-decode-to-Image self-test: MediaCodec's
         // no-Surface getOutputImage() path (NativeVideoImage -> NativeMedia
         // -> VideoToolbox). Same shape as the audio gate above; see
-        // VideoImageSelfTest's own doc for the env vars.
-        if ("1".equals(System.getenv("MACAPK_VIDEO_IMAGE_SELFTEST"))) {
-            VideoImageSelfTest.run();
-            return;
-        }
 
         // Construct + start the "macapk-activity" worker thread (the Android
         // "UI thread": ActivityHost's real main-loop dispatch, Compose
@@ -980,9 +859,8 @@ public final class Boot {
         // half (a) is unconditional -- it is what makes a silently-dead thread
         // visible at all, and it is what the old MACAPK_LOG_UNCAUGHT diagnostic
         // did by hand.
-        final String killEnv = System.getenv("MACAPK_KILL_ON_UNCAUGHT");
         final boolean killOnUncaught =
-            "1".equals(killEnv) || "true".equalsIgnoreCase(killEnv);
+            false;
         final Thread.UncaughtExceptionHandler prevUncaught =
             Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
@@ -1103,10 +981,6 @@ public final class Boot {
         // REAL android.media.AudioTrack -> NativeAudio -> CoreAudio path with
         // a short sine tone so the output device + ring + render callback can
         // be verified end-to-end (audible + MACAPK_AUDIO_DUMP WAV) without
-        // needing an app that makes sound. Diagnostic, env-gated, app-agnostic.
-        if (System.getenv("MACAPK_AUDIO_SELFTEST") != null) {
-            new Thread(Boot::audioSelfTest, "macapk-audio-selftest").start();
-        }
 
         // Pose as Android (a Linux variant) for native-lib loaders
         // that platform-detect via os.name/os.arch. libGDX's
@@ -1477,7 +1351,7 @@ public final class Boot {
         // Cocoa layer observes AppleInterfaceStyle change, the way a device
         // delivers a uiMode Configuration change instead of demanding a relaunch.
         boolean nightYes = macapkSystemIsDark();
-        cfg.uiMode = TvMode.uiModeType()
+        cfg.uiMode = android.content.res.Configuration.UI_MODE_TYPE_NORMAL
             | (nightYes ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
         System.setProperty("macapk.nightMode", nightYes ? "yes" : "no");
         sNightApplied = nightYes;
@@ -1504,10 +1378,7 @@ public final class Boot {
         // >=700dp-tall screen selects the two-line display that carries the
         // live result preview). v1.0.445.
         bootClock("configuration + Resources built");
-        Object resIdx = awtDeferred
-            ? buildResourceIndexWhileAwtInits(cfg, apkPath)
-            : ResBackend.get().openIndex(cfg, apkPath);
-        if (!awtDeferred) bootClock("resource index built");
+        Object resIdx = buildResourceIndexWhileAwtInits(cfg, apkPath);
         ResBackend.get().setResourceIndex(resIdx);
         // v1.0.1047: keep the constructor input. A ResourceIndex bakes the
         // night qualifier at CONSTRUCTION (cfgNight is set once, and every
@@ -1543,7 +1414,7 @@ public final class Boot {
             // it tests the gate directly instead of com.macapk.loader.app.Apps.targetSdkKnown.
             // MACAPK_TARGETSDK_ZERO=0 restores `t <= 0` (dead then: the old
             // synthesis never produced 0).
-            boolean unresolved = Manifest.TARGETSDK_ZERO ? t < 0 : t <= 0;
+            boolean unresolved = (t < 0);
             String def = unresolved ? "Theme.DeviceDefault.Light.DarkActionBar"
                        : (t < 11)   ? "Theme"
                        : (t < 14)   ? "Theme.Holo"
@@ -1568,30 +1439,6 @@ public final class Boot {
         // app's code runs. See paintStartingWindowFromManifest.
         paintStartingWindowFromManifest(resources, manifest);
         bootClock("starting window painted (T1 marker)");
-        // Keyboard bindings (the Controls menu): seed the built-in profiles on
-        // first run, then pick one for this package. MACAPK_KEYBIND_PROFILE
-        // forces a profile by name, which is how the path is exercised before
-        // the menu UI exists. Nothing activates unless a profile's package
-        // matches, so an unrelated game can never inherit someone else's
-        // bindings -- that would present as broken input, which is exactly the
-        // failure class this area is prone to.
-        try {
-            KeyBindProfiles.installDefaultsIfAbsent();
-            String forced = System.getenv("MACAPK_KEYBIND_PROFILE");
-            if (forced != null && !forced.isEmpty()) KeyBindProfiles.setActiveByName(forced);
-            else KeyBindProfiles.autoSelectForPackage(manifest.packageName);
-        } catch (Throwable t) {
-            NativeLog.w("Mac.apk.KeyBind", "profile init failed: " + t);
-        }
-        // Tilt Control (Controls menu): this app's remembered on/off.
-        try { TiltControl.loadForPackage(manifest.packageName); }
-        catch (Throwable t) { NativeLog.w("Mac.apk.Tilt", "init failed: " + t); }
-        // Arrow Keys as D-pad (Controls menu): this app's remembered on/off.
-        try { ArrowPad.loadForPackage(manifest.packageName); }
-        catch (Throwable t) { NativeLog.w("Mac.apk.ArrowPad", "init failed: " + t); }
-        // Space Bar Taps Center (Controls menu): this app's remembered on/off.
-        try { SpaceTap.loadForPackage(manifest.packageName); }
-        catch (Throwable t) { NativeLog.w("Mac.apk.SpaceTap", "init failed: " + t); }
         // v1.0.486: render the app's launcher icon -> appDir/icon.png so the
         // launcher's library tile shows the REAL icon. The C++ unpacker only
         // copies a RASTER mipmap; apps that ship only an adaptive/vector icon
@@ -1621,7 +1468,7 @@ public final class Boot {
         // button stays visible on already-owned stages.
         String androidRoot = System.getProperty("macapk.android.root");
         if (androidRoot == null || androidRoot.isEmpty()) {
-            androidRoot = System.getenv("MACAPK_ANDROID_ROOT");
+            androidRoot = null;
         }
         if (androidRoot == null || androidRoot.isEmpty()) {
             // Last-ditch dev default; inert in every real run because
@@ -1971,15 +1818,13 @@ public final class Boot {
         // Default-ON (v1.0.1573): self-gating -- Class.forName below throws for a
         // non-pairip app (no com.pairip.VMRunner), so this is a no-op there. Kill
         // switch: MACAPK_PAIRIP_GATE_OFF=1.
-        if (System.getenv("MACAPK_PAIRIP_GATE_OFF") == null) {
-            try {
-                Class<?> vmr = Class.forName("com.pairip.VMRunner", true, appCl);
-                boolean ok = NativeLog.nativeRegisterPairipGate(vmr);
-                NativeLog.i(TAG, "pairip gate-emu: executeVM rebind "
-                          + (ok ? "OK" : "FAILED") + " (before Application <clinit>)");
-            } catch (Throwable t) {
-                NativeLog.i(TAG, "pairip gate-emu: com.pairip.VMRunner not present (" + t + ")");
-            }
+        try {
+            Class<?> vmr = Class.forName("com.pairip.VMRunner", true, appCl);
+            boolean ok = NativeLog.nativeRegisterPairipGate(vmr);
+            NativeLog.i(TAG, "pairip gate-emu: executeVM rebind "
+                      + (ok ? "OK" : "FAILED") + " (before Application <clinit>)");
+        } catch (Throwable t) {
+            NativeLog.i(TAG, "pairip gate-emu: com.pairip.VMRunner not present (" + t + ")");
         }
         // MACAPK_PAIRIP_POOLDUMP=<outfile> (owner idea 2026-10-09, best with GATE_OFF):
         // the GENUINE pairip startup VM decodes the per-build string pool into the app's
@@ -2184,9 +2029,7 @@ public final class Boot {
         awaitSystemReady();
         try {
             activityTask.put(() -> {
-                if (!"1".equals(System.getenv("MACAPK_SKIP_QOS_BOOST"))) {
-                    try { NativeLog.nativeBoostCurrentThreadQos(); } catch (Throwable ignored) {}
-                }
+                try { NativeLog.nativeBoostCurrentThreadQos(); } catch (Throwable ignored) {}
                 if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper();
                 // handleBindApplication's setupGraphicsSupport, before the Application's class
                 // initializes: TMPDIR for its native libraries; then pairip's gate.
@@ -2473,60 +2316,7 @@ public final class Boot {
      *  correct delivery path still looks like a failure. */
     private static void maybeInjectTestPush(com.macapk.gms.McsClient.Dispatcher deliver,
                                             String pkg) {
-        final String spec = System.getenv("MACAPK_FCM_TEST_PUSH");
-        if (spec == null || spec.isEmpty()) return;
-        // "0"/"false" mean OFF, matching every other flag in this codebase
-        // (PlayServices uses !"0".equals(...) twice). Treating any non-empty
-        // value as truthy made MACAPK_FCM_TEST_PUSH=0 inject an EMPTY push,
-        // which is a confusing way to spend a debugging session.
-        if ("0".equals(spec) || "false".equalsIgnoreCase(spec)) return;
-        long delay = 20_000L;
-        try {
-            String d = System.getenv("MACAPK_FCM_TEST_PUSH_DELAY_MS");
-            if (d != null && !d.isEmpty()) delay = Long.parseLong(d.trim());
-        } catch (Throwable ignored) {}
-        final long fdelay = delay;
-        Thread t = new Thread(() -> {
-            try { Thread.sleep(fdelay); } catch (InterruptedException ie) { return; }
-            java.util.Map<String, String> extras = new java.util.LinkedHashMap<>();
-            if ("1".equals(spec) || "true".equalsIgnoreCase(spec)) {
-                // Use the keys the REAL path emits. McsClient.handleData writes
-                // `google.message_id`, which is what FirebaseMessagingService
-                // feeds to alreadyReceivedMessage() for dedupe and the prefix
-                // RemoteMessage strips out of getData(). Injecting a bare
-                // `message_id` exercised NEITHER, so a green result said less
-                // about the real path than it appeared to.
-                // Mirror the keys McsClient.handleData actually sets, not just the
-                // message id: `collapse_key` is the only other reserved key the
-                // SDK strips by EXACT match rather than by `google.` prefix, so
-                // omitting it left our hand-written RemoteMessage strip list
-                // unexercised, and sent_time/ttl leave getSentTime()/getTtl() at
-                // 0 where a real push always populates them.
-                extras.put("from", "macapk-test");
-                extras.put("google.message_id", "macapk-test-" + System.currentTimeMillis());
-                extras.put("collapse_key", "macapk-test");
-                extras.put("google.sent_time", Long.toString(System.currentTimeMillis()));
-                extras.put("google.ttl", "2419200");
-                extras.put("macapk_test", "hello");
-            } else {
-                for (String kv : spec.split(",")) {
-                    int eq = kv.indexOf('=');
-                    if (eq > 0) extras.put(kv.substring(0, eq).trim(), kv.substring(eq + 1).trim());
-                }
-            }
-            NativeLog.i(TAG, "FCM TEST PUSH: injecting " + extras.size()
-                    + " keys for " + pkg + " through the real delivery path");
-            try {
-                deliver.deliver(pkg, extras);
-                NativeLog.i(TAG, "FCM TEST PUSH: dispatcher returned without throwing"
-                        + " (this says the BROADCAST was sent, NOT that the app consumed it"
-                        + " -- look for the app's own onMessageReceived logging)");
-            } catch (Throwable e) {
-                NativeLog.w(TAG, "FCM TEST PUSH: dispatch threw: " + e);
-            }
-        }, "macapk-fcm-testpush");
-        t.setDaemon(true);
-        t.start();
+        return;
     }
 
     private static void logUncaught(Thread t, Throwable e) {
@@ -2685,16 +2475,6 @@ public final class Boot {
     /** Locate the macapk-translator binary so AppClassLoader can
      *  invoke it on demand. Resolved from the loader jar's location;
      *  the v2 build script copies the binary next to the runtime. */
-    /** The single opt-out gate for "does this process track the macOS
-     *  appearance at all". Both the boot-time detection and the live flip below
-     *  route through here so MACAPK_FOLLOW_SYSTEM_APPEARANCE=0 cannot end up
-     *  honoured on one path and ignored on the other -- which is exactly what a
-     *  duplicated string literal would eventually produce, and the harnesses
-     *  (debug/recap_mac.sh, canvas_ab.sh) set that variable on every capture, so
-     *  a half-honoured opt-out would silently corrupt fleet measurements. */
-    static boolean macapkFollowSystemAppearance() {
-        return !"0".equals(System.getenv("MACAPK_FOLLOW_SYSTEM_APPEARANCE"));
-    }
 
     /** v1.0.497: is macOS currently in Dark mode? Reads the global
      *  AppleInterfaceStyle default (set to "Dark" when dark, unset when light) --
@@ -2702,7 +2482,6 @@ public final class Boot {
      *  one-shot `defaults` subprocess at boot. Any failure (or
      *  MACAPK_FOLLOW_SYSTEM_APPEARANCE=0) -> light, the safe default. */
     private static boolean macapkSystemIsDark() {
-        if (!macapkFollowSystemAppearance()) return false;
         try {
             Process p = new ProcessBuilder("defaults", "read", "-g", "AppleInterfaceStyle")
                 .redirectErrorStream(true).start();
@@ -2760,21 +2539,16 @@ public final class Boot {
      *  published as the system property macapk.guestVulkan, read by the shim's
      *  dlopen("libvulkan.so") and by hasSystemFeature, so the two never disagree. */
     private static void noteGuestVulkan(Manifest manifest) {
-        String env = System.getenv("MACAPK_GUEST_VULKAN");
         boolean on;
-        if (env != null && env.startsWith("0")) on = false;
-        else if (env != null && env.startsWith("1")) on = true;
-        else {
-            on = false;
-            for (Manifest.FeatureEntry e : manifest.reqFeatures) {
-                if (e.required && e.name != null
-                        && (e.name.equals("android.hardware.vulkan.version")
-                            || e.name.equals("android.hardware.vulkan.level"))) on = true;
-            }
+        on = false;
+        for (Manifest.FeatureEntry e : manifest.reqFeatures) {
+            if (e.required && e.name != null
+                    && (e.name.equals("android.hardware.vulkan.version")
+                        || e.name.equals("android.hardware.vulkan.level"))) on = true;
         }
         System.setProperty("macapk.guestVulkan", on ? "1" : "0");
         if (on) NativeLog.i(TAG, "guest Vulkan: on for this app (MoltenVK; MACAPK_GUEST_VULKAN="
-            + (env == null ? "auto" : env) + ")");
+            + "auto" + ")");
     }
     private static volatile String sApkPath;
     private static volatile String sAppThemeName;
@@ -2814,8 +2588,6 @@ public final class Boot {
 
     public static void macapkOnSystemAppearanceChanged(boolean dark) {
         // The opt-out means "this process does not track macOS", so the host
-        // saying otherwise changes nothing -- boot forced light and it stays light.
-        if (!macapkFollowSystemAppearance()) return;
         if (dark == sNightApplied) return;                 // redundant KVO fire
         Thread t = new Thread(new Runnable() {
             @Override public void run() { macapkApplySystemAppearance(dark); }
@@ -2954,18 +2726,7 @@ public final class Boot {
     private static volatile java.util.Map<String, String> sForeignProcess =
         java.util.Collections.emptyMap();
 
-    private static String foreignProcessFor(String className) {
-        java.util.Map<String, String> t = sForeignProcess;
-        return (className == null || t.isEmpty()) ? null : t.get(className);
-    }
 
-    /** DEFAULT-OFF gate for the foreign-process provider skip (appProviders). Note the polarity is
-     *  the opposite of MACAPK_COMPONENT_GATING's: this one is OFF unless explicitly set to a non-"0"
-     *  value, because it is the riskier half and the owner needs to attribute its effect separately. */
-    private static boolean macapkProviderProcessGate() {
-        String v = System.getenv("MACAPK_PROVIDER_PROCESS_GATE");
-        return v != null && !v.isEmpty() && !"0".equals(v);
-    }
 
     /** The app's providers for this process, as ActivityManagerService.generateApplicationProvidersLocked
      *  hands them to bindApplication: each declared provider with authorities, enabled, of this
@@ -2983,8 +2744,7 @@ public final class Boot {
         java.util.List<Manifest.ProviderEntry> sorted = new java.util.ArrayList<>(manifest.providers);
         sorted.sort((a, b) -> Integer.compare(b.initOrder, a.initOrder));
         for (Manifest.ProviderEntry entry : sorted) {
-            if (MacApkPackageManager.macapkComponentGating()
-                    && !pm.macapkIsComponentEnabled(entry.name, entry.enabled, 0)) {
+            if (!pm.macapkIsComponentEnabled(entry.name, entry.enabled, 0)) {
                 NativeLog.i(TAG, "provider " + entry.name + " skipped: android:enabled=false"
                           + " (a device does not create it either)");
                 continue;
@@ -2998,13 +2758,6 @@ public final class Boot {
                 if (!owner.equals(sProcessName)) {
                     NativeLog.i(TAG, "provider " + entry.name + " skipped: it lives in process " + owner
                               + " (this is " + sProcessName + "; reached through the broker)");
-                    continue;
-                }
-            } else if (macapkProviderProcessGate()) {
-                String proc = foreignProcessFor(entry.name);
-                if (proc != null) {
-                    NativeLog.i(TAG, "provider " + entry.name + " skipped: android:process=" + proc
-                              + " (created when that process starts, not at boot)");
                     continue;
                 }
             }
@@ -3056,18 +2809,16 @@ public final class Boot {
             android.content.ContentProviderRegistry.register(info.authority, provider);
             // The documents the user picks through DocumentsUI's stand-in
             // (DocumentPickerHandler), under ExternalStorageProvider's authority.
-            if (DocumentPickerHandler.DOC_PICKER) {
-                HostDocumentsProvider.init(new java.io.File(application.getApplicationInfo().dataDir));
-                HostDocumentsProvider docs = new HostDocumentsProvider();
-                android.content.pm.ProviderInfo dinfo = new android.content.pm.ProviderInfo();
-                dinfo.name        = HostDocumentsProvider.class.getName();
-                dinfo.authority   = HostDocumentsProvider.AUTHORITY;
-                dinfo.packageName = application.getPackageName();
-                dinfo.exported    = true;
-                dinfo.grantUriPermissions = true;
-                docs.attachInfo(application, dinfo);   // runs onCreate
-                android.content.ContentProviderRegistry.register(dinfo.authority, docs);
-            }
+            HostDocumentsProvider.init(new java.io.File(application.getApplicationInfo().dataDir));
+            HostDocumentsProvider docs = new HostDocumentsProvider();
+            android.content.pm.ProviderInfo dinfo = new android.content.pm.ProviderInfo();
+            dinfo.name        = HostDocumentsProvider.class.getName();
+            dinfo.authority   = HostDocumentsProvider.AUTHORITY;
+            dinfo.packageName = application.getPackageName();
+            dinfo.exported    = true;
+            dinfo.grantUriPermissions = true;
+            docs.attachInfo(application, dinfo);   // runs onCreate
+            android.content.ContentProviderRegistry.register(dinfo.authority, docs);
             // Google Services Framework's gservices settings, answered from
             // the device's real checkin (see GservicesProvider's header). App
             // providers are already installed, so a hosted package that serves
@@ -3096,112 +2847,7 @@ public final class Boot {
     // Diagnostic: play a 2-second 440 Hz sine through the real AudioTrack
     // API to verify the CoreAudio output path end-to-end. Gated on
     // MACAPK_AUDIO_SELFTEST. Combine with MACAPK_AUDIO_DUMP=/tmp/out.wav
-    // to capture the mixed device PCM for the WavCheck verifier.
-    private static void audioSelfTest() {
-        try {
-            // Let the JVM/native registration settle first.
-            Thread.sleep(800);
-            final int sr = 44100;
-            final int seconds = 2;
-            android.media.AudioTrack at = new android.media.AudioTrack(
-                3 /*STREAM_MUSIC*/, sr,
-                android.media.AudioFormat.CHANNEL_OUT_STEREO,
-                android.media.AudioFormat.ENCODING_PCM_16BIT,
-                sr * 2 /*bytes: ~0.25s stereo16*/, android.media.AudioTrack.MODE_STREAM);
-            at.play();
-            final int chunkFrames = 1024;
-            short[] buf = new short[chunkFrames * 2];
-            double phase = 0.0;
-            double freq = 440.0;
-            double dphi = 2.0 * Math.PI * freq / sr;
-            int totalFrames = sr * seconds;
-            int written = 0;
-            while (written < totalFrames) {
-                for (int i = 0; i < chunkFrames; i++) {
-                    short s = (short) (Math.sin(phase) * 0.30 * 32767.0);
-                    buf[i * 2]     = s;  // L
-                    buf[i * 2 + 1] = s;  // R
-                    phase += dphi;
-                    if (phase > 2.0 * Math.PI) phase -= 2.0 * Math.PI;
-                }
-                at.write(buf, 0, buf.length);
-                written += chunkFrames;
-            }
-            // Give the ring time to fully drain before stop() -- the
-            // producer fills the buffer faster than realtime, so up to a
-            // ring's worth of sine is still queued when the write loop ends.
-            Thread.sleep(2500);
-            at.stop();
-            at.release();
-            NativeLog.i(TAG, "audio self-test: wrote " + written
-                      + " frames of 440Hz sine (done)");
-            Thread.sleep(600);   // silent gap to isolate the next leg
 
-            // SoundPool leg: synthesize a 0.4 s 660 Hz WAV clip, load + play
-            // it through the real SoundPool API (decode -> clip -> voice ->
-            // mixer -> device) so PHASE 3 playback is verifiable too.
-            byte[] wav = makeSineWav(44100, 660.0, 0.4, 0.30);
-            java.io.File tmp = java.io.File.createTempFile("macapk_sptest", ".wav");
-            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
-                fos.write(wav);
-            }
-            android.media.SoundPool sp = new android.media.SoundPool(4, 3, 0);
-            int sid = sp.load(tmp.getAbsolutePath(), 1);
-            Thread.sleep(300);                 // let the decode settle
-            sp.play(sid, 1.0f, 1.0f, 1, 0, 1.0f);
-            Thread.sleep(900);                 // let the clip play out
-            sp.release();
-            tmp.delete();
-            NativeLog.i(TAG, "audio self-test: SoundPool played clip id="
-                      + sid + " (done)");
-            Thread.sleep(600);   // silent gap to isolate the MediaPlayer leg
-
-            // MediaPlayer leg: synthesize a 0.4 s 550 Hz WAV, play it through
-            // the real MediaPlayer API (decode -> clip voice -> mixer).
-            byte[] mwav = makeSineWav(44100, 550.0, 0.4, 0.30);
-            java.io.File mtmp = java.io.File.createTempFile("macapk_mptest", ".wav");
-            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(mtmp)) {
-                fos.write(mwav);
-            }
-            android.media.MediaPlayer mp = new android.media.MediaPlayer();
-            mp.setDataSource(mtmp.getAbsolutePath());
-            mp.prepare();
-            mp.start();
-            Thread.sleep(900);
-            mp.stop();
-            mp.release();
-            mtmp.delete();
-            NativeLog.i(TAG, "audio self-test: MediaPlayer played clip dur="
-                      + " (done)");
-        } catch (Throwable t) {
-            NativeLog.w(TAG, "audio self-test failed: " + t);
-            t.printStackTrace();
-        }
-    }
-
-    // Build a 16-bit mono PCM WAV of a sine tone (self-test helper).
-    private static byte[] makeSineWav(int sr, double freq, double seconds, double amp) {
-        int frames = (int) (sr * seconds);
-        int dataLen = frames * 2;              // mono, 16-bit
-        java.nio.ByteBuffer b =
-            java.nio.ByteBuffer.allocate(44 + dataLen)
-                               .order(java.nio.ByteOrder.LITTLE_ENDIAN);
-        b.put("RIFF".getBytes());  b.putInt(36 + dataLen);  b.put("WAVE".getBytes());
-        b.put("fmt ".getBytes());  b.putInt(16);  b.putShort((short) 1);  // PCM
-        b.putShort((short) 1);                 // mono
-        b.putInt(sr);  b.putInt(sr * 2);       // byte rate
-        b.putShort((short) 2);  b.putShort((short) 16);   // block align, bits
-        b.put("data".getBytes());  b.putInt(dataLen);
-        double dphi = 2.0 * Math.PI * freq / sr;
-        double phase = 0.0;
-        for (int i = 0; i < frames; i++) {
-            short s = (short) (Math.sin(phase) * amp * 32767.0);
-            b.putShort(s);
-            phase += dphi;
-            if (phase > 2.0 * Math.PI) phase -= 2.0 * Math.PI;
-        }
-        return b.array();
-    }
 
     /** icon-lifecycle fan-out lane (2026-07-23), BUG A -- "icon only appears
      *  after the first launch, not at install": rasterize the launcher icon
@@ -3278,7 +2924,7 @@ public final class Boot {
             cfg.screenHeightDp = 640;
             cfg.smallestScreenWidthDp = 360;
             cfg.orientation = Configuration.ORIENTATION_PORTRAIT;
-            cfg.uiMode = TvMode.uiModeType()
+            cfg.uiMode = android.content.res.Configuration.UI_MODE_TYPE_NORMAL
                 | (macapkSystemIsDark() ? Configuration.UI_MODE_NIGHT_YES : Configuration.UI_MODE_NIGHT_NO);
             Resources resources = new Resources(assets, metrics, cfg);
             Object resIdx = ResBackend.get().openIndex(cfg, apkPath);
@@ -3365,8 +3011,7 @@ public final class Boot {
                                           String apkPath) {
         if (resources == null || appDir == null) return;
         File out = new File(appDir, "icon.png");
-        final String stampKey = BOOTSPEED_ICON
-            ? launcherIconStampKey(resources, manifestPath, iconRaw, apkPath) : null;
+        final String stampKey = launcherIconStampKey(resources, manifestPath, iconRaw, apkPath);
         if (stampKey != null && launcherIconStampMatches(appDir, stampKey, out)) {
             NativeLog.i(TAG, "launcher icon current (stamp " + LAUNCHER_ICON_STAMP
                 + " matches the apk set, jars and configuration) -- render skipped");
@@ -3538,8 +3183,7 @@ public final class Boot {
             k.append("|jdk=").append(Runtime.version()).append(':').append(jh)
              .append(':').append(jh != null ? fileId(new File(jh, "lib/modules")) : "-");
             // The platform resource table (@android: references in a layer).
-            String fwres = System.getenv("MACAPK_FW_RES_APK");
-            k.append("|fwres=").append(fwres != null ? fileId(new File(fwres)) : "-");
+            k.append("|fwres=").append("-");
             // The app: every member of the installed set.
             java.util.List<File> set = InstalledSplits.of(apkPath);
             if (set.isEmpty()) return null;

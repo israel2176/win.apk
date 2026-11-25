@@ -109,17 +109,17 @@ public final class CameraBridge {
 
     /** Number of cameras. 0 when there is none, or when access is denied. */
     public static int getDeviceCount() {
-        return nat() ? nativeDeviceCount() : VIRTUAL ? Virtual.DeviceCount() : 0;
+        return nat() ? nativeDeviceCount() : Virtual.DeviceCount();
     }
 
     /** Stable unique id, suitable for use as a camera2 camera id string. */
     public static String getDeviceId(int index) {
-        return nat() ? nativeDeviceId(index) : VIRTUAL ? Virtual.DeviceId(index) : null;
+        return nat() ? nativeDeviceId(index) : Virtual.DeviceId(index);
     }
 
     /** Human-readable name, e.g. "FaceTime HD Camera". */
     public static String getDeviceName(int index) {
-        return nat() ? nativeDeviceName(index) : VIRTUAL ? Virtual.DeviceName(index) : null;
+        return nat() ? nativeDeviceName(index) : Virtual.DeviceName(index);
     }
 
     /** One of FACING_*. Win.apk offers every webcam twice, as a BACK and a
@@ -127,7 +127,7 @@ public final class CameraBridge {
      *  a PC's camera serves both roles, so apps that ask for the rear camera
      *  (cheque scanners) work. */
     public static int getDeviceFacing(int index) {
-        return nat() ? nativeDeviceFacing(index) : VIRTUAL ? Virtual.DeviceFacing(index) : -1;
+        return nat() ? nativeDeviceFacing(index) : Virtual.DeviceFacing(index);
     }
 
     /**
@@ -339,30 +339,30 @@ public final class CameraBridge {
 
     /** Number of (resolution, frame-rate range) entries the device advertises. */
     public static int getFormatCount(int index) {
-        return nat() ? nativeFormatCount(index) : VIRTUAL ? Virtual.FormatCount(index) : 0;
+        return nat() ? nativeFormatCount(index) : Virtual.FormatCount(index);
     }
 
     public static int getFormatWidth(int device, int format) {
-        return nat() ? nativeFormatWidth(device, format) : VIRTUAL ? Virtual.FormatWidth(device, format) : 0;
+        return nat() ? nativeFormatWidth(device, format) : Virtual.FormatWidth(device, format);
     }
 
     public static int getFormatHeight(int device, int format) {
-        return nat() ? nativeFormatHeight(device, format) : VIRTUAL ? Virtual.FormatHeight(device, format) : 0;
+        return nat() ? nativeFormatHeight(device, format) : Virtual.FormatHeight(device, format);
     }
 
     public static double getFormatMinFps(int device, int format) {
-        return nat() ? nativeFormatMinFps(device, format) : VIRTUAL ? Virtual.FormatMinFps(device, format) : 0;
+        return nat() ? nativeFormatMinFps(device, format) : Virtual.FormatMinFps(device, format);
     }
 
     public static double getFormatMaxFps(int device, int format) {
-        return nat() ? nativeFormatMaxFps(device, format) : VIRTUAL ? Virtual.FormatMaxFps(device, format) : 0;
+        return nat() ? nativeFormatMaxFps(device, format) : Virtual.FormatMaxFps(device, format);
     }
 
     // ---- Authorization ---------------------------------------------------
 
     /** Current camera access: one of AUTH_*. Never prompts, never blocks. */
     public static int getAuthStatus() {
-        return nat() ? nativeAuthStatus() : VIRTUAL ? Virtual.AuthStatus() : AUTH_DENIED;
+        return nat() ? nativeAuthStatus() : Virtual.AuthStatus();
     }
 
     /**
@@ -389,7 +389,7 @@ public final class CameraBridge {
      *         exist or access is denied. Never blocks indefinitely.
      */
     public static long open(int index) {
-        return nat() ? nativeOpen(index) : VIRTUAL ? Virtual.Open(index) : NO_SESSION;
+        return nat() ? nativeOpen(index) : Virtual.Open(index);
     }
 
     /**
@@ -556,9 +556,6 @@ public final class CameraBridge {
     // frames at 30 fps, so preview screens stay up and their camera-free
     // controls work. MACAPK_VIRTUAL_CAMERA=0 restores the old "no camera".
     // Virtual session handles are negative, so they never collide with a native
-    // pointer and the session-level calls dispatch on the sign alone.
-    private static final boolean VIRTUAL =
-            !"0".equals(System.getenv("MACAPK_VIRTUAL_CAMERA"));
 
     // The Windows host binds every unimplemented native to a stub that returns
     // 0 ("native not implemented on Windows yet"), so isAvailable() is true
@@ -569,7 +566,6 @@ public final class CameraBridge {
     private static volatile boolean sNativeHasDevices;
     private static boolean nat() {
         if (!isAvailable()) return false;
-        if (!VIRTUAL) return true;
         long now = System.nanoTime();
         if (sNativeCheckedAt == 0 || now - sNativeCheckedAt > 2_000_000_000L) {
             sNativeHasDevices = nativeDeviceCount() > 0;
