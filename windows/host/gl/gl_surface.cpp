@@ -21,6 +21,8 @@ namespace {
 // EGL_ANGLE_platform_angle and its D3D / Vulkan / WARP / SwiftShader values.
 constexpr EGLint kPlatformAngle = 0x3202, kPlatformType = 0x3203, kTypeD3D11 = 0x3208, kTypeVulkan = 0x3450,
                  kDeviceType = 0x3209, kDeviceWarp = 0x320B, kDeviceSwiftShader = 0x3487;
+// EGL_ANGLE_platform_angle_d3d's native display for "Direct3D 11, never 9" (EGL_D3D11_ONLY_DISPLAY_ANGLE).
+const EGLNativeDisplayType kD3D11OnlyDisplay = reinterpret_cast<EGLNativeDisplayType>(-3);
 
 EGLDisplay g_display = EGL_NO_DISPLAY;
 EGLConfig g_config = nullptr;
@@ -39,12 +41,22 @@ EGLDisplay open_display(EGLint type, EGLint device) {
     using GetPlatformDisplay = EGLDisplay(EGLAPIENTRY*)(EGLenum, void*, const EGLint*);
     auto get = reinterpret_cast<GetPlatformDisplay>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
     if (!get) return EGL_NO_DISPLAY;
+    // A display of the app's GL's own, not the graphics DLL's (hwui_build/glue/layers.cpp), on which
+    // HWUI's render thread draws every window: ANGLE keeps one Direct3D 11 device with one immediate
+    // context per display and takes no lock around the GL calls of contexts that share nothing, so
+    // an app's GL thread drawing on the render thread's display corrupted ANGLE's state and crashed
+    // it. On a phone the app's EGL contexts and HWUI's are clients of a driver that is safe across
+    // threads; here each gets its own device. ANGLE hands out one display per native display,
+    // platform type, device and power preference: the native display that says "Direct3D 11 only",
+    // which a Direct3D 11 display is anyway, makes this one another than the DLL's
+    // (EGL_DEFAULT_DISPLAY). Nothing crosses between the two: the app's frames reach the compositor
+    // as pixels (gl_read_current).
     EGLint attribs[] = {kPlatformType, type, EGL_NONE, EGL_NONE, EGL_NONE};
     if (device) {
         attribs[2] = kDeviceType;
         attribs[3] = device;
     }
-    EGLDisplay d = get(kPlatformAngle, EGL_DEFAULT_DISPLAY, attribs);
+    EGLDisplay d = get(kPlatformAngle, type == kTypeD3D11 ? kD3D11OnlyDisplay : EGL_DEFAULT_DISPLAY, attribs);
     if (d == EGL_NO_DISPLAY) return d;
     EGLint major = 0, minor = 0;
     if (!eglInitialize(d, &major, &minor)) return EGL_NO_DISPLAY;

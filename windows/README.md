@@ -1153,6 +1153,12 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   heap bitmap with the pixels (no AHardwareBuffer); a TextureView draws
   through its own layer. `test/surfaces/build.sh` builds the APK that shows
   all four, each logging a `SURFACES` line.
+- An app's own GL (a `GLSurfaceView`, native EGL, a `NativeActivity`) is on
+  an ANGLE display of its own (`host/gl/gl_surface.cpp`), not the DLL's:
+  ANGLE has one Direct3D 11 device and immediate context per display and no
+  lock between contexts that share nothing, so the app's GL thread and the
+  render thread on one display crashed ANGLE. Nothing crosses between the two
+  displays: the app's frames reach the compositor as the host layer's pixels.
 - The snapshot (Ctrl+Shift+F12) and the headless frame file
   (`WINAPK_HEADLESS_FRAME`) read the composed frame back on the render thread.
 - Shader caches: ANGLE's programs (`EGL_ANDROID_blob_cache`) and Skia's
