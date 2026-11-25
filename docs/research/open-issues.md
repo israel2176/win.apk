@@ -1407,6 +1407,34 @@ an app's density and resamples it. **To check on Windows:**
   creation fails at every start under Wine (`duplicate column name: rating_level`, its
   `CREATE TABLE`); the app goes on.
 
+## The launcher's own usability (November 2026 review): for the owner to decide
+
+Fixed in that review: the Hebrew's instructions read impersonally ("יש ל...")
+instead of mixing masculine imperatives, "Allow" is "אישור" (not "אפשר"), the
+dialogs' focus ring starts on Enter's button, Remove asks "Remove <app>?",
+Delete removes the selected app (asking), the Google services setup says how
+the downloads get installed, a missing runtime is said as such on launch.
+Left, being a matter of direction:
+
+- **The launcher is invisible to screen readers.** Every page, tile, menu and
+  dialog is drawn with GDI+ in one window and exposes no UI Automation tree:
+  Narrator reads only window titles. The apps' windows have one
+  (`uia_provider.cpp`); the launcher would need its own (tiles as list items,
+  page rows as buttons and toggles, the dialogs' text and buttons).
+- The pane's Google account item is a picture only (the address is its
+  tooltip), unlike Library, Store and Settings, which have names.
+- The library has no search (only the Store does); with many apps there is no
+  way to find one but scrolling.
+- An empty library tells how to add an APK but not where to get one (the Store,
+  the Google services setup).
+- Settings > Updates' footer says the installers are not code-signed and what
+  is checked instead: true, but technical for most users.
+- Keyboard: the starting window's error (Close, Show log, Report a problem) and
+  the install window take only Enter and Esc, not Tab between their buttons.
+- The install window's title is cut without an ellipsis under Wine for a long
+  package name (GDI+'s trimming there); on Windows it shows "…", but a long
+  real name still loses its end: wrapping it to two lines would keep it whole.
+
 ## Work started and not merged
 
 - **AOSP's app layer (November 2026; the owner approved the layer, and decided:
