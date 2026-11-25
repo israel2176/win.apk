@@ -14,9 +14,8 @@
 // each character is a key, as the host's keyboard sends it.
 //
 // Every entry but a hover is a person acting on the window, so it is noted as real input
-// (TouchDispatcher.noteRealInputFromHostView), as TouchDispatcher's own entries note it: that is
-// what lets the click that asked for a link open it in the user's browser (ActivityHost.openHost
-// refuses a host open with no real input in the last 10 s, as Android refuses a background start).
+// (TouchDispatcher.noteRealInputFromHostView), as TouchDispatcher's own entries note it, for what
+// reads TouchDispatcher.lastUserInputMillis.
 package com.winapk.aospviews;
 
 import android.os.Handler;

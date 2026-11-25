@@ -2012,6 +2012,7 @@ public final class Boot {
         start.taskEmpty = () -> {
             NativeLog.i(TAG, "task is empty (last activity finished) -> hiding the app; the launcher activity"
                     + " starts again when it is brought back");
+            ActivityHost.noteTaskBehind(false);
             try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
         };
         start.hostStart = ActivityHost::macapkStartOnHost;
@@ -2024,6 +2025,7 @@ public final class Boot {
         start.hostPermissions = (perms, sink) -> SpecialAccessHandler.requestPermissions(
                 android.app.ActivityThread.currentApplication(), perms, sink, ActivityHost.hostCover(false));
         start.moveToBack = () -> {
+            ActivityHost.noteTaskBehind(false);
             try { NativeCocoa.moveTaskToBack(); } catch (Throwable t) { NativeLog.w(TAG, "moveTaskToBack: " + t); }
         };
         awaitSystemReady();
