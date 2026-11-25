@@ -617,6 +617,50 @@ New bugs found with AOSP views:
   check, then past the consent sheet. (The Hermes "Maximum call stack size
   exceeded (native stack depth)" that left it blank before was the arm64
   guest-stack bug, fixed in 58c443a: it hit Flutter and Hermes alike.)
+- **An app's install shows its progress and its end (November 2026): built,
+  checked under Wine, not yet on real Windows with a real store.** The
+  owner's report: Install in a third-party store showed only Win.apk's
+  question, then nothing. Now the install helper plays Android's package
+  installer: an asking app whose "Install unknown apps" is off gets the
+  blocked-source dialog first (Settings is that switch; Allow goes on), then
+  "Do you want to install / update this app?", then the install window alone
+  in the helper's process (the steps, Cancel until the commit), then "App
+  installed." / "App updated." with Open and Done, or "App not installed."
+  with the reason, Show log, Copy details, Report a problem
+  (`helper_install_ui`, `installs_allowed_from_caller`). The store gets its
+  status when the install ends (`[helper] exit <code>`, `runHelper`), not when
+  the window closes; a cancel is `STATUS_FAILURE_ABORTED` / `RESULT_CANCELED`.
+  With it, an update keeps the registry's `installedAt`: before, every update
+  of an app dropped all its permission grants (they are keyed by it), so a
+  store that updated itself had to be allowed again.
+  *Verified*: `SessionUpdateTest` (a helper that lingers after its exit line
+  has its status sent at once; Linux); the launcher compiled (MinGW, no
+  warning); under Wine, `Win.apk.exe install` run directly and under a
+  stand-in `winapk-runtime.exe` parent: the question, the progress, "App
+  installed." with Open (it started the app's `--run`), the update's "App
+  updated.", the blocked-source dialog, Settings, Allow recorded and kept
+  across the requester's own update, Cancel ("The install was cancelled.",
+  exit 3) and a failure (runtime missing: "App not installed." with the
+  reason, exit 5, the old version kept). Screenshots were in the session's
+  scratch folder only. *Not verified*: a real store app driving it (no
+  network for a store under the sandbox), Hebrew on real Windows. Under Wine
+  the caller check (`appops::resolve`) cannot read the parent's command line
+  (`NtQueryInformationProcess` class 60 is missing), so the
+  blocked-source dialog and the permission dialogs see no caller there; the
+  Wine check used a test-only build that read it from the environment.
+  **Differs from Android, for the owner to decide**: on Android 14 a
+  *session* install (most stores' default) shows only the confirmation; the
+  store shows the progress, and the system shows no "App installed." dialog.
+  `ACTION_INSTALL_PACKAGE` with `EXTRA_RETURN_RESULT` (F-Droid's app) shows the
+  confirmation and the progress, then returns to the store with no result
+  dialog. Win.apk shows the progress and the end for every app's install, as
+  the owner asked (its installs take far longer than a phone's, and the
+  helper cannot tell the two surfaces apart today).
+  **The owner's check on Windows**: in a store (Droid-ify, F-Droid's app),
+  install a small app: the first time, the blocked-source dialog, Settings,
+  Allow; then the question, the window with its bar, "App installed.", Open
+  starts the app; the store shows it installed. Update the store itself from
+  itself, then install another app: no blocked-source dialog again.
 - **Installer of record: decided and done.** The owner's decision: Google
   Play is reported as the installer of every app the user installs, as
   `adb install -i com.android.vending` does, unless a real installer is

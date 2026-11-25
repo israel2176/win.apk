@@ -655,12 +655,25 @@ An app that installs other apps (F-Droid, through `PackageInstaller`) hands
 the APK to upstream's `PackageInstallerBackend`, which runs an install
 helper. On Windows the helper is the launcher itself:
 `Win.apk.exe install --apk <file> --source android [--requestor-label <app>] --json`
-and `uninstall --package <name> ...`. It asks the user, installs into the
-library as above, and keeps `installed_apps.json`, the registry the package
-manager answers from, so a store sees what it installed. The output follows
-upstream's contract: `[helper] progress <fraction> <stage>` lines, then one
-JSON object; exit codes 0 done, 2 bad arguments, 3 declined, 5 failed, 6 not
-an app.
+and `uninstall --package <name> ...`. It plays Android's package installer:
+an asking app whose "Install unknown apps" special access is off first gets
+the blocked-source dialog, whose Settings is that switch
+(`appops::installs_allowed_from_caller`); then "Do you want to install this
+app?"; then, alone in the helper's process, the install window with the
+install's steps and Cancel, and its end, "App installed." with Open and Done
+or "App not installed." with the reason (`helper_install_ui`). It installs into
+the library as above (`install_into_library`, cancelled through the same
+`InstallTable`), and keeps `installed_apps.json`, the registry the package
+manager answers from, so a store sees what it installed. A row's `installedAt`
+(Android's first install time, and the key of the app's signed grants) is kept
+across updates. The output follows upstream's contract: `[helper] progress
+<fraction> <stage>` lines, then one JSON object, then, when the install window
+shows the end, `[helper] exit <code>`: `PackageInstallerBackend.runHelper`
+returns on that line, so the store gets its status when the install ends, as
+on a device, while the window stays for Open or Done. Exit codes 0 done, 2 bad
+arguments, 3 declined or cancelled (`STATUS_FAILURE_ABORTED`,
+`RESULT_CANCELED`), 5 failed, 6 not an app. The genuine Play Store (Google
+signed) installs with no question and no window.
 
 ### Permissions (app-ops)
 
