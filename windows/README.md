@@ -1705,9 +1705,10 @@ keeping every change listed below. Synced: `runtime/java/**`,
 upstream C++ Windows compiles: `runtime/src/native_methods.cpp` (its GL
 stretch), `egl14_bridges.inc`, `native_sqlite.cpp`. Not synced: upstream's
 Mac-only native code (`runtime/src/*.mm`, the other `runtime/src/*.cpp`,
-`runtime/translator/`), the Swift launcher, `launcher/SystemBrokerMain.c`, the
-Skia dylib, entitlements and plists; Windows has its own counterparts in
-`windows/`. Every native a synced class gains needs a Windows answer in
+`runtime/translator/` but for `bionic_shim.cpp`, whose libjnigraphics section
+the build extracts), the Swift launcher, `launcher/SystemBrokerMain.c`, the
+Skia dylib, entitlements and plists; none of it is in this tree, and Windows has
+its own counterparts in `windows/`. Every native a synced class gains needs a Windows answer in
 `windows/host/` (for the classes `host_natives.cpp` binds, an unimplemented
 one returns 0 / null) or a guard in the Java that catches its absence.
 

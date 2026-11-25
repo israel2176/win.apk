@@ -136,7 +136,7 @@ and name the launcher shows), plus an overlay for `java.base`.
 ### The host
 
 `windows/host/` is `winapk-runtime.exe`, the Windows counterpart of
-upstream's `runtime/src/main.cpp`. It finds the runtime files, installs and
+upstream Mac.apk's `runtime/src/main.cpp`. It finds the runtime files, installs and
 converts the app, creates the HotSpot JVM in-process with upstream's options
 (SerialGC, a 16 MB thread stack, upstream's `java.base` changes, bytecode
 verification off) and class-data sharing (below), binds the host natives, and
