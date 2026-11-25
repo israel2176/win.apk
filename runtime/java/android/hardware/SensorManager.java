@@ -146,7 +146,7 @@ public class SensorManager {
     //     POSE_ACCEL_*), which a tilt game or a level app takes as a reading.
     //     A PC has no accelerometer, so none is reported, as on an Android
     //     device without one. Windows' own sensor API (the accelerometer of
-    //     some 2-in-1s) is not wired yet: docs/research/open-issues.md.
+    //     some 2-in-1s) is not wired yet.
     //
     // Do not "improve" the zeros back into plausible values. A plausible lie is
     // strictly worse than an obvious one: it is what let the fabricated pressure

@@ -483,10 +483,10 @@ void refresh_devices(bool force) {
 }
 
 // Every webcam is offered twice: camera 2k faces BACK and 2k+1 faces FRONT,
-// both streaming the same device. The owner's decision: a PC's camera serves
-// both roles, so apps that ask for the rear camera (cheque scanners) work.
-// (AOSP would report a USB camera as EXTERNAL, which camera1 maps to FRONT:
-// docs/research/open-issues.md.) A phone has both and apps are written for
+// both streaming the same device. By design a PC's camera serves both
+// roles, so apps that ask for the rear camera (cheque scanners) work.
+// (AOSP would report a USB camera as EXTERNAL, which camera1 maps to FRONT
+// and an app asking for the back lens would not find.) A phone has both and apps are written for
 // that: QR scanners and CameraX's DEFAULT_BACK_CAMERA ask for the back lens
 // (Camera.open() returns null without one), selfie and video-call screens for
 // the front. A PC's single webcam serves both roles; Windows shares the device
