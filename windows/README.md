@@ -41,7 +41,7 @@ this repository.
 | `launcher/` | `Win.apk.exe`, the app library, the install helper and the permission dialogs (`launcher_main.cpp`, `launcher.rc`, the icon), and its state machines, each a header the unit test drives (`app_runs.h`: an app's run; `installs.h`: an install; `updates.h`: the update check and download) |
 | `java/` | Windows-only Java: `com.winapk.tools.AppInstall` and `AppMeta` (`winapk-tools.jar`), `java_base_patch/` (an overlay for `java.base`), `aosp_gfx/` (the stand-ins in `aosp-graphics.jar`: ART's, Robolectric's, and an `android.icu.text.Bidi` on `java.text.Bidi`), and `winapk-framework.classlist` (the classes of the framework archive, `host/cds.h`) |
 | `tools/` | `winapk-elfrun` (the loader test runner), `winapk-jvm-run` (the real-JVM test), `winapk-aot` (`arm64_aot_main.cpp`), and the generators `gen_jni_slots.py`, `gen_gl_stubs.py`, `gen_icon.py` |
-| `scripts/` | `build_java.sh`, `build_aosp_gfx.sh` (AOSP graphics' files; `redirect_decoders.sh`, its HEIF/AVIF step), `fetch_angle.sh`, `fetch_webview2.sh`, `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
+| `scripts/` | `build_java.sh`, `build_aosp_gfx.sh` (AOSP graphics' files; `redirect_decoders.sh`, its HEIF/AVIF step), `fetch_angle.sh`, `fetch_webview2.sh`, `fetch_apkeep.sh` (apkeep for the Google services setup's Download, built from source with cargo; the versions it downloads are `launcher/google_apps.h`'s), `stage_clang.sh`, `stage_runtime.sh`, `bake_jre.sh` (the JRE Win.apk ships), `merge_classlists.py` |
 | `test/` | The unit tests (`*_test.cpp`), the guest test libraries (`guest/`, built with plain clang + lld, no NDK), the Java tests (`java/`), the Wine runners (`run_*_wine.sh`), the compatibility sweep and the screens crawl (`compat/`) |
 | `package/` | The installer (`winapk.iss`, Inno Setup), `README.txt` and `RELEASE_NOTES.md` shipped with a release |
 | `cmake/`, `compat/`, `third_party/` | The Linux cross toolchain file, the CMake steps that cut the GL and Bitmap bridges out of upstream's `native_methods.cpp` and `bionic_shim.cpp`, a CoreFoundation shim for `native_sqlite.cpp`, the Khronos headers and ANGLE's `gl2ext_angle.h` (build time only) |
@@ -66,6 +66,9 @@ cmake --build build
 windows/scripts/stage_runtime.sh build runtime
 windows/scripts/bake_jre.sh "$JAVA_HOME" runtime/lib runtime/jre
 ```
+
+`stage_runtime.sh` also needs Rust's `cargo` (rustup, with the Visual Studio
+build tools it asks for): `fetch_apkeep.sh` builds apkeep from source.
 
 - `-DWINAPK_JNI_INCLUDE=<jdk>/include` builds the JNI library, its tests,
   `winapk-jvm-run` and the runtime; without it only the loader, the shim and
@@ -179,9 +182,32 @@ Google services on, the broker puts it in the accounts table as the device's
 Google account (for tests with a test account, never on a command line).
 `--verify-apk` runs `com.winapk.tools.ApkCheck` (`windows/java`): the file's
 package, whether its signature verifies (`ApkVerification`, the lineage
-included) and whether Google signed it, as `KEY<tab>value` lines; exit 0
-Google-signed, 4 another signer, 3 does not verify, 1 not an app. The
-launcher's Google services setup installs a file only on 0.
+included) and whether Google signed it, its native code's ABIs, its
+minSdkVersion (a preview's codename, "Q", reads as 10000: Android installs a
+build for a preview on no released version), targetSdkVersion, versionCode
+and versionName, as `KEY<tab>value` lines; exit 0 Google-signed, 4 another
+signer, 3 does not verify, 1 not an app. The launcher's Google services setup
+installs a file only on 0, with x86_64 code or none, and a minSdkVersion it
+presents.
+
+The setup downloads the versions of Google's three apps that
+`launcher/google_apps.h` pins, never APKPure's newest (a preview build of
+Services Framework, minSdkVersion "Q", and an x86-only Play services variant
+have been its newest): Services Framework `14-10182995` (Android 14's build,
+minSdkVersion 34), Play services `26.34.36 (040800-981326859)` (x86 + x86_64,
+nodpi, Android 7.0+) and the Play Store `52.9.21-24 [0] [PR] 968642861`
+(universal, nodpi, Android 7.0+). apkeep is run as
+`apkeep -a "<package>@<version>" -d apk-pure -o acknowledge_dangers=true,arch=x86_64,sdk=34 <dir>`:
+`sdk=34` (`scripts/apkeep-patches/0002`) tells APKPure the device is on
+Android 14, as Win.apk presents, where apkeep always said 29. The pins set
+only the first install; the Play Store then updates itself and Play services.
+APKPure offers only its recent versions, so a pin can stop being offered: CI's
+"Google's pinned apps" step (in the Windows build job, when `google_apps.h`,
+`fetch_apkeep.sh` or apkeep's patches change, and on a run by hand) downloads
+each pin with the staged apkeep as the launcher does and fails unless
+`--verify-apk` says Google signed it, the package and version are the pinned
+ones, its code is x86_64 or none and its minSdkVersion is at most 34; the
+job's summary has a row per app.
 
 `Win.apk.exe` has the user-facing command line (`<file>`, `--run`) and the
 helper verbs `install`, `uninstall`, `runtime-permission`, `special-access`
@@ -2954,6 +2980,25 @@ every such change is listed here:
   value is null: Dynatrace (bit) took an NPE on it.
   `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java` (CI: "Run
   the HttpURLConnection request properties test").
+- `runtime/net_spi/com/macapk/net/SniSocketFactory.java` (new),
+  `AndroidHttpHandlerProvider.java`, `HucFollow.java`, `HucsConnection.java`:
+  an app's https `HttpURLConnection` names the host (SNI) on sockets from any
+  provider. The JDK names it only on its own sockets, or when the verifier is
+  its default, and Boot makes `OkHostnameVerifier` the default; Play services'
+  check-in through its own Conscrypt went out without SNI, got Google's
+  `invalid2.invalid` certificate, and the Play Store stayed at android-id 0
+  (DF-DFERH-01). The app still sees the factory it set.
+- `runtime/java/com/macapk/gms/NativeSignIn.java`: `signInForApp` (a Google
+  `addAccount`) opens the sign-in window whenever none is open, as a device
+  opens the add-account screen each time it is asked for. It went through the
+  one-ask-per-launch latch of the background asks when the caller passed no
+  Activity, as the Play Store's Sign in does, so after the first window was
+  closed every later click answered "cancelled" at once.
+- `runtime/java/com/macapk/loader/SystemServer.java`: the broker logs the first
+  cross-process `notifyChange` of each authority to each process (Services
+  Framework's `android_id` after a check-in, to the Play Store), in
+  `system.log`. (A popup's or a dialog's view tree goes to the run log at its
+  first finished draw too: `AospWindows.logTreeOnce`, Win.apk's own code.)
 - `runtime/java/com/android/internal/graphics/drawable/AnimationScaleListDrawable.java`
   (new) and `android/content/res/Resources.java`: the platform's progress-bar
   styles root their indeterminate drawable in this @hide class; it now inflates

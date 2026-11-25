@@ -1047,6 +1047,8 @@ public final class SystemServer {
     /** AOSP ContentService.notifyChange: every observer of the uri, in every
      *  process but the notifier's (which has told its own). Matched by
      *  authority here; the receiving ContentResolver matches the uri. */
+    private final java.util.Set<String> notifiedOnce = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private void notifyObservers(String fromProc, String uri) {
         String authority;
         try { authority = android.net.Uri.parse(uri).getAuthority(); } catch (Throwable t) { return; }
@@ -1061,6 +1063,11 @@ public final class SystemServer {
                 d.writeInterfaceToken(THREAD_DESCRIPTOR);
                 d.writeString(uri);
                 app.thread.transact(TX_SCHEDULE_NOTIFY, d, null, IBinder.FLAG_ONEWAY);
+                // Once per authority and process, so a change that should reach a process (Services
+                // Framework's android_id after a check-in, to the Play Store) shows in system.log.
+                if (notifiedOnce.add(authority + " -> " + app.proc)) {
+                    log("notifyChange " + authority + " -> " + app.proc + " (first; later ones not logged)");
+                }
             } catch (Throwable t) {
                 log("notifyChange " + uri + " -> " + app.proc + " FAILED: " + t);
             } finally { d.recycle(); }

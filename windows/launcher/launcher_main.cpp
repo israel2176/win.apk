@@ -110,6 +110,7 @@
 
 #include "app_runs.h"
 #include "debug_threads.h"
+#include "google_apps.h"
 #include "installs.h"
 #include "library_files.h"
 #include "maintenance.h"
@@ -146,6 +147,7 @@ constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed wh
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
 constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms device-id's id, or empty)
+constexpr UINT kSetupFetched = WM_APP + 22;   // lParam: new SetupFetch (apkeep's download of one of Google's apps)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
@@ -259,24 +261,39 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Install Play services, Services Framework and Play Store from their downloads.", L"התקנת שירותי Play,\x200F Services Framework וחנות Play מההורדות שלהם."},
         {L"Google Play services", L"שירותי Google Play"},
         {L"Google Play Store", L"חנות Google Play"},
-        {L"Pick the newest version for Android 10 or later.", L"יש לבחור בגרסה החדשה ביותר ל-Android 10 ומעלה."},
-        {L"Pick the x86_64 variant, nodpi, for Android 10 or later.", L"יש לבחור בגרסת x86_64,\x200F nodpi, ל-Android 10 ומעלה."},
-        {L"Pick the nodpi variant, for Android 10 or later.", L"יש לבחור בגרסת nodpi, ל-Android 10 ומעלה."},
+        {L"Pick version {0}, for Android 14 or later.", L"יש לבחור בגרסה {0}, ל-Android 14 ומעלה."},
+        {L"Pick version {0}: the x86 + x86_64 variant, nodpi, for Android 7.0 or later.", L"יש לבחור בגרסה {0}: גרסת x86 + x86_64,\x200F nodpi, ל-Android 7.0 ומעלה."},
+        {L"Pick version {0}: the universal variant, nodpi, for Android 7.0 or later.", L"יש לבחור בגרסה {0}: הגרסה האוניברסלית,\x200F nodpi, ל-Android 7.0 ומעלה."},
         {L"The file could not be checked", L"לא ניתן היה לבדוק את הקובץ"},
         {L"Win.apk's runtime did not start.", L"סביבת ההרצה של Win.apk לא הופעלה."},
         {L"{0} is not one of Google's three apps. To add another app, drop it on the library.", L"{0} אינו אחת משלוש האפליקציות של Google. כדי להוסיף אפליקציה אחרת, יש לשחרר אותה בספרייה."},
         {L"The signature of {0} does not verify, so the file may have been changed after it was signed. Download it again from APKMirror.", L"החתימה של {0} אינה תקפה, ולכן ייתכן שהקובץ שונה אחרי שנחתם. יש להוריד אותו שוב מ-APKMirror."},
-        {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from the APKMirror page that Download opens.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מדף APKMirror שנפתח בלחיצה על „הורדה”."},
+        {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from its APKMirror page.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מהדף שלו ב-APKMirror."},
+        {L"Download all", L"הורדת הכול"},
+        {L"Waiting to download", L"ממתינה להורדה"},
+        {L"Downloading…", L"מוריד…"},
+        {L"Checking…", L"בודקת…"},
+        {L"Win.apk checks that Google signed it.", L"Win.apk בודקת ש-Google חתמה עליה."},
+        {L"APKMirror", L"APKMirror"},
+        {L"From APKPure, version {0}.", L"מ-APKPure, גרסה {0}."},
+        {L"Win.apk downloads it and checks that Google signed it.", L"Win.apk מורידה אותה ובודקת ש-Google חתמה עליה."},
+        {L"{0} could not be downloaded", L"לא ניתן היה להוריד את {0}"},
+        {L"APKPure did not give version {0} in three tries. The app's row now opens its page on APKMirror, where you can download that version yourself.", L"גרסה {0} לא התקבלה מ-APKPure בשלושה ניסיונות. השורה של האפליקציה פותחת עכשיו את הדף שלה ב-APKMirror, שממנו אפשר להוריד את הגרסה הזו בעצמך."},
         {L"Google services are ready", L"שירותי Google מוכנים"},
         {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
         {L"Download each app to your Downloads folder, or drop it here. Win.apk checks that Google signed it, "
          L"then installs it.",
          L"יש להוריד כל אפליקציה לתיקיית ההורדות, או לשחרר אותה כאן. Win.apk בודקת ש-Google חתמה עליה, ואז "
          L"מתקינה אותה."},
+        {L"Download all fetches the apps; you can also download each one yourself or drop it here. Win.apk checks "
+         L"that Google signed it, then installs it.",
+         L"\"הורדת הכול\" מורידה את האפליקציות; אפשר גם להוריד כל אחת בעצמך או לשחרר אותה כאן. Win.apk בודקת "
+         L"ש-Google חתמה עליה, ואז מתקינה אותה."},
         {L"Checking {0}…", L"בודק את {0}…"},
         {L"To use Google Play, install the following apps as described.", L"כדי להפעיל את חנות Google Play, יש להתקין את האפליקציות הבאות לפי ההנחיות."},
-        {L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.", L"ב-{0} יש קוד למעבדי ARM בלבד. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
-        {L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an older version of it.", L"{0} דורש רמת API ‏{1}, ו-Win.apk מציגה רמת API ‏{2}. יש להוריד מ-APKMirror גרסה ישנה יותר שלו."},
+        {L"{0} has no code for x86_64 processors, only for {1}. On APKMirror, download its x86_64 variant.", L"ב-{0} אין קוד למעבדי x86_64, רק ל-{1}. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
+        {L"{0} needs API level {1}, and Win.apk presents API level {2}. Download the version its row names.", L"{0} דורש רמת API ‏{1}, ו-Win.apk מציגה רמת API ‏{2}. יש להוריד את הגרסה שהשורה שלו מציינת."},
+        {L"{0} is built for a preview of Android, which Android does not install on a released version. Download the version its row names.", L"{0} נבנה לגרסת תצוגה מקדימה של Android, ו-Android לא מתקינה אותו בגרסה שיצאה. יש להוריד את הגרסה שהשורה שלו מציינת."},
         {L"It's part of Google services.", L"היא חלק משירותי Google."},
         {L"Starting Google Play…", L"מפעיל את Google Play…"},
         {L"Google Play closed", L"Google Play נסגרה"},
@@ -4999,6 +5016,9 @@ struct Row {
     enum Kind { kText, kButton, kToggle, kChoice } kind = kText;
     std::wstring title, detail, value;  // value: the button's text, or the text on the right
     bool on = false, destructive = false, primary = false, check = false;
+    // A control whose action is under way (or cannot run now): drawn greyed, and neither clicked nor focused, so
+    // a second click cannot start it twice.
+    bool disabled = false;
     std::vector<std::wstring> choices;
     int choice = 0;
     std::function<void(int)> act;  // button: act(0), toggle: act(new state), choice: act(index)
@@ -5058,7 +5078,14 @@ SizeF control_size(Graphics& g, const Row& row) {
 
 void paint_control(Graphics& g, const Row& row, const RectF& r, bool hot) {
     switch (row.kind) {
-        case Row::kButton: draw_button(g, r, row.value, hot, row.primary, row.destructive); break;
+        case Row::kButton:
+            if (row.disabled) {
+                stroke_round(g, r, px(kRadiusControl), g_t.border);
+                draw_text(g, row.value, g_f.body.get(), g_t.text3, r, kCenter);
+                break;
+            }
+            draw_button(g, r, row.value, hot, row.primary, row.destructive);
+            break;
         case Row::kToggle: draw_switch(g, row.on, r, hot); break;
         case Row::kChoice: {
             fill_round(g, r, px(kRadiusControl), hot ? g_t.hover : g_t.card);
@@ -5143,7 +5170,7 @@ void paint_page(Graphics& g) {
             const float h = heights[ri];
             const RectF rr(m, ry, cw, h);
             // A switch takes the whole row (its label turns it too); a button or a list only itself.
-            const bool interactive = row.kind != Row::kText;
+            const bool interactive = row.kind != Row::kText && !row.disabled;
             const int index = static_cast<int>(s.targets.size());
             const bool hot = interactive && s.hot == index, focused = interactive && s.focus == index;
             if (row.kind == Row::kToggle && hot) {
@@ -5651,31 +5678,49 @@ Section google_account_section() {
 
 // ---- Google services setup -----------------------------------------------------
 //
-// Google's own Play services, Services Framework and Play Store, which "Use Google services" runs, are the
-// user's to download: Win.apk never fetches or ships them (APKMirror forbids automated downloads, and copies
-// published here could be taken down). The page has a row per app with Download, which opens the app's
-// APKMirror page in the browser, where APKMirror's own button downloads it. While the page is open the
-// launcher watches the Downloads folder (and takes a file dropped on the page); a new app file is checked
-// by `winapk-runtime --verify-apk` (com.winapk.tools.ApkCheck: its package, and whether its signature
-// verifies and Google signed it, as the runtime checks it before it treats the app as Google's), and only
-// one of the three apps that Google signed is installed, through the same install as a dropped APK.
+// Google's own Play services, Services Framework and Play Store, which "Use Google services" runs, are not
+// shipped with Win.apk (copies published here could be taken down). The page has a row per app with
+// Download, which runs apkeep (bin\tools\apkeep.exe, windows/scripts/fetch_apkeep.sh) to fetch the version
+// google_apps.h pins, x86_64 variant, from APKPure into downloads\google\. The pins set only the first install:
+// the Play Store then updates itself and Play services, as on a phone. APKPure has served altered apps, so what
+// it gives is trusted no more than any other file: every file, fetched or not, is checked by `winapk-runtime
+// --verify-apk` (com.winapk.tools.ApkCheck: its package, and whether its signature verifies and Google
+// signed it, as the runtime checks it before it treats the app as Google's), and only one of the three apps
+// that Google signed is installed, through the same install as a dropped APK. When apkeep is missing, or its
+// copy fails or does not pass, the row's button opens the app's APKMirror page in the browser instead
+// (APKMirror forbids automated downloads: its own button downloads it there); while the page is open the
+// launcher watches the Downloads folder for that (and takes a file dropped on the page).
 
 struct GoogleApp {
     const char* pkg;
     const wchar_t* name;
     const wchar_t* url;   // APKMirror's page for the app: the user picks the release and variant there
-    const wchar_t* pick;  // which variant to pick, in a sentence
+    const wchar_t* pick;  // which release and variant to pick there, in a sentence; {0} is the pinned version
 };
 const GoogleApp kGoogleApps[] = {
     {"com.google.android.gsf", L"Google Services Framework",
      L"https://www.apkmirror.com/apk/google-inc/google-services-framework/",
-     L"Pick the newest version for Android 10 or later."},
+     L"Pick version {0}, for Android 14 or later."},
     {"com.google.android.gms", L"Google Play services",
      L"https://www.apkmirror.com/apk/google-inc/google-play-services/",
-     L"Pick the x86_64 variant, nodpi, for Android 10 or later."},
+     L"Pick version {0}: the x86 + x86_64 variant, nodpi, for Android 7.0 or later."},
     {"com.android.vending", L"Google Play Store", L"https://www.apkmirror.com/apk/google-inc/google-play-store/",
-     L"Pick the nodpi variant, for Android 10 or later."},
+     L"Pick version {0}: the universal variant, nodpi, for Android 7.0 or later."},
 };
+
+// The version google_apps.h pins for a package; empty for none.
+std::string pinned_version(const std::string& pkg) {
+    for (const GooglePin& p : kGooglePins) {
+        if (pkg == p.pkg) return p.version;
+    }
+    return {};
+}
+
+// The pinned version as a left-to-right run, so that a Hebrew sentence keeps "[0] [PR]" and "(040800-...)" as
+// they are written.
+std::wstring pinned_text(const GoogleApp& a) {
+    return L"\x202A" + utf8_to_wide(pinned_version(a.pkg)) + L"\x202C";
+}
 
 const GoogleApp* google_app(const std::string& pkg) {
     for (const GoogleApp& a : kGoogleApps) {
@@ -5839,6 +5884,10 @@ int maintenance_main() {
 
 fs::path setup_log() { return logs_dir() / L"google-setup.log"; }
 
+// The MINSDK --verify-apk gives a minSdkVersion that is a codename (ApkCheck.PREVIEW_MIN_SDK): a preview's build,
+// which a released Android refuses.
+constexpr int kPreviewMinSdk = 10000;
+
 // winapk-runtime --verify-apk's answer for one file.
 struct SetupCheck {
     fs::path file;
@@ -5848,7 +5897,7 @@ struct SetupCheck {
     bool verified = false, google = false;
     std::wstring reason;
     std::wstring abis;  // the ABIs its native code is for, comma-separated; empty: none
-    int min_sdk = 0;    // its minSdkVersion (0: unknown)
+    int min_sdk = 0;    // its minSdkVersion (0: unknown; kPreviewMinSdk and above: a preview's codename)
     int sdk = 0;        // the API level Win.apk presents at most (PresentedSdk's ceiling; 0: unknown)
 };
 
@@ -5859,6 +5908,12 @@ struct SetupState {
     std::deque<std::pair<fs::path, bool>> queue;       // files to check, dropped or not
     std::wstring checking;                             // the file being checked now
     std::map<std::string, std::wstring> installing;    // package: the library name its install has
+    std::set<std::string> fetching;                    // packages apkeep is downloading, or queued to
+    std::deque<std::string> fetch_queue;               // packages waiting for their turn (one download at a time)
+    bool fetch_running = false;                        // a download thread is running
+    std::set<std::string> fetch_failed;                // packages whose APKPure copy failed: APKMirror instead
+    std::set<std::wstring> fetched;                    // files apkeep downloaded (their failures fall back)
+    std::set<std::string> verifying;                   // packages whose download is being checked
 } g_setup;
 
 DWORD WINAPI setup_watch_thread(void* param) {
@@ -5980,12 +6035,189 @@ void setup_offer(const fs::path& file) {
     setup_next();
 }
 
+fs::path apkeep_exe() { return root() / L"bin" / L"tools" / L"apkeep.exe"; }
+fs::path setup_downloads() { return data_dir() / L"downloads" / L"google"; }
+fs::path setup_download_log() { return logs_dir() / L"google-download.log"; }
+
+bool apkeep_present() {
+    std::error_code ec;
+    return fs::exists(apkeep_exe(), ec);
+}
+
+// One apkeep download: the package asked for, and the app file it left (empty: none).
+struct SetupFetch {
+    std::string pkg;
+    fs::path file;
+};
+
+// Appends one line to logs\google-download.log, prefixed with the local time.
+void fetch_log(HANDLE log, const std::string& line) {
+    if (log == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "%04u-%02u-%02u %02u:%02u:%02u ", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute,
+             t.wSecond);
+    const std::string text = stamp + line + "\n";
+    DWORD n = 0;
+    WriteFile(log, text.data(), static_cast<DWORD>(text.size()), &n, nullptr);
+}
+
+// Runs apkeep once for `pkg` into the empty folder `part`, its output appended to `log`; the app file it left,
+// or empty. apkeep says why it skipped an app only on a console (indicatif's println is silent when its output
+// is a file) and exits 0 either way, so the file alone tells success.
+fs::path fetch_once(const std::string& pkg, const fs::path& part, HANDLE log, DWORD* code) {
+    // apkeep's own guard: APKPure is refused unless the caller acknowledges what it has served before. Win.apk
+    // does, because nothing installs here that Google did not sign (setup_checked). The version is google_apps.h's
+    // pin (its name holds spaces and brackets: quoted), asked for as a device of Win.apk's Android 14 (sdk=34,
+    // apkeep-patches/0002) would ask, and only a variant with x86_64 code, or none, is taken.
+    std::wstring cmd = L"\"" + apkeep_exe().wstring() + L"\" -a \"" + utf8_to_wide(pkg + "@" + pinned_version(pkg)) +
+                       L"\" -d apk-pure -o acknowledge_dangers=true,arch=x86_64,sdk=34 " + gms_arg(part.wstring());
+    fetch_log(log, "> " + wide_to_utf8(cmd));
+    SIZE_T attr_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+    std::vector<BYTE> attr_buf(attr_size);
+    auto* attrs = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_buf.data());
+    const bool listed = log != INVALID_HANDLE_VALUE && InitializeProcThreadAttributeList(attrs, 1, 0, &attr_size) &&
+                        UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, &log, sizeof(HANDLE),
+                                                  nullptr, nullptr);
+    STARTUPINFOEXW si{};
+    si.StartupInfo.cb = sizeof(si);
+    if (listed) {
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+        si.StartupInfo.hStdOutput = si.StartupInfo.hStdError = log;
+        si.lpAttributeList = attrs;
+    }
+    PROCESS_INFORMATION pi{};
+    const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, listed, CREATE_NO_WINDOW |
+                                   (listed ? EXTENDED_STARTUPINFO_PRESENT : 0), nullptr, part.c_str(),
+                                   &si.StartupInfo, &pi);
+    if (listed) DeleteProcThreadAttributeList(attrs);
+    *code = ok ? 1 : GetLastError();
+    if (!ok) return {};
+    CloseHandle(pi.hThread);
+    // A stalled download is given up after ten minutes; Play services is about 300 MB.
+    if (WaitForSingleObject(pi.hProcess, 10 * 60 * 1000) == WAIT_TIMEOUT) TerminateProcess(pi.hProcess, 1);
+    *code = wait_exit(pi.hProcess);
+    std::error_code ec;
+    for (fs::directory_iterator it(part, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code fe;
+        if (it->is_regular_file(fe) && is_app_file(it->path()) && fs::file_size(it->path(), fe) > 0) {
+            return it->path();
+        }
+    }
+    return {};
+}
+
+// Downloads one package, trying three times (APKPure fails now and then, and apkeep tries no further), into
+// downloads\google\<pkg>.part\, and keeps the file as downloads\google\<pkg>.<ext>. Every attempt and its
+// outcome is in logs\google-download.log.
+DWORD WINAPI setup_fetch_thread(void* param) {
+    auto* f = static_cast<SetupFetch*>(param);
+    std::error_code ec;
+    const fs::path dir = setup_downloads();
+    const fs::path part = dir / (utf8_to_wide(f->pkg) + L".part");
+    fs::create_directories(logs_dir(), ec);
+    SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
+    HANDLE log = CreateFileW(setup_download_log().c_str(), FILE_APPEND_DATA,
+                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, &sa, OPEN_ALWAYS,
+                             FILE_ATTRIBUTE_NORMAL, nullptr);
+    constexpr int kAttempts = 3;
+    for (int attempt = 1; attempt <= kAttempts && f->file.empty(); ++attempt) {
+        if (attempt > 1) Sleep(attempt == 2 ? 5000 : 20000);
+        fs::remove_all(part, ec);
+        fs::create_directories(part, ec);
+        DWORD code = 1;
+        const fs::path got = fetch_once(f->pkg, part, log, &code);
+        if (got.empty()) {
+            fetch_log(log, f->pkg + ": attempt " + std::to_string(attempt) + " of " + std::to_string(kAttempts) +
+                               " left no app file (apkeep exit code " + std::to_string(code) + ")");
+            continue;
+        }
+        // "com.google.android.gms@26.34.36 (...)@x86_64.apk" -> "com.google.android.gms.apk": the name install_name
+        // reads.
+        const fs::path keep = dir / (utf8_to_wide(f->pkg) + got.extension().wstring());
+        std::error_code fe;
+        fs::remove(keep, fe);
+        fs::rename(got, keep, fe);
+        if (fe) {
+            fetch_log(log, f->pkg + ": could not move " + wide_to_utf8(got.wstring()) + ": " + fe.message());
+            continue;
+        }
+        f->file = keep;
+        fetch_log(log, f->pkg + ": downloaded " + wide_to_utf8(keep.wstring()) + " (" +
+                           std::to_string(fs::file_size(keep, fe)) + " bytes)");
+    }
+    fs::remove_all(part, ec);
+    if (log != INVALID_HANDLE_VALUE) CloseHandle(log);
+    if (!PostMessageW(g_main, kSetupFetched, 0, reinterpret_cast<LPARAM>(f))) delete f;
+    return 0;
+}
+
+// Starts the next queued download, one at a time: three at once from APKPure is the kind of burst it refuses.
+void setup_fetch_next() {
+    if (g_setup.fetch_running || g_setup.fetch_queue.empty()) return;
+    auto* f = new SetupFetch;
+    f->pkg = g_setup.fetch_queue.front();
+    g_setup.fetch_queue.pop_front();
+    HANDLE t = CreateThread(nullptr, 0, setup_fetch_thread, f, 0, nullptr);
+    if (!t) {
+        // No thread: the app's row offers APKMirror instead.
+        g_setup.fetching.erase(f->pkg);
+        g_setup.fetch_failed.insert(f->pkg);
+        delete f;
+        setup_fetch_next();
+        return;
+    }
+    CloseHandle(t);
+    g_setup.fetch_running = true;
+}
+
+// Download for one of Google's apps: apkeep from APKPure (queued behind any other), or, without apkeep or after
+// its copy failed, the app's APKMirror page in the browser.
+void setup_fetch(const GoogleApp& a) {
+    if (g_setup.fetching.count(a.pkg)) return;
+    if (!apkeep_present() || g_setup.fetch_failed.count(a.pkg)) {
+        ShellExecuteW(nullptr, L"open", a.url, nullptr, nullptr, SW_SHOWNORMAL);
+        return;
+    }
+    g_setup.fetching.insert(a.pkg);
+    g_setup.fetch_queue.push_back(a.pkg);
+    setup_fetch_next();
+    if (g_view == kGmsSetupView) rebuild_page();
+}
+
+// apkeep finished: check its file as any other (setup_checked), or say it failed and offer APKMirror.
+void setup_fetched(std::unique_ptr<SetupFetch> f) {
+    g_setup.fetching.erase(f->pkg);
+    g_setup.fetch_running = false;
+    setup_fetch_next();
+    const GoogleApp* app = google_app(f->pkg);
+    if (!f->file.empty()) {
+        g_setup.fetched.insert(f->file.wstring());
+        g_setup.verifying.insert(f->pkg);
+        g_setup.queue.emplace_back(f->file, true);
+        setup_next();
+    } else if (app) {
+        g_setup.fetch_failed.insert(f->pkg);
+        error_with_log(fmt(L"{0} could not be downloaded", {tr(app->name)}),
+                       fmt(L"APKPure did not give version {0} in three tries. The app's row now opens its page on "
+                           L"APKMirror, where you can download that version yourself.",
+                           {pinned_text(*app)}),
+                       setup_download_log());
+    }
+    if (g_view == kGmsSetupView) rebuild_page();
+}
+
 // The check's answer: install the file when it is one of the three apps and Google signed it, else say why.
 void setup_checked(std::unique_ptr<SetupCheck> c) {
     g_setup.checking.clear();
     if (g_view == kGmsSetupView) rebuild_page();  // no longer "Checking" behind a refusal's dialog
     const GoogleApp* app = google_app(c->pkg);
     const std::wstring file = c->file.filename().wstring();
+    const bool fetched = g_setup.fetched.erase(c->file.wstring()) > 0;
+    if (fetched) g_setup.verifying.erase(wide_to_utf8(c->file.stem().wstring()));  // downloads\google\<pkg>.<ext>
+    bool passed = false;
     if (c->code < 0) {
         error_with_log(tr(L"The file could not be checked"), tr(L"Win.apk's runtime did not start."), setup_log());
     } else if (c->pkg.empty() && c->dropped) {
@@ -6011,27 +6243,39 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
     } else if (!c->google) {
         error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
                        fmt(L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download "
-                           L"it from the APKMirror page that Download opens.",
+                           L"it from its APKMirror page.",
                            {file}),
                        setup_log());
     } else if (!c->abis.empty() && (L"," + c->abis + L",").find(L",x86_64,") == std::wstring::npos) {
-        // Native code for ARM only: Win.apk runs x86_64 code, and translating Play services is no way to run it.
+        // No x86_64 code (ARM's, or 32-bit x86's): Win.apk runs x86_64 code, and translating Play services is no
+        // way to run it.
         error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
-                       fmt(L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.",
+                       fmt(L"{0} has no code for x86_64 processors, only for {1}. On APKMirror, download its x86_64 "
+                           L"variant.",
+                           {file, c->abis}),
+                       setup_log());
+    } else if (c->sdk > 0 && c->min_sdk >= kPreviewMinSdk) {
+        // A minSdkVersion that is a codename: Android installs a preview's build only on that preview.
+        error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
+                       fmt(L"{0} is built for a preview of Android, which Android does not install on a released "
+                           L"version. Download the version its row names.",
                            {file}),
                        setup_log());
     } else if (c->sdk > 0 && c->min_sdk > c->sdk) {
         error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
-                       fmt(L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an "
-                           L"older version of it.",
+                       fmt(L"{0} needs API level {1}, and Win.apk presents API level {2}. Download the version its "
+                           L"row names.",
                            {file, std::to_wstring(c->min_sdk), std::to_wstring(c->sdk)}),
                        setup_log());
     } else {
+        passed = true;
         const std::wstring name = install_name(c->file);
         g_setup.installing[c->pkg] = name;
         g_setup_names.insert(name);
         install(c->file, name);
     }
+    // A copy from APKPure that did not pass: the row's button opens APKMirror from now on.
+    if (fetched && !passed && !c->pkg.empty()) g_setup.fetch_failed.insert(c->pkg);
     if (g_view == kGmsSetupView) rebuild_page();
     setup_next();
 }
@@ -6048,11 +6292,39 @@ std::vector<Section> gms_setup_sections() {
     } else {
         // While the page is open the Downloads folder is watched (and a file can be dropped here): each app's row
         // says which file to download, and the files that pass the checks install themselves.
-        state.rows.push_back(text_row(tr(L"To use Google Play, install the following apps as described."), L"",
-                                      g_setup.checking.empty()
-                                          ? tr(L"Download each app to your Downloads folder, or drop it here. "
-                                               L"Win.apk checks that Google signed it, then installs it.")
-                                          : fmt(L"Checking {0}…", {g_setup.checking})));
+        const std::wstring now = !g_setup.checking.empty() ? fmt(L"Checking {0}…", {g_setup.checking})
+                                 : !g_setup.fetching.empty() ? std::wstring(tr(L"Downloading…"))
+                                 : apkeep_present()
+                                     ? std::wstring(tr(L"Download all fetches the apps; you can also download each "
+                                                       L"one yourself or drop it here. Win.apk checks that Google "
+                                                       L"signed it, then installs it."))
+                                     : std::wstring(tr(L"Download each app to your Downloads folder, or drop it "
+                                                       L"here. Win.apk checks that Google signed it, then installs "
+                                                       L"it."));
+        if (apkeep_present()) {
+            // One click for the three: each that is neither installed nor on its way is downloaded.
+            Row all = button_row(tr(L"To use Google Play, install the following apps as described."), now,
+                                            tr(L"Download all"), [] {
+                                                for (const GoogleApp& a : kGoogleApps) {
+                                                    const auto inst = g_setup.installing.find(a.pkg);
+                                                    if (app_of_package(a.pkg) ||
+                                                        (inst != g_setup.installing.end() &&
+                                                         is_pending(inst->second)) ||
+                                                        g_setup.fetch_failed.count(a.pkg)) {
+                                                        continue;
+                                                    }
+                                                    setup_fetch(a);
+                                                }
+                                            });
+            // One click starts it all; until every download, check and install has ended there is nothing to add.
+            all.disabled = !g_setup.fetching.empty() || !g_setup.verifying.empty() || !g_setup.checking.empty() ||
+                           std::any_of(g_setup.installing.begin(), g_setup.installing.end(),
+                                       [](const auto& e) { return is_pending(e.second); });
+            state.rows.push_back(std::move(all));
+        } else {
+            state.rows.push_back(
+                text_row(tr(L"To use Google Play, install the following apps as described."), L"", now));
+        }
     }
     out.push_back(std::move(state));
 
@@ -6069,12 +6341,23 @@ std::vector<Section> gms_setup_sections() {
             apps.rows.push_back(r);
         } else if (inst != g_setup.installing.end() && is_pending(inst->second)) {
             apps.rows.push_back(text_row(tr(a.name), tr(L"Installing…"), utf8_to_wide(a.pkg)));
+        } else if (g_setup.verifying.count(a.pkg)) {
+            apps.rows.push_back(text_row(tr(a.name), tr(L"Checking…"), tr(L"Win.apk checks that Google signed it.")));
+        } else if (g_setup.fetching.count(a.pkg)) {
+            const bool queued = std::find(g_setup.fetch_queue.begin(), g_setup.fetch_queue.end(), a.pkg) !=
+                                g_setup.fetch_queue.end();
+            apps.rows.push_back(text_row(tr(a.name), queued ? tr(L"Waiting to download") : tr(L"Downloading…"),
+                                         fmt(L"From APKPure, version {0}.", {pinned_text(a)})));
+        } else if (apkeep_present() && !g_setup.fetch_failed.count(a.pkg)) {
+            const GoogleApp* ga = &a;
+            apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") +
+                                               tr(L"Win.apk downloads it and checks that Google signed it."),
+                                           tr(L"Download"), [ga] { setup_fetch(*ga); }));
         } else {
-            const wchar_t* url = a.url;
-            apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") + tr(a.pick),
-                                           tr(L"Download"), [url] {
-                                               ShellExecuteW(nullptr, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
-                                           }));
+            const GoogleApp* ga = &a;
+            apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") +
+                                               fmt(a.pick, {pinned_text(a)}),
+                                           tr(L"APKMirror"), [ga] { setup_fetch(*ga); }));
         }
     }
     out.push_back(std::move(apps));
@@ -10311,6 +10594,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case kSetupChecked:
             setup_checked(std::unique_ptr<SetupCheck>(reinterpret_cast<SetupCheck*>(lp)));
+            return 0;
+        case kSetupFetched:
+            setup_fetched(std::unique_ptr<SetupFetch>(reinterpret_cast<SetupFetch*>(lp)));
             return 0;
         case kGmsDone: {
             std::unique_ptr<std::wstring> out(reinterpret_cast<std::wstring*>(lp));

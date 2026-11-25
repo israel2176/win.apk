@@ -887,8 +887,13 @@ the user installed run as apps, as upstream runs them on the Mac:
   `com.android.vending` get the system-app treatment (`FLAG_SYSTEM`, started
   at the broker's boot) only when their APKs' signature verifies and Google's
   certificate made it, as the signer or as an ancestor in the verified v3
-  rotation lineage (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships and
-  downloads none of them. The launcher's setup page installs a file only when
+  rotation lineage (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships
+  none of them. The launcher's setup page downloads the versions
+  `windows/launcher/google_apps.h` pins (the first install only: the Play
+  Store then updates itself and Play services) with apkeep
+  (`bin\tools\apkeep.exe`, `windows/scripts/fetch_apkeep.sh`) from APKPure
+  into `downloads\google\`, or watches the Downloads folder for a copy the
+  user fetched from APKMirror, and installs a file only when
   `winapk-runtime --verify-apk` (`ApkCheck`) says Google signed it, its native
   code (if any) has an x86_64 build, and its minSdkVersion is not above
   `PresentedSdk`'s ceiling. The launcher treats the three as system

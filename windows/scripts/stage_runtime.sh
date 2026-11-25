@@ -7,6 +7,7 @@
 #   <out>/bin/winapk-shell.dll       (Explorer's thumbnails of the app files)
 #   <out>/bin/libEGL.dll, libGLESv2.dll, ... (ANGLE, for GL; fetch_angle.sh)
 #   <out>/bin/WebView2Loader.dll      (WebView2, for web content; fetch_webview2.sh)
+#   <out>/bin/tools/apkeep.exe        (Google services setup's downloads; fetch_apkeep.sh)
 #   <out>/lib/*.jar, java_base_patch/, jdk_unsupported_patch/
 #   <out>/lib/aosp-graphics.jar, bin/robolectric-nativeruntime.dll, bin/aosp/ (ICU's data, the
 #                                     fonts): AOSP's graphics, the only graphics the framework has
@@ -83,5 +84,6 @@ cp -f "$BUILD/Win.apk.exe" "$OUT/"
 cp -f "$HERE/../launcher/winapk.png" "$OUT/bin/"
 "$HERE/fetch_angle.sh" "$OUT/bin"
 "$HERE/fetch_webview2.sh" "$OUT/bin"
+"$HERE/fetch_apkeep.sh" "$OUT/bin"
 rm -rf "$OUT/.build"  # build_java.sh's scratch, not part of the runtime
 echo "[stage] runtime staged in $OUT"

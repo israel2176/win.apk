@@ -73,8 +73,8 @@ data protection, DPAPI).
 
 **Settings > Google account > Use Google services (experimental)** (off by
 default) runs Google's real Play services, Services Framework and Play Store
-as apps, once you have installed them yourself. Win.apk never ships or
-downloads Google's apps.
+as apps. Win.apk does not ship Google's apps: the setup page downloads them
+for you, and installs a copy only when Google signed it.
 
 ![The Google services setup page: a row for each of Google's three apps with a Download button](images/google-setup.png)
 
@@ -83,19 +83,50 @@ downloads Google's apps.
 1. Turn on **Use Google services (experimental)**. The **Google services setup** page opens
    by itself (later: **Google Play** in the left pane, or the row under the
    switch).
-2. For each of the three apps, Google Services Framework, Google Play services
-   and Google Play Store, click **Download**. It opens the app's APKMirror page
-   in your browser. Pick the variant the row names (x86_64 or nodpi, for
-   Android 10 or later) and use APKMirror's own download button.
-3. Keep the page open. Win.apk watches your Downloads folder (or take a file
-   you drop on the page), checks it and installs it. A file is refused, with
-   the reason, when **Google did not sign it**, when it has native code but
-   none for x86_64 (download the x86_64 variant), or when it needs a newer
-   Android (API level) than Win.apk presents (download an older version).
+2. Click **Download all** (or **Download** on one app's row). Win.apk
+   downloads the version of each app chosen for it (below) from APKPure,
+   with the [apkeep](https://github.com/EFForg/apkeep) tool it ships, into
+   `%LOCALAPPDATA%\Win.apk\downloads\google\`, one app at a time and up to
+   three tries each, then checks each file and installs it. APKPure has served
+   altered apps before, so its copies are trusted no more than any other file:
+   a copy that **Google did not sign**, or whose signature does not verify, is
+   refused.
+3. When an app's download fails or its copy is refused, its button becomes
+   **APKMirror**: it opens the app's APKMirror page in your browser. Pick the
+   version and variant the row names (the same ones as below) and use
+   APKMirror's own download button. Keep the page open: Win.apk watches your
+   Downloads folder (or take a file you drop on the page), checks it and
+   installs it. A file is refused, with the reason, when **Google did not
+   sign it**, when it has native code but none for x86_64 (download the x86_64
+   variant), when it is built for a preview of Android (Android does not
+   install those on a released version), or when it needs a newer Android
+   (API level) than Win.apk presents. apkeep's output is in
+   `logs\google-download.log`.
 4. When all three are ticked, **Google Play** in the left pane opens the Play
    Store inside the Win.apk window, where the library is, not in a window of
    its own. Switching to another tab keeps it running; **Google Play** shows
    it again. Closing the Win.apk window closes it.
+
+#### The versions Win.apk installs
+
+Win.apk does not take the newest copy APKPure has: that has been a build for
+a preview of Android (Services Framework's, which a phone refuses too) and a
+variant with code only for 32-bit x86 processors (Play services'). It asks
+for these versions, chosen to be signed by Google, to have x86_64 code or
+none, and to install on Android 14 (API level 34), which is what Win.apk
+presents; every file is still checked for all three before it is installed:
+
+| App | Version | Variant | Needs |
+|---|---|---|---|
+| Google Services Framework | `14-10182995` | the build for Android 14, no native code | Android 14 (API 34) |
+| Google Play services | `26.34.36 (040800-981326859)` | x86 + x86_64, nodpi | Android 7.0 (API 24) |
+| Google Play Store | `52.9.21-24 [0] [PR] 968642861` | universal, nodpi | Android 7.0 (API 24) |
+
+These set only the first install. From then on the Play Store updates itself
+and Play services from Google, as on a phone. Win.apk asks APKPure as a
+device on Android 14 would, and only for a variant with x86_64 code (or
+none). APKPure keeps only its recent versions on offer, so a version can stop
+being offered there; its row then opens APKMirror, which keeps every version.
 
 The three apps are part of Google services, not apps of your library: they
 have no tile, menu or shortcut, and their versions show only on the setup
@@ -226,7 +257,8 @@ installed again, it gets a new ID, which has to be registered again.
   Windows account's secrets. That needs apps to run in a sandbox, which
   Win.apk does not do yet.
 
-Logs: `logs\google-setup.log` (the setup's checks), `logs\system.log` (the
+Logs: `logs\google-setup.log` (the setup's checks), `logs\google-download.log`
+(its downloads), `logs\system.log` (the
 broker), `logs\services\` (apps it started for other apps).
 
 ## What does not work, and will not be faked

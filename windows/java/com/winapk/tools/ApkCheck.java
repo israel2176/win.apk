@@ -20,10 +20,15 @@
 //   GOOGLE    1 when Google's certificate signed it, else 0
 //   ABIS      the ABIs its native code is for, comma-separated, from every APK
 //             of a bundle (empty when it has none)
-//   MINSDK    the base manifest's minSdkVersion (0 when unknown)
+//   MINSDK    the base manifest's minSdkVersion (0 when unknown; 10000 when it
+//             is a preview's codename, which a released Android refuses)
+//   TARGETSDK the base manifest's targetSdkVersion (its minSdkVersion when it
+//             gives none; 0 when unknown)
+//   VERSIONCODE, VERSIONNAME  the base manifest's versionCode and versionName
 //   SDK       the newest API level Win.apk presents (PresentedSdk's ceiling)
 // The launcher refuses a file whose native code has no x86_64 build, or whose
-// minSdkVersion is above SDK: neither would run.
+// minSdkVersion is above SDK: neither would run. CI's "Google's pinned apps"
+// step reads the same lines for the versions launcher/google_apps.h pins.
 // Exit codes: 0 verified and signed by Google, 4 verified with another key,
 // 3 the signature does not verify, 1 no package name or unreadable, 2 usage.
 
@@ -61,7 +66,7 @@ public final class ApkCheck {
         }
         Path file = Paths.get(args[0]);
         String pkg = null;
-        int minSdk = 0;
+        ManifestInfo manifest = new ManifestInfo();
         Path scratch = null;
         try {
             // The base APK: the file itself, or a bundle's, unpacked once to a scratch folder next to it.
@@ -77,7 +82,7 @@ public final class ApkCheck {
             }
             if (base != null) {
                 pkg = AppInstall.packageName(base);
-                minSdk = minSdkOf(base);
+                manifest = manifestOf(base);
             }
         } catch (Throwable t) {
             System.err.println("[verify] " + t);
@@ -113,7 +118,10 @@ public final class ApkCheck {
             abis = "";
         }
         out.println("ABIS\t" + abis);
-        out.println("MINSDK\t" + minSdk);
+        out.println("MINSDK\t" + manifest.minSdk);
+        out.println("TARGETSDK\t" + manifest.targetSdk);
+        out.println("VERSIONCODE\t" + manifest.versionCode);
+        out.println("VERSIONNAME\t" + oneLine(manifest.versionName));
         out.println("SDK\t" + presentedCeiling());
         System.err.println("[verify] " + file + ": " + pkg + (r.verified ? " verified" : " NOT verified ("
                 + r.reason + ")") + (google ? ", signed by Google" : ""));
@@ -142,27 +150,43 @@ public final class ApkCheck {
         if (slash > 4) out.add(name.substring(4, slash));
     }
 
-    /** The minSdkVersion of an APK's <uses-sdk>, by name or by its resource id; 0 when there is none. A
-     *  preview's codename (a string) counts as newer than any release. */
-    static int minSdkOf(Path apk) throws IOException {
+    /** The minSdkVersion (or targetSdkVersion) given for a codename: newer than any release. */
+    static final int PREVIEW_MIN_SDK = 10000;
+
+    /** What the setup reads of an APK's manifest; 0 or "" for what it does not declare. */
+    static final class ManifestInfo {
+        int minSdk, targetSdk;
+        long versionCode;
+        String versionName = "";
+    }
+
+    /** The base manifest's <uses-sdk> and version, each attribute by name or by its resource id. A
+     *  minSdkVersion that is a preview's codename (a string, "Q") is PREVIEW_MIN_SDK: Android's installer
+     *  refuses such a build on any released Android ("Requires development platform Q but this is a release
+     *  platform"), even the release that preview became, and Win.apk presents released levels only. A
+     *  targetSdkVersion left out is the minSdkVersion, as Android reads it. */
+    static ManifestInfo manifestOf(Path apk) throws IOException {
+        ManifestInfo out = new ManifestInfo();
         byte[] axml;
         try (ZipFile zip = new ZipFile(apk.toFile())) {
             ZipEntry m = zip.getEntry("AndroidManifest.xml");
-            if (m == null) return 0;
+            if (m == null) return out;
             try (InputStream in = zip.getInputStream(m)) {
                 axml = in.readAllBytes();
             }
         }
-        final int minSdkAttr = 0x0101020c;  // android.R.attr.minSdkVersion
+        // android.R.attr's minSdkVersion, targetSdkVersion, versionCode, versionName
+        final int minSdkAttr = 0x0101020c, targetSdkAttr = 0x01010270, codeAttr = 0x0101021b, nameAttr = 0x0101021c;
         ByteBuffer b = ByteBuffer.wrap(axml).order(ByteOrder.LITTLE_ENDIAN);
         List<String> strings = null;
         int[] ids = new int[0];
+        boolean target = false, sdk = false;
         int pos = b.getShort(2) & 0xffff;
         while (pos + 8 <= axml.length) {
             int type = b.getShort(pos) & 0xffff;
             int headerSize = b.getShort(pos + 2) & 0xffff;
             int size = b.getInt(pos + 4);
-            if (size <= 0) return 0;
+            if (size <= 0) break;
             if (type == 0x0001) {
                 strings = AppInstall.stringPool(b, pos);
             } else if (type == 0x0180) {  // the resource map: the attribute names' ids, by string index
@@ -170,32 +194,51 @@ public final class ApkCheck {
                 for (int i = 0; i < ids.length; i++) ids[i] = b.getInt(pos + headerSize + i * 4);
             } else if (type == 0x0102 && strings != null) {
                 int element = b.getInt(pos + headerSize + 4);
-                if (element >= 0 && element < strings.size() && "uses-sdk".equals(strings.get(element))) {
+                String tag = element >= 0 && element < strings.size() ? strings.get(element) : "";
+                boolean usesSdk = "uses-sdk".equals(tag) && !sdk, root = "manifest".equals(tag);
+                if (usesSdk || root) {
                     int attrStart = b.getShort(pos + headerSize + 8) & 0xffff;
                     int attrSize = b.getShort(pos + headerSize + 10) & 0xffff;
                     int count = b.getShort(pos + headerSize + 12) & 0xffff;
                     for (int i = 0; i < count; i++) {
                         int a = pos + headerSize + attrStart + i * attrSize;
                         int name = b.getInt(a + 4);
-                        boolean named = name >= 0 && name < strings.size() && "minSdkVersion".equals(strings.get(name));
-                        if (!named && !(name >= 0 && name < ids.length && ids[name] == minSdkAttr)) continue;
+                        int id = name >= 0 && name < ids.length ? ids[name] : 0;
+                        String n = name >= 0 && name < strings.size() ? strings.get(name) : "";
                         int dataType = b.get(a + 15) & 0xff, data = b.getInt(a + 16);
-                        if (dataType == 0x10 || dataType == 0x11) return data;
+                        boolean integer = dataType == 0x10 || dataType == 0x11;
                         int raw = b.getInt(a + 8);
                         String v = raw >= 0 && raw < strings.size() ? strings.get(raw) : null;
-                        if (v == null) return 0;
-                        try {
-                            return Integer.parseInt(v.trim());
-                        } catch (NumberFormatException e) {
-                            return 10000;  // a codename: a preview's
+                        if (usesSdk && (id == minSdkAttr || "minSdkVersion".equals(n))) {
+                            out.minSdk = integer ? data : level(v);
+                        } else if (usesSdk && (id == targetSdkAttr || "targetSdkVersion".equals(n))) {
+                            out.targetSdk = integer ? data : level(v);
+                            target = true;
+                        } else if (root && (id == codeAttr || "versionCode".equals(n))) {
+                            out.versionCode = integer ? data & 0xffffffffL : 0;
+                        } else if (root && (id == nameAttr || "versionName".equals(n))) {
+                            out.versionName = v != null ? v : "";
                         }
                     }
-                    return 0;
+                    if (usesSdk) {
+                        sdk = true;
+                        if (!target) out.targetSdk = out.minSdk;
+                    }
                 }
             }
             pos += size;
         }
-        return 0;
+        return out;
+    }
+
+    /** An API level written as a string: its number, or PREVIEW_MIN_SDK for a preview's codename. */
+    private static int level(String v) {
+        if (v == null) return 0;
+        try {
+            return Integer.parseInt(v.trim());
+        } catch (NumberFormatException e) {
+            return PREVIEW_MIN_SDK;  // a preview's codename
+        }
     }
 
     /** PresentedSdk's ceiling (MACAPK_SDK_CEILING applied), the newest level an app is shown; 36 when it cannot
