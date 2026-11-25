@@ -676,6 +676,12 @@ bool ensure_server() {
 
 // ---- client ------------------------------------------------------------------------
 
+// The pipes found served by a process that is not this user's Win.apk runtime (another install's
+// or build's broker holding a well-known name), with that process's pid: a lookup of one cannot
+// succeed while it lives, so callers stop waiting for it (WinProcesses.foreignServer).
+std::mutex g_foreign_lock;
+std::map<std::wstring, unsigned long> g_foreign;
+
 // A new connection to `ep`, its server verified; INVALID_HANDLE_VALUE when the
 // endpoint is gone (or is not this user's runtime).
 HANDLE connect_to(Endpoint& ep, bool* gone) {
@@ -698,8 +704,16 @@ HANDLE connect_to(Endpoint& ep, bool* gone) {
         if (!ep.process) {
             HANDLE p = open_peer(pid);
             if (!trusted_peer(p)) {
-                std::fprintf(stderr, "[binder] %ls is served by pid %lu, not this user's Win.apk runtime\n",
-                             ep.name.c_str(), static_cast<unsigned long>(pid));
+                bool first;
+                {
+                    std::lock_guard<std::mutex> f(g_foreign_lock);
+                    first = g_foreign[ep.name] != pid;
+                    g_foreign[ep.name] = pid;
+                }
+                if (first) {
+                    std::fprintf(stderr, "[binder] %ls is served by pid %lu, not this user's Win.apk runtime\n",
+                                 ep.name.c_str(), static_cast<unsigned long>(pid));
+                }
                 if (p) CloseHandle(p);
                 CloseHandle(h);
                 *gone = true;
@@ -1118,6 +1132,24 @@ jlong JNICALL Proc_startTime(JNIEnv*, jclass, jint pid) {
 }
 
 // The pipe-name prefix this user's runtimes share (tests and logs).
+// The pid of the process that is not this user's Win.apk runtime and served the published name
+// `jname` at the last lookup, while it still runs; 0 when there is none.
+jint JNICALL Proc_foreignServer(JNIEnv* env, jclass, jstring jname) {
+    std::wstring pipe;
+    if (!published_pipe(env, jname, &pipe)) return 0;
+    unsigned long pid = 0;
+    {
+        std::lock_guard<std::mutex> f(g_foreign_lock);
+        auto it = g_foreign.find(pipe);
+        if (it != g_foreign.end()) pid = it->second;
+    }
+    if (!pid) return 0;
+    HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    const bool alive = p && WaitForSingleObject(p, 0) == WAIT_TIMEOUT;
+    if (p) CloseHandle(p);
+    return alive ? static_cast<jint>(pid) : 0;
+}
+
 jstring JNICALL Proc_pipePrefix(JNIEnv* env, jclass) {
     const std::wstring& p = prefix();
     return env->NewString(reinterpret_cast<const jchar*>(p.data()), static_cast<jsize>(p.size()));
@@ -1141,6 +1173,7 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kProc, "isLauncher", "(I)Z", Proc_isLauncher),
     WINAPK_HOST_NATIVE(kProc, "startTime", "(I)J", Proc_startTime),
     WINAPK_HOST_NATIVE(kProc, "pipePrefix", "()Ljava/lang/String;", Proc_pipePrefix),
+    WINAPK_HOST_NATIVE(kProc, "foreignServer", "(Ljava/lang/String;)I", Proc_foreignServer),
 };
 
 }  // namespace
