@@ -291,7 +291,9 @@ public final class Tasks {
      *  activity that declares every change in its configChanges gets it too
      *  (ActivityConfigurationChangeItem: onConfigurationChanged), any other is relaunched
      *  (ActivityRelaunchItem: destroyed and made again with its saved state) and brought back to the
-     *  state it was in. */
+     *  state it was in. An activity that is stopped (behind another, or the task minimized) is not
+     *  told now: ensureActivityConfiguration skips an invisible one ("Skipping config check
+     *  invisible"), and it gets the configuration when it comes back (`resume`). */
     void configurationChanged(Configuration next) {
         if (config != null && config.diff(next) == 0 && config.equals(next)) return;
         config = new Configuration(next);
@@ -300,31 +302,50 @@ public final class Tasks {
         schedule(process);
         for (Record r : new ArrayList<>(task)) {
             if (!r.launched || r.finishing || r.state == State.DESTROYING || r.state == State.DESTROYED) continue;
-            Configuration last = r.reported != null ? r.reported : next;
-            int changes = last.diff(next) & ~CONFIG_WINDOW_CONFIGURATION;
-            r.reported = new Configuration(next);
-            if (changes == 0) continue;
+            if (r.state == State.STOPPING || r.state == State.STOPPED) continue;
             ClientTransaction tx = ClientTransaction.obtain(app, r.token);
-            if ((changes & ~Compat.getRealConfigChanged(r.info)) != 0) {
-                // ActivityRecord.ensureActivityConfiguration: the window is kept across the relaunch
-                // only for a change of size (isResizeOnlyChange); any other (a new density, a theme)
-                // makes it again, so nothing of the old instance's views (a ComposeView found in the
-                // kept content and reused) outlives it at the old configuration.
-                boolean preserveWindow = isResizeOnlyChange(changes);
-                tx.addCallback(android.app.servertransaction.ActivityRelaunchItem.obtain(null, null, changes,
-                        new android.util.MergedConfiguration(new Configuration(next), new Configuration()),
-                        preserveWindow));
+            int kind = ensureConfiguration(tx, r, false);
+            if (kind == 0) continue;
+            if (kind == 2) {
                 tx.setLifecycleStateRequest(r.state == State.RESUMED
                         ? ResumeActivityItem.obtain(false, false)
-                        : r.state == State.PAUSED || r.state == State.PAUSING
-                                ? PauseActivityItem.obtain()
-                                : StopActivityItem.obtain(0));
-            } else {
-                tx.addCallback(android.app.servertransaction.ActivityConfigurationChangeItem.obtain(
-                        new Configuration(next)));
+                        : PauseActivityItem.obtain());
             }
             schedule(tx);
         }
+    }
+
+    /** ActivityRecord.ensureActivityConfiguration for `r` against the task's configuration, into `tx`:
+     *  0 when the activity has it already; else an ActivityConfigurationChangeItem
+     *  (onConfigurationChanged) for a change its configChanges declares, or an ActivityRelaunchItem
+     *  for any other, carrying its pending results and new intents when `andResume`
+     *  (relaunchActivityLocked), which are then no longer pending. */
+    private int ensureConfiguration(ClientTransaction tx, Record r, boolean andResume) {
+        Configuration last = r.reported != null ? r.reported : config;
+        int changes = last.diff(config) & ~CONFIG_WINDOW_CONFIGURATION;
+        r.reported = new Configuration(config);
+        if (changes == 0) return 0;
+        if ((changes & ~Compat.getRealConfigChanged(r.info)) != 0) {
+            // The window is kept across the relaunch only for a change of size
+            // (isResizeOnlyChange); any other (a new density, a theme) makes it again, so nothing of
+            // the old instance's views (a ComposeView found in the kept content and reused) outlives
+            // it at the old configuration.
+            boolean preserveWindow = isResizeOnlyChange(changes);
+            List<ResultInfo> results = null;
+            List<com.android.internal.content.ReferrerIntent> intents = null;
+            if (andResume) {
+                if (!r.results.isEmpty()) results = new ArrayList<>(r.results);
+                if (!r.newIntents.isEmpty()) intents = new ArrayList<>(r.newIntents);
+                r.results.clear();
+                r.newIntents.clear();
+            }
+            tx.addCallback(android.app.servertransaction.ActivityRelaunchItem.obtain(results, intents, changes,
+                    new android.util.MergedConfiguration(new Configuration(config), new Configuration()),
+                    preserveWindow));
+            return 2;
+        }
+        tx.addCallback(android.app.servertransaction.ActivityConfigurationChangeItem.obtain(new Configuration(config)));
+        return 1;
     }
 
     /** ActivityInfo.CONFIG_WINDOW_CONFIGURATION (hidden): never a reason to relaunch. */
@@ -553,6 +574,9 @@ public final class Tasks {
             return;
         }
         ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+        // A configuration it missed while stopped comes first (a relaunch takes the pending results
+        // and intents with it).
+        ensureConfiguration(tx, r, true);
         if (!r.results.isEmpty()) {
             tx.addCallback(ActivityResultItem.obtain(new ArrayList<>(r.results)));
             r.results.clear();

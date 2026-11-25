@@ -171,7 +171,8 @@ public class AospAppLifecycleTest {
     }
 
     public static class First extends Base {
-        boolean started;
+        static boolean started;   // the process's first resume only (First is relaunched below)
+        static boolean resized;
 
         @Override protected void onResume() {
             super.onResume();
@@ -230,7 +231,16 @@ public class AospAppLifecycleTest {
 
         @Override protected void onSaveInstanceState(Bundle out) {
             super.onSaveInstanceState(out);
-            new android.os.Handler(Looper.getMainLooper()).post(() -> second.finish());
+            // Once First is stopped, the display changes size (a configuration change neither
+            // activity declares): Second, resumed, is relaunched now; First, stopped, only when it
+            // comes back (ensureActivityConfiguration skips an invisible activity). The relaunched
+            // Second finishes.
+            if (!resized) {
+                resized = true;
+                Configuration c = new Configuration(launchConfig);
+                c.screenWidthDp = 400;
+                com.winapk.aospapp.AospAppHost.INSTANCE.configurationChanged(c);
+            }
         }
 
         @Override protected void onActivityResult(int request, int result, Intent data) {
@@ -261,16 +271,19 @@ public class AospAppLifecycleTest {
     static First first;
 
     public static class Second extends Base {
+        static int resumes;
+
         @Override protected void onResume() {
             super.onResume();
             second = this;
             note("Second: extra x=" + getIntent().getIntExtra("x", -1) + ", calling " + getCallingActivity().getShortClassName());
             setResult(RESULT_OK, new Intent().putExtra("r", "done"));
+            if (++resumes == 2) new android.os.Handler(Looper.getMainLooper()).post(() -> second.finish());
         }
 
         @Override protected void onDestroy() {
             super.onDestroy();
-            new android.os.Handler(Looper.getMainLooper()).post(() -> first.finish());
+            if (isFinishing()) new android.os.Handler(Looper.getMainLooper()).post(() -> first.finish());
         }
     }
 
@@ -282,13 +295,20 @@ public class AospAppLifecycleTest {
             "Second.onCreate", "Second.onStart", "Second.onResume",
             "Second: extra x=7, calling AospAppLifecycleTest$First",
             "First.onStop", "First.onSaveInstanceState",
+            // The size change: Second relaunched, First (stopped) left alone.
+            "Second.onPause", "Second.onStop", "Second.onSaveInstanceState", "Second.onDestroy",
+            "Second.onCreate", "Second.onStart", "Second.onResume",
+            "Second: extra x=7, calling AospAppLifecycleTest$First",
             "Second.onPause",
-            "First.onRestart", "First.onStart",
+            // First comes back relaunched at the new size, its result delivered before onResume.
+            "First.onDestroy", "First.onCreate", "First.onStart",
             "First.onActivityResult 42 -1 done",
             "First.onResume",
             "Second.onStop", "Second.onDestroy",
             "First.onPause", "First.onStop", "First.onDestroy",
             "task empty");
+
+    static final Configuration launchConfig = new Configuration();
 
     static native boolean redirectBegin();   // plainjvm_host.cpp
     static native int redirectEnd();
@@ -344,7 +364,7 @@ public class AospAppLifecycleTest {
                 First.class.getName(), activity(ai, First.class),
                 Second.class.getName(), activity(ai, Second.class),
                 Trampoline.class.getName(), activity(ai, Trampoline.class));
-        Configuration config = new Configuration();
+        Configuration config = launchConfig;
         config.setToDefaults();
         config.screenWidthDp = 360;
         config.screenHeightDp = 640;
