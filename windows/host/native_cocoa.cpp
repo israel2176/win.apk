@@ -1298,7 +1298,10 @@ DWORD WINAPI render_thread(void*) {
             if (!committed) {
                 committed = env->CallStaticBooleanMethod(display, note, w, h, dpi) == JNI_TRUE;
                 if (env->ExceptionCheck()) {
-                    env->ExceptionClear();
+                    // The display change was not taken: say why (its stack), rather than show a window the
+                    // app never laid out for.
+                    std::fprintf(stderr, "[win.apk] display: the change to %dx%d px at %d dpi threw:\n", w, h, dpi);
+                    env->ExceptionDescribe();  // prints and clears
                     committed = true;
                 }
             }
