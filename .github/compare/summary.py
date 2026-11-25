@@ -100,6 +100,21 @@ def main():
             if mems:
                 line += f", median peak {statistics.median(mems):g} MB"
         md.append(line + f" (medians over the {len(both)} apps both drew)")
+    # What the peak was made of: measure.ps1's sum at the peak by role, and the largest processes.
+    md += ["", "<details><summary>Memory at the peak, by process role (MB, cold / warm)</summary>", ""]
+    md.append("| App | Runtime | Cold: at the peak | Warm: at the peak |")
+    md.append("|---|---|---|---|")
+    for a in apps:
+        meta, runs = a["app"], a["runs"]
+        for i, (rt, label) in enumerate(RUNTIMES):
+            cells = []
+            for ph in ("cold", "warm"):
+                r = runs[f"{rt}-{ph}"] or {}
+                roles = r.get("at_peak") or {}
+                cells.append("; ".join(f"{k} {v:g}" for k, v in roles.items()) +
+                             (f" (at {num(r.get('peak_at_s'), ' s')})" if roles else "") or "–")
+            md.append("| " + " | ".join([meta.get("pkg", "") if i == 0 else "", label] + cells) + " |")
+    md += ["", "</details>"]
     (out / "compare.md").write_text("\n".join(md) + "\n", encoding="utf-8")
     print("\n".join(md))
 

@@ -13,9 +13,15 @@
 #                 (edges and colors: CmpWin.Judge)
 #   memory        the peak, over 1-second samples, of the summed working sets of the run's
 #                 processes: every process whose image is in the runtime's folder, and their
-#                 descendants (WebView2's, a translator's). the other runtime's waiting launcher (the
-#                 dalvikvm of com.other.app.Launcher) is kept apart: a Start menu or Explorer
-#                 launch detaches and ends it (other-launch, docs/installer.md)
+#                 descendants (WebView2's, a translator's) by parent process id, a child only
+#                 when it was created after its parent (Windows reuses the id of a process that
+#                 ended: without that check a recycled id took in csrss, lsass, svchost... of
+#                 the whole machine, LocalSend's 3358 MB in run 45513190823). the other runtime's waiting
+#                 launcher (the dalvikvm of com.other.app.Launcher) is kept apart: a Start
+#                 menu or Explorer launch detaches and ends it (other-launch, docs/installer.md).
+#                 Per process too: its image, its role from its command line (Role) and its own
+#                 peak working set ("processes"), and the processes summed at the peak by role
+#                 ("at_peak"), so that the table says what the memory was
 #   idle CPU      the run's processes' CPU time over the last 30 s of the run, in % of one core
 param(
   [Parameter(Mandatory)] [ValidateSet('winapk', 'other')] [string] $Runtime,
@@ -215,7 +221,7 @@ function JudgeEnd([IntPtr] $h) {
 # The run's processes now: {pid -> process}, the waiting the other runtime launcher apart.
 function Sample() {
   $all = @{}
-  foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath, CommandLine, Name, WorkingSetSize, KernelModeTime, UserModeTime) {
+  foreach ($p in Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, ExecutablePath, CommandLine, Name, WorkingSetSize, KernelModeTime, UserModeTime, CreationDate) {
     $all[[int]$p.ProcessId] = $p
   }
   $in = @{}
@@ -227,7 +233,9 @@ function Sample() {
     $grew = $false
     foreach ($p in $all.Values) {
       $id = [int]$p.ProcessId
-      if (-not $in.ContainsKey($id) -and $id -ne 0 -and $in.ContainsKey([int]$p.ParentProcessId) -and $p.ParentProcessId -ne $p.ProcessId) {
+      $parent = [int]$p.ParentProcessId
+      if (-not $in.ContainsKey($id) -and $id -ne 0 -and $in.ContainsKey($parent) -and $parent -ne $id -and
+          $p.CreationDate -ge $all[$parent].CreationDate) {
         $in[$id] = $true; $grew = $true
       }
     }
@@ -238,6 +246,31 @@ function Sample() {
     if ($Runtime -eq 'other' -and "$($p.CommandLine)" -match 'com\.other\.app\.Launcher') { $launcher[$id] = $p } else { $set[$id] = $p }
   }
   return @{ Set = $set; Launcher = $launcher }
+}
+# What a process is for, from its image and command line: Win.apk's by its own flags, a JVM by
+# what it runs, WebView2's by its --type.
+function Role($p) {
+  $c = "$($p.CommandLine)"; $n = "$($p.Name)".ToLowerInvariant()
+  switch -regex ($n) {
+    '^winapk-runtime\.exe$' {
+      if ($c -match '--cds-dump') { return 'class-data archive dump (wrapper)' }
+      if ($c -match '--cds-prepare') { return 'class-data archive (prepare)' }
+      if ($c -match '--aot-translate') { return 'arm64 translation worker' }
+      if ($c -match '--install-only') { return 'install' }
+      if ($c -match '--system') { return 'system broker' }
+      if ($c -match '--gms') { return 'Google services CLI' }
+      return 'app'
+    }
+    '^javaw?\.exe$' {
+      if ($c -match 'Xshare:dump') { return 'class-data archive dump (JVM)' }
+      return 'JVM'
+    }
+    '^clang' { return 'arm64 translation (clang)' }
+    '^msedgewebview2\.exe$' { if ($c -match '--type=([\w-]+)') { return "WebView2 $($Matches[1])" }; return 'WebView2' }
+    '^conhost\.exe$' { return 'console host' }
+    '^cmd\.exe$' { return 'launch shell' }
+    default { if ($c -match 'com\.other\.[\w.]+') { return $Matches[0] }; return $n }
+  }
 }
 function SumMB($procs) { ($procs.Values | Measure-Object -Property WorkingSetSize -Sum).Sum / 1MB }
 function CpuOf($p) { ([double]$p.KernelModeTime + [double]$p.UserModeTime) / 1e7 }
@@ -293,7 +326,8 @@ if ($Runtime -eq 'winapk') {
   $p = StartLogged "`"$the other runtimeApp\other-app.cmd`" launch $Package --window" $log
   $frameRx = 'first frame drawn \(\d+ presented\)'
 }
-$peak = 0.0; $peakLauncher = 0.0; $peakNames = ''
+$peak = 0.0; $peakLauncher = 0.0; $peakNames = ''; $peakSet = @{}
+$procPeak = @{}  # pid -> @{ name; role; peak_mb; first_s; last_s }
 $idleFrom = if ($Seconds -ge 45) { $Seconds - 30 } else { [int]($Seconds / 2) }
 $idleStart = $null; $last = $null; $lastT = 0
 $frameAt = $null; $nonBlankAt = $null; $exitedAt = $null
@@ -310,7 +344,17 @@ while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
     $s = Sample
     $last = $s; $lastT = $sw.Elapsed.TotalSeconds
     $mb = SumMB $s.Set
-    if ($mb -gt $peak) { $peak = $mb; $peakNames = (($s.Set.Values | ForEach-Object { $_.Name }) | Sort-Object | Get-Unique) -join ' ' }
+    if ($mb -gt $peak) {
+      $peak = $mb; $peakNames = (($s.Set.Values | ForEach-Object { $_.Name }) | Sort-Object | Get-Unique) -join ' '
+      $peakSet = $s.Set; $result.peak_at_s = [Math]::Round($lastT, 1)
+    }
+    foreach ($id in $s.Set.Keys) {
+      $q = $s.Set[$id]
+      if (-not $procPeak.ContainsKey($id)) {
+        $procPeak[$id] = @{ name = $q.Name; role = (Role $q); peak_mb = 0.0; first_s = [Math]::Round($lastT, 1) }
+      }
+      $e = $procPeak[$id]; $e.peak_mb = [Math]::Max($e.peak_mb, $q.WorkingSetSize / 1MB); $e.last_s = [Math]::Round($lastT, 1)
+    }
     $peakLauncher = [Math]::Max($peakLauncher, (SumMB $s.Launcher))
     if ($null -eq $idleStart -and $lastT -ge $idleFrom) { $idleStart = @{ T = $lastT; Set = $s.Set } }
     if ($null -eq $nonBlankAt) {
@@ -335,6 +379,15 @@ $self = [regex]::Match((ReadText $log), 'startup: first frame at ([\d.]+) s')  #
 $result.first_frame_self_s = if ($self.Success) { [double]$self.Groups[1].Value } else { $null }
 $result.peak_mb = [Math]::Round($peak)
 $result.peak_processes = $peakNames
+# Every process seen, largest first: image, role, its own peak, when it was first and last seen.
+$result.processes = @($procPeak.GetEnumerator() | Sort-Object { -$_.Value.peak_mb } | ForEach-Object {
+  [ordered]@{ pid = $_.Key; name = $_.Value.name; role = $_.Value.role; peak_mb = [Math]::Round($_.Value.peak_mb)
+    first_s = $_.Value.first_s; last_s = $_.Value.last_s } })
+# The sum at the peak by role (the processes of one role added up), largest first.
+$byRole = @{}
+foreach ($q in $peakSet.Values) { $r = Role $q; $byRole[$r] = [double]$byRole[$r] + $q.WorkingSetSize / 1MB }
+$result.at_peak = [ordered]@{}
+foreach ($kv in ($byRole.GetEnumerator() | Sort-Object { -$_.Value })) { $result.at_peak[$kv.Key] = [Math]::Round($kv.Value) }
 if ($Runtime -eq 'other') { $result.peak_launcher_mb = [Math]::Round($peakLauncher) }
 $result.exited_by_itself_s = $exitedAt
 $result.exit = if ($p.HasExited) { $p.ExitCode } else { $null }
