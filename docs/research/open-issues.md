@@ -1089,13 +1089,14 @@ app on real Windows; to check then:
   while the close waits), configuration changes with relaunch (resize, turn,
   locale, night mode), starts from outside (a sign-in's redirect), the window's
   orientation per activity (Tensy's SDL `SENSOR_LANDSCAPE` request now turns
-  the window, as on a device), FLAG_SECURE (`AospWindows`), and receivers,
-  broadcasts and services through Win.apk's dispatch (A3's first part).
+  the window, as on a device), FLAG_SECURE (`AospWindows`), and services, broadcasts and the app's
+  providers through `ActivityThread` over the in-process activity manager
+  (A3: `ActiveServices`, `ActiveBroadcasts`, `installContentProviders`).
   Under Wine all ten smoke apps draw, the UI probe's lines are unchanged, the
-  service host and `--system` start. **Left (A3's second part):** services,
-  receivers and providers run by `ActivityThread` itself over the in-process
-  activity manager instead of Win.apk's `ServiceRegistry`, receiver registry
-  and provider installer. **Check again:** `SurfaceView`'s own readiness gates
+  service host and `--system` start. **Left:** `ContentProvider` and `ContentResolver`
+  are still Win.apk's (the in-process system providers' checks have no AOSP
+  counterpart in one process); an app attached to a running broker was not
+  run under the harness. **Check again:** `SurfaceView`'s own readiness gates
   that asked Win.apk's activity stack answer as they did on the app layer
   (never "resumed"); the GL apps of the smoke set draw through the views'
   `followSurfaces`. Found on the way and fixed: the libandroidfw port's

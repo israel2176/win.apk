@@ -961,8 +961,12 @@ the change refused from anyone but the launcher.
    whose in-process activity manager and task manager send it the client
    transactions system_server would (`docs/research/aosp-app.md`); the
    `ActivityHost` entries above hand the window's close, minimize and restore
-   to that task manager. The framework has no `Activity`, `Application` or
-   `ActivityThread` of its own: it is compiled against AOSP's
+   to that task manager. Services, broadcasts and the app's
+   providers run through `ActivityThread` too (the activity manager's
+   `ActiveServices` and `ActiveBroadcasts`, `installContentProviders`); a
+   service or receiver of another app is the system broker's. The framework
+   has no `Activity`, `Application`, `ActivityThread`, `Service` or
+   `BroadcastReceiver` of its own: it is compiled against AOSP's
    (`windows/scripts/aosp_app_take.sh`), and asks the process's Application
    through `com.macapk.loader.app.Apps`.
 
