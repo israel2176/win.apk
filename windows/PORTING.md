@@ -758,7 +758,8 @@ How the display path works now, after a review of resizing and presentation
   pixel; a frame from before a resize is shown unscaled at the top left, with
   the window background where it does not reach, until the app draws the new
   one (`window_frame_present`); a frame is scaled only when the app is meant to
-  draw at another size (a monitor with another scale, `WINAPK_RESIZABLE=0`).
+  draw at another size (`WINAPK_RESIZABLE=0`, a density pinned by
+  `WINAPK_DENSITY`), or for the moments after a density change (below).
   Touch goes to Java as the surface in points (pixels over the density), so a
   click lands on the pixel it was made on.
 - The app follows every step of a drag, as an Android freeform window does,
@@ -772,6 +773,32 @@ How the display path works now, after a review of resizing and presentation
   before, the fit was deferred to the next restore and then sized the window
   to the maximized dp. A window too big for another monitor's work area is
   made smaller and the app follows it, instead of being shown resampled.
+- The density follows the scale the window shows the phone at, as an Android
+  display's density changes (Settings > Display size, a desktop window moved
+  to a display of another density). A drag keeps the scale (more or fewer dp,
+  same density); maximizing (the phone turned: a turned phone's dp as large
+  as the screen), restoring and a monitor with another scale
+  (`WM_DPICHANGED`) change it, and the window then gives the app the density
+  of the new scale (`window_density_for`, a whole dpi) with its new size
+  (`WindowInput::resized`). The render thread sends both to
+  `DisplayConfig.macapkNoteDisplay`, which commits them as one configuration
+  change with the new `densityDpi` through AOSP's app layer
+  (`Tasks.configurationChanged`): `ResourcesImpl.updateConfiguration` takes
+  the DisplayMetrics' density from it and drops the density-dependent
+  drawable caches, `ActivityThread` updates `DisplayMetrics.DENSITY_DEVICE`
+  and Bitmap's default density, an activity that does not declare
+  `configChanges="density"` is relaunched with its saved state and the
+  others hear `onConfigurationChanged`; the in-process window manager reports
+  the new density in its `DisplayInfo` and in every window's configuration
+  (overlaid from the commit, so a window never applies the display it
+  replaced) and resizes every window at it. `DENSITY_DEVICE_STABLE` and
+  `macapkDeviceDensity()` stay the launch density, as the stable density stays
+  the device's on Android; touch keeps its points at that unit, so it is
+  unaffected. Until the app has drawn at the new density, its last frame is
+  shown larger or smaller by the densities' ratio from the window's top
+  left, then the new one pixel for pixel. Before this the density was fixed for the process
+  and a maximized window or another monitor's frames were resampled until
+  the next start: blurry text in a maximized window.
 - The composite never stretches: the content GL view's frame and the view
   tree, or an app's native frames and the tree, are blended only when they
   agree on the size; one from before a resize goes out alone, unscaled, and
@@ -798,15 +825,11 @@ How the display path works now, after a review of resizing and presentation
 
 Still open:
 
-- The density is a process constant. On a monitor with another scale
-  (`WM_DPICHANGED`) the window keeps its size in physical terms and the frames
-  are resampled, as a system-DPI-aware Windows program is bitmap-stretched.
-  Android treats it as a density configuration change and relaunches
-  activities that do not declare `density`. Here `DisplayMetrics
-  .DENSITY_DEVICE_STABLE` and `macapkDeviceDensity()` are read by hundreds of
-  framework call sites, `DisplayConfig.compute` keeps the density on purpose,
-  and the relaunch path (`MACAPK_RESIZE_RELAUNCH`) is off and untried on
-  native engines; a live density change needs those first.
+- A live density change is a relaunch for most activities, as on Android: an
+  app that keeps state badly loses it as it would on a phone whose display
+  size changed. Native engines (NativeActivity, a GL game's surface) are
+  relaunched too unless they declare `density`; untried on a real GL game
+  under Windows.
 - The window is painted with GDI from a readback of every frame (the GL views
   and the app's native frames included) and DWM composites it: no tearing,
   but a copy per frame and no vsync. A DXGI swap chain on the window with

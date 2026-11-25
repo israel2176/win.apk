@@ -382,9 +382,14 @@ cheque scanner in a portrait app), the screen under it gets its own back.
 Maximizing is turning the phone: the app's display keeps the phone's short
 side and becomes as long as the screen is wide (360 x 800 dp becomes about
 700 x 360 dp on a 16:9 monitor), so the app shows its landscape layout large,
-not a tablet-sized display with its content small. In the run where you
-maximize it the picture is enlarged, which softens it; an app that was
-maximized when it closed opens maximized the next time, drawn sharp.
+not a tablet-sized display with its content small. It is drawn sharp, pixel
+for pixel: the app gets the density at which that display fills the screen,
+as an Android phone whose display size setting changes does (most screens are
+made again, keeping what you typed and where you were, as Android does; for
+a moment the old picture is shown enlarged). Restoring the window brings back
+the phone's own size and density, and so does moving the window to a monitor
+with another scale. An app that was maximized when it closed opens maximized
+the next time.
 
 The size you settle on is remembered per app and used the next time the app
 opens, before the App window size setting. The app's details page shows it and
@@ -778,7 +783,7 @@ Environment variables the launcher and the runtime read:
 | `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; set it yourself for the **Auto** preset or a direct run |
 | `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
 | `WINAPK_MAXIMIZE_TURNS=0` | A maximized window is a large display at the window's scale, not the phone turned |
-| `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
+| `WINAPK_DENSITY=<dpi>` | Pins the density the app sees; a maximized window or another monitor's scale then enlarges or shrinks the picture instead of giving the app a new density |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |
 | `WINAPK_AOT=0` | Run ARM-only apps' code on the JIT only: no translation is loaded or made |
 | `WINAPK_ABIS=arm64-v8a` | Install an app's ARM64 build although it has an x86_64 one (for comparing the two) |
