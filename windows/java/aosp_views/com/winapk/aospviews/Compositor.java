@@ -149,6 +149,11 @@ final class Compositor {
         if (sFrame == null || sFrame.getWidth() != width || sFrame.getHeight() != height) {
             sFrame = GfxBackend.get().createFrameBitmap(width, height);
             sCanvas = new Canvas(sFrame);
+            // Layers are composed pixel for pixel, as SurfaceFlinger composes buffers: no density
+            // scaling between a window's bitmap and the frame. Each bitmap takes the default
+            // density when it is made, which a density change moves (ActivityThread
+            // .updateDefaultDensity), and a canvas at another one would draw it scaled by the ratio.
+            sCanvas.setDensity(Bitmap.DENSITY_NONE);
         }
         Canvas c = sCanvas;
         // Nothing under the windows is black, as SurfaceFlinger's empty display; but while a
