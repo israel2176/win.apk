@@ -71,6 +71,18 @@ JNIEXPORT jint JNICALL Java_com_macapk_loader_NativeCocoa_displayHz(JNIEnv*, jcl
 // there is no animation on it to enable or disable.
 JNIEXPORT void JNICALL Java_android_graphics_HardwareRenderer_nSetRtAnimationsEnabled(JNIEnv*, jclass, jboolean) {}
 
+// The GPU DLL's natives the window path reaches (com.winapk.aospviews.HwuiLayers: a window's layer and
+// the compositor's scene; RenderNode's position updates for a SurfaceView): this harness has no DLL and
+// shows nothing, so a layer is a token and the scene goes nowhere.
+JNIEXPORT jlong JNICALL Java_com_winapk_aospviews_HwuiLayers_nCreate(JNIEnv*, jclass, jint, jint) { return 1; }
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nResize(JNIEnv*, jclass, jlong, jint, jint) {}
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nRelease(JNIEnv*, jclass, jlong) {}
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nPostBitmap(JNIEnv*, jclass, jlong, jlong) {}
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nSetScene(JNIEnv*, jclass, jlongArray, jintArray, jintArray,
+                                                                     jint, jint, jboolean) {}
+JNIEXPORT void JNICALL Java_android_graphics_RenderNode_nRequestPositionUpdates(JNIEnv*, jclass, jlong, jobject) {}
+JNIEXPORT jboolean JNICALL Java_android_graphics_HardwareRenderer_nIsDrawingEnabled(JNIEnv*, jclass) { return JNI_TRUE; }
+
 // AospAppLifecycleTest.redirectBegin() / redirectEnd(): around System.load of the native runtime, as
 // host/aosp_gfx.cpp does around its LoadLibrary.
 JNIEXPORT jboolean JNICALL Java_AospAppLifecycleTest_redirectBegin(JNIEnv* env, jclass) {
