@@ -686,12 +686,11 @@ bool is_gl_view(jlong view) {
     std::lock_guard<std::mutex> hold(g_gl_views_lock);
     return g_gl_views.count(view) != 0;
 }
-void clear_composite_tree();
+void clear_composite_gl();
 void JNICALL Cocoa_setContentView(JNIEnv*, jclass, jlong, jlong view) {
-    // Upstream's overlay layer belongs to the content view, so a new one starts
-    // without the previous tree's frame (a GL game must not sit under the
-    // splash it replaced); the tree that owns the new view presents again.
-    if (g_content_view.exchange(view) != view) clear_composite_tree();
+    // A new content view starts without the previous GL view's frame (a GL game must not sit under
+    // the splash it replaced).
+    if (g_content_view.exchange(view) != view) clear_composite_gl();
 }
 void JNICALL Cocoa_closeWindow(JNIEnv*, jclass, jlong) {}
 
@@ -742,16 +741,15 @@ jobjectArray JNICALL Cocoa_takeHostUrls(JNIEnv* env, jclass) {
 jobjectArray JNICALL Cocoa_urlSchemeHandlers(JNIEnv*, jclass, jstring) { return nullptr; }
 jint JNICALL Cocoa_setUrlSchemeDefault(JNIEnv*, jclass, jstring, jstring) { return -1; }
 
-// The GL overlay layer: dialogs and toasts over content the view tree does
-// not draw (GL, surfaces).
+// Upstream's overlay layer (its own dialogs over GL content): over the app's windows.
 void JNICALL Cocoa_presentOverlayBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) {
     if (!argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < w * h) return;
     jint* px = env->GetIntArrayElements(argb, nullptr);
     if (!px) return;
-    window_set_overlay(reinterpret_cast<const uint32_t*>(px), w, h);
+    hwui_host_layer_above(reinterpret_cast<const uint32_t*>(px), w, h);
     env->ReleaseIntArrayElements(argb, px, JNI_ABORT);
 }
-void JNICALL Cocoa_clearOverlayBitmap(JNIEnv*, jclass) { window_clear_overlay(); }
+void JNICALL Cocoa_clearOverlayBitmap(JNIEnv*, jclass) { hwui_host_layer_above(nullptr, 0, 0); }
 
 // Quitting: the window goes away at once, before the app's teardown runs.
 jboolean JNICALL Cocoa_hostHideWindowsForQuit(JNIEnv*, jclass) {
@@ -925,23 +923,13 @@ void present_pixels(const uint32_t* argb, int w, int h);
 // ---- the guest layer ---------------------------------------------------------
 //
 // Frames an app's native code renders into its ANativeWindow
-// (native_window.h). While they keep coming the window shows them, and the
-// view tree's frame is composited over them through the hole the owning
-// SurfaceView punches, or not at all when the native window has no known
-// owner or sits on top (SurfaceView.macapkNativeWindowLayerZ, pulled by the
-// render thread: 0 legacy above-all slot, 1 below the window, 2 on top).
+// (native_window.h): a host layer under the app's windows, seen through the
+// hole the owning SurfaceView punches, or over them when the native window has
+// no known owner or sits on top (SurfaceView.macapkNativeWindowLayerZ, pulled
+// by the render thread: 0 legacy above-all slot, 1 below the window, 2 on top).
 std::atomic<int> g_content_w{0}, g_content_h{0};
 std::atomic<int> g_guest_layer_z{0};
 std::atomic<unsigned long long> g_guest_last_ms{0};
-std::mutex g_tree_lock;
-std::vector<uint32_t> g_tree_frame;
-int g_tree_w = 0, g_tree_h = 0;
-// The native code's last frame (under g_tree_lock). A compositor shows a
-// surface's last buffer until the next one, and an app draws only when
-// something changes: Flutter drew City Car's sign-in screen, went idle, and
-// the tree's next frame covered its hole with black.
-std::vector<uint32_t> g_guest_frame;
-int g_guest_w = 0, g_guest_h = 0;
 
 bool guest_live() {
     const unsigned long long last = g_guest_last_ms.load();
@@ -953,11 +941,11 @@ bool guest_live() {
 // AOSP stacks a window as: a SurfaceView's buffer BELOW the window at the
 // view's rect (APPLICATION_MEDIA_SUBLAYER), the view tree over it -- seen
 // through the transparent hole SurfaceView.draw punches -- and a
-// setZOrderOnTop surface above the tree. Upstream gets that from CALayers (the
-// tree's overlay layer sits above the GL view, each lockCanvas surface has a
-// layer of its own). Here it is one composite of: the content GL view's frame
-// (when the content is one), the lockCanvas surfaces (presentSurfaceBitmap) at
-// the rects their SurfaceViews report, and the view tree's latest frame.
+// setZOrderOnTop surface above the tree. The windows are HWUI's layers on the
+// GPU (hwui_host.h); what the host has as pixels is two layers at the display's
+// size around them: under them the content GL view's frame (when the content is
+// one) and the lockCanvas surfaces (presentSurfaceBitmap) at the rects their
+// SurfaceViews report, over them the setZOrderOnTop surfaces.
 //
 // Without it, a window whose content had become the shared GL view (a
 // SurfaceView joined the tree after setContentView: a camera preview, a video
@@ -970,8 +958,8 @@ struct SurfaceLayer {
 };
 std::mutex g_comp_lock;
 std::map<int, SurfaceLayer> g_surface_layers;
-std::vector<uint32_t> g_comp_tree, g_comp_gl, g_comp_out;
-int g_comp_tree_w = 0, g_comp_tree_h = 0, g_comp_gl_w = 0, g_comp_gl_h = 0;
+std::vector<uint32_t> g_comp_gl, g_comp_out;
+int g_comp_gl_w = 0, g_comp_gl_h = 0;
 std::atomic<bool> g_have_surfaces{false};
 
 jclass g_sv_cls = nullptr;
@@ -1039,28 +1027,8 @@ void blit_scaled(uint32_t* dst, int dw, int dh, const uint32_t* src, int sw, int
     }
 }
 
-// src ("source over", straight alpha) over dst, both w x h.
-void blend_over(uint32_t* dst, const uint32_t* src, size_t n) {
-    for (size_t i = 0; i < n; ++i) {
-        const uint32_t t = src[i];
-        const uint32_t a = t >> 24;
-        if (a == 255) {
-            dst[i] = t;
-        } else if (a != 0) {
-            const uint32_t g = dst[i];
-            uint32_t px = 0xff000000u;
-            for (int sh = 0; sh <= 16; sh += 8) {
-                const uint32_t c = (((t >> sh) & 0xff) * a + ((g >> sh) & 0xff) * (255 - a)) / 255;
-                px |= c << sh;
-            }
-            dst[i] = px;
-        }
-    }
-}
-
-// Builds the composite from what is stored and presents it. The size is the
-// view tree's (the display surface the layer rects are given in), else the GL
-// frame's.
+// Builds the two host layers from what is stored, at the display's size (the
+// one the layer rects are given in); nothing before the first windows.
 void compose_and_present(JNIEnv* env) {
     const std::vector<LayerPlace> places = pull_layer_places(env);
     std::lock_guard<std::mutex> hold(g_comp_lock);
@@ -1068,14 +1036,8 @@ void compose_and_present(JNIEnv* env) {
         if (pl.packed == 0) g_surface_layers.erase(pl.key);
     }
     g_have_surfaces = !g_surface_layers.empty();
-    // With the app's windows composed on the GPU (hwui_host.h) the host's part is two layers at the
-    // display's size: under the windows (the content GL view, the surfaces under their windows,
-    // seen through the holes SurfaceView punches) and over them (setZOrderOnTop surfaces).
-    int dw = 0, dh = 0;
-    const bool gpu = hwui_display_size(&dw, &dh);
-    const int W = gpu ? dw : g_comp_tree_w > 0 ? g_comp_tree_w : g_comp_gl_w;
-    const int H = gpu ? dh : g_comp_tree_w > 0 ? g_comp_tree_h : g_comp_gl_h;
-    if (W <= 0 || H <= 0) return;
+    int W = 0, H = 0;
+    if (!hwui_display_size(&W, &H)) return;
     g_comp_out.assign(static_cast<size_t>(W) * H, 0xff000000u);
     uint32_t* out = g_comp_out.data();
     if (!g_comp_gl.empty() && is_gl_view(g_content_view.load())) {
@@ -1096,56 +1058,32 @@ void compose_and_present(JNIEnv* env) {
         }
     };
     draw_layers(false);
-    if (gpu) {
-        bool any_above = false;
-        for (const auto& pl : places) any_above |= pl.shown() && pl.on_top && g_surface_layers.count(pl.key);
-        hwui_host_layer(out, W, H);
-        if (any_above) {
-            g_comp_out.assign(static_cast<size_t>(W) * H, 0u);
-            out = g_comp_out.data();
-            draw_layers(true);
-            hwui_host_layer_above(g_comp_out.data(), W, H);
-        } else {
-            hwui_host_layer_above(nullptr, 0, 0);
-        }
-        return;
+    bool any_above = false;
+    for (const auto& pl : places) any_above |= pl.shown() && pl.on_top && g_surface_layers.count(pl.key);
+    hwui_host_layer(out, W, H);
+    if (any_above) {
+        g_comp_out.assign(static_cast<size_t>(W) * H, 0u);
+        out = g_comp_out.data();
+        draw_layers(true);
+        hwui_host_layer_above(g_comp_out.data(), W, H);
+    } else {
+        hwui_host_layer_above(nullptr, 0, 0);
     }
-    if (g_comp_tree_w == W && g_comp_tree_h == H && !g_comp_tree.empty()) {
-        blend_over(out, g_comp_tree.data(), g_comp_out.size());
-    }
-    draw_layers(true);
-    present_pixels(out, W, H);
 }
 
-// Whether frames go through the composite: the content is a GL view (the view
-// tree is then its overlay), or a surface has shown a frame.
-bool composite_active() { return is_gl_view(g_content_view.load()) || g_have_surfaces.load(); }
-
-void clear_composite_tree() {
+void clear_composite_gl() {
     std::lock_guard<std::mutex> hold(g_comp_lock);
-    g_comp_tree.clear();
-    g_comp_tree_w = g_comp_tree_h = 0;
     g_comp_gl.clear();
     g_comp_gl_w = g_comp_gl_h = 0;
 }
 
-void composite_tree_frame(JNIEnv* env, const uint32_t* argb, int w, int h) {
-    {
-        std::lock_guard<std::mutex> hold(g_comp_lock);
-        g_comp_tree.assign(argb, argb + static_cast<size_t>(w) * h);
-        g_comp_tree_w = w;
-        g_comp_tree_h = h;
-    }
-    compose_and_present(env);
-}
-
-// The content GL view's frame. Alone (no tree overlay, no surfaces) it is
-// presented as before; an unchanged frame is not re-composited.
+// The content GL view's frame. Alone (no surfaces) it is the layer under the windows as it is; an
+// unchanged frame is not re-composited.
 void composite_gl_frame(JNIEnv* env, const std::vector<uint32_t>& px, int w, int h) {
     bool alone;
     {
         std::lock_guard<std::mutex> hold(g_comp_lock);
-        alone = g_comp_tree.empty() && g_surface_layers.empty();
+        alone = g_surface_layers.empty();
         if (!alone && g_comp_gl_w == w && g_comp_gl_h == h && g_comp_gl == px) return;
         g_comp_gl = px;
         g_comp_gl_w = w;
@@ -1172,15 +1110,6 @@ void JNICALL Cocoa_presentSurfaceBitmap(JNIEnv* env, jclass, jint key, jintArray
     }
     env->ReleaseIntArrayElements(argb, px, JNI_ABORT);
     if (!guest_live()) compose_and_present(env);
-}
-
-// The view tree's latest frame, kept for compositing once a guest has shown.
-void keep_tree_frame(const uint32_t* argb, int w, int h) {
-    if (g_guest_last_ms.load() == 0) return;
-    std::lock_guard<std::mutex> hold(g_tree_lock);
-    g_tree_frame.assign(argb, argb + static_cast<size_t>(w) * h);
-    g_tree_w = w;
-    g_tree_h = h;
 }
 
 // One GL view's tick: ANGLE's context on its pbuffer, the renderer's
@@ -1516,30 +1445,10 @@ const std::wstring& headless_frame_path() {
 
 // A frame for the window (and for WINAPK_HEADLESS_FRAME): from the view tree,
 // or from the content GL view (gl_tick).
-void present_pixels(const uint32_t* argb, int w, int h) {
-    // The app's windows are composed on the GPU (hwui_host.h): a frame the host has as pixels (an
-    // app's native GL or video surface, a SurfaceView's canvas) is the layer under them, and the
-    // frame is counted when the composed one is shown (hwui_frame_presented).
-    if (hwui_active()) {
-        hwui_host_layer(argb, w, h);
-        return;
-    }
-    const long frame = ++g_frames;
-    if (frame == 1) {
-        std::fprintf(stderr, "[win.apk] first frame presented (%dx%d)\n", w, h);
-        std::fflush(stderr);
-        cds_first_frame();
-        machine_load::log_first_frame();
-    }
-    const std::wstring& path = headless_frame_path();
-    // An ARGB int is B, G, R, A in memory: the byte order of a 32-bit DIB.
-    window_present(argb, w, h);
-    if (!path.empty()) {
-        static std::mutex lock;
-        std::lock_guard<std::mutex> hold(lock);
-        write_bmp(path.c_str(), reinterpret_cast<const jint*>(argb), w, h);
-    }
-}
+// A frame the host has as pixels (an app's native GL or video surface, a SurfaceView's canvas): the
+// layer under the app's windows, composed on the GPU (hwui_host.h). The frame is counted when the
+// composed one is shown (hwui_frame_presented).
+void present_pixels(const uint32_t* argb, int w, int h) { hwui_host_layer(argb, w, h); }
 
 }  // namespace
 
@@ -1564,9 +1473,10 @@ void hwui_frame_presented(int w, int h, int64_t start_ns, int64_t compose_ns, in
                       frame <= kWarmupFrames, now);
 }
 
-bool hwui_wants_frame_pixels() { return !headless_frame_path().empty(); }
+bool hwui_wants_frame_pixels() { return !headless_frame_path().empty() || window_frame_wanted(); }
 
 void hwui_frame_pixels(const uint32_t* argb, int w, int h) {
+    window_frame_pixels(argb, w, h);
     const std::wstring& path = headless_frame_path();
     if (path.empty()) return;
     static std::mutex lock;
@@ -1585,134 +1495,35 @@ void phone_size_dp(int* w, int* h) {
     *h = g_phone_h.load();
 }
 
-void present_over_guest(const uint32_t* argb, int w, int h);
-
 void guest_frame_present(const uint32_t* argb, int w, int h) {
     if (g_guest_last_ms.exchange(GetTickCount64()) == 0) {
         std::fprintf(stderr, "[win.apk] native window: first frame from the app's native code (%dx%d)\n", w, h);
     }
-    // Composed on the GPU (hwui_host.h): under the windows when the native window's SurfaceView is
-    // below its window, else over them.
-    if (hwui_active()) {
-        if (g_guest_layer_z.load() == 1) hwui_host_layer(argb, w, h);
-        else hwui_host_layer_above(argb, w, h);
-        return;
-    }
-    if (g_guest_layer_z.load() != 1) {
-        present_pixels(argb, w, h);
-        return;
-    }
-    {
-        std::lock_guard<std::mutex> hold(g_tree_lock);
-        g_guest_frame.assign(argb, argb + static_cast<size_t>(w) * h);
-        g_guest_w = w;
-        g_guest_h = h;
-    }
-    present_over_guest(argb, w, h);
+    // Under the windows when the native window's SurfaceView is below its window, else over them.
+    // The layer stays until the next frame, as a compositor shows a surface's last buffer: an app
+    // draws only when something changes (Flutter drew City Car's sign-in screen and went idle).
+    if (g_guest_layer_z.load() == 1) hwui_host_layer(argb, w, h);
+    else hwui_host_layer_above(argb, w, h);
 }
 
-// The view tree over a guest frame: where the tree is transparent (the
-// SurfaceView's hole) the guest shows. Both are the surface's size; an app
-// that set its own buffer geometry (a game rendering at a lower resolution)
-// is scaled up to the tree, as Android's compositor scales its buffer to the
-// window. Otherwise a size they disagree on means one of them is from before
-// a resize: the guest's frame goes out alone, at its own size (the window
-// shows it unscaled), and the next frame of each brings them together.
-void present_over_guest(const uint32_t* argb, int w, int h) {
-    thread_local std::vector<uint32_t> out;
-    int tw = 0, th = 0;
-    {
-        std::lock_guard<std::mutex> hold(g_tree_lock);
-        tw = g_tree_w;
-        th = g_tree_h;
-        if (tw <= 0 || th <= 0 || ((tw != w || th != h) && !native_window_has_geometry())) {
-            present_pixels(argb, w, h);
-            return;
-        }
-        out.resize(static_cast<size_t>(tw) * th);
-        for (int y = 0; y < th; ++y) {
-            const uint32_t* grow = argb + static_cast<size_t>(y * h / th) * w;
-            const uint32_t* trow = g_tree_frame.data() + static_cast<size_t>(y) * tw;
-            uint32_t* orow = out.data() + static_cast<size_t>(y) * tw;
-            for (int x = 0; x < tw; ++x) {
-                const uint32_t t = trow[x], g = grow[x * w / tw];
-                const uint32_t a = t >> 24;
-                if (a == 255) {
-                    orow[x] = t;
-                } else if (a == 0) {
-                    orow[x] = g | 0xff000000u;
-                } else {
-                    uint32_t px = 0xff000000u;
-                    for (int sh = 0; sh <= 16; sh += 8) {
-                        const uint32_t c = (((t >> sh) & 0xff) * a + ((g >> sh) & 0xff) * (255 - a)) / 255;
-                        px |= c << sh;
-                    }
-                    orow[x] = px;
-                }
-            }
-        }
-    }
-    present_pixels(out.data(), tw, th);
-}
 
 namespace {
 
-// The view tree's frame. While a GL view is the window's content the view
-// tree reaches the window as the overlay layer instead (presentOverlayBitmap).
+// A whole frame the framework's own producers draw in software (a video frame, a legacy surface's
+// canvas, a camera preview): the layer under the windows.
 void JNICALL Cocoa_presentBitmap(JNIEnv* env, jclass, jintArray argb, jint w, jint h) {
     if (!argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < w * h) return;
     jint* px = env->GetIntArrayElements(argb, nullptr);
     if (!px) return;
-    keep_tree_frame(reinterpret_cast<const uint32_t*>(px), w, h);
-    // While the app's native code shows frames, its next one brings this along.
-    // With a GL content view or a surface on screen, the tree is their overlay.
-    // When it has gone quiet, the tree still goes over its last frame.
-    if (!guest_live()) {
-        thread_local std::vector<uint32_t> guest;
-        int gw = 0, gh = 0;
-        if (g_guest_last_ms.load() != 0 && g_guest_layer_z.load() == 1) {
-            std::lock_guard<std::mutex> hold(g_tree_lock);
-            guest = g_guest_frame;
-            gw = g_guest_w;
-            gh = g_guest_h;
-        }
-        if (gw > 0 && gh > 0) present_over_guest(guest.data(), gw, gh);
-        else if (composite_active()) composite_tree_frame(env, reinterpret_cast<const uint32_t*>(px), w, h);
-        else present_pixels(reinterpret_cast<const uint32_t*>(px), w, h);
-    }
+    present_pixels(reinterpret_cast<const uint32_t*>(px), w, h);
     env->ReleaseIntArrayElements(argb, px, JNI_ABORT);
 }
 
-// A view tree frame of which only [l, r) x [t, b) was drawn again (a frame
-// clipped to its damage: ViewCanvasDriver, FRAMESPEED S2): those rows alone are
-// read from the array, patched into the frame the window holds, and repainted,
-// instead of the whole frame being copied twice and blitted. Only for the plain
-// case -- the tree is the window's whole content and no frame file is written;
-// false otherwise, and the frame goes the whole way.
-bool present_changed_rect(JNIEnv* env, jintArray argb, jint w, jint h, jint l, jint t, jint r, jint b, jint flags) {
-    constexpr jint kForceFull = 1, kValidate = 2;  // NativeCocoa.PRESENT_FLAG_*
-    if (flags & (kForceFull | kValidate)) return false;  // new bitmap; or drawn whole, the rectangle only claimed
-    if (!argb || w <= 0 || h <= 0 || env->GetArrayLength(argb) < w * h) return false;
-    if (l < 0 || t < 0 || r > w || b > h || r <= l || b <= t) return false;
-    if (l == 0 && t == 0 && r == w && b == h) return false;
-    if (g_guest_last_ms.load() != 0 || composite_active() || !headless_frame_path().empty()) return false;
-    thread_local std::vector<uint32_t> rows;
-    const size_t rw = static_cast<size_t>(r - l);
-    rows.resize(rw * static_cast<size_t>(b - t));
-    for (jint y = t; y < b; ++y) {
-        env->GetIntArrayRegion(argb, y * w + l, r - l, reinterpret_cast<jint*>(rows.data() + (y - t) * rw));
-    }
-    if (!window_present_rect(rows.data(), w, h, l, t, r, b)) return false;
-    ++g_frames;
-    return true;
-}
 
-// The diffing present. There is no layer to diff against here, so a frame is
-// published (PRESENT_PUBLISHED) whole, or as the rectangle the driver says is
-// all that changed.
-jint JNICALL Cocoa_presentFrame(JNIEnv* env, jclass cls, jintArray argb, jint w, jint h, jint l, jint t, jint r,
-                                jint b, jint flags) {
-    if (!present_changed_rect(env, argb, w, h, l, t, r, b, flags)) Cocoa_presentBitmap(env, cls, argb, w, h);
+// The diffing present: published (PRESENT_PUBLISHED) whole.
+jint JNICALL Cocoa_presentFrame(JNIEnv* env, jclass cls, jintArray argb, jint w, jint h, jint, jint, jint, jint,
+                                jint) {
+    Cocoa_presentBitmap(env, cls, argb, w, h);
     return 1;
 }
 

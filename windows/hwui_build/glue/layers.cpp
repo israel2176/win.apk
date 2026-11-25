@@ -26,6 +26,9 @@
 #include <psapi.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <map>
+#include <string>
 #include <cstdarg>
 #include <atomic>
 #include <cstring>
@@ -57,6 +60,150 @@ void log_memory_now(const char* when) {
           m.PrivateUsage / 1048576.0);
 }
 bool g_logged_first = false;
+
+// Where the process's committed memory is, by owner, after a memory line: each module's image
+// (its writable copies and data), each heap (Windows' own heaps, walked), the other private
+// regions (the largest listed: a driver's or a runtime's own allocations), and mapped views.
+// For telling the GPU driver's and ANGLE's floor from the graphics' own memory.
+void log_memory_map(const char* when) {
+    struct Region {
+        uintptr_t base;
+        size_t committed;
+        DWORD protect;
+    };
+    std::map<uintptr_t, size_t> image;  // allocation base -> committed
+    std::map<uintptr_t, Region> priv;   // allocation base -> committed private
+    size_t mapped = 0, image_total = 0, priv_total = 0;
+    MEMORY_BASIC_INFORMATION mbi;
+    for (uintptr_t a = 0; VirtualQuery(reinterpret_cast<void*>(a), &mbi, sizeof mbi) == sizeof mbi;
+         a = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize) {
+        if (mbi.State != MEM_COMMIT) continue;
+        const uintptr_t base = reinterpret_cast<uintptr_t>(mbi.AllocationBase);
+        if (mbi.Type == MEM_IMAGE) {
+            image[base] += mbi.RegionSize;
+            image_total += mbi.RegionSize;
+        } else if (mbi.Type == MEM_MAPPED) {
+            mapped += mbi.RegionSize;
+        } else {
+            Region& r = priv[base];
+            r.base = base;
+            r.committed += mbi.RegionSize;
+            r.protect = mbi.Protect;
+            priv_total += mbi.RegionSize;
+        }
+        if (reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize < a) break;
+    }
+    // Heaps: their regions' allocation bases, and what is allocated in them.
+    HANDLE heaps[128];
+    const DWORD nheaps = std::min<DWORD>(GetProcessHeaps(128, heaps), 128);
+    size_t heap_committed = 0;
+    std::vector<std::pair<size_t, std::string>> heap_lines;
+    for (DWORD i = 0; i < nheaps; i++) {
+        if (!HeapLock(heaps[i])) continue;
+        PROCESS_HEAP_ENTRY e{};
+        size_t busy = 0, committed = 0;
+        while (HeapWalk(heaps[i], &e)) {
+            if (e.wFlags & PROCESS_HEAP_REGION) {
+                committed += e.Region.dwCommittedSize;
+                auto it = priv.find(reinterpret_cast<uintptr_t>(e.lpData));
+                if (it != priv.end()) it->second.protect = 0xFFFFFFFF;  // a heap's
+            } else if (e.wFlags & PROCESS_HEAP_ENTRY_BUSY) {
+                busy += e.cbData;
+                if (e.cbData >= (1u << 20)) {  // a large block lives in its own region
+                    MEMORY_BASIC_INFORMATION b;
+                    if (VirtualQuery(e.lpData, &b, sizeof b) == sizeof b) {
+                        auto it = priv.find(reinterpret_cast<uintptr_t>(b.AllocationBase));
+                        if (it != priv.end()) {
+                            it->second.protect = 0xFFFFFFFF;
+                            committed += it->second.committed;
+                        }
+                    }
+                }
+            }
+        }
+        HeapUnlock(heaps[i]);
+        heap_committed += committed;
+        char line[160];
+        std::snprintf(line, sizeof line, "heap %p: %.1f MB committed, %.1f MB in use", heaps[i],
+                      committed / 1048576.0, busy / 1048576.0);
+        heap_lines.emplace_back(committed, line);
+    }
+    std::vector<std::pair<size_t, std::string>> mods;
+    for (const auto& [base, size] : image) {
+        char name[MAX_PATH] = "?";
+        GetModuleFileNameA(reinterpret_cast<HMODULE>(base), name, MAX_PATH);
+        const char* leaf = std::strrchr(name, '\\');
+        mods.emplace_back(size, leaf ? leaf + 1 : name);
+    }
+    std::sort(mods.rbegin(), mods.rend());
+    std::sort(heap_lines.rbegin(), heap_lines.rend());
+    std::vector<Region> other;
+    size_t other_total = 0;
+    for (const auto& [base, r] : priv) {
+        if (r.protect == 0xFFFFFFFF) continue;
+        other.push_back(r);
+        other_total += r.committed;
+    }
+    std::sort(other.begin(), other.end(), [](const Region& x, const Region& y) { return x.committed > y.committed; });
+    ALOGW("memory map, %s: committed private %.1f MB (heaps %.1f MB in %u, other private %.1f MB in %zu "
+          "allocations), images %.1f MB, mapped %.1f MB", when, priv_total / 1048576.0, heap_committed / 1048576.0,
+          static_cast<unsigned>(nheaps), other_total / 1048576.0, other.size(), image_total / 1048576.0,
+          mapped / 1048576.0);
+    std::string top;
+    for (size_t i = 0; i < mods.size() && i < 12; i++) {
+        char b[96];
+        std::snprintf(b, sizeof b, "%s%s %.1f", i ? ", " : "", mods[i].second.c_str(), mods[i].first / 1048576.0);
+        top += b;
+    }
+    ALOGW("memory map, %s: largest images (MB): %s", when, top.c_str());
+    for (size_t i = 0; i < heap_lines.size() && i < 8; i++) ALOGW("memory map, %s: %s", when, heap_lines[i].second.c_str());
+    top.clear();
+    for (size_t i = 0; i < other.size() && i < 15; i++) {
+        // The module whose code is nearest below the region says nothing; the size and protection do.
+        char b[96];
+        std::snprintf(b, sizeof b, "%s%.2f (0x%lx)", i ? ", " : "", other[i].committed / 1048576.0,
+                      static_cast<unsigned long>(other[i].protect));
+        top += b;
+    }
+    ALOGW("memory map, %s: largest other private regions (MB, protection): %s", when, top.c_str());
+    // What is new since the last map (the regions allocated in between, by allocation base), and
+    // what grew in the ones both have.
+    static std::map<uintptr_t, size_t> last;
+    static std::string last_when;
+    if (!last_when.empty()) {
+        size_t added = 0, grown = 0;
+        std::vector<std::pair<size_t, uintptr_t>> fresh;
+        for (const Region& r : other) {
+            auto it = last.find(r.base);
+            if (it == last.end()) {
+                added += r.committed;
+                fresh.emplace_back(r.committed, r.base);
+            } else if (r.committed > it->second) {
+                grown += r.committed - it->second;
+            }
+        }
+        std::sort(fresh.rbegin(), fresh.rend());
+        std::string list;
+        for (size_t i = 0; i < fresh.size() && i < 15; i++) {
+            char b[64];
+            std::snprintf(b, sizeof b, "%s%.2f", i ? ", " : "", fresh[i].first / 1048576.0);
+            list += b;
+        }
+        ALOGW("memory map, %s: other private new since \"%s\": %.1f MB in %zu regions (largest, MB: %s), grown "
+              "%.1f MB", when, last_when.c_str(), added / 1048576.0, fresh.size(), list.c_str(), grown / 1048576.0);
+    }
+    last.clear();
+    for (const Region& r : other) last[r.base] = r.committed;
+    last_when = when;
+    size_t buckets[4] = {};  // < 64 KB, < 1 MB, < 16 MB, more
+    for (const Region& r : other) {
+        buckets[r.committed < (64u << 10) ? 0 : r.committed < (1u << 20) ? 1 : r.committed < (16u << 20) ? 2 : 3] +=
+            r.committed;
+    }
+    ALOGW("memory map, %s: other private by region size: under 64 KB %.1f MB, 64 KB-1 MB %.1f MB, 1-16 MB %.1f MB, "
+          "over 16 MB %.1f MB", when, buckets[0] / 1048576.0, buckets[1] / 1048576.0, buckets[2] / 1048576.0,
+          buckets[3] / 1048576.0);
+}
 
 // A window's layer. ANativeWindow first: HWUI holds it as one (sp<ANativeWindow>, refcounted
 // through common.incRef/decRef).
@@ -551,18 +698,26 @@ void compose_now() {
     }
     draw_host(g_host_above, false);  // straight alpha 0 or 255: the same premultiplied
     glDisableVertexAttribArray(0);
-    if (!g_gl.screen_hwnd && g_host && g_host->wants_pixels && g_host->wants_pixels() && g_host->pixels) {
-        std::vector<uint32_t> rgba(static_cast<size_t>(dw) * dh), argb(rgba.size());
-        glReadPixels(0, 0, dw, dh, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
-        for (int y = 0; y < dh; y++) {
-            const uint32_t* s = &rgba[static_cast<size_t>(dh - 1 - y) * dw];
-            uint32_t* o = &argb[static_cast<size_t>(y) * dw];
-            for (int x = 0; x < dw; x++) {
-                const uint32_t v = s[x];  // bytes R, G, B, A
-                o[x] = (v & 0xff00ff00u) | ((v & 0xffu) << 16) | ((v >> 16) & 0xffu);
+    // The frame as pixels for the host: headless, the frame file; in a window, a snapshot (the box,
+    // clipped to the client area).
+    if (g_host && g_host->wants_pixels && g_host->wants_pixels() && g_host->pixels) {
+        const int x0 = std::max(lay.x, 0), y0 = std::max(lay.y, 0);
+        const int rw = std::min(lay.x + lay.w, cw) - x0, rh = std::min(lay.y + lay.h, ch) - y0;
+        if (rw > 0 && rh > 0) {
+            std::vector<uint32_t> rgba(static_cast<size_t>(rw) * rh), argb(rgba.size());
+            // GL's rows are bottom first, but an inverted-Y window surface's are the client's.
+            const bool top_first = g_gl.screen_hwnd && g_gl.flip_y;
+            glReadPixels(x0, top_first ? y0 : ch - y0 - rh, rw, rh, GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
+            for (int y = 0; y < rh; y++) {
+                const uint32_t* s = &rgba[static_cast<size_t>(top_first ? y : rh - 1 - y) * rw];
+                uint32_t* o = &argb[static_cast<size_t>(y) * rw];
+                for (int x = 0; x < rw; x++) {
+                    const uint32_t v = s[x];  // bytes R, G, B, A
+                    o[x] = (v & 0xff00ff00u) | ((v & 0xffu) << 16) | ((v >> 16) & 0xffu);
+                }
             }
+            g_host->pixels(argb.data(), rw, rh);
         }
-        g_host->pixels(argb.data(), dw, dh);
     }
     if (!g_logged_first) {
         g_logged_first = true;
@@ -593,6 +748,7 @@ void compose_now() {
     }
     if (composed == 600) {
         log_memory_now("600 frames");
+        log_memory_map("600 frames");
         if (GrDirectContext* gr = rt.getGrContext()) {
             int count = 0;
             size_t bytes = 0;
@@ -666,6 +822,7 @@ EGLDisplay eglDisplay() {
             g_display = d;
             attach_blob_cache(d);
             log_memory_now("EGL display up (ANGLE, Direct3D 11)");
+            log_memory_map("EGL display up (ANGLE, Direct3D 11)");
             return d;
         }
     }
