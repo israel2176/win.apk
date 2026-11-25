@@ -495,7 +495,8 @@ public final class AospRes implements ResBackend {
         return resolveAttrRaw(theme, attrName);
     }
 
-    @Override public boolean attrStyleLane() { return !"0".equals(System.getenv("MACAPK_ATTRSTYLE")); }
+    // Upstream's MACAPK_ATTRSTYLE=0 turned the theme-attribute style references off; no switch here.
+    @Override public boolean attrStyleLane() { return true; }
 
     /** A value in the text spelling Win.apk's index uses for style items (ArscReader.formatValue),
      *  which the callers parse. */
@@ -695,7 +696,6 @@ public final class AospRes implements ResBackend {
     /** Configuration.macapkDeriveScreenLayout: screenLayout from the dp sizes, through AOSP's own
      *  Configuration.reduceScreenLayout, keeping the direction bits. */
     @Override public void deriveScreenLayout(Configuration cfg) {
-        if ("0".equals(System.getenv("MACAPK_SCREENLAYOUT_DERIVE"))) return;
         int w = cfg.screenWidthDp, h = cfg.screenHeightDp;
         if (w <= 0 || h <= 0) return;
         int dir = cfg.screenLayout & Configuration.SCREENLAYOUT_LAYOUTDIR_MASK;

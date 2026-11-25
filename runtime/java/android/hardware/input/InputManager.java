@@ -200,7 +200,7 @@ public final class InputManager {
      *  keystroke could move the crewmate under EITHER surface, so that a reconnect
      *  eats a tap is not proven. With the keystrokes on a real keyboard device:
      *  0 reconnects (measured). Falsifier: on a promoted build a ~100 ms arrow/WASD
-     *  tap in Freeplay moves the crewmate; if not, A/B with MACAPK_HOST_KEYBOARD=0.
+     *  tap in Freeplay moves the crewmate.
      *
      *  The device is what EventHub/InputReader build for an ordinary USB or
      *  Bluetooth keyboard: KEYBOARD + ALPHAKEY classes, so SOURCE_KEYBOARD and
@@ -213,11 +213,11 @@ public final class InputManager {
      *  KEY_SELECT, as many consumer-control keyboards do) would put SOURCE_DPAD
      *  back on host arrows, which is the bit libunity's joystick attach keys on. External (a keyboard attached to
      *  the phone Mac.apk presents), id 2: ids 0 and 1 are taken (0 = "not from a
-     *  physical device", 1 = the touchscreen). =0 restores the pre-change
-     *  surface byte for byte: no such device, keystrokes from -1 with
-     *  KEYBOARD|DPAD, Configuration KEYBOARD_NOKEYS / HARDKEYBOARDHIDDEN_YES. */
-    public static final boolean MACAPK_HOST_KEYBOARD =
-            !"0".equals(System.getenv("MACAPK_HOST_KEYBOARD"));
+     *  physical device", 1 = the touchscreen). Always on: the environment
+     *  switch that put back the old surface (no such device, keystrokes from -1
+     *  with KEYBOARD|DPAD, Configuration KEYBOARD_NOKEYS / HARDKEYBOARDHIDDEN_YES)
+     *  is gone, as the owner wants no switches; a PC has a real keyboard. */
+    public static final boolean MACAPK_HOST_KEYBOARD = true;
     /** The host keyboard's device id (see above). */
     public static final int HOST_KEYBOARD_ID = 2;
 
