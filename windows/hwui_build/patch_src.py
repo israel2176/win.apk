@@ -136,6 +136,10 @@ EDITS = [
      '        GrBackendSurfaceMutableState newState(VK_IMAGE_LAYOUT_UNDEFINED,\n'
      '                                              VK_QUEUE_FAMILY_FOREIGN_EXT);\n',
      '        GrBackendSurfaceMutableState newState;\n'),
+    # Zygote's Vulkan driver preload (never the pipeline here).
+    ('hwui/apex/jni_runtime.cpp',
+     '        vkEnumerateInstanceVersion(&apiVersion);\n',
+     '        apiVersion = 0;  // Win.apk: no Vulkan\n'),
     # libutils' Looper on hwui_glue's emulated eventfd and epoll: sys/eventfd.h (its read, write
     # and close) before anything that closes a descriptor (unique_fd).
     ('system_core/libutils/Looper.cpp',

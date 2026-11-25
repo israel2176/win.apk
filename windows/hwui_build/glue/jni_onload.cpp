@@ -17,6 +17,8 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 
 extern "C" int register_android_graphics_classes(JNIEnv* env);  // hwui/apex/jni_runtime.cpp
@@ -130,6 +132,14 @@ void register_soft(JNIEnv* env, const char* cls, const JNINativeMethod* m, int n
 }  // namespace
 
 extern "C" __declspec(dllexport) jint JNICALL JNI_OnLoad(JavaVM* vm, void*) {
+    // HWUI's log (liblog) in the run's log, and a fatal error's message before the abort.
+    __android_log_set_logger(__android_log_stderr_logger);
+    __android_log_set_minimum_priority(ANDROID_LOG_WARN);
+    __android_log_set_aborter([](const char* message) {
+        std::fprintf(stderr, "[win.apk] graphics: fatal: %s\n", message);
+        std::fflush(stderr);
+        std::abort();
+    });
     JNIEnv* env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) return JNI_ERR;
 

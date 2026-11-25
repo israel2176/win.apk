@@ -35,8 +35,8 @@ bool aosp_gfx_prepare(const fs::path& lib, const fs::path& bin) {
     g_on = false;
     AospGfxFiles f;
     f.jar = lib / "aosp-graphics.jar";
-    f.dll = bin / "robolectric-nativeruntime.dll";
-    f.icu_data = bin / "aosp" / "icu" / "icudt68l.dat";
+    f.dll = bin / "aosp-hwui.dll";
+    f.icu_data = bin / "aosp" / "icu" / "icudt72l.dat";
     f.fonts = bin / "aosp" / "fonts";
     f.hyphen = bin / "aosp" / "hyphen-data";
     std::error_code ec;
