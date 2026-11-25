@@ -6,9 +6,11 @@
 #                 from the launch command (Win.apk: "[win.apk] first frame presented" or
 #                 "native window: first frame"; the other runtime: "first frame drawn (N presented)")
 #   non-blank     the app's window read back (PrintWindow, PW_CLIENTONLY|PW_RENDERFULLCONTENT,
-#                 as the other runtime's own e2e reads it, and a copy of the screen under it; the larger):
-#                 the share of pixels away from its most common color (24 per channel, the other runtime's
-#                 e2e rule); "drawn" is 0.5% or more at the end of the run, the other runtime's e2e threshold
+#                 as the other runtime's own e2e reads it, and a copy of the screen under it while nothing of
+#                 another process covers it): the share of pixels away from its most common color
+#                 (24 per channel, the other runtime's e2e rule); "drawn" at the end of the run is 0.5% or
+#                 more, the other runtime's e2e threshold, or a sparse screen of anti-aliased text and icons
+#                 (edges and colors: CmpWin.Judge)
 #   memory        the peak, over 1-second samples, of the summed working sets of the run's
 #                 processes: every process whose image is in the runtime's folder, and their
 #                 descendants (WebView2's, a translator's). the other runtime's waiting launcher (the
@@ -118,23 +120,96 @@ public static class CmpWin {
     return Math.Abs(((a >> 16) & 255) - ((b >> 16) & 255)) <= 24 && Math.Abs(((a >> 8) & 255) - ((b >> 8) & 255)) <= 24 &&
         Math.Abs((a & 255) - (b & 255)) <= 24;
   }
-  // The share (0..1) of pixels away from the most common color.
-  public static double NonBlank(Bitmap b) {
-    if (b == null) return 0;
-    var d = b.LockBits(new Rectangle(0, 0, b.Width, b.Height), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
-    var px = new int[b.Width * b.Height];
-    for (int y = 0; y < b.Height; y++) Marshal.Copy(IntPtr.Add(d.Scan0, y * d.Stride), px, y * b.Width, b.Width);
+  // What a window read back shows. Share: the share (0..1) of pixels away from the most common
+  // color (the other runtime's e2e rule). Edges: the share of neighbouring pixel pairs, across and down, that
+  // differ as much. Colors: the distinct colors away from the background. Drawn: Share from 0.5%
+  // (the other runtime's e2e threshold), or a sparse screen with anti-aliased text or icons on it (edges from
+  // 0.4%, 32 colors or more): an app's first screen can be an empty note or list under a toolbar
+  // of icons (Fossify Notes: 0.31%, 0.58%, 90+ colors in both runtimes), where a blank window has
+  // no edge, a hairline one color and a lone 48 px progress ring 0.24% edges.
+  public class Look { public double Share, Edges; public int Colors; public bool Drawn; }
+  public static Look Judge(Bitmap b) {
+    var look = new Look();
+    if (b == null || b.Width == 0 || b.Height == 0) return look;
+    int w = b.Width, h = b.Height;
+    var d = b.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppRgb);
+    var px = new int[w * h];
+    for (int y = 0; y < h; y++) Marshal.Copy(IntPtr.Add(d.Scan0, y * d.Stride), px, y * w, w);
     b.UnlockBits(d);
     var counts = new Dictionary<int, int>();
-    foreach (int c0 in px) { int c = c0 & 0xffffff, n; counts.TryGetValue(c, out n); counts[c] = n + 1; }
+    for (int i = 0; i < px.Length; i++) { int c = px[i] & 0xffffff, n; px[i] = c; counts.TryGetValue(c, out n); counts[c] = n + 1; }
     int bg = 0, best = -1;
     foreach (var kv in counts) if (kv.Value > best) { best = kv.Value; bg = kv.Key; }
-    int other = 0;
-    foreach (int c0 in px) if (!Near(c0 & 0xffffff, bg)) other++;
-    return px.Length == 0 ? 0 : (double)other / px.Length;
+    int other = 0, colors = 0; long edges = 0;
+    foreach (var kv in counts) if (!Near(kv.Key, bg)) colors++;
+    for (int y = 0; y < h; y++) {
+      for (int x = 0; x < w; x++) {
+        int c = px[y * w + x];
+        if (!Near(c, bg)) other++;
+        if (x + 1 < w && !Near(c, px[y * w + x + 1])) edges++;
+        if (y + 1 < h && !Near(c, px[(y + 1) * w + x])) edges++;
+      }
+    }
+    look.Share = (double)other / px.Length;
+    look.Edges = (double)edges / px.Length;
+    look.Colors = colors;
+    look.Drawn = look.Share >= 0.005 || (look.Edges >= 0.004 && look.Colors >= 32);
+    return look;
+  }
+  [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
+  [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
+  // Whether the screen shows this app at its window's client centre and four inner corners: the
+  // window itself, one it owns or another of its process's but a console (a dialog a runtime shows
+  // as its own window). A copy of the screen under a covered window reads whatever covers it
+  // (run 45513190823's the other runtime warm runs: a console of log lines over the app).
+  public static bool OnTop(IntPtr h) {
+    RECT r; if (!GetClientRect(h, out r) || r.Right <= 0 || r.Bottom <= 0) return false;
+    uint pid; GetWindowThreadProcessId(h, out pid);
+    int[][] at = { new[] { r.Right / 2, r.Bottom / 2 }, new[] { r.Right / 8, r.Bottom / 8 },
+                   new[] { r.Right * 7 / 8, r.Bottom / 8 }, new[] { r.Right / 8, r.Bottom * 7 / 8 },
+                   new[] { r.Right * 7 / 8, r.Bottom * 7 / 8 } };
+    foreach (var a in at) {
+      var p = new POINT { X = a[0], Y = a[1] }; ClientToScreen(h, ref p);
+      IntPtr top = WindowFromPoint(p);
+      if (top == IntPtr.Zero) return false;
+      IntPtr root = GetAncestor(top, 2 /* GA_ROOT */);
+      if (root == h || GetAncestor(top, 3 /* GA_ROOTOWNER */) == h) continue;
+      // A console window answers for the process attached to it, so it is named by its class.
+      var cls = new System.Text.StringBuilder(64); GetClassNameW(root, cls, cls.Capacity);
+      string c = cls.ToString();
+      uint other; GetWindowThreadProcessId(root, out other);
+      if (other != pid || c == "ConsoleWindowClass" || c == "CASCADIA_HOSTING_WINDOW_CLASS") return false;
+    }
+    return true;
   }
 }
 '@
+}
+
+# The end of the run's verdict on the app's window $h, read back with PrintWindow and from the
+# screen (PNGs of both kept): drawn when either read is (CmpWin.Judge); the screen's read counts
+# only while the window is on top there, as a covering console would otherwise read as drawn.
+function JudgeEnd([IntPtr] $h) {
+  $looks = @()
+  foreach ($way in 'print', 'screen') {
+    $b = if ($way -eq 'print') { [CmpWin]::Print($h) } else { [CmpWin]::Screen($h) }
+    if (-not $b) { continue }
+    $l = [CmpWin]::Judge($b)
+    $result["nonblank_pct_$way"] = [Math]::Round(100 * $l.Share, 2)
+    $result["edges_pct_$way"] = [Math]::Round(100 * $l.Edges, 2)
+    $result["colors_$way"] = $l.Colors
+    $b.Save((Join-Path $Out "$tag.end-$way.png"), [Drawing.Imaging.ImageFormat]::Png); $b.Dispose()
+    if ($way -eq 'screen' -and -not [CmpWin]::OnTop($h)) { $result.screen_covered = $true; continue }
+    $looks += $l
+  }
+  $best = $looks | Sort-Object { [int]$_.Drawn }, { $_.Share } -Descending | Select-Object -First 1
+  if ($best) {
+    $result.nonblank_pct = [Math]::Round(100 * $best.Share, 2)
+    $result.edges_pct = [Math]::Round(100 * $best.Edges, 2)
+    $result.colors = $best.Colors
+    $result.drawn = $best.Drawn
+  }
 }
 
 # The run's processes now: {pid -> process}, the waiting the other runtime launcher apart.
@@ -242,7 +317,7 @@ while ($sw.Elapsed.TotalSeconds -lt $Seconds) {
       $w = AppWindow $s.Set
       if ($w) {
         $b = [CmpWin]::Print([IntPtr]$w[0])
-        if ($b -and [CmpWin]::NonBlank($b) -ge 0.005) {
+        if ($b -and [CmpWin]::Judge($b).Drawn) {
           $nonBlankAt = [Math]::Round($lastT, 1)
           $b.Save((Join-Path $Out "$tag.first-nonblank.png"), [Drawing.Imaging.ImageFormat]::Png)
         }
@@ -280,24 +355,14 @@ if ($idleStart -and $last -and $lastT -gt $idleStart.T + 5 -and $null -eq $exite
 # The end of the run: the window read back two ways, and the whole screen.
 $s = Sample
 $w = AppWindow $s.Set
-$result.nonblank_pct = 0.0
+$result.nonblank_pct = 0.0; $result.drawn = $false
 if ($w) {
   $h = [IntPtr]$w[0]
   $result.window = "$($w[2])x$($w[3])"
   [void][CmpWin]::SetForegroundWindow($h)
   Start-Sleep -Milliseconds 700
-  $share = 0.0
-  foreach ($way in 'print', 'screen') {
-    $b = if ($way -eq 'print') { [CmpWin]::Print($h) } else { [CmpWin]::Screen($h) }
-    if ($b) {
-      $v = [CmpWin]::NonBlank($b); $result["nonblank_pct_$way"] = [Math]::Round(100 * $v, 2)
-      $share = [Math]::Max($share, $v)
-      $b.Save((Join-Path $Out "$tag.end-$way.png"), [Drawing.Imaging.ImageFormat]::Png); $b.Dispose()
-    }
-  }
-  $result.nonblank_pct = [Math]::Round(100 * $share, 2)
+  JudgeEnd $h
 }
-$result.drawn = $result.nonblank_pct -ge 0.5
 try {
   Add-Type -AssemblyName System.Windows.Forms
   $v = [Windows.Forms.SystemInformation]::VirtualScreen

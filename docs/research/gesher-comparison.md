@@ -157,12 +157,23 @@ screenshots and logs in `compare-<package>`) has, cold / warm:
 | Column | What |
 |---|---|
 | Installs | The install command's exit 0 (the other runtime: and its "installed <package>" line, as its e2e checks) and its seconds |
-| Draws (cold) | At the end of the cold run, the app's window (the largest visible window of the run's processes) read back with PrintWindow and from the screen: the larger share of pixels away from its most common color; "yes" from 0.5%, the other runtime's e2e threshold. "exited" when the runtime ended by itself |
+| Draws (cold) | At the end of the cold run, the app's window (the largest visible window of the run's processes) read back with PrintWindow and from the screen (the screen's read only while no window of another process, or a console, covers the window: `screen_covered` in the JSON), `measure.ps1`'s `CmpWin.Judge`: "yes" from 0.5% of pixels away from the most common color (the other runtime's e2e threshold), or for a sparse screen from 0.4% of neighbouring pixel pairs differing with 32 colors or more away from the background (anti-aliased text and icons; a blank window, a hairline or a lone progress ring stays "NO"). The cell shows the share; `edges_pct` and `colors` are in the JSON. "exited" when the runtime ended by itself |
 | First frame | Seconds from the launch command to the runtime's own first-frame log line (Win.apk `[win.apk] first frame presented`; the other runtime `first frame drawn (N presented)`) |
 | First non-blank | Seconds to the first 1-second sample whose window read back non-blank: the same measure for both, coarser |
 | Peak MB | The highest sum, over 1-second samples, of the working sets of every process whose image is in the runtime's folder and of their descendants (WebView2's included). the other runtime's device processes count; its waiting launcher (the `com.other.app.Launcher` VM, which a Start menu launch detaches and ends) is kept apart as `peak_launcher_mb` in the JSON |
 | Idle CPU % | The same processes' CPU time over the last 30 s of the run, in % of one core; empty when the app ended before |
 | Closes on WM_CLOSE | The launch command ended within 20 s of WM_CLOSE to the app's windows |
+
+Why the rule is more than the share: in run 45513190823 Fossify Notes was "NO (0.31%)" in both
+runtimes, yet both had drawn its real first screen, an empty note ("Insert text here") under a
+toolbar of three icons with no title, as a device shows it on first start (`MainActivity` hides the
+tab strip while only the first note exists; its toolbar has no title): 0.31% of the pixels, but
+0.58% edges and 90 (Win.apk) / 145 (the other runtime) colors. The same run's the other runtime warm screen reads were a
+console of log lines over the app (29% "drawn" from the screen, 0.32% from PrintWindow); they no
+longer count. Re-judged by the new arithmetic, every other app of that run keeps its verdict; only
+the other runtime's Jellyfin, "yes" from its screen reads alone (PrintWindow read 0%: its "WebView not
+supported" dialog, then a crash box, over a uniform window), now depends on whose windows those
+were, which a new run's `screen_covered` tells.
 
 What stays unequal: an app whose manifest fixes landscape turns in Win.apk and not in
 the other runtime (it does not rotate windows yet); the other runtime's cold start boots its device, Win.apk has none; the
