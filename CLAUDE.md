@@ -20,7 +20,12 @@ Hebrew versions under `docs/he/` and `README.he.md`.
 **The project's rules.**
 - Behave like Android. Layers move onto AOSP's own code (AOSP 14: app, views,
   resources, graphics), not hand-tuned layout or text metrics; where Win.apk
-  has to answer itself, it answers as a phone would.
+  has to answer itself, it answers as a phone would. Before changing how
+  something behaves, ask what Android does in that case and do the same; no
+  Win.apk-only rule (a latch, a time window, a heuristic) where Android has a
+  plain one: a Google `addAccount` opens its window each time unless one is
+  open, as a device's add-account screen does. Where Win.apk cannot do what
+  Android does, say how it differs.
 - No switches. The runtime has one behaviour: no opt-in or kill-switch
   environment variables or properties. What the environment still carries is
   plumbing, a test hook or a log (`windows/README.md`, "Environment
@@ -135,6 +140,8 @@ page's Permissions rows, which stop a running app on revoke), single instance
   draw text with `draw_text` and images with `draw_image`, never directly.
   Layout and hit-testing code stays left-to-right.
 - Icons are glyphs from Segoe Fluent Icons / MDL2 Assets (`kGlyph*`).
+- A button that starts something stays disabled until it has ended
+  (`Row::disabled` on a page), so a second click cannot start it twice.
 
 ## Build and check
 
@@ -163,3 +170,6 @@ page's Permissions rows, which stop a running app on revoke), single instance
 - Don't add app-specific hacks; fix the framework, shim or host.
 - PRs go to `main`; CI must be green. Releases only via the manual
   `windows-release.yml` run.
+- After a push to a PR, once its CI run has finished, give the link to that
+  run's `winapk-setup` artifact (the installer) without being asked:
+  `https://github.com/<owner>/<repo>/actions/runs/<run>/artifacts/<id>`.
