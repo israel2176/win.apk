@@ -75,9 +75,6 @@ media_status_t AImage_getHardwareBuffer(const AImage*, AHardwareBuffer** buffer)
 
 namespace android {
 ANativeWindowBuffer* AHardwareBuffer_to_ANativeWindowBuffer(AHardwareBuffer*) { return nullptr; }
-// Android libEGL's own blob cache file (the driver's shaders); ANGLE keeps none of its own. HWUI's
-// ShaderCache (Skia's programs) has its file regardless.
-void egl_set_cache_filename(const char*) {}
 }  // namespace android
 
 // --- Skia's AHardwareBuffer import: nothing to import ---
