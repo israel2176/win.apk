@@ -4611,6 +4611,9 @@ int show_prompt(Prompt& p, const RECT& over) {
     const int corner = 2;  // DWMWCP_ROUND, Windows 11, as the splash and the menus
     DwmSetWindowAttribute(p.window, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner, sizeof(corner));
     if (p.timeout) SetTimer(p.window, 1, kAskTimeoutMs, nullptr);
+    // The ring starts on what Enter answers, as a Windows dialog marks its default button: where that is
+    // Cancel under an accent Remove, the eye otherwise takes the accent one for Enter's.
+    if (!p.focus) p.focus = p.default_id;
     if (p.owner) EnableWindow(p.owner, FALSE);
     ShowWindow(p.window, SW_SHOW);
     SetForegroundWindow(p.window);
