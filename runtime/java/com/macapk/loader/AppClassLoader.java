@@ -120,7 +120,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  to make the family child-first: the app's bundled copy wins; our shadow
      *  only rescues a class the app did NOT bundle. Full design + tradeoff:
      *  docs/gms-shadow-classloader-contract_2026-06-21.md. */
-    /*  Package-private, not private, ON PURPOSE: Boot.installAutoInitProviders'
+    /*  Package-private, not private, ON PURPOSE: Boot.appProviders'
      *  Firebase default-app rescue only makes sense under child-first and MUST
      *  agree with this flag. It used to re-derive the answer with its own
      *  expression that required MACAPK_GMS_CHILD_FIRST to be *explicitly* "1"/

@@ -33,8 +33,13 @@ public interface AppHost {
          *  sender in `firstSender`); null: `launch`. */
         public Intent first;
         public String firstSender;
-        /** Runs on the main thread after the Application is made and attached, right before its
-         *  onCreate, where ActivityThread.handleBindApplication installs the app's providers. */
+        /** The app's providers for this process (ActivityThread.installContentProviders creates,
+         *  attaches and publishes them before Application.onCreate). */
+        public java.util.List<android.content.pm.ProviderInfo> providers;
+        /** Runs on the main thread after the Application is made and attached, before its providers
+         *  are installed. */
+        public Consumer<Application> afterApplicationAttach;
+        /** Runs on the main thread right before Application.onCreate, after its providers. */
         public Consumer<Application> beforeApplicationOnCreate;
         /** The task's last activity is gone (Win.apk hides the window, as the home screen would
          *  show; the launcher activity starts again when the window comes back). */

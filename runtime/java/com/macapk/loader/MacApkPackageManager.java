@@ -1889,7 +1889,7 @@ public final class MacApkPackageManager extends PackageManager {
     //
     // Before v1.1.0 Mac.apk instead open-coded `if (!e.enabled) continue;` at
     // TWO sites (queryIntentActivities, queryBroadcastReceivers), had no test
-    // at all at SIX more (Boot.installAutoInitProviders, ServiceRegistry.ensure,
+    // at all at SIX more (Boot.appProviders, ServiceRegistry.ensure,
     // Context.macapkDeliverToManifestReceiver, getServiceInfo, getProviderInfo,
     // resolveContentProvider), and honoured MATCH_DISABLED_COMPONENTS nowhere.
     // The visible consequence: we constructed components a device never
@@ -5782,7 +5782,7 @@ public final class MacApkPackageManager extends PackageManager {
      *  AOSP's fallback chain, which is exactly what a real device reports for
      *  such a provider -- not a placeholder we could not fill.
      *
-     *  Package-private, not private: Boot.installAutoInitProviders builds the
+     *  Package-private, not private: Boot.appProviders builds the
      *  ProviderInfo that a provider actually SEES in attachInfo/onCreate, and
      *  it must fill the same fields the same way. One copy, two callers. */
     static void macapkFillProviderPermissions(

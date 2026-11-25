@@ -75,6 +75,25 @@ public class AospAppLifecycleTest {
         }
     }
 
+    /** A provider the manifest declares: created by ActivityThread.installContentProviders before
+     *  Application.onCreate, then queried through the app's ContentResolver. */
+    static final String AUTHORITY = PKG + ".provider";
+    static final List<String> prov = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    public static class Provider extends android.content.ContentProvider {
+        @Override public boolean onCreate() { prov.add("Provider.onCreate"); return true; }
+        @Override public android.database.Cursor query(android.net.Uri uri, String[] projection, String selection,
+                String[] selectionArgs, String sortOrder) {
+            android.database.MatrixCursor c = new android.database.MatrixCursor(new String[] {"v"});
+            c.addRow(new Object[] {"hello " + uri.getLastPathSegment()});
+            return c;
+        }
+        @Override public String getType(android.net.Uri uri) { return null; }
+        @Override public android.net.Uri insert(android.net.Uri uri, android.content.ContentValues v) { return null; }
+        @Override public int delete(android.net.Uri uri, String s, String[] a) { return 0; }
+        @Override public int update(android.net.Uri uri, android.content.ContentValues v, String s, String[] a) { return 0; }
+    }
+
     static final List<String> SVC_EXPECTED = List.of(
             "Started.onCreate", "Started.onStartCommand 1 go", "Started.onDestroy",
             "Bound.onCreate", "Bound.onBind", "connected to Bound", "Bound.onUnbind", "Bound.onDestroy");
@@ -88,6 +107,7 @@ public class AospAppLifecycleTest {
         @Override public void onCreate() {
             super.onCreate();
             note("App.onCreate");
+            prov.add("App.onCreate");
             // A receiver registered on the application's context hears a broadcast an activity sends
             // (step A3: ContextImpl's receivers and broadcasts). Not in the callback order: when it
             // is heard is the broadcast queue's, checked once at the end.
@@ -121,6 +141,10 @@ public class AospAppLifecycleTest {
                 started = true;
                 note("First: getApplication() is App: " + (getApplication() instanceof App));
                 sendBroadcast(new Intent(PING).setPackage(PKG).putExtra("v", "pong"));
+                try (android.database.Cursor c = getContentResolver().query(
+                        android.net.Uri.parse("content://" + AUTHORITY + "/x"), null, null, null, null)) {
+                    prov.add(c != null && c.moveToFirst() ? "query " + c.getString(0) : "query nothing");
+                }
                 startService(new Intent(this, Started.class).putExtra("s", "go"));
                 sendOrderedBroadcast(new Intent(STATIC).setPackage(PKG).putExtra("v", "m"), null,
                         new android.content.BroadcastReceiver() {
@@ -252,7 +276,7 @@ public class AospAppLifecycleTest {
         com.winapk.aospapp.AospApp.start(ai, config,
                 (intent, type) -> intent.getComponent() != null ? activities.get(intent.getComponent().getClassName()) : null,
                 AospAppLifecycleTest.class.getClassLoader(),
-                new com.macapk.loader.MacApkPackageManager(PKG, apk, ai.dataDir, ai.nativeLibraryDir), launch,
+                packageManager(apk, ai), launch,
                 () -> {
                     note("task empty");
                     finish();
@@ -293,6 +317,8 @@ public class AospAppLifecycleTest {
             + "    <receiver android:name=\"AospAppLifecycleTest$Static\" android:exported=\"false\">\n"
             + "      <intent-filter><action android:name=\"" + STATIC + "\"/></intent-filter>\n"
             + "    </receiver>\n"
+            + "    <provider android:name=\"AospAppLifecycleTest$Provider\" android:authorities=\"" + AUTHORITY
+            + "\" android:exported=\"false\"/>\n"
             + "  </application>\n"
             + "</manifest>\n";
 
@@ -316,6 +342,15 @@ public class AospAppLifecycleTest {
             }
         }
         return out.getPath();
+    }
+
+    /** The package manager the runtime builds (Boot): the manifest's providers given to it. */
+    static com.macapk.loader.MacApkPackageManager packageManager(String apk, ApplicationInfo ai) throws Exception {
+        com.macapk.loader.Manifest m = com.macapk.loader.Manifest.parse(new File(ai.dataDir, "AndroidManifest.xml"));
+        Map<String, com.macapk.loader.Manifest.ProviderEntry> providers = new java.util.HashMap<>();
+        for (com.macapk.loader.Manifest.ProviderEntry p : m.providers) providers.put(p.name, p);
+        return new com.macapk.loader.MacApkPackageManager(PKG, apk, ai.dataDir, ai.nativeLibraryDir, null, null,
+                providers);
     }
 
     static ActivityInfo activity(ApplicationInfo ai, Class<?> c) {
@@ -353,6 +388,11 @@ public class AospAppLifecycleTest {
         List<String> want = SVC_EXPECTED;
         if (!started.equals(want.subList(0, 3)) || !bound.equals(want.subList(3, want.size()))) {
             System.out.println("FAILED: the services gave " + svc + ", Android gives " + want);
+            System.exit(1);
+        }
+        if (!prov.equals(List.of("Provider.onCreate", "App.onCreate", "query hello x"))) {
+            System.out.println("FAILED: the provider gave " + prov + ", Android gives [Provider.onCreate, App.onCreate,"
+                    + " query hello x]");
             System.exit(1);
         }
         if (!rcv.equals(List.of("Static m ordered=true", "result 7"))) {

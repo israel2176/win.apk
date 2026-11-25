@@ -986,7 +986,7 @@ public abstract class PackageManager {
     // DOES have a manifest. The justification that used to live here -- "the
     // components don't actually exist as services in our process model" -- had
     // been false since ServiceRegistry, the v1.0.997 manifest-broadcast
-    // dispatch and Boot.installAutoInitProviders landed: those three DO
+    // dispatch and Boot.appProviders landed: those three DO
     // instantiate manifest components, so an unrecorded setComponentEnabledSetting
     // was a returns-success-does-nothing method. Removed at v1.1.0 rather than
     // left as a comment that tells the next reader not to look.

@@ -56,6 +56,7 @@ public class AospAppRewrite {
     static final Set<String> TO_COMPAT = Set.of(
             "android/app/ActivityManager.getService()Landroid/app/IActivityManager;",
             "android/app/Instrumentation.callApplicationOnCreate(Landroid/app/Application;)V",
+            "android/app/ActivityThread.installContentProviders(Landroid/content/Context;Ljava/util/List;)V",
             "android/app/compat/CompatChanges.isChangeEnabled(J)Z",
             "android/graphics/Compatibility.setTargetSdkVersion(I)V",
             "android/app/ActivityManager.isStartResultFatalError(I)Z",

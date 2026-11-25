@@ -4,7 +4,7 @@
 // Files, Downloads).
 //
 // THE GAP THIS FILLS: ContentProviderRegistry (android.content) is populated
-// exactly one way -- com.macapk.loader.Boot.installAutoInitProviders() walks
+// exactly one way -- ActivityThread.installContentProviders (Boot.appProviders lists them) walks
 // the APK's manifest <provider> declarations and registers each one under
 // its android:authorities. "media" is never declared by any app manifest
 // (on real Android it is baked into the system image by

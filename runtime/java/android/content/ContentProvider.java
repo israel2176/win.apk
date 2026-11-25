@@ -87,13 +87,14 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
 
     public ContentProvider() {}
 
-    /** Called by the framework after instantiating the provider, before
-     *  onCreate(). Sets the Context the provider should report from
-     *  getContext() and the ProviderInfo the manifest declared.
+    /** Called by the framework after instantiating the provider (ActivityThread.installProvider):
+     *  sets the Context the provider reports from getContext() and the ProviderInfo the manifest
+     *  declared, then, the first time only, runs onCreate, as AOSP's attachInfo does.
      *
      *  AOSP's signature is `public void attachInfo(Context, ProviderInfo)`
      *  with a private 3-arg overload. We expose just the 2-arg form. */
     public void attachInfo(Context context, ProviderInfo info) {
+        final boolean first = mContext == null;
         mContext = context;
         mInfo    = info;
         // AOSP ContentProvider.attachInfo (frameworks/base/core/java/android/
@@ -114,6 +115,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
             mWritePermission = info.writePermission;
             mPathPermissions = info.pathPermissions;
         }
+        if (first) onCreate();
     }
 
     private String mReadPermission;
@@ -728,5 +730,159 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *  Part of ContentInterface. */
     public int checkUriPermission(Uri uri, int uid, int modeFlags) {
         return android.content.pm.PackageManager.PERMISSION_DENIED;
+    }
+
+    // ---- AOSP's Transport: the provider as an IContentProvider ----
+    //
+    // ActivityThread.installProvider (AOSP's, lib/aosp-app.jar) attaches the provider and publishes
+    // getIContentProvider() to the activity manager, as on a device; a client of the binder reaches
+    // the provider through Transport, which checks as AOSP's Transport does (here the in-process
+    // transport's checks, macapkEnforce*, which also stand in for providers of another package that
+    // live in the app's process) and calls the provider. ContentResolver calls the provider directly
+    // with the same checks.
+
+    private final Transport mTransport = new Transport();
+
+    /** {@hide} AOSP ContentProvider.getIContentProvider. */
+    public IContentProvider getIContentProvider() { return mTransport; }
+
+    /** {@hide} AOSP ContentProvider.coerceToLocalContentProvider: the provider behind a local
+     *  transport, or null for a remote one. */
+    public static ContentProvider coerceToLocalContentProvider(IContentProvider abstractInterface) {
+        return abstractInterface instanceof Transport ? ((Transport) abstractInterface).getContentProvider() : null;
+    }
+
+    /** {@hide} AOSP ContentProvider.getAuthorityWithoutUserId: "userId@authority" -> "authority". */
+    public static String getAuthorityWithoutUserId(String auth) {
+        if (auth == null) return null;
+        int end = auth.lastIndexOf('@');
+        return auth.substring(end + 1);
+    }
+
+    /** {@hide} AOSP ContentProvider.Transport, over the provider's own checks. */
+    class Transport extends ContentProviderNative {
+        ContentProvider getContentProvider() { return ContentProvider.this; }
+
+        @Override public String getProviderName() { return ContentProvider.this.getClass().getName(); }
+
+        @Override public Cursor query(AttributionSource attributionSource, Uri uri, String[] projection,
+                Bundle queryArgs, android.os.ICancellationSignal cancellationSignal) {
+            macapkEnforceRead(uri);
+            return ContentProvider.this.query(uri, projection, queryArgs, null);
+        }
+
+        @Override public String getType(AttributionSource attributionSource, Uri uri) {
+            return macapkTransportGetType(uri);
+        }
+
+        @Override public void getTypeAsync(AttributionSource attributionSource, Uri uri,
+                android.os.RemoteCallback callback) {
+            Bundle b = new Bundle();
+            b.putString("result" /* ContentResolver.REMOTE_CALLBACK_RESULT */, getType(attributionSource, uri));
+            callback.sendResult(b);
+        }
+
+        @Override public void getTypeAnonymousAsync(Uri uri, android.os.RemoteCallback callback) {
+            Bundle b = new Bundle();
+            b.putString("result" /* ContentResolver.REMOTE_CALLBACK_RESULT */, ContentProvider.this.getTypeAnonymous(uri));
+            callback.sendResult(b);
+        }
+
+        @Override public Uri insert(AttributionSource attributionSource, Uri uri, ContentValues values,
+                Bundle extras) {
+            macapkEnforceWrite(uri);
+            return ContentProvider.this.insert(uri, values, extras);
+        }
+
+        @Override public int bulkInsert(AttributionSource attributionSource, Uri uri, ContentValues[] values) {
+            macapkEnforceWrite(uri);
+            return ContentProvider.this.bulkInsert(uri, values);
+        }
+
+        @Override public ContentProviderResult[] applyBatch(AttributionSource attributionSource, String authority,
+                java.util.ArrayList<ContentProviderOperation> operations) throws OperationApplicationException {
+            macapkEnforceBatch(operations);
+            return ContentProvider.this.applyBatch(authority, operations);
+        }
+
+        @Override public int delete(AttributionSource attributionSource, Uri uri, Bundle extras) {
+            macapkEnforceWrite(uri);
+            return ContentProvider.this.delete(uri, extras);
+        }
+
+        @Override public int update(AttributionSource attributionSource, Uri uri, ContentValues values,
+                Bundle extras) {
+            macapkEnforceWrite(uri);
+            return ContentProvider.this.update(uri, values, extras);
+        }
+
+        @Override public android.os.ParcelFileDescriptor openFile(AttributionSource attributionSource, Uri uri,
+                String mode, android.os.ICancellationSignal cancellationSignal) throws java.io.FileNotFoundException {
+            macapkEnforceFile(uri, mode);
+            return ContentProvider.this.openFile(uri, mode, null);
+        }
+
+        @Override public android.content.res.AssetFileDescriptor openAssetFile(AttributionSource attributionSource,
+                Uri uri, String mode, android.os.ICancellationSignal cancellationSignal)
+                throws java.io.FileNotFoundException {
+            macapkEnforceFile(uri, mode);
+            return ContentProvider.this.openAssetFile(uri, mode, null);
+        }
+
+        @Override public android.content.res.AssetFileDescriptor openTypedAssetFile(
+                AttributionSource attributionSource, Uri uri, String mimeType, Bundle opts,
+                android.os.ICancellationSignal cancellationSignal) throws java.io.FileNotFoundException {
+            macapkEnforceFile(uri, "r");
+            return ContentProvider.this.openTypedAssetFile(uri, mimeType, opts, null);
+        }
+
+        @Override public Bundle call(AttributionSource attributionSource, String authority, String method,
+                String arg, Bundle extras) {
+            return ContentProvider.this.call(authority, method, arg, extras);
+        }
+
+        @Override public String[] getStreamTypes(AttributionSource attributionSource, Uri uri,
+                String mimeTypeFilter) {
+            return ContentProvider.this.getStreamTypes(uri, mimeTypeFilter);
+        }
+
+        @Override public int checkUriPermission(AttributionSource attributionSource, Uri uri, int uid,
+                int modeFlags) {
+            return ContentProvider.this.checkUriPermission(uri, uid, modeFlags);
+        }
+
+        @Override public android.os.ICancellationSignal createCancellationSignal() {
+            return null;   // no remote cancellation: the calls run in this process
+        }
+
+        @Override public Uri canonicalize(AttributionSource attributionSource, Uri uri) {
+            macapkEnforceRead(uri);
+            return ContentProvider.this.canonicalize(uri);
+        }
+
+        @Override public void canonicalizeAsync(AttributionSource attributionSource, Uri uri,
+                android.os.RemoteCallback callback) {
+            Bundle b = new Bundle();
+            b.putParcelable("result" /* ContentResolver.REMOTE_CALLBACK_RESULT */, canonicalize(attributionSource, uri));
+            callback.sendResult(b);
+        }
+
+        @Override public Uri uncanonicalize(AttributionSource attributionSource, Uri uri) {
+            macapkEnforceRead(uri);
+            return ContentProvider.this.uncanonicalize(uri);
+        }
+
+        @Override public void uncanonicalizeAsync(AttributionSource attributionSource, Uri uri,
+                android.os.RemoteCallback callback) {
+            Bundle b = new Bundle();
+            b.putParcelable("result" /* ContentResolver.REMOTE_CALLBACK_RESULT */, uncanonicalize(attributionSource, uri));
+            callback.sendResult(b);
+        }
+
+        @Override public boolean refresh(AttributionSource attributionSource, Uri uri, Bundle extras,
+                android.os.ICancellationSignal cancellationSignal) {
+            macapkEnforceRead(uri);
+            return ContentProvider.this.refresh(uri, extras, null);
+        }
     }
 }

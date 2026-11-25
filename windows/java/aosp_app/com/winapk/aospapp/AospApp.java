@@ -54,6 +54,9 @@ public final class AospApp {
     final ClassLoader classLoader;
     final PackageManager packageManager;
     final Consumer<Application> beforeOnCreate;
+    Consumer<Application> afterAttach;
+    /** The app's providers for bindApplication (AppHost.Start.providers). */
+    java.util.List<android.content.pm.ProviderInfo> providers = java.util.List.of();
     final Tasks tasks;
     final IActivityClientController clientController;
     final Intent launch;
@@ -104,7 +107,18 @@ public final class AospApp {
     public static ActivityThread start(ApplicationInfo info, Configuration config, Resolver resolver,
                                        ClassLoader appClassLoader, PackageManager pm,
                                        Intent launch, Runnable onTaskEmpty) {
-        return start(new AospApp(info, config, resolver, appClassLoader, pm, launch, null, onTaskEmpty));
+        AospApp app = new AospApp(info, config, resolver, appClassLoader, pm, launch, null, onTaskEmpty);
+        // The package's providers, as PackageManagerService gives ActivityManagerService them.
+        try {
+            android.content.pm.PackageInfo pi = pm.getPackageInfo(info.packageName, PackageManager.GET_PROVIDERS);
+            if (pi.providers != null) {
+                for (android.content.pm.ProviderInfo p : pi.providers) if (p.applicationInfo == null) p.applicationInfo = info;
+                app.providers = java.util.List.of(pi.providers);
+            }
+        } catch (PackageManager.NameNotFoundException e) {
+            // no package info: no providers
+        }
+        return start(app);
     }
 
     /** The runtime's start (AospAppHost). */
@@ -112,6 +126,8 @@ public final class AospApp {
         AospApp app = new AospApp(s.info, s.config, null, s.classLoader, s.packageManager, s.launch,
                 s.beforeApplicationOnCreate, s.taskEmpty);
         app.onMoveToBack = s.moveToBack;
+        app.afterAttach = s.afterApplicationAttach;
+        if (s.providers != null) app.providers = s.providers;
         app.orientation = s.orientation;
         app.userOrientation = s.userOrientation;
         app.first = s.first;

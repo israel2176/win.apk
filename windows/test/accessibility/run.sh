@@ -44,7 +44,7 @@ rm -f "$OUT/snapshot.txt"
 # As windows/test/aospapp/run.sh starts its JVM (winapk-runtime's way).
 MACAPK_LOG_LEVEL=7 timeout 120 "$JAVA_HOME/bin/java" -XX:+UnlockDiagnosticVMOptions -XX:-BytecodeVerificationRemote \
     --enable-native-access=ALL-UNNAMED -Djava.awt.headless=true \
-    -Dwinapk.aosp.gfx=1 -Dwinapk.aosp.views=1 \
+    -Dwinapk.aosp.gfx=1 -Dwinapk.aosp.res=1 -Dwinapk.aosp.views=1 \
     -Dwinapk.aosp.res.framework="$STAGE/bin/aosp/framework-res-34.apk" -Dwinapk.aosp.fonts="$STAGE/bin/aosp/fonts" \
     -Dicu.data.path="$NR/icu/icudt68l.dat" -Dicu.locale.default=en-US \
     -Dwinapk.test.gfx.runtime="$RUNTIME" -Dwinapk.test.host="$OUT/liba11y_host.so" \

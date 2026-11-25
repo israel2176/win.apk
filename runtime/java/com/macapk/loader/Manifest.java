@@ -256,7 +256,7 @@ public final class Manifest {
          *  `component.setEnabled(array.getBoolean(enabledAttr, true))`), and
          *  ServiceEntry/ActivityEntry have carried it for a long time --
          *  ProviderEntry was simply the one that never got it, which is why
-         *  Boot.installAutoInitProviders had no boolean to test and constructed
+         *  Boot.appProviders had no boolean to test and constructed
          *  providers a device never constructs. NOT a tri-state: AOSP's default
          *  is a plain getBoolean(attr, true), so "absent" and "true" are the
          *  same answer.

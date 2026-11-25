@@ -857,7 +857,7 @@ public final class Boot {
         // via a diagnostic stack capture, Firebase's
         // `com.google.firebase.concurrent.UiExecutor` static initializer
         // calls it from FirebaseInitProvider.onCreate() during
-        // installAutoInitProviders(), long before macapk-activity exists.
+        // ActivityThread.installContentProviders(), long before macapk-activity exists.
         // Looper.noteMainThread's opportunistic "first caller wins" fallback
         // then pins THIS (wrong) thread as "the" main thread forever, and
         // every androidx main-thread assertion --
@@ -1265,7 +1265,7 @@ public final class Boot {
                 foreign.put(e.getKey(), resolved);
             }
             ClassFileRewriter.setForeignProcessComponents(foreign);
-            // Same table, kept for installAutoInitProviders' process filter.
+            // Same table, kept for appProviders' process filter.
             // ONE computation of "which components does the manifest put in a
             // different process" -- recomputing the ':' prefix rule at a second
             // site is how the two answers drift apart.
@@ -2146,7 +2146,8 @@ public final class Boot {
             start.firstSender = firstSender;
         }
         final Intent laterUrlFinal = start.launch != null ? laterUrl : null;
-        start.beforeApplicationOnCreate = application -> {
+        start.providers = appProviders(manifest, pm, ai, resources);
+        start.afterApplicationAttach = application -> {
             // A Meta app's SoLoader.init (in its attachBaseContext, just run) extracted its superpack:
             // its libraries are exposed before a provider or onCreate loads one.
             try {
@@ -2157,7 +2158,8 @@ public final class Boot {
                 NativeLog.w(TAG, "post-attachBaseContext superpack exposure skipped: " + t);
             }
             ActivityHost.init(application, appCl);
-            installAutoInitProviders(application, manifest.providers, appCl);
+        };
+        start.beforeApplicationOnCreate = application -> {
             installSystemProviders(application);
             startPushChannel(application, manifest);
             SystemClient.attach(application, manifest.packageName);
@@ -2957,191 +2959,75 @@ public final class Boot {
         return (className == null || t.isEmpty()) ? null : t.get(className);
     }
 
-    /** DEFAULT-OFF gate for the foreign-process provider skip. Note the
-     *  polarity is the opposite of MACAPK_COMPONENT_GATING's: this one is OFF
-     *  unless explicitly set to a non-"0" value, because it is the riskier half
-     *  and the owner needs to attribute its effect separately. See the long
-     *  comment at its use site in installAutoInitProviders. */
+    /** DEFAULT-OFF gate for the foreign-process provider skip (appProviders). Note the polarity is
+     *  the opposite of MACAPK_COMPONENT_GATING's: this one is OFF unless explicitly set to a non-"0"
+     *  value, because it is the riskier half and the owner needs to attribute its effect separately. */
     private static boolean macapkProviderProcessGate() {
         String v = System.getenv("MACAPK_PROVIDER_PROCESS_GATE");
         return v != null && !v.isEmpty() && !"0".equals(v);
     }
 
-    private static void installAutoInitProviders(
-            android.app.Application application,
-            java.util.List<Manifest.ProviderEntry> providers,
-            ClassLoader cl) {
-        if (providers == null || providers.isEmpty()) {
-            NativeLog.i(TAG, "no auto-init providers declared");
-            return;
+    /** The app's providers for this process, as ActivityManagerService.generateApplicationProvidersLocked
+     *  hands them to bindApplication: each declared provider with authorities, enabled, of this
+     *  process (one of another android:process is created when that process starts, or reached
+     *  through the broker), its ProviderInfo as the package manager fills it, in initOrder (highest
+     *  first). AOSP's ActivityThread.installContentProviders creates, attaches and publishes them
+     *  before Application.onCreate. */
+    private static java.util.List<android.content.pm.ProviderInfo> appProviders(Manifest manifest,
+            MacApkPackageManager pm, android.content.pm.ApplicationInfo ai, Resources resources) {
+        java.util.List<android.content.pm.ProviderInfo> out = new java.util.ArrayList<>();
+        if (manifest.providers == null || manifest.providers.isEmpty()) {
+            NativeLog.i(TAG, "no providers declared");
+            return out;
         }
-        // Sort descending by initOrder. Default initOrder is 0; the
-        // common SDK pattern is initOrder=100 for top-of-stack
-        // (Firebase) and 90 for consumers (Crashlytics).
-        java.util.List<Manifest.ProviderEntry> sorted =
-            new java.util.ArrayList<>(providers);
+        java.util.List<Manifest.ProviderEntry> sorted = new java.util.ArrayList<>(manifest.providers);
         sorted.sort((a, b) -> Integer.compare(b.initOrder, a.initOrder));
-        // The PackageManager that answers the gating question. AOSP never hands
-        // a filtered-out provider to ActivityThread.installContentProviders in
-        // the first place: AMS.generateApplicationProvidersLocked queries with
-        // STOCK_PM_FLAGS | GET_URI_PERMISSION_PATTERNS | MATCH_DIRECT_BOOT_AUTO
-        // (ContentProviderHelper.java:1211-1218), and STOCK_PM_FLAGS is
-        // GET_SHARED_LIBRARY_FILES ONLY -- no MATCH_DISABLED_COMPONENTS -- so a
-        // disabled provider is never in data.providers and is never constructed.
-        MacApkPackageManager gatePm = null;
-        try {
-            android.content.pm.PackageManager pm = application.getPackageManager();
-            if (pm instanceof MacApkPackageManager) gatePm = (MacApkPackageManager) pm;
-        } catch (Throwable ignored) {}
         for (Manifest.ProviderEntry entry : sorted) {
-            try {
-                // (a) android:enabled, through the ONE AOSP decision function
-                // (which also folds in any setComponentEnabledSetting override,
-                // so an app that ENABLES a manifest-disabled provider before
-                // boot still gets it). flags=0 deliberately: AOSP's own query
-                // does not pass MATCH_DISABLED_COMPONENTS.
-                //
-                // MEASURED 2026-08-19 over the 64-package corpus: exactly TWO
-                // providers are affected -- com.zhiliaoapp.musically's
-                // com.google.firebase.provider.FirebaseInitProvider and
-                // com.google.android.youtube's
-                // androidx.lifecycle.ProcessLifecycleOwnerInitializer.
-                if (gatePm != null && MacApkPackageManager.macapkComponentGating()
-                        && !gatePm.macapkIsComponentEnabled(
-                                entry.name, entry.enabled, 0)) {
-                    NativeLog.i(TAG, "provider " + entry.name
-                              + " skipped: android:enabled=false"
-                              + " (a device does not create it either)");
-                    continue;
-                }
-                // (b) no authority. ComponentResolverBase.java:194-213 skips any
-                // provider whose authority is null, so it never reaches
-                // installContentProviders. We additionally cannot publish it
-                // into ContentProviderRegistry, so creating it would be a
-                // construction with no reachable purpose.
-                if (entry.authorities == null || entry.authorities.isEmpty()) {
-                    NativeLog.i(TAG, "provider " + entry.name
-                              + " skipped: declares no android:authorities");
-                    continue;
-                }
-                // (c) FOREIGN PROCESS. The same query filters by process:
-                //   if (processName != null
-                //       && (!p.getProcessName().equals(processName) || ...)) continue;
-                // so a provider declaring android:process=":acra" is created
-                // only when the :acra process starts, not at app boot.
-                //
-                // ⚠ SEPARATELY GATED, and DEFAULT-OFF, deliberately. This is
-                // the only sub-change whose AOSP justification rests on
-                // multi-process semantics Mac.apk deliberately does not model,
-                // and it silently removes an authority from
-                // ContentProviderRegistry -- a ContentResolver query against
-                // org.fdroid.fdroid.acra would start returning nothing where it
-                // previously dispatched. MEASURED: 4 providers across 4 apps
-                // (org.acra.attachment.AcraContentProvider in :acra for
-                // org.fdroid.fdroid, com.ichi2.anki and org.schabi.newpipe;
-                // com.ss.android.ugc.aweme.account.provider.AccountInfoProvider
-                // in :account for com.zhiliaoapp.musically), THREE of which are
-                // protected-fleet apps. Flip MACAPK_PROVIDER_PROCESS_GATE=1 to
-                // measure it on its own, which is the only way its effect is
-                // attributable.
-                //
-                // ... except in a split package (SystemClient.splitActive: the system
-                // broker runs each android:process as its own runtime), where this IS
-                // the AOSP behaviour and not a deviation: a provider is installed only
-                // by the process it is declared for, and every other process reaches it
-                // through the broker (ContentProviderRegistry -> SystemClient
-                // .remoteProvider -> GET_PROVIDER). Nothing is lost by skipping it here:
-                // its authority is served from the process that owns it.
-                if (SystemClient.splitActive() && sManifest != null && sProcessName != null) {
-                    // ComponentInfo.processName, not the foreign table: a provider
-                    // that names no android:process belongs to the APPLICATION's
-                    // process, which in a package with an application-level
-                    // android:process is not the one every other process runs.
-                    String owner = sManifest.processNameOf(entry.name);
-                    if (!owner.equals(sProcessName)) {
-                        NativeLog.i(TAG, "provider " + entry.name
-                                  + " skipped: it lives in process " + owner
-                                  + " (this is " + sProcessName + "; reached through the broker)");
-                        continue;
-                    }
-                } else if (macapkProviderProcessGate()) {
-                    String proc = foreignProcessFor(entry.name);
-                    if (proc != null) {
-                        NativeLog.i(TAG, "provider " + entry.name
-                                  + " skipped: android:process=" + proc
-                                  + " (created when that process starts, not at boot)");
-                        continue;
-                    }
-                }
-                Class<?> cls = Class.forName(entry.name, true, cl);
-                Object instance = cls.getDeclaredConstructor().newInstance();
-                if (!(instance instanceof android.content.ContentProvider)) {
-                    NativeLog.w(TAG, "provider " + entry.name
-                              + " is not a ContentProvider -- skipping");
-                    continue;
-                }
-                android.content.ContentProvider provider =
-                    (android.content.ContentProvider) instance;
-                android.content.pm.ProviderInfo info =
-                    new android.content.pm.ProviderInfo();
-                // The STRING a "@string/x" android:authorities names, as AOSP's
-                // parser hands it on (Manifest.ProviderEntry.resolvedAuthorities).
-                final String authorities = entry.resolvedAuthorities(application.getResources());
-                info.name        = entry.name;
-                info.authority   = authorities;
-                info.packageName = application.getPackageName();
-                info.initOrder   = entry.initOrder;
-                info.exported    = entry.exported;
-                info.grantUriPermissions = entry.grantUriPermissions;
-                // The permission / URI-grant half, straight off the manifest
-                // (Manifest.ProviderEntry already applied AOSP's fallback
-                // chain, PackageParser.parseProvider:5111-5171). Needed HERE
-                // and not only in MacApkPackageManager: the ProviderInfo a
-                // provider sees in attachInfo/onCreate is THIS one, and it is
-                // the one apps read -- two of com.zhiliaoapp.musically
-                // 46.4.3's providers read info.readPermission in the first
-                // statement of onCreate.
-                MacApkPackageManager.macapkFillProviderPermissions(info, entry);
-                provider.attachInfo(application, info);
-                boolean ok = false;
-                try { ok = provider.onCreate(); }
-                catch (Throwable t) {
-                    NativeLog.w(TAG, "provider " + entry.name
-                              + " onCreate threw " + t + " -- continuing");
-                    t.printStackTrace();
-                }
-                NativeLog.i(TAG, "provider " + entry.name
-                          + " onCreate returned " + ok);
-                // Publish the live provider into the process-wide registry
-                // keyed by EVERY authority it declares, mirroring
-                // ActivityThread.installProvider populating mProviderMap.
-                // This is what makes ContentResolver.query/insert/open*
-                // against a content:// URI actually dispatch to this
-                // provider. Manifest-driven (authorities come straight
-                // from android:authorities), so it is app-agnostic.
-                if (authorities != null && !authorities.isEmpty()) {
-                    android.content.ContentProviderRegistry.register(
-                        authorities, provider);
-                }
-            } catch (ClassNotFoundException cnf) {
-                // Many APKs declare optional providers (different
-                // analytics SDKs by build flavor) and the actual class
-                // only ships in some variants. Logging at INFO not
-                // WARNING because this is normal.
-                NativeLog.i(TAG, "provider " + entry.name
-                          + " not found in classpath -- skipping");
-            } catch (Throwable t) {
-                NativeLog.w(TAG, "provider " + entry.name
-                          + " init failed: " + t + " -- continuing");
-                t.printStackTrace();
+            if (MacApkPackageManager.macapkComponentGating()
+                    && !pm.macapkIsComponentEnabled(entry.name, entry.enabled, 0)) {
+                NativeLog.i(TAG, "provider " + entry.name + " skipped: android:enabled=false"
+                          + " (a device does not create it either)");
+                continue;
             }
+            if (entry.authorities == null || entry.authorities.isEmpty()) {
+                NativeLog.i(TAG, "provider " + entry.name + " skipped: declares no android:authorities");
+                continue;
+            }
+            if (SystemClient.splitActive() && sManifest != null && sProcessName != null) {
+                String owner = sManifest.processNameOf(entry.name);
+                if (!owner.equals(sProcessName)) {
+                    NativeLog.i(TAG, "provider " + entry.name + " skipped: it lives in process " + owner
+                              + " (this is " + sProcessName + "; reached through the broker)");
+                    continue;
+                }
+            } else if (macapkProviderProcessGate()) {
+                String proc = foreignProcessFor(entry.name);
+                if (proc != null) {
+                    NativeLog.i(TAG, "provider " + entry.name + " skipped: android:process=" + proc
+                              + " (created when that process starts, not at boot)");
+                    continue;
+                }
+            }
+            android.content.pm.ProviderInfo info = new android.content.pm.ProviderInfo();
+            info.name = entry.name;
+            info.authority = entry.resolvedAuthorities(resources);
+            info.packageName = manifest.packageName;
+            info.processName = ai.processName;
+            info.applicationInfo = ai;
+            info.initOrder = entry.initOrder;
+            info.exported = entry.exported;
+            info.enabled = true;
+            info.grantUriPermissions = entry.grantUriPermissions;
+            MacApkPackageManager.macapkFillProviderPermissions(info, entry);
+            out.add(info);
         }
+        return out;
     }
 
     /** Register the system-authority ContentProviders real Android bakes
      *  into the system image at boot (PackageManagerService, not any app's
      *  manifest). Mirrors the attachInfo + onCreate + registry-publish
-     *  sequence installAutoInitProviders uses above for manifest
+     *  sequence ActivityThread.installProvider does for manifest
      *  <provider> declarations, but with a synthesized ProviderInfo --
      *  there is no <provider> element to parse here, since no APK ever
      *  declares android:authorities="media" itself.
@@ -3149,7 +3035,7 @@ public final class Boot {
      *  Currently backs exactly one authority ("media" ->
      *  android.provider.MediaStoreProvider). Wrapped in the same
      *  single try/catch-per-provider tolerance as
-     *  installAutoInitProviders so a failure here degrades to "no media
+     *  appProviders so a failure here degrades to "no media
      *  index" rather than blocking app boot. App-agnostic: gated on
      *  nothing but the fixed system authority string, never a package
      *  name, so it runs identically for every app. */
@@ -3164,16 +3050,9 @@ public final class Boot {
             info.packageName = application.getPackageName();
             info.exported    = true;
             info.grantUriPermissions = true;
+            // attachInfo runs onCreate, as AOSP's does.
             provider.attachInfo(application, info);
-            boolean ok = false;
-            try { ok = provider.onCreate(); }
-            catch (Throwable t) {
-                NativeLog.w(TAG, "system provider " + info.authority
-                          + " onCreate threw " + t + " -- continuing");
-                t.printStackTrace();
-            }
-            NativeLog.i(TAG, "system provider " + info.authority
-                      + " onCreate returned " + ok);
+            NativeLog.i(TAG, "system provider media attached");
             android.content.ContentProviderRegistry.register(info.authority, provider);
             // The documents the user picks through DocumentsUI's stand-in
             // (DocumentPickerHandler), under ExternalStorageProvider's authority.
@@ -3186,8 +3065,7 @@ public final class Boot {
                 dinfo.packageName = application.getPackageName();
                 dinfo.exported    = true;
                 dinfo.grantUriPermissions = true;
-                docs.attachInfo(application, dinfo);
-                docs.onCreate();
+                docs.attachInfo(application, dinfo);   // runs onCreate
                 android.content.ContentProviderRegistry.register(dinfo.authority, docs);
             }
             // Google Services Framework's gservices settings, answered from
@@ -3204,8 +3082,7 @@ public final class Boot {
                 ginfo.authority   = com.macapk.gms.GservicesProvider.AUTHORITY;
                 ginfo.packageName = "com.google.android.gsf";
                 ginfo.exported    = true;
-                gs.attachInfo(application, ginfo);
-                gs.onCreate();
+                gs.attachInfo(application, ginfo);   // runs onCreate
                 // A FALLBACK: when the real Google Services Framework runs in its
                 // own process (Settings > Use Google GMS), its provider answers.
                 android.content.ContentProviderRegistry.registerFallback(ginfo.authority, gs);
