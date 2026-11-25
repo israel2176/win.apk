@@ -42,6 +42,12 @@ std::string stamp(const std::filesystem::path& p);
 // archive maps (-D..., -XX:ErrorFile=, -Xlog:...): left out of the key.
 bool per_launch(const std::string& option);
 
+// The dump's heap, in place of the app's -Xms128m -Xmx1g: `java -Xshare:dump` allocates little heap
+// (the classes' mirrors and strings); most of its memory is the classes it parses and the archive it
+// writes. Measured under Wine on Jerboa's first install: the dump's JVM 207 MB with the app's heap, 166
+// to 190 MB with this one. The heap size is in the key only through the app's options, not these.
+inline constexpr const char* kDumpHeapOptions[] = {"-Xms8m", "-Xmx96m"};
+
 // The framework the JVM's options are for: "aosp", always now (host/aosp_gfx.h: AOSP's graphics,
 // resources and views, their jars first on the class path, which the key has). Kept as a function for
 // the archive's name, framework-<graphics>-<key>.jsa.

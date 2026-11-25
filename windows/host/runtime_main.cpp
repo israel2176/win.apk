@@ -2511,6 +2511,9 @@ int wmain(int argc, wchar_t** argv) {
             prepare_arm64(b.options, b.app_dir);
             if (!convert_dex(b.options, b.app_dir, &b.app_jar)) code = 1;
         }
+        // The framework archive, when this Win.apk has none yet: here, after the conversion (one JVM
+        // child at a time), and not 10 s into the app's first start (cds.h).
+        if (code == 0) winapk::host::cds_after_install();
         // Not a return: the JVM is still up, and framework threads the icon render started must not keep
         // the process alive.
         std::fflush(stderr);

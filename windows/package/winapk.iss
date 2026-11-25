@@ -69,6 +69,8 @@ english.FileTypeName=Android app
 hebrew.FileTypeName=אפליקציית Android
 english.OpenWinApk=Open Win.apk
 hebrew.OpenWinApk=פתיחת Win.apk
+english.Optimizing=Preparing the Android framework for faster app starts...
+hebrew.Optimizing=מכין את מסגרת Android להפעלה מהירה של אפליקציות...
 
 [Tasks]
 Name: desktopicon; Description: "{cm:DesktopIcon}"
@@ -106,6 +108,11 @@ Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B
 Type: filesandordirs; Name: "{userprograms}\Win.apk Apps"
 
 [Run]
+; The framework's class-data sharing archive for this Win.apk (host/cds.h), made now as Android
+; compiles its framework at an update, so that no app start makes it: a second JVM of 200 MB
+; beside the app 10 s into its first start doubled that start's memory. Hidden; an install
+; without it still works (the first app install, or else the first app start, makes it).
+Filename: "{app}\bin\winapk-runtime.exe"; Parameters: "--cds-prepare"; StatusMsg: "{cm:Optimizing}"; Flags: runhidden
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
