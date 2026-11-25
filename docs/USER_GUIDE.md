@@ -306,8 +306,8 @@ library, light or dark and mirrored in Hebrew: **Remove**, **Clear library**,
 **Stop installing?**, signing out of Google, an error with **Show log**, an
 app asking to install, update or remove another app, and the permission
 questions apps ask. The accent button comes first; for anything that removes
-something, Enter picks **Cancel**. Esc or the window's ✕ closes a dialog
-without an answer.
+something, Enter picks **Cancel**. The button Enter picks has the focus ring
+when the dialog opens. Esc or the window's ✕ closes a dialog without an answer.
 
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
