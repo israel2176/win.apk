@@ -212,6 +212,31 @@ or later with an error, the window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
+### When an app crashes or stops responding
+
+Win.apk tells you what a phone would, in Android's own words (Hebrew when
+Win.apk is in Hebrew):
+
+- **The app crashed** (an error the app did not handle, on any of its threads,
+  or its native code faulted): the app closes at once, as on a phone, and
+  **Wiz has stopped** appears where its window was, or **Wiz keeps stopping**
+  when it crashed less than a minute after its last crash. **App info** opens
+  its details page; **Close app**, Enter or Esc closes the message (so does
+  five minutes without an answer). **Show log** and **Report a problem** are
+  links under the title. A phone shows this message on a repeated crash, and
+  on the first one too with Developer options' **Always show crash dialog**;
+  Win.apk shows it each time. An app that handles its own crash (shows its
+  own crash report, then closes) gets no message, as on a phone.
+- **The app isn't responding**: it was given input (a click, a key, typed
+  text) and has not taken it for five seconds, as Android counts it.
+  **Wiz isn't responding** appears over its window, with **Close app**, which
+  ends it, and **Wait** (also Enter and Esc), which leaves it running; if it
+  still does not respond, the next input asks again five seconds on. The same
+  question comes over the starting window when you click it or press a key
+  and the app has not drawn five seconds later. An app that never draws and
+  is given no input keeps its starting window, with **Still starting**,
+  until you close it.
+
 Win.apk keeps the Java classes every app loads (the JDK's and the Android
 framework's) ready in a file every app start maps, instead of reading and
 checking them again each time (class-data sharing): a fifth off a typical
