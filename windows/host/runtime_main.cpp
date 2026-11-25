@@ -617,8 +617,10 @@ unsigned long long dex_bytes(const fs::path& base) {
 // 4.6 -> 2.3 s, Jellyfin 4.8 -> 2.6, Jitsi 3.3 -> 1.4, Fossify Notes 3.0 -> 1.4 (JDK on Linux, 4 cores),
 // Jerboa under Wine with the shipped Temurin 21 11.2 -> 7.4 s. C2's code is faster once compiled (1.45 s
 // against 2.15 s per Jerboa of DEX in a warm JVM), so it wins back its warm-up only past about five
-// Jerboas, ~55 MB of DEX: above kDexC2Above the converter keeps the default tiered JIT. The output is
-// the same either way (the converter's bytes do not depend on the JIT).
+// Jerboas, ~55 MB of DEX: above kDexC2Above the converter keeps the default tiered JIT. The cut sits
+// below that break-even, at 40 MB, as a margin: the break-even comes from one app on one machine, and
+// near it either choice costs about the same, while far above it C1 alone would be the slow one. The
+// output is the same either way (the converter's bytes do not depend on the JIT).
 constexpr unsigned long long kDexC2Above = 40ull << 20;
 std::vector<std::wstring> dex_jit_options(const fs::path& apk) {
     if (dex_bytes(apk) > kDexC2Above) return {};
@@ -1676,6 +1678,9 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("-Djava.library.path=");
     v.push_back("-XX:+UseSerialGC");
     v.push_back("-Xms128m");
+    // 1 GB, upstream's: twice a high-end phone's largeHeap. Apps size their caches by what
+    // ActivityManager reports, at most 512 MB (getLargeMemoryClass, clamped there as on a
+    // phone), so the framework's own objects keep room above that.
     v.push_back("-Xmx1g");
     v.push_back("-Xss16m");
     v.push_back("-XX:+UnlockDiagnosticVMOptions");

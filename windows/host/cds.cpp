@@ -179,6 +179,9 @@ bool wait_for_running_dump() {
     return done;
 }
 
+// After the first frame, the dump waits 10 s: an app is busiest right after it opens (its own
+// start-up work, the first screens), and a below-normal priority dump of ~3.5 s of four cores would
+// still take memory and cache from it; an app closed sooner dumps at exit (cds_before_exit).
 DWORD WINAPI dump_later(void*) {
     const std::wstring d = env(L"WINAPK_CDS_DUMP_DELAY_MS");
     Sleep(d.empty() ? 10000 : static_cast<DWORD>(std::wcstoul(d.c_str(), nullptr, 10)));
