@@ -304,8 +304,14 @@ public final class Tasks {
             if (changes == 0) continue;
             ClientTransaction tx = ClientTransaction.obtain(app, r.token);
             if ((changes & ~Compat.getRealConfigChanged(r.info)) != 0) {
+                // ActivityRecord.ensureActivityConfiguration: the window is kept across the relaunch
+                // only for a change of size (isResizeOnlyChange); any other (a new density, a theme)
+                // makes it again, so nothing of the old instance's views (a ComposeView found in the
+                // kept content and reused) outlives it at the old configuration.
+                boolean preserveWindow = isResizeOnlyChange(changes);
                 tx.addCallback(android.app.servertransaction.ActivityRelaunchItem.obtain(null, null, changes,
-                        new android.util.MergedConfiguration(new Configuration(next), new Configuration()), true));
+                        new android.util.MergedConfiguration(new Configuration(next), new Configuration()),
+                        preserveWindow));
                 tx.setLifecycleStateRequest(r.state == State.RESUMED
                         ? ResumeActivityItem.obtain(false, false)
                         : r.state == State.PAUSED || r.state == State.PAUSING
@@ -321,6 +327,14 @@ public final class Tasks {
 
     /** ActivityInfo.CONFIG_WINDOW_CONFIGURATION (hidden): never a reason to relaunch. */
     private static final int CONFIG_WINDOW_CONFIGURATION = 0x20000000;
+
+    /** ActivityRecord.isResizeOnlyChange: only the size, the orientation and the layout changed. */
+    private static boolean isResizeOnlyChange(int change) {
+        return (change & ~(android.content.pm.ActivityInfo.CONFIG_SCREEN_SIZE
+                | android.content.pm.ActivityInfo.CONFIG_SMALLEST_SCREEN_SIZE
+                | android.content.pm.ActivityInfo.CONFIG_ORIENTATION
+                | android.content.pm.ActivityInfo.CONFIG_SCREEN_LAYOUT)) == 0;
+    }
 
     Record find(IBinder token) {
         for (Record r : task) if (r.token == token) return r;
