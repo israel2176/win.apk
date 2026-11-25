@@ -182,11 +182,10 @@ patch_module() {  # patch_module <module> <out dir> <source dir>...
 patch_module java.base "$LIB/java_base_patch" "$RT/java_base_patch" "$HERE/../java/java_base_patch"
 patch_module jdk.unsupported "$LIB/jdk_unsupported_patch" "$RT/jdk_unsupported_patch"
 
-# Shipped key-bind profiles are classpath resources of the loader jar.
-if [[ -d "$RT/java/com/macapk/loader/keybinds" ]]; then
-    mkdir -p "$TMP/com/macapk/loader/keybinds"
-    cp -f "$RT"/java/com/macapk/loader/keybinds/* "$TMP/com/macapk/loader/keybinds/"
-fi
+# Upstream's shipped key-bind profiles (runtime/java/com/macapk/loader/keybinds) are not packaged:
+# the one there is for one game (Hill Climb Racing's taps), app-specific data the project does not
+# ship, and its keys would never reach it here (AOSP's input, AospInput, does not run the old
+# TouchDispatcher key path that applies profiles). With no index KeyBindProfiles installs none.
 
 echo "[build_java] packaging..."
 ( cd "$TMP" && find . -type f -name '*.class' ! -path './com/macapk/*' ! -path './com/android/apksig/*' | sort > "$WORK/framework.list" )
