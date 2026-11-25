@@ -1611,9 +1611,10 @@ public final class SystemServer {
      *  system apps (Google's Play Store, Play services, Services Framework: what keeps
      *  apps updated and push messages flowing). Another app's held job runs when that
      *  app runs, as a phone's rarely used apps get their jobs in the restricted bucket:
-     *  each started process is a JVM. WINAPK_JOBS_START_APPS=1 starts any app's. */
+     *  each started process is a JVM. (Starting any app's, as Android does within its standby
+     *  buckets, is for the owner to decide: docs/research/open-issues.md, "Decisions for the
+     *  owner"; its opt-in switch is gone.) A field so the broker's test can replace it. */
     java.util.function.Predicate<String> mayStartForJob = pkg -> {
-        if ("1".equals(System.getenv("WINAPK_JOBS_START_APPS"))) return true;
         PackageRecord pr = packages.get(pkg);
         return pr != null && MacApkPackageManager.platformSystemApk(pr.pkg, pr.apkPath);
     };

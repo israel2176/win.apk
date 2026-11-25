@@ -208,7 +208,6 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_JAVA_IO_SHARE_DELETE=0` | java.io opens files as the JDK does, without `FILE_SHARE_DELETE` (`host/java_io_open.cpp`), for comparing |
 | `WINAPK_DUMP_VIEWS=1` | Logs the top window's views (`[viewdump]` lines: class, id name, text, content description, clickable, enabled, bounds in the frame's pixels) each time its content changes and then holds still for half a second, with a Compose view's nodes from its accessibility provider, as uiautomator's dump does; a test finds and taps a button from them (`runtime/java/com/macapk/loader/ViewDump.java`) |
 | `WINAPK_PLAY_INSTALLER=0`/`1` | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of an app the user installed with no installer of record, `0` reports none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
-| `WINAPK_JOBS_START_APPS=1` | The system broker starts any app's process for a job of its that is due (`runtime/java/com/macapk/loader/SystemServer.java`, `mayStartForJob`); by default only Google's three apps are started for one, another app's held job runs when that app runs |
 | `MACAPK_BROKER_MAINTENANCE=1` | Set by `winapk-runtime --system --maintenance` (the background updates' window, which the launcher opens every 4 hours while it runs, `launcher/maintenance.h`): the broker boots the Play Store too, runs the jobs that are due and stops `MACAPK_BROKER_MAINTENANCE_GRACE_S` (default 180) seconds after the last |
 | `WINAPK_TEST_INSTALLER=<package>` | Debugging only: `getInstallerPackageName` and `getInstallSourceInfo` answer that installer for every app, over the record and `WINAPK_PLAY_INSTALLER`; nothing in Win.apk sets it (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
 | `WINAPK_TEST_RESIZE=<w>x<h>` | A second after the first frame, resizes the window to a client area of that many pixels (CI's "Boot an APK in a window") |
@@ -3557,8 +3556,8 @@ every such change is listed here:
   `TX_JOB_REPORT`) and runs a job the broker hands back at once
   (`JobScheduler.macapkRunNow`, `JOB_RUN`); `SystemServer.java` keeps a dead
   process's jobs, starts the Play Store, Play services or the Services
-  Framework headless when one of theirs is due and its constraints hold (any
-  app's with `WINAPK_JOBS_START_APPS=1`), lists held jobs in
+  Framework headless when one of theirs is due and its constraints hold
+  (another app's held job runs when that app runs), lists held jobs in
   `getAllPendingJobs`, drops a removed package's, stays up while a job it
   handed out runs (10 minutes at most), and with `--maintenance`
   (`MACAPK_BROKER_MAINTENANCE=1`, `BrokerIdle.maintenanceGraceMs`) boots the
