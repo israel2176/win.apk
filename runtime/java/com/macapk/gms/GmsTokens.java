@@ -40,17 +40,29 @@ public final class GmsTokens {
         IBinder s = sService;
         if (s != null && s.isBinderAlive() && sServiceForTest == null) return s;
         s = lookUp();
-        if (s == null && com.macapk.loader.WinProcesses.available()) {
+        // A service that did not come up is not waited for again for a while: an app's
+        // every token question must not cost it START_WAIT_MS.
+        if (s == null && com.macapk.loader.WinProcesses.available()
+                && System.currentTimeMillis() - sStartFailedMs > RETRY_START_MS) {
             start();
             long deadline = System.currentTimeMillis() + START_WAIT_MS;
             while (s == null && System.currentTimeMillis() < deadline) {
                 try { Thread.sleep(200); } catch (InterruptedException e) { break; }
                 s = lookUp();
             }
+            if (s == null) {
+                sStartFailedMs = System.currentTimeMillis();
+                GmsTokenService.log("the token service did not answer within " + START_WAIT_MS + " ms"
+                        + " (logs\\gms-tokens.log)");
+            }
         }
         sService = s;
         return s;
     }
+
+    /** How long after a start that failed no other start is tried. */
+    static final long RETRY_START_MS = 60_000L;
+    private static long sStartFailedMs = -RETRY_START_MS;
 
     private static void start() {
         try {

@@ -742,7 +742,9 @@ window's `oauth_token`, which becomes the master token in the service; the app
 gets the e-mail back. The first request starts the service (`logs\gms-tokens.log`),
 which exits after five idle minutes. An older install's plain tokens in
 `gms_state.properties` are moved into `tokens.dat` by the first owner that
-reads the file (an app's process has the service do it before it reads).
+reads the file: the launcher runs `--gms accounts` at its start while there is
+no `tokens.dat` (`seal_gms_tokens`), and an app's process that still finds
+none has the service do it before it reads.
 What this does not do: every app runs with the user's rights and its native
 code is not confined, so code that sets out to can still read the user's DPAPI
 secrets or start a runtime naming another app's APK; real isolation needs a

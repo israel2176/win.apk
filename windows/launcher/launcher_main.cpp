@@ -5441,6 +5441,23 @@ void ask_device_id() {
     else g_device_id_asking = false;
 }
 
+// An older install kept the account's master token in plain text in gms_state.properties. The runtime's
+// owner side moves it into the sealed tokens.dat the first time it reads the file (com.macapk.gms.GmsStore);
+// an app's process has the token service do that first, which costs it a JVM start. So at its start the
+// launcher has `--gms accounts` read the file once, on a thread, when there is a file and no tokens.dat yet
+// (two stats: the launcher never reads either file). Nothing is shown.
+DWORD WINAPI seal_gms_tokens_thread(void*) {
+    std::wstring out;
+    run_gms(L"accounts", &out);
+    return 0;
+}
+
+void seal_gms_tokens() {
+    std::error_code ec;
+    if (!fs::exists(gms_dir() / L"gms_state.properties", ec) || fs::exists(gms_dir() / L"tokens.dat", ec)) return;
+    if (HANDLE t = CreateThread(nullptr, 0, seal_gms_tokens_thread, nullptr, 0, nullptr)) CloseHandle(t);
+}
+
 // The row: the ID, Copy, and the registration page as a link (the page is Google's, and the user signs in there).
 Row device_id_row() {
     // Left to right in Hebrew too: a signed ID's minus stays in front of its digits.
@@ -12202,6 +12219,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
         remove_maintenance_task();  // earlier builds' scheduled task: background updates are the launcher's now
     }
+    seal_gms_tokens();  // an older install's plain Google token, sealed before an app opens
     theme_menus();
 
     WNDCLASSEXW wc{sizeof(wc)};
