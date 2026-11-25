@@ -23,6 +23,13 @@
 # resource APK is a later step). Keep the two in sync when upstream changes
 # its Java build.
 #
+# The framework has no android.graphics of its own (nor the android.text
+# classes that measure and lay out): it runs on AOSP's, lib/aosp-graphics.jar
+# (build_aosp_gfx.sh), and compiles against the same classes of android-all 14
+# (aosp_gfx_take.sh), with the methods build_aosp_gfx.sh adds to them, so that
+# it calls nothing they lack. android-all comes from windows/test/aospgfx/fetch.sh
+# into WINAPK_AOSP_GFX_DEPS (default thirdparty/aosp-gfx, which CI caches).
+#
 # JAVA_HOME selects the JDK (21); otherwise javac and jar come from PATH.
 
 set -euo pipefail
@@ -37,9 +44,11 @@ WORK="$OUT/.build"  # scratch: classes, file lists, javac log
 TMP="$WORK/classes"
 
 if [[ -n "${JAVA_HOME:-}" ]]; then
+    JAVA="$JAVA_HOME/bin/java"
     JAVAC="$JAVA_HOME/bin/javac"
     JAR="$JAVA_HOME/bin/jar"
 else
+    JAVA=java
     JAVAC=javac
     JAR=jar
 fi
@@ -57,6 +66,40 @@ native_path() { printf '%s\n' "$1" | native_paths; }
 # recompiles everything anyway, so wiping costs nothing.
 rm -rf "$TMP"
 mkdir -p "$TMP" "$LIB"
+
+# AOSP's graphics classes, to compile against only: they ship in aosp-graphics.jar, never in
+# android-framework.jar (javac writes no class it only reads from the class path).
+echo "[build_java] AOSP's graphics classes to compile against (android-all 14)..."
+DEPS="${WINAPK_AOSP_GFX_DEPS:-$HERE/../../thirdparty/aosp-gfx}"
+"$HERE/../test/aospgfx/fetch.sh" "$DEPS" jar > /dev/null
+DEPS="$(cd -- "$DEPS" && pwd)"
+ALL="$DEPS/android-all-14.jar"
+GFX_API="$WORK/aosp-gfx-api"
+rm -rf "$GFX_API"
+mkdir -p "$GFX_API"
+# shellcheck source=aosp_gfx_take.sh
+source "$HERE/aosp_gfx_take.sh"
+unzip -Z1 "$ALL" > "$WORK/all.txt"
+aosp_gfx_take "$WORK/all.txt" > "$WORK/gfx-take.txt"
+( cd "$GFX_API" && xargs -d '\n' unzip -qo "$ALL" < "$WORK/gfx-take.txt" )
+# The members build_aosp_gfx.sh adds to AOSP's classes (Api35, FrameworkMembers), added here too.
+"$JAVAC" -nowarn --release 21 -d "$(native_path "$GFX_API")" -cp "$(native_path "$ALL")" \
+    "$(native_path "$HERE/../java/aosp_gfx/com/winapk/aospgfx/Api35.java")" \
+    "$(native_path "$HERE/../java/aosp_gfx/com/winapk/aospgfx/FrameworkMembers.java")"
+"$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$GFX_API")" \
+    com/winapk/aospgfx/Api35 com/winapk/aospgfx/FrameworkMembers > /dev/null
+
+# AOSP's app layer, to compile against only, likewise: it ships in aosp-app.jar (build_aosp_app.sh);
+# the framework has no Activity, Application, Instrumentation, LoadedApk, ActivityThread or framework
+# Fragment of its own.
+echo "[build_java] AOSP's app layer classes to compile against (android-all 14)..."
+APP_API="$WORK/aosp-app-api"
+rm -rf "$APP_API"
+mkdir -p "$APP_API"
+# shellcheck source=aosp_app_take.sh
+source "$HERE/aosp_app_take.sh"
+aosp_app_take "$WORK/all.txt" > "$WORK/app-take.txt"
+( cd "$APP_API" && xargs -d '\n' unzip -qo "$ALL" < "$WORK/app-take.txt" )
 
 echo "[build_java] compiling runtime/java..."
 LIST="$WORK/java.list"
@@ -76,7 +119,7 @@ APACHE_LEGACY="$RT/../thirdparty/apache-http-legacy/org.apache.http.legacy.jvm.j
 APKSIG="$RT/../thirdparty/apksig/apksig-9.5.1.jar"
 CP_SEP=":"
 command -v cygpath > /dev/null 2>&1 && CP_SEP=";"  # javac on Windows splits on ';'
-CP="$(native_path "$APKSIG")"
+CP="$(native_path "$APKSIG")$CP_SEP$(native_path "$GFX_API")$CP_SEP$(native_path "$APP_API")"
 [[ -f "$APACHE_LEGACY" ]] && CP="$CP$CP_SEP$(native_path "$APACHE_LEGACY")"
 if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options -cp "$CP" @"$LIST" \
         > "$WORK/javac.log" 2>&1; then
@@ -95,7 +138,7 @@ fi
 if [[ -d "$RT/net_spi" ]]; then
     find "$RT/net_spi" -name '*.java' ! -path '* [2-9].java' | sort | native_paths > "$WORK/net_spi.list"
     if [[ -s "$WORK/net_spi.list" ]]; then
-        "$JAVAC" -d "$TMP" -nowarn -Xlint:-options @"$WORK/net_spi.list"
+        "$JAVAC" -d "$TMP" --source 21 --target 21 -nowarn -Xlint:-options @"$WORK/net_spi.list"
     fi
     if [[ -d "$RT/net_spi/META-INF/services" ]]; then
         mkdir -p "$TMP/META-INF/services"
@@ -132,27 +175,16 @@ patch_module() {  # patch_module <module> <out dir> <source dir>...
     [[ -s "$WORK/$module.list" ]] || return 0
     rm -rf "$dst"
     mkdir -p "$dst"
-    "$JAVAC" -nowarn ${win_system:+--system "$win_system"} --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
+    "$JAVAC" -nowarn --source 21 --target 21 ${win_system:+--system "$win_system"} --patch-module "$module=$dirs" -d "$dst" @"$WORK/$module.list"
     [[ -n "$win_system" || "$module" != java.base ]] || command -v cygpath > /dev/null 2>&1 ||
         echo "[build_java] note: sun.nio.fs.Windows* left out (set WINAPK_WIN_JDK to a Windows JDK to build them)"
 }
 patch_module java.base "$LIB/java_base_patch" "$RT/java_base_patch" "$HERE/../java/java_base_patch"
 patch_module jdk.unsupported "$LIB/jdk_unsupported_patch" "$RT/jdk_unsupported_patch"
 
-# Shipped key-bind profiles are classpath resources of the loader jar.
-if [[ -d "$RT/java/com/macapk/loader/keybinds" ]]; then
-    mkdir -p "$TMP/com/macapk/loader/keybinds"
-    cp -f "$RT"/java/com/macapk/loader/keybinds/* "$TMP/com/macapk/loader/keybinds/"
-fi
-
 echo "[build_java] packaging..."
 ( cd "$TMP" && find . -type f -name '*.class' ! -path './com/macapk/*' ! -path './com/android/apksig/*' | sort > "$WORK/framework.list" )
 ( cd "$TMP" && "$JAR" --create --file "$LIB/android-framework.jar" @"$WORK/framework.list" )
-if compgen -G "$RT/fonts/*.ttf" > /dev/null; then
-    mkdir -p "$TMP/fonts"
-    cp -f "$RT"/fonts/*.ttf "$TMP/fonts/"
-    ( cd "$TMP" && "$JAR" --update --file "$LIB/android-framework.jar" fonts )
-fi
 ( cd "$TMP" && "$JAR" --create --file "$LIB/macapk-loader.jar" com/macapk com/android/apksig apksig-legal )
 if [[ -d "$TMP/META-INF/services" ]]; then
     ( cd "$TMP" && "$JAR" --update --file "$LIB/macapk-loader.jar" META-INF/services )
@@ -178,10 +210,15 @@ echo "[build_java] compiling windows/java..."
 TOOLS="$WORK/tools"
 rm -rf "$TOOLS"
 mkdir -p "$TOOLS"
-# java_base_patch is an overlay of java.base (compiled above), not a tool.
-find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' | sort | native_paths > "$WORK/tools.list"
-# AppMeta calls into the framework and the loader, compiled into $TMP above.
-"$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")" @"$WORK/tools.list"
+# java_base_patch is an overlay of java.base (compiled above), not a tool; aosp_gfx goes into
+# aosp-graphics.jar (build_aosp_gfx.sh), first on every framework JVM's class path;
+# aosp_res into aosp-resources.jar (build_aosp_res.sh) and aosp_views into aosp-views.jar
+# (build_aosp_views.sh), always first: stage_runtime.sh then drops what they shadow from
+# android-framework.jar; aosp_app into aosp-app.jar (build_aosp_app.sh, not staged yet).
+find "$HERE/../java" -name '*.java' -not -path '*/java_base_patch/*' -not -path '*/aosp_gfx/*' \
+    -not -path '*/aosp_res/*' -not -path '*/aosp_views/*' -not -path '*/aosp_app/*' | sort | native_paths > "$WORK/tools.list"
+# AppMeta calls into the framework and the loader, compiled into $TMP above, and the graphics.
+"$JAVAC" -d "$TOOLS" --release 21 -cp "$(native_path "$TMP")$CP_SEP$(native_path "$GFX_API")$CP_SEP$(native_path "$APP_API")" @"$WORK/tools.list"
 ( cd "$TOOLS" && "$JAR" --create --file "$LIB/winapk-tools.jar" . )
 
 # The class list of the framework archive (host/cds.h), made from the smoke

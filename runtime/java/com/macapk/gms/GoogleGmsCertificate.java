@@ -22,14 +22,9 @@ public final class GoogleGmsCertificate {
     private GoogleGmsCertificate() {}
 
     /** Whether getPackageInfo reports this certificate for gms and the store. */
-    public static boolean enabled() {
-        String v = System.getenv("MACAPK_GMS_GOOGLE_CERT");
-        return !"0".equals(v) && !"false".equalsIgnoreCase(v);
-    }
 
     /** The certificate as a Signature, or null when switched off. */
     public static android.content.pm.Signature signature() {
-        if (!enabled()) return null;
         return new android.content.pm.Signature(java.util.Base64.getDecoder().decode(DER_BASE64));
     }
 

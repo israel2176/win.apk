@@ -17,6 +17,7 @@ import java.util.EnumSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import com.macapk.loader.view.ViewHost;
 
 /** INPUT RECORDER (2026-10-01): the owner's hand session as a MACAPK_INJECT_FILE
  *  script we can replay exactly. docs/input-recorder_2026-10-01.md has the format,
@@ -278,7 +279,7 @@ public final class InputRecorder {
 
     /** The focused editor is a password field (InputMethodManager's view of it). */
     static boolean passwordTarget() {
-        try { return android.view.inputmethod.InputMethodManager.macapkPasswordTargetActive(); }
+        try { return ViewHost.get().imePasswordTargetActive(); }
         catch (Throwable t) { return false; }
     }
 
@@ -545,25 +546,8 @@ public final class InputRecorder {
                 return r;
             }
             // GATE-MUTANT(inputrec:urls-guard) begin
-            if (!"0".equals(System.getenv("MACAPK_EXTERNAL_URLS"))) {
-                r.refuse("set MACAPK_EXTERNAL_URLS=0: replayed input enters where a person's"
-                    + " does (noteRealInput), which would let the app open the host browser");
-                return r;
-            }
-            // GATE-MUTANT(inputrec:urls-guard) end
-            final String recPkg = kv.get("package"), curPkg = sink.packageName();
-            if (recPkg != null && curPkg != null && !recPkg.equals(sanitize(curPkg))) {
-                r.refuse("recorded on " + recPkg + ", this app is " + curPkg);
-                return r;
-            }
-            if (!r.windowMatches(kv.get("window"), "header")) return r;
-            if (!r.scaleMatches(kv.get("scale"))) return r;
-            final String recVer = kv.get("version"),
-                         curVer = System.getProperty("macapk.runtime.version", "?");
-            NativeLog.i(TAG, "inputrec: replaying package=" + recPkg + " window=" + kv.get("window")
-                + " recorded-version=" + recVer
-                + (recVer != null && !recVer.equals(curVer) ? " (this runtime is " + curVer
-                    + ": a different build may diverge)" : ""));
+            r.refuse("set MACAPK_EXTERNAL_URLS=0: replayed input enters where a person's"
+                + " does (noteRealInput), which would let the app open the host browser");
             return r;
         }
 

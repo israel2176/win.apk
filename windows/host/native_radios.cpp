@@ -15,7 +15,16 @@
 //
 // The same IP helper answers ConnectivityManager: which adapter carries the
 // default route (wired, Wi-Fi, mobile broadband, a tunnel), its addresses,
-// gateway, DNS servers and MTU (Radio_defaultNetwork).
+// gateway, DNS servers and MTU (Radio_defaultNetwork), and whether Windows
+// counts the connection as metered (Radio_networkMetered: the Network List
+// Manager's cost, which Settings > Network > "Metered connection" sets; what
+// Android's NET_CAPABILITY_NOT_METERED and a JobScheduler job's unmetered
+// constraint read).
+//
+// com.macapk.loader.HostPower is here too, for the same callers' other
+// question: whether the PC runs on mains power, and its battery's charge
+// (GetSystemPowerStatus), for JobScheduler's charging and battery-not-low
+// constraints and BatteryManager.
 //
 // Bluetooth here is the classic (BR/EDR) API: the radio, whether it is on,
 // and the paired devices. Talking to devices (RFCOMM, LE scans, GATT) is
@@ -38,6 +47,7 @@
 #include <windows.h>
 #include <bluetoothapis.h>
 #include <iphlpapi.h>
+#include <netlistmgr.h>
 #include <wlanapi.h>
 
 namespace winapk::host {
@@ -394,6 +404,47 @@ jobjectArray JNICALL Radio_defaultNetwork(JNIEnv* env, jclass) {
                          std::to_string(best->IfType), std::to_string(best->Mtu), addresses, gateways, dns});
 }
 
+// Whether Windows counts the internet connection as metered: 1 yes (a fixed or
+// variable cost, over or near its data limit, roaming: what Settings' "Metered
+// connection" and a mobile plan set), 0 no (unrestricted), -1 when it would not
+// say. The Network List Manager answers for the connections it routes internet
+// traffic through, the default route's among them.
+jint JNICALL Radio_networkMetered(JNIEnv*, jclass) {
+    // The JVM thread may or may not be in a COM apartment: join the MTA when it is in
+    // none, and only undo what this call did.
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    jint out = -1;
+    INetworkCostManager* costs = nullptr;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(NetworkListManager), nullptr, CLSCTX_ALL, __uuidof(INetworkCostManager),
+                                   reinterpret_cast<void**>(&costs))) &&
+        costs) {
+        DWORD cost = 0;
+        if (SUCCEEDED(costs->GetCost(&cost, nullptr))) {
+            constexpr DWORD kMetered = NLM_CONNECTION_COST_FIXED | NLM_CONNECTION_COST_VARIABLE |
+                                       NLM_CONNECTION_COST_OVERDATALIMIT | NLM_CONNECTION_COST_ROAMING |
+                                       NLM_CONNECTION_COST_APPROACHINGDATALIMIT;
+            if (cost & kMetered) out = 1;
+            else if (cost & NLM_CONNECTION_COST_UNRESTRICTED) out = 0;
+        }
+        costs->Release();
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    return out;
+}
+
+// ---- Power (com.macapk.loader.HostPower) -----------------------------------------
+
+// {AC line (0 off, 1 on, 255 unknown), battery percent (255 unknown), battery flags
+// (128: no system battery)}, as GetSystemPowerStatus reports them; null when it fails.
+jintArray JNICALL Power_status(JNIEnv* env, jclass) {
+    SYSTEM_POWER_STATUS s{};
+    if (!GetSystemPowerStatus(&s)) return nullptr;
+    const jint v[3] = {s.ACLineStatus, s.BatteryLifePercent, s.BatteryFlag};
+    jintArray a = env->NewIntArray(3);
+    if (a) env->SetIntArrayRegion(a, 0, 3, v);
+    return a;
+}
+
 // ---- Wi-Fi notifications ---------------------------------------------------------
 
 // What WifiManager turns into its broadcasts (HostRadios.WIFI_EVENT_*).
@@ -509,6 +560,7 @@ jobjectArray JNICALL Radio_bluetoothBonded(JNIEnv* env, jclass) {
 }
 
 constexpr const char* kCls = "com.macapk.loader.HostRadios";
+constexpr const char* kPowerCls = "com.macapk.loader.HostPower";
 
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeWifiState", "()I", Radio_wifiState),
@@ -518,6 +570,8 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeWifiDhcp", "()[I", Radio_wifiDhcp),
     WINAPK_HOST_NATIVE(kCls, "nativeWifiEvent", "(I)I", Radio_wifiEvent),
     WINAPK_HOST_NATIVE(kCls, "nativeDefaultNetwork", "()[Ljava/lang/String;", Radio_defaultNetwork),
+    WINAPK_HOST_NATIVE(kCls, "nativeNetworkMetered", "()I", Radio_networkMetered),
+    WINAPK_HOST_NATIVE(kPowerCls, "nativeStatus", "()[I", Power_status),
     WINAPK_HOST_NATIVE(kCls, "nativeBluetoothRadio", "()[Ljava/lang/String;", Radio_bluetoothRadio),
     WINAPK_HOST_NATIVE(kCls, "nativeBluetoothBonded", "()[Ljava/lang/String;", Radio_bluetoothBonded),
 };

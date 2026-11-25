@@ -19,7 +19,9 @@
 //   2. installed and converted once by winapk-runtime --install-only, which
 //      also writes the app's icon and name (apps\<name>\icon.png, label.txt;
 //      the name moves next to the APK as library\<name>.label, because the
-//      app's first run moves files it does not know out of apps\<name>);
+//      app's first run moves files it does not know out of apps\<name>); a
+//      bundle is then kept as library\<name>.apk and <name>.splits\, hard
+//      links to the APKs it installed, not whole (library_files.h);
 //   3. given a Start menu shortcut (Start > Win.apk Apps) and, unless turned
 //      off in the settings, a desktop shortcut, with the app's own icon, that
 //      start it through this program.
@@ -37,11 +39,16 @@
 // app the other way (library\<name>.orientation), and an app whose manifest
 // fixes its launched activity's orientation always gets that one.
 //
-// The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
-// free and open-source apps): its index is fetched in the background and
-// kept as store\catalog.tsv, searchable and by category. Install downloads
-// the APK, checks it against the index's SHA-256 and installs it as above;
-// an app the library already has (by package) is updated in place.
+// The Store, next to the library, is Win.apk's own store app (israel2176/
+// win.apk-store, package app.apkstore: Google Play's catalogue searched, free
+// apps downloaded and installed through Android's PackageInstaller), shown
+// inside the library window as Google Play is. Win.apk has it as a system
+// component, no tile and no shortcut: the first opening of the Store downloads
+// the newest release's apk-store.apk from GitHub, held to GitHub's size and
+// SHA-256 of it (store_app.h), and installs it quietly; the daily update check
+// updates it the same way. Its installs go through the install helper below,
+// and its "Install unknown apps" is on from its first install, as a device's
+// preinstalled store is allowed.
 //
 //   Win.apk.exe                      the library
 //   Win.apk.exe <app.apk> [...]      the install window, for these files
@@ -51,14 +58,19 @@
 //   Win.apk.exe runtime-permission | special-access | app-details ... --source android --json
 //
 // The last two are the install helper, upstream's macapk-installhelper: an app
-// that installs apps (F-Droid, through PackageInstaller) hands its APK to
-// PackageInstallerBackend, which runs this program. It asks the user, installs
-// as above, and keeps installed_apps.json, the installed-apps registry that
-// PackageManager answers apps from, so a store sees what it installed. Its
-// output keeps the helper's contract: "[helper] progress <fraction> <stage>"
-// lines, then one JSON object; exit 0 done, 2 bad arguments, 3 declined,
-// 5 failed, 6 not an app. The third line is the permission dialogs (see
-// "Permissions" below).
+// that installs apps (the Store, through PackageInstaller) hands its APK to
+// PackageInstallerBackend, which runs this program. It asks the user as
+// Android's package installer does (an app whose "Install unknown apps" is off
+// is first sent to that switch, then "Do you want to install this app?"),
+// shows the install in the install window and its end there ("App installed."
+// with Open and Done, or "App not installed." and why), installs as above, and
+// keeps installed_apps.json, the installed-apps registry that PackageManager
+// answers apps from, so a store sees what it installed. Its output keeps the
+// helper's contract: "[helper] progress <fraction> <stage>" lines, then one
+// JSON object, then (once its window shows the end) "[helper] exit <code>",
+// which is when the app gets its result; exit 0 done, 2 bad arguments,
+// 3 declined or cancelled, 5 failed, 6 not an app. The third line is the
+// permission dialogs (see "Permissions" below).
 
 #include <windows.h>
 #include <commctrl.h>
@@ -75,6 +87,9 @@
 #include <tlhelp32.h>
 #include <wincrypt.h>
 #include <winternl.h>
+#include <netlistmgr.h>
+#include <softpub.h>
+#include <wintrust.h>
 
 #include <algorithm>
 #include <cmath>
@@ -95,9 +110,13 @@
 #include "app_runs.h"
 #include "debug_threads.h"
 #include "installs.h"
+#include "library_files.h"
+#include "maintenance.h"
+#include "store_app.h"
 #include "updates.h"
 #include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
+#include "../include/winapk/package_events.h"
 
 namespace fs = std::filesystem;
 
@@ -113,29 +132,29 @@ constexpr UINT kInstalled = WM_APP + 1;       // an install ended (finish_instal
 constexpr UINT kRunExited = WM_APP + 2;       // the app's run ended (finish_run says how); lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
 constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
-constexpr UINT kStoreCatalog = WM_APP + 5;    // wParam: kCatalogList (lParam: new std::vector<StoreApp>), Done, Failed
-constexpr UINT kStoreProgress = WM_APP + 6;   // wParam: KB of the catalog received so far
-constexpr UINT kStoreIcon = WM_APP + 7;       // wParam: kIconFailed, Saved, Dropped; lParam: new std::string (package)
-constexpr UINT kStoreDownload = WM_APP + 8;   // wParam: percent, lParam: new std::string (package)
-constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Download
+constexpr UINT kStoreAppChecked = WM_APP + 5;     // lParam: new StoreAppCheck (the Store's newest release, as read)
+constexpr UINT kStoreAppProgress = WM_APP + 6;    // wParam: percent of apk-store.apk downloaded
+constexpr UINT kStoreAppDownloaded = WM_APP + 7;  // wParam: a StoreAppDownload
 constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed; wParam: exit code, lParam: new std::wstring (stdout)
 constexpr UINT kRunReady = WM_APP + 11;       // the app's window is up; lParam: new std::wstring (the app's name)
 constexpr UINT kGmsAccount = WM_APP + 12;     // lParam: new std::wstring (the signed-in account, or empty)
 constexpr UINT kUpdateChecked = WM_APP + 13;  // lParam: new UpdateCheck (the check, with its result)
 constexpr UINT kUpdateProgress = WM_APP + 14; // wParam: percent of Win.apk-Setup.exe downloaded
-constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: ok (complete and checked)
+constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: 0 broke off, else updates.h SetupVerdict + 1
 constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
+constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
+constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms device-id's id, or empty)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
+constexpr UINT_PTR kMaintenanceTimer = 5;  // shown or hidden: is a maintenance window due? (maintenance.h)
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
-constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdStop, kCmdInfo, kCmdRemove };
 
 HINSTANCE g_inst;
-HWND g_main, g_search;
+HWND g_main;
 HFONT g_edit_font, g_mono_font;
 HBRUSH g_edit_brush, g_code_brush;
 float g_dpi = 96;
@@ -159,19 +178,16 @@ void pick_language() {
 // The Hebrew for an English string, keyed by the English itself.
 const wchar_t* tr(const wchar_t* en) {
     static const std::map<std::wstring, const wchar_t*> he = {
-        {L"Drop to install", L"שחרר כדי להתקין"},
+        {L"Drop to install", L"יש לשחרר כאן כדי להתקין"},
         {L"Win.apk keeps its own copy, so the downloaded file can be deleted", L"Win.apk שומרת עותק משלה, כך שניתן למחוק את הקובץ שהורד"},
         {L"Installing…", L"מתקין…"},
         {L"Installing {0} of {1}", L"מתקין {0} מתוך {1}"},
         {L"Install app", L"התקנת אפליקציה"},
-        {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
         {L"No apps installed yet", L"עדיין לא הותקנו אפליקציות"},
         {L"Logs", L"יומנים"},
         {L"Stop", L"עצירה"},
         {L"{0} running", L"{0} פועלות"},
         {L"Running", L"פועלת"},
-        {L"Clear the search", L"ניקוי החיפוש"},
-        {L"Check F-Droid for new apps", L"בדיקת אפליקציות חדשות ב-F-Droid"},
         {L"{0} app", L"אפליקציה אחת"},
         {L"{0} apps", L"{0} אפליקציות"},
         {L"Android apps", L"אפליקציות Android"},
@@ -179,8 +195,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Install an Android app", L"התקנת אפליקציית Android"},
         {L"Installing {0}…", L"מתקין את {0}…"},
         {L"{0} is still being installed.", L"{0} עדיין בהתקנה."},
-        {L"Remove {0}", L"הסרת {0}"},
-        {L"Remove {0}?", L"להסיר את {0}?"},  // an app asks to remove another (the install helper)
+        {L"Remove {0}?", L"להסיר את {0}?"},
         {L"Remove", L"הסרה"},
         {L"{0} was removed.", L"{0} הוסרה."},
         {L"Done", L"סיום"},
@@ -216,6 +231,14 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Speed up ARM apps", L"האצת אפליקציות ARM"},
         {L"Translates ARM code to your PC's code in the background so apps run faster. Runs at low priority.",
          L"ממיר ברקע קוד ARM לקוד של המחשב, כדי שהאפליקציות ירוצו מהר יותר. פועל בעדיפות נמוכה."},
+        {L"Report Google Play as the installer", L"דיווח על Google Play כמקור ההתקנה"},
+        {L"Update apps in the background", L"עדכון אפליקציות ברקע"},
+        {L"While Win.apk is open, even in the background, Google services start for a few minutes every few hours "
+         L"so the Play Store can update your apps, as a phone does. Only on mains power.",
+         L"כל עוד Win.apk פתוחה, גם ברקע, שירותי Google פועלים לכמה דקות כל כמה שעות כדי שחנות Play תוכל לעדכן "
+         L"את האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל."},
+        {L"Apps you install appear to come from Google Play, as some banking apps require.",
+         L"האפליקציות שמתקינים נראות כאילו הותקנו מ-Google Play, כפי שחלק מאפליקציות הבנקים דורשות."},
         {L"Performance", L"ביצועים"},
         {L"Optimizing for this PC…", L"מבצע אופטימיזציה למחשב הזה…"},
         {L"{0} of {1} parts", L"{0} מתוך {1} חלקים"},
@@ -245,7 +268,10 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from the APKMirror page that Download opens.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מדף APKMirror שנפתח בלחיצה על „הורדה”."},
         {L"Google services are ready", L"שירותי Google מוכנים"},
         {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
-        {L"Waiting for the downloads", L"ממתין להורדות"},
+        {L"Download each app to your Downloads folder, or drop it here. Win.apk checks that Google signed it, "
+         L"then installs it.",
+         L"יש להוריד כל אפליקציה לתיקיית ההורדות, או לשחרר אותה כאן. Win.apk בודקת ש-Google חתמה עליה, ואז "
+         L"מתקינה אותה."},
         {L"Checking {0}…", L"בודק את {0}…"},
         {L"To use Google Play, install the following apps as described.", L"כדי להפעיל את חנות Google Play, יש להתקין את האפליקציות הבאות לפי ההנחיות."},
         {L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.", L"ב-{0} יש קוד למעבדי ARM בלבד. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
@@ -255,14 +281,13 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Google Play closed", L"Google Play נסגרה"},
         {L"Google Play didn't start", L"Google Play לא נפתחה"},
         {L"Open Google Play", L"פתיחת Google Play"},
-        {L"Google Play opened in its own window.", L"Google Play נפתחה בחלון נפרד."},
         {L"Google's apps", L"האפליקציות של Google"},
         {L"Installed, {0}", L"מותקנת, {0}"},
         {L"Not installed.", L"לא מותקנת."},
         {L"Win.apk checks that Google signed it, then installs it", L"Win.apk בודקת ש-Google חתמה עליו, ואז מתקינה אותו"},
         {L"Runs the Google Play services, Services Framework and Play Store you install yourself, as apps other "
          L"apps can reach. Only copies signed by Google are trusted. Takes effect when an app starts.",
-         L"מפעיל את Google Play services, ‏Services Framework ו-Play Store שהתקנת בעצמך, כאפליקציות שאפליקציות "
+         L"מפעיל את שירותי Google Play, ‏Services Framework וחנות Play שהתקנת בעצמך, כאפליקציות שאפליקציות "
          L"אחרות יכולות לפנות אליהן. רק עותקים חתומים על ידי Google נחשבים מהימנים. נכנס לתוקף כשאפליקציה "
          L"מופעלת."},
         {L"Signing in…", L"מתבצעת כניסה…"},
@@ -271,7 +296,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Sign in", L"כניסה"},
         {L"Sign in with Google", L"כניסה עם חשבון Google"},
         {L"Add another account", L"הוספת חשבון נוסף"},
-        {L"One account for every app: Google sign-in, Play licence checks and push notifications.",
+        {L"One account for every app: Google sign-in, Play license checks and push notifications.",
          L"חשבון אחד לכל האפליקציות: כניסה עם Google, בדיקת רישיון Play והתראות push."},
         {L"Sign in…", L"כניסה…"},
         {L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your password. The "
@@ -282,7 +307,16 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The account and its tokens are removed from this PC. Apps that used it will ask you to sign in again.",
          L"החשבון והאסימונים שלו יוסרו מהמחשב. אפליקציות שהשתמשו בו יבקשו להתחבר שוב."},
         {L"Signed out of {0}.", L"החשבון {0} נותק."},
+        {L"Device ID for Google", L"מזהה המכשיר עבור Google"},
+        {L"This device isn't Play Protect certified. Google lets you register it to your account so that Google "
+         L"apps sign in.",
+         L"המכשיר הזה אינו מאושר על ידי Play Protect. ‏Google מאפשרת לרשום אותו בחשבון שלך כדי שאפליקציות "
+         L"Google יאפשרו להתחבר."},
+        {L"Register this device", L"רישום המכשיר הזה"},
+        {L"Device ID copied.", L"מזהה המכשיר הועתק."},
         {L"Could not sign out", L"ההתנתקות נכשלה"},
+        {L"{0} could not be read as an Android app. It may be damaged or not fully downloaded; download it again.", L"לא ניתן היה לקרוא את {0} כאפליקציית אנדרואיד. ייתכן שהקובץ פגום או שההורדה לא הושלמה; הורד אותו שוב."},
+        {L"Win.apk could not remove the account from this PC. The log says why.", L"Win.apk לא הצליחה להסיר את החשבון מהמחשב הזה. הסיבה כתובה ביומן."},
         {L"Signed in to Google.", L"הכניסה ל-Google הושלמה."},
         {L"Signed in as {0}.", L"מחובר בתור {0}."},
         {L"No account was added.", L"לא נוסף חשבון."},
@@ -331,40 +365,45 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
         {L"An app", L"אפליקציה"},
         {L"{0} asks to remove it.", L"{0} מבקשת להסיר אותה."},
-        {L"Update {0}?", L"לעדכן את {0}?"},
+        {L"Do you want to update this app?", L"האם לעדכן את האפליקציה הזו?"},
         {L"{0} asks to update it with the copy it has ({1}).", L"{0} מבקשת לעדכן אותה בעותק שיש לה ({1})."},
-        {L"Install {0}?", L"להתקין את {0}?"},
+        {L"Do you want to install this app?", L"האם להתקין את האפליקציה הזו?"},
         {L"{0} asks to install it.", L"{0} מבקשת להתקין אותה."},
+        {L"App installed.", L"האפליקציה הותקנה."},
+        {L"App updated.", L"האפליקציה עודכנה."},
+        {L"App not installed.", L"האפליקציה לא הותקנה."},
+        {L"For your security, your PC currently isn't allowed to install unknown apps from this source.",
+         L"מטעמי אבטחה, המחשב שלך לא מורשה כרגע להתקין אפליקציות לא מוכרות מהמקור הזה."},
+        {L"You can change this in Settings.", L"אפשר לשנות זאת בהגדרות."},
         {L"bytes", L"בתים"},
         {L"Library", L"ספרייה"},
         {L"Store", L"חנות"},
-        {L"Search F-Droid", L"חיפוש ב-F-Droid"},
-        {L"All categories", L"כל הקטגוריות"},
+        {L"Starting the Store…", L"מפעיל את החנות…"},
+        {L"Getting the Store…", L"מוריד את החנות…"},
+        {L"Downloading the Store… {0}%", L"מוריד את החנות… {0}%"},
+        {L"Installing the Store…", L"מתקין את החנות…"},
+        {L"Win.apk's own store, from its page on GitHub. This happens once.",
+         L"החנות של Win.apk, מהדף שלה ב-GitHub. זה קורה פעם אחת."},
+        {L"The Store couldn't be set up", L"לא ניתן היה להכין את החנות"},
+        {L"GitHub could not be reached, or did not answer. Check the internet connection, then try again later.",
+         L"לא ניתן היה להתחבר ל-GitHub, או שלא התקבלה תשובה. בדוק את החיבור לאינטרנט ונסה שוב מאוחר יותר."},
+        {L"GitHub lists no release of the Store that Win.apk can check.",
+         L"ב-GitHub אין גרסה של החנות ש-Win.apk יכולה לבדוק."},
+        {L"The downloaded file is not the one GitHub lists. It was deleted and not installed.",
+         L"הקובץ שהורד אינו זה ש-GitHub מפרט. הוא נמחק ולא הותקן."},
+        {L"Installing it failed. Its log says why.", L"ההתקנה נכשלה. היומן שלה מסביר למה."},
+        {L"The Store closed", L"החנות נסגרה"},
+        {L"The Store didn't start", L"החנות לא נפתחה"},
+        {L"Open the Store", L"פתיחת החנות"},
+        {L"The Store opened in its own window.", L"החנות נפתחה בחלון נפרד."},
+        {L"Google Play opened in its own window.", L"Google Play נפתחה בחלון נפרד."},
+        {L"It's part of Win.apk.", L"היא חלק מ-Win.apk."},
         {L"Install", L"התקנה"},
         {L"Update", L"עדכון"},
-        {L"Getting the app catalog from F-Droid…", L"מוריד את קטלוג האפליקציות מ-F-Droid…"},
-        {L"{0} MB so far. This happens once; later the store opens at once.", L"{0} MB עד עכשיו. זה קורה פעם אחת; בהמשך החנות תיפתח מיד."},
-        {L"Checking F-Droid for new apps…", L"בודק אם יש אפליקציות חדשות ב-F-Droid…"},
-        {L"F-Droid could not be reached", L"לא ניתן להתחבר ל-F-Droid"},
-        {L"Check the internet connection, then try again.", L"בדוק את החיבור לאינטרנט ונסה שוב."},
         {L"Try again", L"ניסיון חוזר"},
-        {L"Try other words, or every category.", L"נסה מילים אחרות, או את כל הקטגוריות."},
-        {L"Downloading {0}…", L"מוריד את {0}…"},
-        {L"Downloading…", L"מוריד…"},
-        {L"Downloading {0} failed. Check the internet connection, then try again.", L"ההורדה של {0} נכשלה. בדוק את החיבור לאינטרנט ונסה שוב."},
-        {L"F-Droid could not be checked for new apps.", L"לא ניתן היה לבדוק אם יש אפליקציות חדשות ב-F-Droid."},
-        {L"Details", L"פרטים"},
-        {L"Version", L"גרסה"},
-        {L"Size", L"גודל"},
-        {L"Updated", L"עודכנה"},
-        {L"License", L"רישיון"},
-        {L"Categories", L"קטגוריות"},
-        {L"Package", L"חבילה"},
-        {L"F-Droid page", L"הדף ב-F-Droid"},
-        {L"The app's description, screenshots and source code.", L"התיאור של האפליקציה, צילומי מסך וקוד המקור."},
         {L"unknown", L"לא ידוע"},
-        {L"Allow", L"אפשר"},
-        {L"Don't allow", L"אל תאפשר"},
+        {L"Allow", L"אישור"},
+        {L"Don't allow", L"לא לאשר"},
         {L"Allow {0} to manage media?", L"לאפשר ל-{0} לנהל מדיה?"},
         {L"Photos and videos", L"תמונות וסרטונים"},
         {L"Music and audio", L"מוזיקה ואודיו"},
@@ -381,7 +420,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Reset", L"איפוס"},
         {L"Window", L"חלון"},
         {L"Window size  ·  {0} × {1} dp", L"גודל החלון  ·  {0} × {1} dp"},
-        {L"The size you last gave the app's window. Reset, it opens at the app window size in Settings again.",
+        {L"The size you last gave the app's window. After a reset, it opens at the app window size in Settings again.",
          L"הגודל האחרון שנתת לחלון של האפליקציה. אחרי איפוס היא תיפתח שוב בגודל חלון האפליקציות שבהגדרות."},
         {L"{0} opens at the app window size in Settings again.", L"{0} תיפתח שוב בגודל חלון האפליקציות שבהגדרות."},
         {L"{0} will ask for its permissions again.", L"{0} תשאל שוב על ההרשאות שלה."},
@@ -415,7 +454,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Display over other apps", L"הצגה מעל אפליקציות אחרות"},
         {L"Install unknown apps", L"התקנת אפליקציות לא מוכרות"},
         {L"Allow {0} to display over other apps?", L"לאפשר ל-{0} להציג מעל אפליקציות אחרות?"},
-        {L"Close", L"סגור"},
+        {L"Close", L"סגירה"},
         {L"Notification access", L"גישה להתראות"},
         {L"Win.apk can't give {0} notification access. Windows has no feed of other apps' notifications for an Android app to read.",
          L"Win.apk לא יכולה לתת ל-{0} גישה להתראות. ב-Windows אין זרם התראות של אפליקציות אחרות שאפליקציית Android תוכל לקרוא."},
@@ -438,7 +477,6 @@ const wchar_t* tr(const wchar_t* en) {
          L"ב-Windows אין הגדרות מערכת של Android ש-{0} תוכל לשנות; זה נחשב כמותר."},
         {L"{0} was stopped, as Android does when a permission is revoked.",
          L"{0} נעצרה, כפי ש-Android עושה כשהרשאה נשללת."},
-        {L"A newer version is out", L"יש גרסה חדשה יותר"},
         {L"Allow {0} to access music and audio on this PC?", L"לאפשר ל-{0} גישה למוזיקה ולאודיו במחשב הזה?"},
         {L"Allow {0} to access photos and videos on this PC?", L"לאפשר ל-{0} גישה לתמונות ולסרטונים במחשב הזה?"},
         {L"Allow {0} to access photos, media, and files on this PC?", L"לאפשר ל-{0} גישה לתמונות, למדיה ולקבצים במחשב הזה?"},
@@ -448,8 +486,8 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Allow {0} to access this PC's location?", L"לאפשר ל-{0} גישה למיקום של המחשב הזה?"},
         {L"Allow {0} to install other apps?", L"לאפשר ל-{0} להתקין אפליקציות אחרות?"},
         {L"Allow {0} to manage all files?", L"לאפשר ל-{0} לנהל את כל הקבצים?"},
-        {L"Also remove accounts and data saved by the app", L"הסר גם חשבונות ומידע שנשמרו על ידי האפליקציה"},
-        {L"Removes the app and its shortcuts.", L"ההסרה מסירה את האפליקציה ואת קיצורי הדרך שלה."},
+        {L"Also remove accounts and data saved by the app", L"להסיר גם חשבונות ונתונים שהאפליקציה שמרה"},
+        {L"Removes the app and its shortcuts.", L"מסיר את האפליקציה ואת קיצורי הדרך שלה."},
         {L"App details", L"פרטי האפליקציה"},
         {L"Apps", L"אפליקציות"},
         {L"Apps save to and open from your Downloads, Pictures, Documents, Music and Videos.", L"אפליקציות שומרות בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך, ופותחות מהן."},
@@ -458,7 +496,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} has no screen to open from a launcher, so on a phone it has no icon either. These are the screens "
          L"other apps can open; the one you choose opens from now on, and App details can change it.",
          L"ל-{0} אין מסך שנפתח ממסך הבית, ולכן גם בטלפון אין לה סמל. אלה המסכים שאפליקציות אחרות יכולות לפתוח; "
-         L"המסך שתבחרו ייפתח מעכשיו, ואפשר לשנות אותו בפרטי האפליקציה."},
+         L"המסך שייבחר ייפתח מעכשיו, ואפשר לשנות אותו בפרטי האפליקציה."},
         {L"{0} cannot be opened", L"לא ניתן לפתוח את {0}"},
         {L"It has no screen to open from a launcher, and none that other apps may open. It works for other apps "
          L"(as a plug-in or a service), which open it themselves.",
@@ -466,15 +504,15 @@ const wchar_t* tr(const wchar_t* en) {
          L"(כתוסף או כשירות), והן פותחות אותה בעצמן."},
         {L"OK", L"אישור"},
         {L"Screen it opens", L"המסך שנפתח"},
-        {L"Asked when it opens", L"נשאל בעת הפתיחה"},
-        {L"The app has no screen to open from a launcher; this is the screen it opens, of those other apps can "
+        {L"Asked when it opens", L"ייבחר בעת הפתיחה"},
+        {L"The app has no screen to open from a launcher, so it opens this one of the screens other apps can "
          L"open.",
          L"לאפליקציה אין מסך שנפתח ממסך הבית; זה המסך שנפתח, מבין אלה שאפליקציות אחרות יכולות לפתוח."},
         {L"Change…", L"שינוי…"},
-        {L"{0} opens {1} from now on.", L"{0} תיפתח מעכשיו ב{1}."},
+        {L"{0} opens {1} from now on.", L"{0} תיפתח מעכשיו במסך „{1}”."},
         {L"Cancelled", L"בוטלה"},
-        {L"Close {0} first, then install it again.", L"קודם סגור את {0}, ואז התקן אותה שוב."},
-        {L"Close {0} first, then remove it.", L"קודם סגור את {0}, ואז הסר אותה."},
+        {L"Close {0} first, then install it again.", L"יש לסגור קודם את {0}, ואז להתקין אותה שוב."},
+        {L"Close {0} first, then remove it.", L"יש לסגור קודם את {0}, ואז להסיר אותה."},
         {L"Closes the app at once, as Force stop does on a phone.", L"סוגר את האפליקציה מיד, כמו \"עצירה בכפייה\" בטלפון."},
         {L"Run files  ·  {0}", L"קבצי ההרצה  ·  {0}"},
         {L"What Win.apk prepared to run the app: {0}", L"מה ש-Win.apk הכינה כדי להריץ את האפליקציה: {0}"},
@@ -484,30 +522,28 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Report a problem with {0}", L"דיווח על בעיה ב-{0}"},
         {L"Open report", L"פתיחת דיווח"},
         {L"Check whether it was already reported", L"בדיקה אם הבעיה כבר דווחה"},
-        {L"Opens a GitHub issue with the app's details and log", L"פותח Issue ב-GitHub עם נתוני האפליקציה והיומן"},
+        {L"Opens a GitHub issue with the app's details and log", L"פותח דיווח ב-GitHub עם פרטי האפליקציה והיומן"},
         {L"A GitHub form opens with the version and system details filled in. The log is selected in its folder "
          L"for you to attach; nothing is sent automatically.",
          L"ייפתח טופס ב-GitHub עם פרטי הגרסה והמערכת. היומן יסומן בתיקייה לצירוף; שום דבר לא נשלח אוטומטית."},
         {L"Couldn't install", L"ההתקנה נכשלה"},
         {L"Couldn't install {0}", L"לא ניתן היה להתקין את {0}"},
-        {L"Drop an Android app here", L"גרור לכאן אפליקציית Android"},
+        {L"Drop an Android app here", L"אפשר לגרור לכאן אפליקציית Android"},
         {L"The reason for each failure is shown below.", L"סיבת הכישלון מוצגת ליד כל אחת."},
         {L"Enter", L"Enter"},
-        {L"Google did not answer. Check the internet connection, then try again.", L"Google לא ענתה. בדוק את החיבור לאינטרנט ונסה שוב."},
+        {L"Google did not answer. Check the internet connection, then try again.", L"Google לא ענתה. יש לבדוק את החיבור לאינטרנט ולנסות שוב."},
         {L"Google sign-in", L"כניסה ל-Google"},
         {L"Hide details", L"הסתרת הפרטים"},
-        {L"In your library", L"בספרייה שלך"},
         {L"Installing {0}", L"מתקין את {0}"},
         {L"Installs asked for by apps", L"התקנות שאפליקציות ביקשו"},
         {L"It can change or delete photos, videos and music that other apps made, without asking you.", L"היא תוכל לשנות או למחוק תמונות, סרטונים ומוזיקה שאפליקציות אחרות יצרו, בלי לשאול אותך."},
         {L"It can read, change and delete every file in your Downloads, Pictures, Documents, Music and Videos.", L"היא תוכל לקרוא, לשנות ולמחוק כל קובץ בתיקיות ההורדות, התמונות, המסמכים, המוזיקה והסרטונים שלך."},
         {L"It's in the Start menu and on the desktop.", L"היא בתפריט התחל ובשולחן העבודה."},
         {L"It's in the Start menu.", L"היא בתפריט התחל."},
-        {L"Keep installing", L"המשך להתקין"},
+        {L"Keep installing", L"המשך ההתקנה"},
         {L"Log - Win.apk", L"יומן - Win.apk"},
         {L"Manage", L"ניהול"},
         {L"No matches", L"אין התאמות"},
-        {L"Not installed", L"לא מותקנת"},
         {L"OK", L"אישור"},
         {L"On Windows such windows stay inside the app's own window.", L"ב-Windows חלונות כאלה נשארים בתוך החלון של האפליקציה."},
         {L"Open .apk, .apkm, .xapk and .apks files with Win.apk", L"פתיחת קובצי ‎.apk, ‎.apkm, ‎.xapk ו-‎.apks באמצעות Win.apk"},
@@ -526,20 +562,24 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The app is in Start > Win.apk Apps either way.", L"האפליקציה נמצאת בכל מקרה בתפריט התחל > Win.apk Apps."},
         {L"The app stopped with an error.", L"האפליקציה נעצרה עם שגיאה."},
         {L"The app's file  ·  {0}", L"קובץ האפליקציה  ·  {0}"},
+        {L"The app's files  ·  {0}", L"קובצי האפליקציה  ·  {0}"},
         {L"The install was cancelled.", L"ההתקנה בוטלה."},
         {L"The install was cancelled. The app stays as it was.", L"ההתקנה בוטלה. האפליקציה נשארת כפי שהייתה."},
         {L"They're in the Start menu.", L"הן בתפריט התחל."},
         {L"This app has no permissions to set.", L"לאפליקציה הזו אין הרשאות להגדיר."},
-        {L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes the arm64-v8a part.", L"בקובץ הזה אין קוד למחשב. התקן את החבילה המלאה (‎.apkm, ‎.xapk או ‎.apks) שכוללת את החלק arm64-v8a."},
+        {L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes the arm64-v8a part.", L"בקובץ הזה אין קוד למחשב. יש להתקין את החבילה המלאה (‎.apkm, ‎.xapk או ‎.apks) שכוללת את החלק arm64-v8a."},
         {L"This log is written the next time the app is opened or installed.", L"היומן ייכתב בפעם הבאה שהאפליקציה תיפתח או תותקן."},
         {L"Troubleshooting", L"פתרון בעיות"},
         {L"Turning a permission off closes {0}.", L"כיבוי הרשאה סוגר את {0}."},
-        {L"What was not installed yet is left out. An app that was being updated stays as it was.", L"מה שעוד לא הותקן לא יותקן. אפליקציה שהתעדכנה נשארת כפי שהייתה."},
+        {L"What was not installed yet is left out. An app that was being updated stays as it was.", L"מה שעוד לא הותקן לא יותקן. אפליקציה שהייתה באמצע עדכון נשארת כפי שהייתה."},
         {L"Win.apk could not convert this app. See the log for details.", L"Win.apk לא הצליחה להמיר את האפליקציה. פרטים נוספים ביומן."},
+        {L"Win.apk could not copy this file into its library. Check that the disk has free space, then try again.", L"Win.apk לא הצליחה להעתיק את הקובץ לספרייה שלה. בדוק שיש מקום פנוי בדיסק ונסה שוב."},
+        {L"Win.apk could not start its runtime. See the log for details.", L"Win.apk לא הצליחה להפעיל את סביבת ההרצה שלה. פרטים נוספים ביומן."},
+        {L"A part of Win.apk is missing or does not load. Install Win.apk again.", L"חלק מ־Win.apk חסר או לא נטען. התקן את Win.apk מחדש."},
         {L"Win.apk still asks you before each app it installs.", L"Win.apk עדיין תשאל אותך לפני כל אפליקציה שתותקן."},
-        {L"Win.apk's runtime is missing. Install Win.apk again.", L"סביבת ההרצה של Win.apk חסרה. התקן את Win.apk מחדש."},
+        {L"Win.apk's runtime is missing. Install Win.apk again.", L"סביבת ההרצה של Win.apk חסרה. יש להתקין את Win.apk מחדש."},
         {L"Removes the app and its shortcuts. You can also remove what it saved.", L"מסיר את האפליקציה ואת קיצורי הדרך שלה. אפשר להסיר גם את מה שהיא שמרה."},
-        {L"or choose Install app  ·  .apk .apkm .xapk .apks", L"או בחר \"התקנת אפליקציה\"  ·  apk, apkm, xapk, apks"},
+        {L"or choose Install app  ·  .apk .apkm .xapk .apks", L"או לבחור „התקנת אפליקציה”  ·  apk, apkm, xapk, apks"},
         {L"{0}  ·  install", L"{0}  ·  התקנה"},
         {L"{0}  ·  last run", L"{0}  ·  הפעלה אחרונה"},
         {L"{0}  ·  run before", L"{0}  ·  ההפעלה הקודמת"},
@@ -552,10 +592,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} of {1} apps are installed", L"{0} מתוך {1} אפליקציות הותקנו"},
         {L"{0} was not installed", L"{0} לא הותקנה"},
         {L"{0}'s permissions", L"ההרשאות של {0}"},
-        {L"Preparing…", L"מתכונן…"},
+        {L"Preparing…", L"בהכנה…"},
         {L"Converting the app's code. This happens once.", L"ממיר את קוד האפליקציה. זה קורה פעם אחת."},
         {L"Getting the app's name and icon…", L"קורא את שם האפליקציה והסמל שלה…"},
         {L"Getting the app ready. This happens once.", L"מכין את האפליקציה. זה קורה פעם אחת."},
+        {L"Getting Win.apk ready. This happens once.", L"מכין את Win.apk. זה קורה פעם אחת."},
         {L"Windows' location settings apply too.", L"גם הגדרות המיקום של Windows חלות."},
         {L"Windows' camera settings apply too.", L"גם הגדרות המצלמה של Windows חלות."},
         {L"Windows' microphone settings apply too.", L"גם הגדרות המיקרופון של Windows חלות."},
@@ -575,7 +616,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Win.apk is up to date (version {0}).", L"Win.apk מעודכנת (גרסה {0})."},
         {L"Version {0} is available.", L"גרסה {0} זמינה."},
         {L"A new version of Win.apk is available: {0}.", L"יש גרסה חדשה של Win.apk: {0}."},
-        {L"Couldn't check for updates. Check the internet connection.", L"לא ניתן היה לבדוק אם יש עדכונים. בדוק את החיבור לאינטרנט."},
+        {L"Couldn't check for updates. Check the internet connection.", L"לא ניתן היה לבדוק אם יש עדכונים. יש לבדוק את החיבור לאינטרנט."},
         {L"What's new", L"מה חדש"},
         {L"What's new in {0}", L"מה חדש בגרסה {0}"},
         {L"Released {0}", L"תאריך פרסום: {0}"},
@@ -587,10 +628,16 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The check reads the list of releases on GitHub. Nothing about you or your apps is sent.", L"הבדיקה קוראת את רשימת הגרסאות ב-GitHub. שום מידע עליך או על האפליקציות שלך אינו נשלח."},
         {L"Downloading Win.apk {0}…", L"מוריד את Win.apk {0}…"},
         {L"Downloading… {0}%", L"מוריד… {0}%"},
-        {L"Couldn't download the update. Check the internet connection.", L"לא ניתן היה להוריד את העדכון. בדוק את החיבור לאינטרנט."},
-        {L"Wait for the installs to finish, then update Win.apk.", L"המתן לסיום ההתקנות, ולאחר מכן עדכן את Win.apk."},
-        {L"Close {0} first: the update replaces files it uses.", L"סגור תחילה את {0}: העדכון מחליף קבצים שהיא משתמשת בהם."},
-        {L"Close the running apps first: the update replaces files they use.", L"סגור תחילה את האפליקציות הפועלות: העדכון מחליף קבצים שהן משתמשות בהם."},
+        {L"Couldn't download the update. Check the internet connection.", L"לא ניתן היה להוריד את העדכון. יש לבדוק את החיבור לאינטרנט."},
+        {L"Checking the Win.apk {0} installer…", L"בודק את תוכנית ההתקנה של Win.apk {0}…"},
+        {L"The downloaded installer is not the one GitHub lists (its SHA-256 differs). It was deleted and not run.", L"תוכנית ההתקנה שהורדה אינה זו ש-GitHub מפרט (סיכום הביקורת SHA-256 שלה שונה). היא נמחקה ולא הופעלה."},
+        {L"The downloaded installer is not of the version offered. It was deleted and not run.", L"תוכנית ההתקנה שהורדה אינה של הגרסה שהוצעה. היא נמחקה ולא הופעלה."},
+        {L"The downloaded installer's signature does not hold. It was deleted and not run.", L"החתימה של תוכנית ההתקנה שהורדה אינה תקפה. היא נמחקה ולא הופעלה."},
+        {L"GitHub gives no SHA-256 checksum of this release's installer, so Win.apk does not download it; its page on GitHub has its files.", L"GitHub אינו מפרסם סיכום ביקורת SHA-256 לתוכנית ההתקנה של גרסה זו, ולכן Win.apk אינה מורידה אותה; הקבצים שלה נמצאים בדף הגרסה ב-GitHub."},
+        {L"Win.apk's installers are not code-signed: an update runs only when its size, its SHA-256 checksum and its version are the ones GitHub lists for the release.", L"תוכניות ההתקנה של Win.apk אינן חתומות בחתימת קוד: עדכון מופעל רק כשהגודל שלו, סיכום הביקורת SHA-256 שלו והגרסה שלו הם אלה ש-GitHub מפרט לגרסה."},
+        {L"Wait for the installs to finish, then update Win.apk.", L"יש להמתין לסיום ההתקנות, ואז לעדכן את Win.apk."},
+        {L"Close {0} first: the update replaces files it uses.", L"יש לסגור קודם את {0}: העדכון מחליף קבצים שהיא משתמשת בהם."},
+        {L"Close the running apps first: the update replaces files they use.", L"יש לסגור קודם את האפליקציות הפועלות: העדכון מחליף קבצים שהן משתמשות בהם."},
         {L"The installer could not be started.", L"לא ניתן היה להפעיל את תוכנית ההתקנה."},
         {L"Debug mode", L"מצב דיבוג"},
         {L"For developers. Apps opened from now on report every thread they have, with its Java and native stack.", L"למפתחים. אפליקציות שייפתחו מעכשיו ידווחו על כל תהליכון שלהן, עם מחסנית ה-Java והמחסנית המקורית שלו."},
@@ -604,18 +651,18 @@ const wchar_t* tr(const wchar_t* en) {
         {L"System", L"מערכת"},
         {L"Not identified", L"לא מזוהים"},
         {L"Looking for running apps…", L"מחפש אפליקציות פועלות…"},
-        {L"No app is running. Open an app and its threads appear here.", L"אין אפליקציה פועלת. פתח אפליקציה והתהליכונים שלה יופיעו כאן."},
-        {L"{0} is not running. Open it and its threads appear here.", L"{0} אינה פועלת. פתח אותה והתהליכונים שלה יופיעו כאן."},
+        {L"No app is running. Open an app and its threads appear here.", L"אין אפליקציה פועלת. כשתיפתח אפליקציה, התהליכונים שלה יופיעו כאן."},
+        {L"{0} is not running. Open it and its threads appear here.", L"{0} אינה פועלת. כשהיא תיפתח, התהליכונים שלה יופיעו כאן."},
         {L"Threads: {0}  ·  Processes: {1}", L"תהליכונים: {0}  ·  תהליכים: {1}"},
         {L"{0} shown", L"מוצגים {0}"},
-        {L"Reopen the app for Java names and stacks", L"פתח את האפליקציה מחדש כדי לראות שמות ומחסניות של Java"},
+        {L"Reopen the app for Java names and stacks", L"יש לפתוח את האפליקציה מחדש כדי לראות שמות ומחסניות של Java"},
         {L"Paused", L"מושהה"},
         {L"Pause", L"השהיה"},
         {L"Resume", L"המשך"},
-        {L"Select a thread to see its stack.", L"בחר תהליכון כדי לראות את המחסנית שלו."},
-        {L"Paused. Resume to see this thread's stack.", L"מושהה. לחץ על המשך כדי לראות את המחסנית של התהליכון."},
+        {L"Select a thread to see its stack.", L"יש לבחור תהליכון כדי לראות את המחסנית שלו."},
+        {L"Paused. Resume to see this thread's stack.", L"מושהה. יש ללחוץ על „המשך” כדי לראות את המחסנית של התהליכון."},
         {L"The thread has ended.", L"התהליכון הסתיים."},
-        {L"This process has no debug agent: it was opened before debug mode was turned on, or it does not answer. Stop the app and open it again to see Java names and stacks.", L"לתהליך הזה אין סוכן דיבוג: הוא נפתח לפני שמצב הדיבוג הופעל, או שאינו עונה. עצור את האפליקציה ופתח אותה שוב כדי לראות שמות ומחסניות של Java."},
+        {L"This process has no debug agent: it was opened before debug mode was turned on, or it does not answer. Stop the app and open it again to see Java names and stacks.", L"לתהליך הזה אין סוכן דיבוג: הוא נפתח לפני שמצב הדיבוג הופעל, או שאינו עונה. יש לעצור את האפליקציה ולפתוח אותה שוב כדי לראות שמות ומחסניות של Java."},
         {L"Stacks are shown for the processes that run the app's code. This one is a helper the app started.", L"מחסניות מוצגות לתהליכים שמריצים את קוד האפליקציה. זהו תהליך עזר שהאפליקציה הפעילה."},
         {L"Search threads: a name, a type, a library", L"חיפוש תהליכונים: שם, סוג, ספרייה"},
         {L"Process", L"תהליך"},
@@ -715,11 +762,6 @@ std::wstring file_name_safe(std::wstring s) {
     return s.empty() ? L"App" : s;
 }
 
-std::wstring lower(std::wstring s) {
-    if (!s.empty()) CharLowerBuffW(&s[0], static_cast<DWORD>(s.size()));
-    return s;
-}
-
 std::wstring format_bytes(uintmax_t n) {
     const wchar_t* units[] = {tr(L"bytes"), L"KB", L"MB", L"GB"};
     double v = static_cast<double>(n);
@@ -750,14 +792,8 @@ std::wstring long_date(const FILETIME& when) {
     return buf;
 }
 
-// FILETIME counts 100 ns from 1601, Java's milliseconds from 1970.
+// FILETIME counts 100 ns from 1601, Unix time from 1970.
 constexpr unsigned long long kUnixEpochFiletime = 116444736000000000ull;
-
-std::wstring java_date(long long ms) {
-    if (ms <= 0) return tr(L"unknown");
-    const unsigned long long t = kUnixEpochFiletime + static_cast<unsigned long long>(ms) * 10000;
-    return long_date(FILETIME{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)});
-}
 
 // The version in launcher.rc, read from the program's own resource.
 std::wstring version() {
@@ -891,24 +927,13 @@ int effective_orientation(const std::wstring& name) {
 
 // The settings' screen size and the app's orientation, in dp: what the runtime
 // started from here is told (apply_runtime_env), and what the starting window
-// is sized by. "Auto" leaves whatever WINAPK_PHONE_SIZE the user set
-// themselves, turned to the orientation; `name` empty (an install) takes the
-// settings' orientation.
+// is sized by. "Auto" is 360x800 dp, turned to the orientation; `name` empty
+// (an install) takes the settings' orientation.
 void runtime_phone_size(const std::wstring& name, int* pw, int* ph) {
     const DWORD i = setting(L"PhoneSize", 0);
     const bool landscape = (name.empty() ? landscape_default() : effective_orientation(name) == kLandscape);
     int w = 360, h = 800;
-    if (i == 0 || i >= std::size(kPhonePresets)) {
-        wchar_t own[64];
-        if (GetEnvironmentVariableW(L"WINAPK_PHONE_SIZE", own, 64) > 0) {
-            int ow = 0, oh = 0;
-            wchar_t x = 0;
-            if (swscanf(own, L"%d%c%d", &ow, &x, &oh) == 3 && ow > 0 && oh > 0) {
-                w = ow;
-                h = oh;
-            }
-        }
-    } else {
+    if (i > 0 && i < std::size(kPhonePresets)) {
         w = kPhonePresets[i].w;
         h = kPhonePresets[i].h;
     }
@@ -927,15 +952,17 @@ void apply_runtime_env(const std::wstring& name) {
 // ---------------------------------------------------------------------------
 // Windows integration: file types and shortcuts
 
-void set_reg_default(const std::wstring& sub, const std::wstring& value) {
+// A string value of HKCU\<sub> (its default value when name is null).
+void set_reg_string(const std::wstring& sub, const wchar_t* name, const std::wstring& value) {
     HKEY key = nullptr;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, sub.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) ==
         ERROR_SUCCESS) {
-        RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+        RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
                        static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
         RegCloseKey(key);
     }
 }
+void set_reg_default(const std::wstring& sub, const std::wstring& value) { set_reg_string(sub, nullptr, value); }
 
 std::wstring reg_default(const std::wstring& sub) {
     wchar_t buf[256] = {};
@@ -958,6 +985,20 @@ void register_file_types(bool force) {
         const std::wstring key = std::wstring(L"Software\\Classes\\") + ext;
         const std::wstring current = reg_default(key);
         if (force || current.empty() || current == L"WinApk.Package") set_reg_default(key, L"WinApk.Package");
+    }
+    // Each file's own app icon as its thumbnail (bin\winapk-shell.dll, windows/shell/apk_thumbnail.cpp), on the
+    // file type so it goes with it; per user, and run by the shell in its isolated surrogate process (no
+    // DisableProcessIsolation). The installer writes the same keys (winapk.iss).
+    const fs::path shell_dll = root() / L"bin" / L"winapk-shell.dll";
+    std::error_code ec;
+    if (fs::exists(shell_dll, ec)) {
+        const std::wstring clsid = L"{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}";
+        const std::wstring server = L"Software\\Classes\\CLSID\\" + clsid;
+        set_reg_default(server, L"Win.apk app file thumbnails");
+        set_reg_default(server + L"\\InprocServer32", shell_dll.wstring());
+        set_reg_string(server + L"\\InprocServer32", L"ThreadingModel", L"Apartment");
+        // IThumbnailProvider's handler key.
+        set_reg_default(L"Software\\Classes\\WinApk.Package\\ShellEx\\{e357fccd-a995-4576-b01f-234630154e96}", clsid);
     }
     SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
 }
@@ -1064,6 +1105,8 @@ std::vector<App> library() {
         if (!e.is_regular_file(ec) || !is_app_file(e.path())) continue;
         const std::wstring name = e.path().stem().wstring();
         if (!fs::exists(label_file(name), ec)) continue;  // not installed (yet)
+        // A bundle beside the app's .apk was being replaced by it (library_files.h): the .apk is the app.
+        if (winapk::launcher::is_bundle_file(e.path()) && fs::exists(library_dir() / (name + L".apk"), ec)) continue;
         apps.push_back({name, label_of(name), e.path()});
     }
     std::sort(apps.begin(), apps.end(), [](const App& a, const App& b) {
@@ -1074,12 +1117,15 @@ std::vector<App> library() {
 }
 
 // Google's Services Framework, Play services and Play Store are system components of Win.apk's Google services,
-// not apps the user opens: the library, its tiles and the shortcuts leave them out (installed_apps.json keeps
-// them, for the runtime and the system broker); their versions show on the Google services setup page, and
-// Google Play in the pane is the Play Store's one way in.
-bool system_package(const std::string& pkg) {
+// and the Store's app (store_app.h) one of Win.apk itself: not apps the user opens from the library. The library,
+// its tiles and the shortcuts leave them out (installed_apps.json keeps them, for the runtime and the system
+// broker); Google's versions show on the Google services setup page, Google Play in the pane is the Play Store's
+// one way in, and the Store in the pane the Store's.
+bool google_package(const std::string& pkg) {
     return pkg == "com.google.android.gsf" || pkg == "com.google.android.gms" || pkg == "com.android.vending";
 }
+
+bool system_package(const std::string& pkg) { return google_package(pkg) || pkg == winapk::launcher::kStorePackage; }
 
 bool system_app(const std::wstring& name) {
     const std::vector<std::string> p = package_of(name);
@@ -1175,6 +1221,64 @@ void apply_aot_clang_env() {
     }
 }
 
+// A failure of the launcher's own, before the runtime could log anything, as a line of the run's or the install's
+// log: "[E] launcher: <what>: <Windows' words> (error N)". The [E] is what log_summary and the failure sentences
+// read.
+std::string launcher_error_line(const std::wstring& what, DWORD err) {
+    wchar_t* msg = nullptr;
+    std::wstring words;
+    if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, err, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), reinterpret_cast<wchar_t*>(&msg), 0,
+                       nullptr) ||
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, err, 0, reinterpret_cast<wchar_t*>(&msg), 0, nullptr)) {
+        words = msg;
+        LocalFree(msg);
+        while (!words.empty() && (words.back() == L'\n' || words.back() == L'\r' || words.back() == L'.'))
+            words.pop_back();
+    }
+    return wide_to_utf8(L"[E] launcher: " + what + L": " + (words.empty() ? L"" : words + L" ") + L"(error " +
+                        std::to_wstring(err) + L")\r\n");
+}
+
+// The same line as a log of its own: `log` is replaced, since no runtime wrote it this time.
+void log_launcher_error(const fs::path& log, const std::wstring& what, DWORD err) {
+    std::error_code ec;
+    fs::create_directories(log.parent_path(), ec);
+    HANDLE f = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    const std::string line = launcher_error_line(what, err);
+    DWORD n = 0;
+    WriteFile(f, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
+// The runtime ended with an NTSTATUS (0xC...): Windows ended it, often before it could write a line (a DLL
+// that does not load stops it before main). Appended to its log, after the runtime's own lines, with what the
+// status means when it is a known one.
+void log_runtime_status(const fs::path& log, DWORD code) {
+    if (log.empty() || code < 0xC0000000u) return;
+    const wchar_t* what = code == 0xC0000135u   ? L"a DLL it needs was not found"
+                          : code == 0xC0000139u ? L"a DLL it needs lacks a function (a mismatched DLL)"
+                          : code == 0xC000007Bu ? L"a DLL it needs is not a valid 64-bit image"
+                          : code == 0xC0000142u ? L"a DLL it needs failed to initialize"
+                          : code == 0xC0000005u ? L"an access violation"
+                          : code == 0xC00000FDu ? L"a stack overflow"
+                          : code == 0xC0000409u ? L"a fail-fast stop (a broken check or a stack buffer overrun)"
+                                                : L"ended by Windows";
+    wchar_t hex[16];
+    swprintf(hex, 16, L"0x%08lX", static_cast<unsigned long>(code));
+    const std::string line =
+        wide_to_utf8(L"[E] launcher: winapk-runtime.exe ended with " + std::wstring(hex) + L" (" + what + L")\r\n");
+    HANDLE f = CreateFileW(log.c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    DWORD n = 0;
+    WriteFile(f, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
 // `name` is the app the runtime opens, for its orientation; empty for an install. The runtime's
 // stdout and stderr go to `log` (none: NUL). `ready`, when given, is the launch handshake's event
 // (win32_window.h, take_launcher_ready_event): the child gets it, and only it and the log, through
@@ -1232,7 +1336,14 @@ HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::w
                                    CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT |
                                        (listed ? EXTENDED_STARTUPINFO_PRESENT : 0),
                                    &env[0], root().c_str(), &si.StartupInfo, &pi);
+    const DWORD err = ok ? 0 : GetLastError();
     if (listed) DeleteProcThreadAttributeList(attrs);
+    if (!ok && out != INVALID_HANDLE_VALUE) {
+        // Else the log stays empty: Show log would say nothing about why the app or the install did not start.
+        const std::string line = launcher_error_line(L"could not start " + runtime_exe().wstring(), err);
+        DWORD n = 0;
+        WriteFile(out, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    }
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
     if (!ok) return nullptr;
     // The app's window may take the foreground from the splash.
@@ -1339,9 +1450,9 @@ DWORD WINAPI run_thread(void* param) {
     AcquireSRWLockShared(&g_proc_lock);
     const bool stopped_early = g_runs.stop_requested(job->name);
     ReleaseSRWLockShared(&g_proc_lock);
+    const fs::path log = stopped_early ? fs::path() : start_run_log(job->name);
     HANDLE p = stopped_early ? nullptr
-                             : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", start_run_log(job->name),
-                                             job->name, ready, job->env);
+                             : start_runtime(L"--apk \"" + job->apk.wstring() + L"\"", log, job->name, ready, job->env);
     DWORD code = 1;
     AcquireSRWLockExclusive(&g_proc_lock);
     if (!p) {
@@ -1362,6 +1473,7 @@ DWORD WINAPI run_thread(void* param) {
         }
         WaitForSingleObject(p, INFINITE);
         GetExitCodeProcess(p, &code);
+        log_runtime_status(log, code);
         AcquireSRWLockExclusive(&g_proc_lock);
         g_runs.ended(job->name, code == 0);
         ReleaseSRWLockExclusive(&g_proc_lock);
@@ -1393,8 +1505,7 @@ void expect_run_end(const std::wstring& name) {
 struct InstallJob {
     fs::path source;
     std::wstring name;
-    fs::path replaces;  // the app's previous APK, when it is updated from one with another extension
-    bool temporary;     // the store's download, removed once it is in the library
+    bool temporary;     // the Store's app as Win.apk downloaded it, removed once it is in the library
 };
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
@@ -1463,11 +1574,25 @@ void cancel_install(const std::wstring& name) {
 }
 
 void write_registry();
+fs::path registry_apk(const std::string& pkg);
+
+// The system broker (winapk-runtime --system, with Google services on) plays Android's system_server, and
+// learns a package as PackageManagerService does: at the commit. Each install, update and removal tells it
+// once the registry holds the change, with the APK the registry names for the package (a removal: the one
+// it named), and waits for it to take the change in (winapk/package_events.h). With no broker running this
+// does nothing: a broker reads the registry when it starts.
+void tell_broker(winapk::package_events::Change change, const std::string& pkg, const fs::path& removed_apk = {},
+                 bool data_removed = false) {
+    const fs::path apk = change == winapk::package_events::kRemoved ? removed_apk : registry_apk(pkg);
+    if (pkg.empty() || apk.empty()) return;
+    winapk::package_events::tell_broker(change, utf8_to_wide(pkg), apk.wstring(), data_removed,
+                                        runtime_exe().wstring());
+}
 
 // Whether the app is running: winapk-runtime holds a named mutex keyed on
 // the app's data folder for as long as it runs the app (claim_single_instance
 // in host/runtime_main.cpp; the key is made the same way here).
-bool app_running(const std::wstring& name) {
+std::wstring app_instance(const std::wstring& name) {
     std::error_code ec;
     std::wstring key = fs::absolute(app_dir(name), ec).lexically_normal().wstring();
     if (ec) key = app_dir(name).wstring();
@@ -1477,7 +1602,11 @@ bool app_running(const std::wstring& name) {
     for (const wchar_t c : key) h = (h ^ static_cast<uint16_t>(c)) * 1099511628211ull;
     wchar_t mutex[48];
     swprintf(mutex, 48, L"Local\\WinApk-app-%016llx", static_cast<unsigned long long>(h));
-    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, mutex);
+    return mutex;
+}
+
+bool app_running(const std::wstring& name) {
+    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, app_instance(name).c_str());
     if (!m) return false;
     const DWORD w = WaitForSingleObject(m, 0);
     if (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED) ReleaseMutex(m);
@@ -1489,17 +1618,46 @@ void remove_app_files(const std::wstring& name);
 struct GoogleApp;
 const GoogleApp* google_app(const std::string& pkg);
 namespace appops {
-bool stop_library_app(const std::wstring& name);
+bool stop_library_app(const std::wstring& name, UINT exit_code = 1);
 }
 
-// Google's three apps are not in the library, so the user has no way to close
-// them: Play services in particular runs whenever an app or the Play Store uses
-// it. Installing a newer copy stops the running one first instead of asking.
-bool stop_google_app_for_install(const std::wstring& name) {
+// Stops every process of the app for its update, as PackageManagerService kills an app it replaces: with exit
+// code 0, so that a library that started it takes the end as the app's own close, not as "stopped with an
+// error". True once none is left.
+bool stop_app_for_update(const std::wstring& name) {
+    if (!appops::stop_library_app(name, 0)) return !app_running(name);
+    expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
+    for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
+    return !app_running(name);
+}
+
+// Whether the app's running process is one the system broker started with no window, to serve another
+// app's bind or broadcast: beside the instance mutex, the runtime's "-pid" mapping holds the holder's pid
+// and its flags (runtime_main.cpp claim_single_instance; 1 is kHolderServiceHost).
+bool runs_as_service_host(const std::wstring& name) {
+    HANDLE map = OpenFileMappingW(FILE_MAP_READ, FALSE, (app_instance(name) + L"-pid").c_str());
+    if (!map) return false;
+    DWORD flags = 0;
+    if (const auto* p = static_cast<const DWORD*>(MapViewOfFile(map, FILE_MAP_READ, 0, 0, 2 * sizeof(DWORD)))) {
+        flags = p[1];
+        UnmapViewOfFile(p);
+    }
+    CloseHandle(map);
+    return (flags & 1) != 0;
+}
+
+// Android kills every process of a package before an install replaces its code (the install's freeze), and
+// the install here would find a running copy's files in use. What runs with no window of the user's goes
+// first: a service host the system broker started (the app's main process or another android:process of
+// it), and Google's three apps, which are not in the library, so the user has no way to close them (Play
+// services runs whenever an app or the Play Store uses it). An app the user has open in a window is left
+// to the user, who closes it and then updates it: false.
+bool stop_app_for_install(const std::wstring& name) {
     std::string pkg;
     for (const wchar_t c : name) pkg += static_cast<char>(c < 0x80 ? c : '?');
-    if (!google_app(pkg) || !appops::stop_library_app(name)) return false;
-    expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
+    if (app_running(name) && !google_app(pkg) && !runs_as_service_host(name)) return false;
+    if (appops::stop_library_app(name))
+        expect_run_end(name);  // the Play Store in a window of its own: stopped for its update, not "an error"
     for (int i = 0; i < 100 && app_running(name); ++i) Sleep(100);  // its mutex goes with the process
     return !app_running(name);
 }
@@ -1531,61 +1689,131 @@ struct InstallClaim {
     InstallClaim& operator=(const InstallClaim&) = delete;
 };
 
-// An update that was cut off (the process killed, the PC switched off) left the app's previous APK
-// beside it as <name><ext>.previous, and in its place a new one that may be half copied and was never
-// converted. Each such app gets its previous APK (and icon) back, as a failed update does. A new app
-// whose install was cut off left its APK in the library with no name beside it, and whatever the install
-// had made of it: those go, as after a failed install. An app whose install is alive in another process
-// is left to it. True when something was put back or removed.
+// The install's record (android\data\app\.<name>.installed: the installed base.apk's path, in UTF-8), which
+// the runtime writes once it has installed the app from its library file (runtime_main.cpp, install_app).
+fs::path install_record(const std::wstring& name) {
+    return data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed");
+}
+
+// The installed copy the record names (the folder of its base.apk); empty when there is none.
+fs::path installed_copy(const std::wstring& name) {
+    std::ifstream f(install_record(name), std::ios::binary);
+    std::string path((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (path.empty()) return {};
+    const fs::path base(utf8_to_wide(path));
+    std::error_code ec;
+    return fs::is_regular_file(base, ec) ? base.parent_path() : fs::path();
+}
+
+// The bundle the app was installed from, replaced by hard links to its installed APKs (library_files.h)
+// when its installed copy was made from this very file: AppInstall's stamp names its size and time. A copy
+// made from another file (a failed update's, another library name's of the same package) is no copy of it.
+// Returns the app's file now: the .apk, or the bundle when it stays.
+fs::path keep_installed_apks(const std::wstring& name, const fs::path& bundle) {
+    const fs::path copy = installed_copy(name);
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (copy.empty() || !GetFileAttributesExW(bundle.c_str(), GetFileExInfoStandard, &a)) return bundle;
+    const unsigned long long t =
+        (static_cast<unsigned long long>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+    const uintmax_t size = (static_cast<uintmax_t>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+    std::string stamp;
+    {
+        std::ifstream f(copy / L".installed", std::ios::binary);
+        stamp.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    }
+    // Java's FileTime.toMillis: milliseconds since 1970, rounded down.
+    if (t < kUnixEpochFiletime ||
+        !winapk::launcher::stamp_matches(stamp, size, static_cast<long long>((t - kUnixEpochFiletime) / 10000)))
+        return bundle;
+    const fs::path apk = winapk::launcher::keep_installed(bundle, copy);
+    return apk.empty() ? bundle : apk;
+}
+
+// An update that was cut off (the process killed, the PC switched off) left the app's previous files beside
+// the new ones as <entry>.previous (library_files.h), and in their place a new file that may be half copied
+// and was never converted. Each such app gets its previous files (and icon) back, as a failed update does,
+// and is installed again from them at its next start. A new app whose install was cut off left its file in
+// the library with no name beside it, and whatever the install had made of it: those go, as after a failed
+// install. An installed app still kept as a bundle (from a library older than library_files.h's layout, or
+// an install cut off while its links were made) is replaced by links to its installed APKs, once its
+// installed copy is of that bundle: else it stays until a start installs it again. An app whose install is
+// alive in another process is left to it, and a running app as it is. True when something changed.
 bool recover_interrupted_installs() {
     bool recovered = false;
     std::error_code ec;
-    std::vector<fs::path> kept, files;
+    std::set<std::wstring> set_aside;
+    std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
-        if (e.path().extension() == L".previous") kept.push_back(e.path());
-        else if (e.is_regular_file(ec) && is_app_file(e.path())) files.push_back(e.path());
+        if (e.path().extension() == L".previous") {
+            fs::path entry = e.path();
+            entry.replace_extension();  // <name><ext>
+            set_aside.insert(entry.stem().wstring());
+        } else if (e.is_regular_file(ec) && is_app_file(e.path())) {
+            files.push_back(e.path());
+        }
     }
-    for (const fs::path& previous : kept) {
-        fs::path target = previous;
-        target.replace_extension();  // <name><ext>
-        const std::wstring name = target.stem().wstring();
+    for (const std::wstring& name : set_aside) {
         const InstallClaim claim(name, false);
         if (!claim.held) continue;
-        if (MoveFileExW(previous.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING)) recovered = true;
+        if (winapk::launcher::put_back(library_dir(), name)) recovered = true;
+        fs::remove(install_record(name), ec);  // the installed copy may be the cut-off one's
         MoveFileExW((app_dir(name) / L"icon.png.previous").c_str(), (app_dir(name) / L"icon.png").c_str(),
                     MOVEFILE_REPLACE_EXISTING);
     }
     for (const fs::path& file : files) {
         const std::wstring name = file.stem().wstring();
-        if (fs::exists(label_file(name), ec)) continue;  // installed
+        if (!fs::exists(file, ec)) continue;  // a cut-off update's, removed above
+        if (fs::exists(label_file(name), ec)) {  // installed
+            if (!winapk::launcher::is_bundle_file(file)) continue;
+            const InstallClaim claim(name, false);
+            if (!claim.held || app_running(name)) continue;
+            const fs::path kept = keep_installed_apks(name, file);
+            if (kept == file) continue;
+            recovered = true;
+            const App app{name, label_of(name), kept};  // its shortcuts named the bundle
+            const fs::path desktop = known_folder(FOLDERID_Desktop) / (file_name_safe(app.label) + L".lnk");
+            make_app_shortcuts(app, fs::exists(desktop, ec));
+            continue;
+        }
         const InstallClaim claim(name, false);
         if (!claim.held) continue;
-        if (fs::remove(file, ec)) recovered = true;
+        for (const fs::path& p : winapk::launcher::app_entries(library_dir(), name, false)) fs::remove_all(p, ec);
+        recovered = true;
         remove_app_files(name);
     }
     return recovered;
 }
 
-// Copies `source` into the library as <name><ext> and installs it there: the
-// install, the code conversion, the name, icon and package, the shortcuts.
-// `replaces` is the app's previous APK, removed once the new one is in. An
-// app that is running is left alone (its files are in use): false, with
-// `*running` set. An update that fails or is cancelled puts the previous APK
-// back; a new app that does leaves nothing behind.
-bool install_into_library(const fs::path& source, const std::wstring& name, const fs::path& replaces,
-                          bool* running) {
-    *running = app_running(name) && !stop_google_app_for_install(name);
+// Copies `source` into the library as <name><ext> and installs it there: the install, the code conversion,
+// the name, icon and package, the shortcuts. A bundle is then replaced by links to its installed APKs, so
+// the library keeps the app once (library_files.h). The app's files from before are set aside first and
+// removed once the new one is in, whatever its extension was. An app open in a window is left alone (its
+// files are in use): false, with `*running` set; what runs of it with no window is stopped first
+// (stop_app_for_install). An update that fails or is cancelled puts the previous files back; a new app that
+// does leaves nothing behind. Once the registry has the app, a running system broker is told (tell_broker).
+bool install_into_library(const fs::path& source, const std::wstring& name, bool* running) {
+    *running = !stop_app_for_install(name);
     if (*running) return false;
     const InstallClaim claim(name, true);  // until this returns: see recover_interrupted_installs
     std::error_code ec;
     fs::create_directories(library_dir(), ec);
     const fs::path target = library_dir() / (name + source.extension().wstring());
     const bool update = fs::exists(label_file(name), ec);
-    const fs::path kept = target.wstring() + L".previous";
+    // The library's own file again (opened from the library folder): installed again as it is, with its splits.
     const bool same = fs::equivalent(source, target, ec);
-    const bool backed_up = !same && fs::exists(target, ec) &&
-                           MoveFileExW(target.c_str(), kept.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
-    bool ok = same || CopyFileW(source.c_str(), target.c_str(), FALSE) != 0;
+    // The install must run: a record newer than the incoming file's date (a copy keeps the date it was
+    // downloaded on) would have the runtime take the installed copy for this file's.
+    fs::remove(install_record(name), ec);
+    // Never a write over a kept file: it is the installed APK itself (library_files.h).
+    bool ok = same;
+    // The runtime does not run when these fail, so nothing else would write this install's log.
+    if (!ok && !winapk::launcher::set_aside(library_dir(), name)) {
+        log_launcher_error(install_log(name), L"could not set the app's present files aside in " +
+                                                  library_dir().wstring(), GetLastError());
+    } else if (!ok && !(ok = CopyFileW(source.c_str(), target.c_str(), TRUE) != 0)) {
+        log_launcher_error(install_log(name), L"could not copy " + source.wstring() + L" to " + target.wstring(),
+                           GetLastError());
+    }
     // The install writes the new version's icon first (so that it shows while the code is converted):
     // an update keeps the app's own beside it, to put back if the update does not go through.
     const fs::path icon = app_dir(name) / L"icon.png", icon_kept = app_dir(name) / L"icon.png.previous";
@@ -1599,6 +1827,7 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
             ReleaseSRWLockExclusive(&g_installs_lock);
             WaitForSingleObject(p, INFINITE);
             GetExitCodeProcess(p, &code);
+            log_runtime_status(install_log(name), code);
             AcquireSRWLockExclusive(&g_installs_lock);
             g_installs.detach(name);
             ReleaseSRWLockExclusive(&g_installs_lock);
@@ -1618,15 +1847,24 @@ bool install_into_library(const fs::path& source, const std::wstring& name, cons
     if (icon_backed_up && !ok) MoveFileExW(icon_kept.c_str(), icon.c_str(), MOVEFILE_REPLACE_EXISTING);
     else if (icon_backed_up) fs::remove(icon_kept, ec);
     if (ok) {
-        if (backed_up) fs::remove(kept, ec);
-        if (!replaces.empty() && replaces != target) fs::remove(replaces, ec);
-        make_app_shortcuts({name, label_of(name), target}, setting(L"DesktopShortcut", 1) != 0);
+        const fs::path kept = winapk::launcher::is_bundle_file(target) ? keep_installed_apks(name, target) : target;
+        winapk::launcher::drop_previous(library_dir(), name);
+        make_app_shortcuts({name, label_of(name), kept}, setting(L"DesktopShortcut", 1) != 0);
     } else if (!same) {
-        fs::remove(target, ec);
-        if (backed_up) MoveFileExW(kept.c_str(), target.c_str(), MOVEFILE_REPLACE_EXISTING);
-        else if (!update) remove_app_files(name);
+        // Installed again from the files put back at their next start: the installed copy may be this one's.
+        fs::remove(install_record(name), ec);
+        if (!winapk::launcher::put_back(library_dir(), name)) {
+            for (const fs::path& p : winapk::launcher::app_entries(library_dir(), name, false))
+                fs::remove_all(p, ec);
+            if (!update) remove_app_files(name);
+        }
     }
     write_registry();
+    if (ok) {
+        const std::vector<std::string> pkg = package_of(name);
+        if (!pkg.empty() && !pkg[0].empty())
+            tell_broker(update ? winapk::package_events::kReplaced : winapk::package_events::kAdded, pkg[0]);
+    }
     return ok;
 }
 
@@ -1640,7 +1878,7 @@ DWORD WINAPI install_thread(void* param) {
     ReleaseSRWLockExclusive(&g_installs_lock);
     if (started) {
         PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
-        ok = install_into_library(job->source, job->name, job->replaces, &running);
+        ok = install_into_library(job->source, job->name, &running);
     }
     AcquireSRWLockExclusive(&g_installs_lock);
     g_installs.ended(job->name, ok, running);
@@ -1654,24 +1892,7 @@ DWORD WINAPI install_thread(void* param) {
 }
 
 // ---------------------------------------------------------------------------
-// The store: F-Droid's catalog, its icons and its APKs
-
-constexpr wchar_t kRepo[] = L"https://f-droid.org/repo/";
-// In 100 ns units; f-droid.org publishes a few times a day.
-constexpr unsigned long long kCatalogMaxAge = 6ull * 3600 * 10000000;
-
-fs::path store_dir() { return data_dir() / L"store"; }
-fs::path catalog_file() { return store_dir() / L"catalog.tsv"; }
-fs::path catalog_etag_file() { return store_dir() / L"catalog.etag"; }
-fs::path store_icon_file(const std::string& pkg) { return store_dir() / L"icons" / (utf8_to_wide(pkg) + L".png"); }
-fs::path downloads_dir() { return store_dir() / L"downloads"; }
-
-struct StoreApp {
-    std::string pkg, icon, apk, sha256;  // icon: a URL; apk: the file's name in the repo
-    std::wstring name, summary, name_he, summary_he, version, license;
-    std::vector<std::wstring> categories;
-    long long code = 0, size = 0, updated = 0;  // versionCode, bytes, ms since 1970
-};
+// HTTP: WinHTTP downloads, and a reader for the JSON GitHub answers with
 
 // A WinHTTP session; `agent` is the User-Agent its requests send.
 HINTERNET open_http_session(const wchar_t* agent) {
@@ -1681,7 +1902,7 @@ HINTERNET open_http_session(const wchar_t* agent) {
         s = WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     }
     if (s) {
-        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // the catalog is 70 MB of JSON, a fifth of that gzipped
+        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // GitHub's JSON comes gzipped
         WinHttpSetOption(s, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
         DWORD per_server = 8;
         WinHttpSetOption(s, WINHTTP_OPTION_MAX_CONNS_PER_SERVER, &per_server, sizeof(per_server));
@@ -1690,8 +1911,7 @@ HINTERNET open_http_session(const wchar_t* agent) {
     return s;
 }
 
-// One WinHTTP session for the store, so the icons' requests reuse their
-// connections to f-droid.org rather than each making its own.
+// The default WinHTTP session, for a request that names none.
 HINTERNET http_session() {
     static const HINTERNET session = open_http_session(L"Win.apk");
     return session;
@@ -1700,8 +1920,8 @@ HINTERNET http_session() {
 // GETs `url` into `out`, through <out>.part so a broken download never looks
 // whole. With an `etag` the server may answer 304, not modified. `progress`
 // gets the bytes so far and the total (0 when unknown); `headers` are more
-// request headers ("Name: value", CRLF between); `session` defaults to the
-// store's. Returns the HTTP status, 0 when the server could not be reached or
+// request headers ("Name: value", CRLF between); `session` defaults to
+// http_session(). Returns the HTTP status, 0 when the server could not be reached or
 // the body broke off.
 int http_get(const std::wstring& url, const fs::path& out, const std::wstring& etag, std::wstring* new_etag,
              const std::function<void(uint64_t, uint64_t)>& progress, const std::wstring& headers = L"",
@@ -1732,10 +1952,26 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
                             WINHTTP_HEADER_NAME_BY_INDEX, &code, &size, WINHTTP_NO_HEADER_INDEX);
         status = static_cast<int>(code);
         if (status == 200) {
-            DWORD total = 0;
-            size = sizeof(total);
-            WinHttpQueryHeaders(request, WINHTTP_QUERY_CONTENT_LENGTH | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &total, &size, WINHTTP_NO_HEADER_INDEX);
+            // What the body must come to (updates.h expected_body): the framing headers read as text, whole (a
+            // number query stops at 4 GB, and a repeated header comes joined with commas). The session inflates
+            // gzip and deflate, so an encoded body's Content-Length is not the bytes read.
+            auto header = [request](DWORD query) {
+                DWORD bytes = 0;
+                WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, WINHTTP_NO_OUTPUT_BUFFER, &bytes,
+                                    WINHTTP_NO_HEADER_INDEX);
+                if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes == 0 || bytes > 64 * 1024)
+                    return std::wstring();
+                std::wstring s(bytes / sizeof(wchar_t) + 1, L'\0');
+                if (!WinHttpQueryHeaders(request, query, WINHTTP_HEADER_NAME_BY_INDEX, s.data(), &bytes,
+                                         WINHTTP_NO_HEADER_INDEX))
+                    return std::wstring();
+                s.resize(bytes / sizeof(wchar_t));
+                return s;
+            };
+            const winapk::launcher::BodyLength body = winapk::launcher::expected_body(
+                header(WINHTTP_QUERY_CONTENT_LENGTH), header(WINHTTP_QUERY_CONTENT_ENCODING),
+                header(WINHTTP_QUERY_TRANSFER_ENCODING), /*decoded=*/true);
+            const uint64_t total = body.exact() ? body.bytes : 0;  // for progress: 0 when unknown
             if (new_etag) {
                 wchar_t tag[256] = {};
                 size = sizeof(tag);
@@ -1749,18 +1985,25 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
             const fs::path part = out.wstring() + L".part";
             HANDLE f =
                 CreateFileW(part.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            bool ok = f != INVALID_HANDLE_VALUE;
+            bool ok = f != INVALID_HANDLE_VALUE && body.kind != winapk::launcher::BodyLength::kBroken;
             uint64_t got = 0;
             std::vector<char> buf(1 << 16);
-            for (DWORD n = 0; ok; got += n) {
+            while (ok) {
+                DWORD n = 0;
                 ok = WinHttpReadData(request, buf.data(), static_cast<DWORD>(buf.size()), &n) != 0;
                 if (!ok || n == 0) break;
+                got += n;
+                // More than the server announced: not the file asked for; stop reading it at once.
+                if (body.exact() && got > body.bytes) ok = false;
                 DWORD written = 0;
-                ok = WriteFile(f, buf.data(), n, &written, nullptr) && written == n;
-                if (ok && progress) progress(got + n, total);
+                ok = ok && WriteFile(f, buf.data(), n, &written, nullptr) && written == n;
+                if (ok && progress) progress(got, total);
             }
             if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
-            ok = ok && got > 0 && MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+            // Kept only whole: never empty, and at the announced length when there is one (a connection closed
+            // early ends a read without an error).
+            ok = ok && got > 0 && body.whole(got) &&
+                 MoveFileExW(part.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
             if (!ok) {
                 fs::remove(part, ec);
                 status = 0;
@@ -1772,7 +2015,7 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
     return status;
 }
 
-// The file's SHA-256 in lower-case hex, as F-Droid's index gives it.
+// The file's SHA-256 in lower-case hex, as GitHub's asset digests give it.
 std::string sha256_of(const fs::path& file) {
     std::string out;
     BCRYPT_ALG_HANDLE alg = nullptr;
@@ -1803,9 +2046,9 @@ std::string sha256_of(const fs::path& file) {
     return out;
 }
 
-// A pull parser for the one JSON file the store reads, F-Droid's
-// index-v1.json: it walks the 70 MB once without building a tree, and the
-// callers keep only the fields the store shows.
+// A pull parser for the JSON the launcher reads (GitHub's releases, the
+// installed-apps registry): it walks the text once without building a tree,
+// and the callers keep only the fields they need.
 struct Json {
     const char* p;
     const char* end;
@@ -1923,356 +2166,17 @@ struct Json {
         else if (p < end && *p == '[') array([this] { skip(); });
         else scalar(nullptr);
     }
-    std::vector<std::string> strings() {
-        std::vector<std::string> out;
-        array([&] {
-            out.emplace_back();
-            str(&out.back());
-        });
-        return out;
-    }
 };
-
-// One APK of an app in the index.
-struct IndexApk {
-    std::string file, sha256, version;
-    long long code = 0, size = 0;
-    bool arm_only = false;  // native code for arm64 and not x86_64: it runs, translated, but an x86_64 build is better
-};
-
-// The fields of index-v1.json's app entry the store keeps; the names and
-// summaries per language come from `localized` when the entry has none of
-// its own.
-struct IndexApp {
-    std::string pkg, name, summary, name_he, summary_he, icon, license, suggested, updated;
-    std::vector<std::string> categories;
-};
-
-void read_index_app(Json& j, IndexApp* a) {
-    std::string top_icon, any_icon_lang, any_icon;
-    std::map<std::string, std::pair<std::string, std::string>> names;  // language: name, summary
-    j.object([&](const std::string& k) {
-        if (k == "packageName") j.str(&a->pkg);
-        else if (k == "name") j.str(&a->name);
-        else if (k == "summary") j.str(&a->summary);
-        else if (k == "icon") j.str(&top_icon);
-        else if (k == "license") j.str(&a->license);
-        else if (k == "suggestedVersionCode") j.scalar(&a->suggested);
-        else if (k == "lastUpdated") j.scalar(&a->updated);
-        else if (k == "categories") a->categories = j.strings();
-        else if (k == "localized") {
-            j.object([&](const std::string& lang) {
-                std::string name, summary, icon;
-                j.object([&](const std::string& f) {
-                    if (f == "name") j.str(&name);
-                    else if (f == "summary") j.str(&summary);
-                    else if (f == "icon") j.str(&icon);
-                    else j.skip();
-                });
-                if (!icon.empty() && (any_icon.empty() || lang == "en-US")) any_icon_lang = lang, any_icon = icon;
-                names[lang] = {name, summary};
-            });
-        } else {
-            j.skip();
-        }
-    });
-    auto pick = [&](std::string* out, bool summary, std::initializer_list<const char*> langs, bool any) {
-        for (const char* lang : langs) {
-            const auto it = names.find(lang);
-            const std::string& v = it == names.end() ? std::string() : summary ? it->second.second : it->second.first;
-            if (out->empty() && !v.empty()) *out = v;
-        }
-        for (const auto& n : names) {
-            if (!any || !out->empty()) break;
-            *out = summary ? n.second.second : n.second.first;
-        }
-    };
-    pick(&a->name, false, {"en-US", "en", "en-GB"}, true);
-    pick(&a->summary, true, {"en-US", "en", "en-GB"}, true);
-    pick(&a->name_he, false, {"he", "iw", "he-IL", "iw-IL"}, false);
-    pick(&a->summary_he, true, {"he", "iw", "he-IL", "iw-IL"}, false);
-    if (!top_icon.empty()) a->icon = wide_to_utf8(kRepo) + "icons-240/" + top_icon;
-    else if (!any_icon.empty()) a->icon = wide_to_utf8(kRepo) + a->pkg + "/" + any_icon_lang + "/" + any_icon;
-}
-
-// An APK entry; false when it cannot run here: native code for neither
-// x86_64 nor arm64-v8a (Win.apk translates arm64), or no SHA-256 to check.
-bool read_index_apk(Json& j, IndexApk* apk) {
-    std::string hash_type, code, size;
-    std::vector<std::string> abis;
-    j.object([&](const std::string& k) {
-        if (k == "apkName") j.str(&apk->file);
-        else if (k == "hash") j.str(&apk->sha256);
-        else if (k == "hashType") j.str(&hash_type);
-        else if (k == "versionName") j.str(&apk->version);
-        else if (k == "versionCode") j.scalar(&code);
-        else if (k == "size") j.scalar(&size);
-        else if (k == "nativecode") abis = j.strings();
-        else j.skip();
-    });
-    apk->code = std::atoll(code.c_str());
-    apk->size = std::atoll(size.c_str());
-    const bool x64 = std::find(abis.begin(), abis.end(), "x86_64") != abis.end();
-    const bool arm64 = std::find(abis.begin(), abis.end(), "arm64-v8a") != abis.end();
-    apk->arm_only = arm64 && !x64;
-    return (abis.empty() || x64 || arm64) && hash_type == "sha256" && apk->sha256.size() == 64 && !apk->file.empty();
-}
-
-std::string tsv_field(std::string s) {
-    for (char& c : s) {
-        if (c == '\t' || c == '\n' || c == '\r') c = ' ';
-    }
-    return s;
-}
-
-// Turns index-v1.json into catalog.tsv: a line per app that can run here,
-// with the APK the store installs. That is F-Droid's suggested version (the
-// newest, unless it marks a newer one as not ready) and, where an app is
-// built per ABI, its x86_64 build. Returns the number of apps.
-size_t convert_index(const fs::path& json_file, const fs::path& out) {
-    std::string json;
-    {
-        std::ifstream f(json_file, std::ios::binary);
-        json.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    }
-    Json j{json.data(), json.data() + json.size()};
-    std::vector<IndexApp> apps;
-    std::map<std::string, std::vector<IndexApk>> apks;
-    j.object([&](const std::string& key) {
-        if (key == "apps") {
-            j.array([&] {
-                apps.emplace_back();
-                read_index_app(j, &apps.back());
-            });
-        } else if (key == "packages") {
-            j.object([&](const std::string& pkg) {
-                std::vector<IndexApk>& list = apks[pkg];
-                j.array([&] {
-                    IndexApk apk;
-                    if (read_index_apk(j, &apk)) list.push_back(apk);
-                });
-            });
-        } else {
-            j.skip();
-        }
-    });
-    if (!j.ok) return 0;
-    std::string text = "winapk-catalog 1\n";
-    size_t count = 0;
-    for (const IndexApp& a : apps) {
-        const auto it = apks.find(a.pkg);
-        if (a.pkg.empty() || a.name.empty() || it == apks.end() || it->second.empty()) continue;
-        const long long suggested = std::atoll(a.suggested.c_str());
-        const IndexApk* best = nullptr;
-        for (int pass = 0; pass < 2 && !best; ++pass) {  // the suggested version or older, else any
-            for (const IndexApk& apk : it->second) {
-                if (pass == 0 && suggested > 0 && apk.code > suggested) continue;
-                if (!best || apk.code > best->code) best = &apk;
-            }
-        }
-        if (best->arm_only) {
-            for (const IndexApk& apk : it->second) {
-                if (!apk.arm_only && apk.version == best->version) best = &apk;
-            }
-        }
-        std::string cats;
-        for (const std::string& c : a.categories) cats += (cats.empty() ? "" : ";") + c;
-        const std::string fields[] = {a.pkg, std::to_string(best->code), std::to_string(best->size), a.updated,
-                                      best->file, best->sha256, a.icon, best->version, a.license, cats,
-                                      a.name, a.summary, a.name_he, a.summary_he};
-        for (size_t i = 0; i < std::size(fields); ++i) text += (i ? "\t" : "") + tsv_field(fields[i]);
-        text += "\n";
-        ++count;
-    }
-    const fs::path tmp = out.wstring() + L".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f << text;
-        if (!f) return 0;
-    }
-    return count && MoveFileExW(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) ? count : 0;
-}
-
-std::vector<StoreApp> read_catalog() {
-    std::vector<StoreApp> out;
-    std::ifstream f(catalog_file(), std::ios::binary);
-    std::string line;
-    if (!std::getline(f, line) || line != "winapk-catalog 1") return out;
-    while (std::getline(f, line)) {
-        std::vector<std::string> v;
-        for (size_t from = 0;;) {
-            const size_t tab = line.find('\t', from);
-            v.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
-            if (tab == std::string::npos) break;
-            from = tab + 1;
-        }
-        if (v.size() != 14) continue;
-        StoreApp a;
-        a.pkg = v[0];
-        a.code = std::atoll(v[1].c_str());
-        a.size = std::atoll(v[2].c_str());
-        a.updated = std::atoll(v[3].c_str());
-        a.apk = v[4];
-        a.sha256 = v[5];
-        a.icon = v[6];
-        a.version = utf8_to_wide(v[7]);
-        a.license = utf8_to_wide(v[8]);
-        for (size_t from = 0; from < v[9].size();) {
-            const size_t semi = (std::min)(v[9].find(';', from), v[9].size());
-            a.categories.push_back(utf8_to_wide(v[9].substr(from, semi - from)));
-            from = semi + 1;
-        }
-        a.name = utf8_to_wide(v[10]);
-        a.summary = utf8_to_wide(v[11]);
-        a.name_he = utf8_to_wide(v[12]);
-        a.summary_he = utf8_to_wide(v[13]);
-        out.push_back(std::move(a));
-    }
-    return out;
-}
-
-unsigned long long file_age(const fs::path& p) {
-    WIN32_FILE_ATTRIBUTE_DATA a{};
-    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a)) return ~0ull;
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    const auto t = [](const FILETIME& f) {
-        return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime;
-    };
-    return t(now) > t(a.ftLastWriteTime) ? t(now) - t(a.ftLastWriteTime) : 0;
-}
-
-void touch(const fs::path& p) {
-    HANDLE f = CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    SetFileTime(f, nullptr, nullptr, &now);
-    CloseHandle(f);
-}
-
-enum { kCatalogList, kCatalogDone, kCatalogFailed };
-
-// Shows the catalog kept from last time, then fetches F-Droid's index when
-// that is older than kCatalogMaxAge (or `param` asks to), unless the server
-// says it has not changed.
-DWORD WINAPI catalog_thread(void* param) {
-    const bool force = param != nullptr;
-    std::error_code ec;
-    fs::create_directories(store_dir(), ec);
-    // A kept catalog with no app in it (cut short, emptied) is none: it is fetched whole, without its ETag,
-    // which would only get "not modified" for the list that is missing.
-    std::vector<StoreApp> kept;
-    if (fs::exists(catalog_file(), ec)) kept = read_catalog();
-    const bool have = !kept.empty();
-    if (have) {
-        PostMessageW(g_main, kStoreCatalog, kCatalogList,
-                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(std::move(kept))));
-    }
-    int result = kCatalogDone;
-    if (!have || force || file_age(catalog_file()) > kCatalogMaxAge) {
-        std::wstring etag, new_etag;
-        if (have) {
-            std::ifstream f(catalog_etag_file(), std::ios::binary);
-            std::string s;
-            std::getline(f, s);
-            etag = utf8_to_wide(s);
-        }
-        const fs::path raw = store_dir() / L"index-v1.json";
-        ULONGLONG last = 0;
-        const int status = http_get(std::wstring(kRepo) + L"index-v1.json", raw, etag, &new_etag,
-                                    [&](uint64_t got, uint64_t) {
-                                        if (GetTickCount64() - last < 100) return;
-                                        last = GetTickCount64();
-                                        PostMessageW(g_main, kStoreProgress, static_cast<WPARAM>(got >> 10), 0);
-                                    });
-        if (status == 304) {
-            touch(catalog_file());
-        } else if (status == 200 && convert_index(raw, catalog_file())) {
-            std::ofstream(catalog_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
-            PostMessageW(g_main, kStoreCatalog, kCatalogList,
-                         reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
-        } else {
-            result = kCatalogFailed;
-        }
-        fs::remove(raw, ec);
-    }
-    PostMessageW(g_main, kStoreCatalog, result, 0);
-    return 0;
-}
-
-enum { kIconFailed, kIconSaved, kIconDropped };
-
-// Icons are fetched by a few threads from a queue, the newest request first:
-// the cards on screen now come before those scrolled past.
-SRWLOCK g_icon_lock = SRWLOCK_INIT;
-CONDITION_VARIABLE g_icon_wake = CONDITION_VARIABLE_INIT;
-std::vector<std::pair<std::string, std::string>> g_icon_queue;  // package, URL
-int g_icon_threads = 0;
-
-DWORD WINAPI icon_thread(void*) {
-    for (;;) {
-        AcquireSRWLockExclusive(&g_icon_lock);
-        while (g_icon_queue.empty()) SleepConditionVariableSRW(&g_icon_wake, &g_icon_lock, INFINITE, 0);
-        const auto [pkg, url] = g_icon_queue.back();
-        g_icon_queue.pop_back();
-        ReleaseSRWLockExclusive(&g_icon_lock);
-        const bool ok = http_get(utf8_to_wide(url), store_icon_file(pkg), L"", nullptr, {}) == 200;
-        PostMessageW(g_main, kStoreIcon, ok ? kIconSaved : kIconFailed, reinterpret_cast<LPARAM>(new std::string(pkg)));
-    }
-}
-
-void request_icon(const std::string& pkg, const std::string& url) {
-    AcquireSRWLockExclusive(&g_icon_lock);
-    g_icon_queue.emplace_back(pkg, url);
-    if (g_icon_queue.size() > 48) {  // long scrolled past: asked for again if it comes back into view
-        PostMessageW(g_main, kStoreIcon, kIconDropped,
-                     reinterpret_cast<LPARAM>(new std::string(g_icon_queue.front().first)));
-        g_icon_queue.erase(g_icon_queue.begin());
-    }
-    if (g_icon_threads < 4) {
-        if (HANDLE t = CreateThread(nullptr, 0, icon_thread, nullptr, 0, nullptr)) {
-            CloseHandle(t);
-            ++g_icon_threads;
-        }
-    }
-    ReleaseSRWLockExclusive(&g_icon_lock);
-    WakeConditionVariable(&g_icon_wake);
-}
-
-struct Download {
-    std::string pkg, sha256;
-    std::wstring url, label;
-    fs::path file;
-};
-
-SRWLOCK g_download_lock = SRWLOCK_INIT;  // one download at a time; the installs after them go one at a time too
-
-DWORD WINAPI download_thread(void* param) {
-    std::unique_ptr<Download> d(static_cast<Download*>(param));
-    AcquireSRWLockExclusive(&g_download_lock);
-    int shown = -1;
-    const int status = http_get(d->url, d->file, L"", nullptr, [&](uint64_t got, uint64_t total) {
-        const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
-        if (pct == shown) return;
-        shown = pct;
-        PostMessageW(g_main, kStoreDownload, static_cast<WPARAM>(pct),
-                     reinterpret_cast<LPARAM>(new std::string(d->pkg)));
-    });
-    // The APK must be the one F-Droid's index names; anything else is not installed.
-    const bool ok = status == 200 && sha256_of(d->file) == d->sha256;
-    std::error_code ec;
-    if (!ok) fs::remove(d->file, ec);
-    ReleaseSRWLockExclusive(&g_download_lock);
-    PostMessageW(g_main, kStoreDownloaded, ok, reinterpret_cast<LPARAM>(d.release()));
-    return 0;
-}
 
 // ---------------------------------------------------------------------------
 // Software updates: the newest release on GitHub and its installer
 //
 // Releases are pre-releases tagged v0.2.0-preview, so /releases/latest (which
-// skips them) will not do: the list is read and its highest version taken.
+// skips them) will not do: the list is read and its highest version taken
+// (updates.h pick_release: never a draft, a pre-release only while there is no
+// full release). Its installer is downloaded only with GitHub's SHA-256 of it,
+// and runs only when its size, SHA-256, signature and version are the
+// release's (updates.h judge_setup), also a copy downloaded before.
 // The request says nothing about the user, and its answer is kept with its ETag:
 // a check that finds nothing new costs GitHub a 304, and the library shows the
 // last result at start without asking again within the day.
@@ -2296,29 +2200,7 @@ HINTERNET updater_session() {
     return session;
 }
 
-// 0.2.0 of "v0.2.0-preview": the numbers before any -suffix or +build.
-std::vector<unsigned> version_numbers(const std::wstring& v) {
-    std::vector<unsigned> out;
-    size_t i = !v.empty() && (v[0] == L'v' || v[0] == L'V') ? 1 : 0;
-    while (i < v.size() && iswdigit(v[i])) {
-        unsigned n = 0;
-        while (i < v.size() && iswdigit(v[i])) n = n * 10 + static_cast<unsigned>(v[i++] - L'0');
-        out.push_back(n);
-        if (i >= v.size() || v[i] != L'.') break;
-        ++i;
-    }
-    return out;
-}
-
-// <0, 0, >0 as a is older than, the same as or newer than b; missing numbers count as 0 (0.2 = 0.2.0).
-int compare_versions(const std::wstring& a, const std::wstring& b) {
-    const std::vector<unsigned> x = version_numbers(a), y = version_numbers(b);
-    for (size_t i = 0; i < (std::max)(x.size(), y.size()); ++i) {
-        const unsigned p = i < x.size() ? x[i] : 0, q = i < y.size() ? y[i] : 0;
-        if (p != q) return p < q ? -1 : 1;
-    }
-    return 0;
-}
+using winapk::launcher::compare_versions;  // updates.h: the version rules, tested there
 
 // Release notes in Markdown as plain text: no headings' #, no ** or `, "• " for list items,
 // [text](link) as its text, and no runs of blank lines.
@@ -2376,8 +2258,9 @@ std::string markdown_to_text(const std::string& md) {
 
 struct Release {
     std::wstring tag, version, notes, page;  // version: the tag without its v; notes: plain text
-    std::wstring url;                        // Win.apk-Setup.exe's download, empty when the release has none
-    std::string digest;                      // the asset's "sha256:<hex>", when GitHub gives one
+    std::wstring url;                        // Win.apk-Setup.exe's download, empty when there is none to check
+    std::string sha256;                      // GitHub's SHA-256 of the asset, lower-case hex
+    bool unchecked = false;                  // the release has an installer, but GitHub gives no SHA-256 of it
     uint64_t size = 0;                       // the asset's bytes
     FILETIME published{};
 };
@@ -2395,27 +2278,30 @@ FILETIME iso_filetime(const std::string& s) {
     return ft;
 }
 
-// The newest release in GitHub's list that is not a draft, with its installer asset; `found` says whether there
-// is one. Returns whether the list could be read.
+// The release to offer from GitHub's list (updates.h pick_release), with its installer asset when GitHub lists
+// a SHA-256 of it; `found` says whether there is one. Returns whether the list could be read.
 bool newest_release(const std::string& json, Release* best, bool* found_out) {
+    using winapk::launcher::ListedRelease;
     Json j{json.data(), json.data() + json.size()};
-    bool found = false;
     auto text = [&j](std::string* out) {  // a string, or skips a null
         j.ws();
         if (j.p < j.end && *j.p == '"') j.str(out);
         else j.skip();
     };
+    std::vector<Release> releases;
+    std::vector<ListedRelease> listed;
     j.array([&] {
         Release r;
-        bool draft = false;
+        ListedRelease l;
+        std::wstring url;
         j.object([&](const std::string& key) {
             std::string v;
-            if (key == "draft") {
+            if (key == "draft" || key == "prerelease") {
                 j.scalar(&v);
-                draft = v == "true";
+                (key == "draft" ? l.draft : l.prerelease) = v == "true";
             } else if (key == "tag_name") {
                 text(&v);
-                r.tag = utf8_to_wide(v);
+                r.tag = l.tag = utf8_to_wide(v);
             } else if (key == "body") {
                 text(&v);
                 r.notes = utf8_to_wide(markdown_to_text(v));
@@ -2427,32 +2313,42 @@ bool newest_release(const std::string& json, Release* best, bool* found_out) {
                 r.published = iso_filetime(v);
             } else if (key == "assets") {
                 j.array([&] {
-                    std::string name, url, size, digest;
+                    std::string name, link, size, digest, state;
                     j.object([&](const std::string& k) {
                         if (k == "name") text(&name);
-                        else if (k == "browser_download_url") text(&url);
+                        else if (k == "browser_download_url") text(&link);
                         else if (k == "size") j.scalar(&size);
                         else if (k == "digest") text(&digest);
+                        else if (k == "state") text(&state);
                         else j.skip();
                     });
-                    if (utf8_to_wide(name) == kSetupAsset && !url.empty()) {
-                        r.url = utf8_to_wide(url);
-                        r.size = std::strtoull(size.c_str(), nullptr, 10);
-                        r.digest = digest;
+                    if (utf8_to_wide(name) == kSetupAsset && !link.empty() && !l.asset) {
+                        l.asset = true;
+                        l.asset_state = state;
+                        l.digest = digest;
+                        l.size = std::strtoull(size.c_str(), nullptr, 10);
+                        url = utf8_to_wide(link);
                     }
                 });
             } else {
                 j.skip();
             }
         });
-        if (!j.ok || draft || version_numbers(r.tag).empty()) return;
-        if (!found || compare_versions(r.tag, best->tag) > 0) {
-            r.version = r.tag.substr(r.tag[0] == L'v' || r.tag[0] == L'V' ? 1 : 0);
-            *best = std::move(r);
-            found = true;
+        if (!j.ok) return;
+        r.version = r.tag.substr(!r.tag.empty() && (r.tag[0] == L'v' || r.tag[0] == L'V') ? 1 : 0);
+        if (winapk::launcher::installer_checkable(l)) {
+            r.url = url;
+            r.sha256 = winapk::launcher::asset_sha256(l.digest);
+            r.size = l.size;
+        } else {
+            r.unchecked = l.asset;  // an installer Win.apk cannot check is not downloaded: its page is offered
         }
+        releases.push_back(std::move(r));
+        listed.push_back(std::move(l));
     });
-    *found_out = j.ok && found;
+    const int pick = j.ok ? winapk::launcher::pick_release(listed) : -1;
+    if (pick >= 0) *best = std::move(releases[static_cast<size_t>(pick)]);
+    *found_out = pick >= 0;
     return j.ok;
 }
 
@@ -2476,7 +2372,8 @@ DWORD WINAPI update_check_thread(void* param) {
             etag = utf8_to_wide(s);
         }
         const int status = http_get(kReleasesUrl, releases_file(), etag, &new_etag, {},
-                                    L"Accept: application/vnd.github+json", updater_session());
+                                    L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28",
+                                    updater_session());
         if (status == 200) {
             std::ofstream(releases_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
         }
@@ -2493,12 +2390,152 @@ DWORD WINAPI update_check_thread(void* param) {
     return 0;
 }
 
-// Downloads the release's Win.apk-Setup.exe to updates\, and keeps it only when it is whole: the size GitHub
-// gives, and its SHA-256 when GitHub gives that too.
+// A file's Authenticode signature, as WinVerifyTrust judges it with the generic verify action (WINTRUST_ACTION_
+// GENERIC_VERIFY_V2), and who signed it when it verifies. No revocation check and nothing fetched from the network
+// (WTD_CACHE_ONLY_URL_RETRIEVAL): the answer does not wait on a CRL server. Per WinVerifyTrust's documentation,
+// TRUST_E_NOSIGNATURE, TRUST_E_SUBJECT_FORM_UNKNOWN and TRUST_E_PROVIDER_UNKNOWN mean the file carries no
+// signature this provider knows; every other failure (a bad digest, an untrusted root, an explicit distrust, a
+// signature policy) is a signature that does not hold. The signer is the leaf certificate's subject and issuer as
+// X.500 names: a name alone could be had from another authority, a thumbprint would change at every renewal.
+winapk::launcher::Signature authenticode(const fs::path& file, std::wstring* signer) {
+    using winapk::launcher::Signature;
+    if (signer) signer->clear();
+    const std::wstring path = file.wstring();
+    WINTRUST_FILE_INFO info{};
+    info.cbStruct = sizeof(info);
+    info.pcwszFilePath = path.c_str();
+    WINTRUST_DATA data{};
+    data.cbStruct = sizeof(data);
+    data.dwUIChoice = WTD_UI_NONE;
+    data.fdwRevocationChecks = WTD_REVOKE_NONE;
+    data.dwUnionChoice = WTD_CHOICE_FILE;
+    data.pFile = &info;
+    data.dwStateAction = WTD_STATEACTION_VERIFY;
+    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL | WTD_REVOCATION_CHECK_NONE;
+    GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
+    const LONG status = WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
+    Signature out;
+    if (status == ERROR_SUCCESS) {
+        out = Signature::kValid;
+    } else if (status == TRUST_E_NOSIGNATURE || status == TRUST_E_SUBJECT_FORM_UNKNOWN ||
+               status == TRUST_E_PROVIDER_UNKNOWN) {
+        out = Signature::kUnsigned;
+    } else {
+        out = Signature::kInvalid;
+    }
+    if (out == Signature::kValid && signer) {
+        // The state WinVerifyTrust kept (WTD_STATEACTION_VERIFY) holds the chain it built: its first signer's
+        // first certificate is the one that signed.
+        CRYPT_PROVIDER_DATA* prov = WTHelperProvDataFromStateData(data.hWVTStateData);
+        CRYPT_PROVIDER_SGNR* sgnr = prov ? WTHelperGetProvSignerFromChain(prov, 0, FALSE, 0) : nullptr;
+        const CERT_CONTEXT* cert = sgnr && sgnr->csCertChain > 0 && sgnr->pasCertChain
+                                       ? sgnr->pasCertChain[0].pCert
+                                       : nullptr;
+        auto name = [cert](DWORD flags) {
+            if (!cert) return std::wstring();
+            DWORD type = CERT_X500_NAME_STR | CERT_NAME_STR_REVERSE_FLAG;
+            const DWORD n = CertGetNameStringW(cert, CERT_NAME_RDN_TYPE, flags, &type, nullptr, 0);
+            if (n <= 1) return std::wstring();
+            std::wstring s(n, L'\0');
+            CertGetNameStringW(cert, CERT_NAME_RDN_TYPE, flags, &type, s.data(), n);
+            s.resize(n - 1);
+            return s;
+        };
+        const std::wstring subject = name(0), issuer = name(CERT_NAME_ISSUER_FLAG);
+        if (subject.empty() || issuer.empty()) {
+            out = Signature::kInvalid;  // verified, yet with no certificate to name: not a signer to trust
+        } else {
+            *signer = subject + L" | " + issuer;
+        }
+    }
+    data.dwStateAction = WTD_STATEACTION_CLOSE;
+    WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
+    return out;
+}
+
+// Who signed Win.apk.exe itself; empty when this build is not code-signed (no build is, so far). Asked once.
+const std::wstring& own_signer() {
+    static const std::wstring who = [] {
+        std::wstring self(32768, L'\0');
+        const DWORD n = GetModuleFileNameW(nullptr, self.data(), static_cast<DWORD>(self.size()));
+        if (n == 0 || n >= self.size()) return std::wstring();
+        self.resize(n);
+        std::wstring name;
+        return authenticode(self, &name) == winapk::launcher::Signature::kValid ? name : std::wstring();
+    }();
+    return who;
+}
+
+// The ProductVersion string of a file's version resource; empty when it has none. The languages the resource
+// lists (\VarFileInfo\Translation) are tried in order, then US English in Unicode and in Windows-1252, which is
+// how resources without a translation table are usually labelled.
+std::wstring product_version(const fs::path& file) {
+    DWORD unused = 0;
+    const DWORD size = GetFileVersionInfoSizeW(file.c_str(), &unused);
+    if (size == 0) return {};
+    std::vector<BYTE> block(size);
+    if (!GetFileVersionInfoW(file.c_str(), 0, size, block.data())) return {};
+    std::vector<DWORD> langs;
+    struct LangCodepage {
+        WORD lang, codepage;
+    };
+    LangCodepage* table = nullptr;
+    UINT bytes = 0;
+    if (VerQueryValueW(block.data(), L"\\VarFileInfo\\Translation", reinterpret_cast<void**>(&table), &bytes) &&
+        table) {
+        for (UINT i = 0; i < bytes / sizeof(LangCodepage); ++i)
+            langs.push_back(static_cast<DWORD>(table[i].lang) << 16 | table[i].codepage);
+    }
+    langs.push_back(0x040904b0);
+    langs.push_back(0x040904e4);
+    for (DWORD lc : langs) {
+        wchar_t key[64];
+        swprintf(key, 64, L"\\StringFileInfo\\%08lx\\ProductVersion", static_cast<unsigned long>(lc));
+        wchar_t* value = nullptr;
+        UINT chars = 0;
+        if (VerQueryValueW(block.data(), key, reinterpret_cast<void**>(&value), &chars) && value && chars > 0) {
+            std::wstring s(value, chars);
+            while (!s.empty() && s.back() == L'\0') s.pop_back();
+            return s;
+        }
+    }
+    return {};
+}
+
+// Whether the installer at `file` may run as the update to `r` (updates.h judge_setup). Its size is looked at
+// first: a file of another size is refused without being hashed or verified.
+winapk::launcher::SetupVerdict judge_setup_file(const fs::path& file, const Release& r) {
+    winapk::launcher::SetupFacts f;
+    std::error_code ec;
+    f.size = fs::file_size(file, ec);
+    if (ec) f.size = 0;
+    if (f.size != 0 && f.size == r.size) {
+        f.sha256 = sha256_of(file);
+        if (!f.sha256.empty() && f.sha256 == r.sha256) {
+            f.signature = authenticode(file, &f.signer);
+            f.product_version = product_version(file);
+        }
+    }
+    return winapk::launcher::judge_setup(f, r.size, r.sha256, r.version, own_signer());
+}
+
+// A copy kept from before is checked again as a download is; if it does not hold, or there is none, the release's
+// Win.apk-Setup.exe is downloaded to updates\ and kept only when judge_setup says it may run. wParam of
+// kUpdateDownloaded: 0 when the download broke off, else the verdict + 1.
 DWORD WINAPI update_download_thread(void* param) {
     std::unique_ptr<Release> r(static_cast<Release*>(param));
-    int shown = -1;
+    using winapk::launcher::SetupVerdict;
     const fs::path file = setup_file(r->version);
+    std::error_code ec;
+    if (fs::exists(file, ec)) {
+        const SetupVerdict kept = judge_setup_file(file, *r);
+        if (winapk::launcher::setup_runs(kept)) {
+            PostMessageW(g_main, kUpdateDownloaded, static_cast<WPARAM>(kept) + 1, 0);
+            return 0;
+        }
+        fs::remove(file, ec);
+    }
+    int shown = -1;
     const int status = http_get(r->url, file, L"", nullptr, [&](uint64_t got, uint64_t total) {
         if (!total) total = r->size;
         const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
@@ -2506,11 +2543,15 @@ DWORD WINAPI update_download_thread(void* param) {
         shown = pct;
         PostMessageW(g_main, kUpdateProgress, static_cast<WPARAM>(pct), 0);
     }, L"", updater_session());
-    std::error_code ec;
-    bool ok = status == 200 && r->size > 0 && fs::file_size(file, ec) == r->size && !ec;
-    if (ok && r->digest.rfind("sha256:", 0) == 0) ok = "sha256:" + sha256_of(file) == r->digest;
-    if (!ok) fs::remove(file, ec);
-    PostMessageW(g_main, kUpdateDownloaded, ok, 0);
+    WPARAM result = 0;
+    if (status == 200) {
+        const SetupVerdict v = judge_setup_file(file, *r);
+        result = static_cast<WPARAM>(v) + 1;
+        if (!winapk::launcher::setup_runs(v)) fs::remove(file, ec);
+    } else {
+        fs::remove(file, ec);
+    }
+    PostMessageW(g_main, kUpdateDownloaded, result, 0);
     return 0;
 }
 
@@ -2629,7 +2670,7 @@ std::unique_ptr<Gdiplus::Font> glyph_font(float size) {
 constexpr wchar_t kGlyphSettings[] = L"\uE713", kGlyphDownload[] = L"\uE896", kGlyphSearch[] = L"\uE721",
                   kGlyphChevron[] = L"\uE70D", kGlyphCheck[] = L"\uE73E", kGlyphError[] = L"\uE783",
                   kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A", kGlyphLibrary[] = L"\uE8F1",
-                  kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710", kGlyphRefresh[] = L"\uE72C",
+                  kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710",
                   kGlyphClear[] = L"\uE894", kGlyphLog[] = L"\uE8A5", kGlyphPackage[] = L"\uE7B8",
                   kGlyphChevronUp[] = L"\uE70E", kGlyphBack[] = L"\uE72B", kGlyphForward[] = L"\uE72A",
                   kGlyphContact[] = L"\uE77B", kGlyphPlay[] = L"\uE768", kGlyphInfo[] = L"\uE946",
@@ -2939,45 +2980,36 @@ float g_scroll = 0;
 bool g_drag_over = false, g_tracking = false;
 bool g_focus_visible = false;  // the selection was reached with the keyboard: it shows a focus ring
 
-// The library and the store share the window's scrolling (the store alone has the search box);
-// the view not shown keeps its own query and scroll position here.
-enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView, kGmsSetupView, kPlayView } g_view = kLibraryView;
+// The library's grid, a page (Settings, an app's details, the Google services setup), or an app shown in the window
+// (the Store, Google Play).
+enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kGmsSetupView, kPlayView } g_view = kLibraryView;
 void set_view(View view);
-std::map<View, std::wstring> g_queries;  // the search of a grid view not shown
-std::map<View, float> g_scrolls;         // and its scroll position
 bool g_setup_from_settings = false;      // the Google services setup was opened from Settings (it goes back there)
 std::set<std::wstring> g_setup_names;    // installs the setup page started: system components, never a tile
 bool google_services_on();
 void open_google_play();
 
-struct StoreState {
-    std::vector<StoreApp> apps;  // the catalog, the most recently updated first
-    std::vector<int> shown;      // what the grid shows: the search and the category applied
-    std::wstring category;       // empty: every category
-    // The catalog's fetch: not asked for yet (the store was never opened), under way (catalog_thread), or
-    // over, well or not. `apps` may hold a list in any of them: the one kept from the last fetch.
-    enum class Fetch { kNotStarted, kLoading, kDone, kFailed } fetch = Fetch::kNotStarted;
-    bool loading() const { return fetch == Fetch::kLoading; }
-    // No list to show yet, and one is on its way (or will be, once the store is opened).
-    bool first_load() const { return apps.empty() && (fetch == Fetch::kLoading || fetch == Fetch::kNotStarted); }
-    uint64_t got_kb = 0;  // of the catalog, while it loads
-    std::map<std::string, std::pair<std::wstring, long long>> installed;  // package: library name, versionCode
-    std::map<std::string, int> downloads;                                  // package: percent, -1 waiting
-    std::map<std::string, std::unique_ptr<Gdiplus::Bitmap>> icons;         // rounded; null: none
-    std::set<std::string> icon_wait;                                       // being fetched
-} g_store;
-
-// Google Play in the window (see "Google Play, in the window" below).
-struct PlayState {
-    HWND panel = nullptr;  // the host panel over the content area; the Play Store's window is its child
-    std::wstring name;     // the Play Store's library name, while it runs (or last ran) in the panel
+// An app shown in the window (see "Apps in the window" below): the Store and Google Play.
+struct Embedded {
+    View view;              // the view it fills
+    const wchar_t* title;   // that view's title
+    const wchar_t* starting;  // under the spinner while it starts
+    HWND panel = nullptr;   // the host panel over the content area; the app's window is its child
+    std::wstring name;      // the app's library name, while it runs (or last ran) in the panel
     enum State { kIdle, kStarting, kShown, kClosed, kFailed } state = kIdle;
-} g_play;
+    bool up() const { return state == kStarting || state == kShown; }
+};
+Embedded g_store_app{kStoreView, L"Store", L"Starting the Store…"};
+Embedded g_play{kPlayView, L"Google Play", L"Starting Google Play…"};
+
+// Where getting and updating the Store's app stands (store_app.h). The library's thread only.
+winapk::launcher::StoreSetup g_store_setup;
 
 // What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings, 3 Google Play.
-enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitTile, kHitThumb, kHitTrack, kHitCategory,
-               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitInfoLink, kHitBack, kHitPage, kHitAccount,
-               kHitPlayOpen, kHitPlayLog };
+// kHitRetry: the Store's Try again; kHitPanelOpen and kHitPanelLog: an app shown in the window that ended, opened again
+// or its log.
+enum HitKind { kHitNone, kHitNav, kHitAdd, kHitTile, kHitThumb, kHitTrack, kHitRetry, kHitInfoClose, kHitInfoLink,
+               kHitBack, kHitPage, kHitAccount, kHitPanelOpen, kHitPanelLog };
 enum NavItem { kNavLibrary, kNavStore, kNavSettings, kNavPlay, kNavCount };
 struct Hit {
     HitKind kind = kHitNone;
@@ -2992,12 +3024,12 @@ float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 // the content layer beside it, with the page's title and toolbar above the
 // grid, or a page (Settings, an app's details) in its place.
 struct Layout {
-    RectF rail, nav[kNavCount], content, title, account, search, clear, add, category, refresh, grid, drop, retry, infobar,
+    RectF rail, nav[kNavCount], content, title, account, add, grid, drop, retry, infobar,
         info_close, info_link,  // info_link: measured when the InfoBar is painted
-        play, play_open, play_log;  // Google Play's panel, and its Open and Show log once it closed
+        panel, panel_open, panel_log;  // an app shown in the window, and its Open and Show log once it closed
     bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
-    float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
+    float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles
 } g_l;
 
 // The signed-in Google account the toolbar's account button shows; empty when there is none
@@ -3169,52 +3201,16 @@ void info(const std::wstring& text, StatusKind kind, const std::wstring& link = 
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
-// A store app's name and summary in Hebrew when F-Droid has them.
-const std::wstring& store_name(const StoreApp& a) { return g_rtl && !a.name_he.empty() ? a.name_he : a.name; }
-const std::wstring& store_summary(const StoreApp& a) {
-    return g_rtl && !a.summary_he.empty() ? a.summary_he : a.summary;
-}
+// Which library app has each package: an install of a package the library has updates that app, and Google's
+// apps and the Store are found by package.
+std::map<std::string, std::wstring> g_packages;  // package: library name
 
-// The icon kept from the store, fetched the first time a card asks for it; null meanwhile.
-Gdiplus::Bitmap* store_icon(const StoreApp& a) {
-    const auto it = g_store.icons.find(a.pkg);
-    if (it != g_store.icons.end()) return it->second.get();
-    if (g_store.icon_wait.count(a.pkg)) return nullptr;
-    std::error_code ec;
-    if (a.icon.empty() || fs::exists(store_icon_file(a.pkg), ec)) {
-        Gdiplus::Bitmap* raw = (g_store.icons[a.pkg] = rounded_icon(store_icon_file(a.pkg), ipx(56))).get();
-        return raw;
-    }
-    g_store.icon_wait.insert(a.pkg);
-    request_icon(a.pkg, a.icon);
-    return nullptr;
-}
-
-// Which packages the library has, and at which version, for the store's buttons.
-void scan_installed() {
-    g_store.installed.clear();
+void scan_packages() {
+    g_packages.clear();
     for (const App& app : g_apps) {
         const std::vector<std::string> p = package_of(app.name);
-        if (p.empty() || p[0].empty()) continue;
-        g_store.installed[p[0]] = {app.name, p.size() > 1 ? std::atoll(p[1].c_str()) : 0};
+        if (!p.empty() && !p[0].empty()) g_packages[p[0]] = app.name;
     }
-}
-
-enum Offer { kOfferInstall, kOfferUpdate, kOfferOpen, kOfferDownloading, kOfferInstalling };
-
-// What the store offers for an app: to install it, update it (the library's
-// version is older; unknown counts as current) or open it, or its progress.
-Offer offer_for(const StoreApp& a, int* percent = nullptr) {
-    const auto dl = g_store.downloads.find(a.pkg);
-    if (dl != g_store.downloads.end()) {
-        if (percent) *percent = dl->second;
-        return kOfferDownloading;
-    }
-    const auto it = g_store.installed.find(a.pkg);
-    const std::wstring name = it != g_store.installed.end() ? it->second.first : file_name_safe(utf8_to_wide(a.pkg));
-    if (is_pending(name)) return kOfferInstalling;
-    if (it == g_store.installed.end()) return kOfferInstall;
-    return it->second.second > 0 && a.code > it->second.second ? kOfferUpdate : kOfferOpen;
 }
 
 // ---------------------------------------------------------------------------
@@ -3224,11 +3220,6 @@ RectF tile_rect(int i) {
     const int col = i % g_l.cols, row = i / g_l.cols;
     return RectF(g_l.grid.X + px(8) + col * (g_l.tile_w + g_l.gap),
                  g_l.grid.Y + px(4) + row * (g_l.tile_h + g_l.gap) - g_scroll, g_l.tile_w, g_l.tile_h);
-}
-
-// The store card's button, in its bottom corner.
-RectF card_button(const RectF& card) {
-    return RectF(card.GetRight() - px(16) - px(104), card.GetBottom() - px(12) - px(32), px(104), px(32));
 }
 
 RectF thumb_rect() {
@@ -3253,13 +3244,13 @@ float measure(const std::wstring& s, const Gdiplus::Font* f) {
     return w;
 }
 
-void place_play_panel();
+void place_panels();
+bool panel_shows_log();
 
 void compute_layout() {
     RECT rc;
     GetClientRect(g_main, &rc);
     const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom);
-    const bool store = g_view == kStoreView;
 
     // The pane: the brand row, Library and Store (and Google Play under it while Google services are on),
     // Settings at the bottom.
@@ -3280,26 +3271,12 @@ void compute_layout() {
     const float m = px(24), cx = g_l.content.X + m, cw = g_l.content.Width - 2 * m;
     g_l.title = RectF(cx, px(20), cw, px(44));
     const float ch = px(32), cy = g_l.title.Y + (g_l.title.Height - ch) / 2;
-    float right = cx + cw;
-    if (store) {
-        g_l.refresh = RectF(right - ch, cy, ch, ch);
-        right = g_l.refresh.X - px(8);
-        const float category_w = g_store.apps.empty() ? 0 : (std::min)(px(180), cw * 0.28f);  // none without a catalog
-        g_l.category = RectF(right - category_w, cy, category_w, ch);
-        if (category_w > 0) right = g_l.category.X - px(8);
-    } else {
-        const float add_w = measure(tr(L"Install app"), g_f.body_semi.get()) + px(50);
-        g_l.add = RectF(right - add_w, cy, add_w, ch);
-        right = g_l.add.X - px(8);
-    }
-    // Only the store has a search box: the library is short enough to see whole.
-    const float search_w = store ? (std::min)(px(260), (std::max)(px(120), right - cx - px(220))) : 0;
-    g_l.search = RectF(right - search_w, cy, search_w, ch);
-    g_l.clear = RectF(g_l.search.GetRight() - px(30), cy + px(2), px(28), ch - px(4));
+    const float add_w = measure(tr(L"Install app"), g_f.body_semi.get()) + px(50);
+    g_l.add = RectF(cx + cw - add_w, cy, add_w, ch);
     const float top = g_l.title.GetBottom() + px(16);
     g_l.grid = RectF(cx - px(8), top, cw + px(16), (std::max)(0.0f, g_l.content.GetBottom() - top));
 
-    // The empty library's drop card, and the store's Try again.
+    // The empty library's drop card, and the Store's Try again.
     const float dw = (std::min)(px(520), g_l.grid.Width - px(32)), dh = px(200);
     const float dy = g_l.grid.Y + (std::max)(px(8), (g_l.grid.Height - dh) / 2 - px(40));
     g_l.drop = RectF(g_l.grid.X + (g_l.grid.Width - dw) / 2, dy, dw, dh);
@@ -3309,71 +3286,23 @@ void compute_layout() {
     g_l.info_close = RectF(g_l.infobar.GetRight() - px(40), g_l.infobar.Y + px(8), px(32), px(32));
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
                       g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
-    // Google Play: the Play Store's own window, a child of the panel under the title, edge to edge in the layer.
-    g_l.play = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
-    const bool play_log = g_play.state == PlayState::kFailed;  // Show log beside Open; else Open alone, centred
-    g_l.play_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (play_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
-    g_l.play_log = RectF(g_l.play_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
-    place_play_panel();
+    // The Store and Google Play: the app's own window, a child of the panel under the title, edge to edge in the
+    // layer. Once it ended (or the Store could not be set up), Show log beside Open; else Open alone, centred.
+    g_l.panel = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
+    const bool panel_log = panel_shows_log();
+    g_l.panel_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (panel_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
+    g_l.panel_log = RectF(g_l.panel_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
+    place_panels();
 
-    size_t items = g_tiles.size();
-    if (store) {  // cards, as many across as fit at 300 px or more
-        g_l.gap = px(8);
-        g_l.tile_h = px(112);
-        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (px(300) + g_l.gap)));
-        g_l.tile_w = (g_l.grid.Width - px(26) - (g_l.cols - 1) * g_l.gap) / g_l.cols;
-        items = g_store.shown.size();
-    } else {
-        g_l.tile_w = px(112);
-        g_l.tile_h = px(132);
-        g_l.gap = px(8);
-        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (g_l.tile_w + g_l.gap)));
-    }
+    const size_t items = g_tiles.size();
+    g_l.tile_w = px(112);
+    g_l.tile_h = px(132);
+    g_l.gap = px(8);
+    g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (g_l.tile_w + g_l.gap)));
     const int rows = (static_cast<int>(items) + g_l.cols - 1) / g_l.cols;
     g_l.content_h = rows ? rows * (g_l.tile_h + g_l.gap) - g_l.gap + px(12) : 0;
     g_l.max_scroll = (std::max)(0.0f, g_l.content_h - g_l.grid.Height);
     clamp_scroll();
-    const int edit_h = ipx(20);
-    MoveWindow(g_search, static_cast<int>(g_l.search.X + px(32)),
-               static_cast<int>(g_l.search.Y + (g_l.search.Height - edit_h) / 2),
-               static_cast<int>(g_l.search.Width - px(32) - px(30)), edit_h, TRUE);
-}
-
-std::wstring query(View view) {
-    if (view != g_view) return g_queries[view];
-    wchar_t buf[256] = {};
-    GetWindowTextW(g_search, buf, 256);
-    return buf;
-}
-
-// The store's cards for the search and category: by name first (the exact
-// name, those starting with the words, then those containing them), then by summary or
-// package; with no search, the most recently updated first.
-void rebuild_store() {
-    const std::wstring q = lower(query(kStoreView));
-    std::vector<std::pair<int, int>> ranked;  // rank, index
-    for (size_t i = 0; i < g_store.apps.size(); ++i) {
-        const StoreApp& a = g_store.apps[i];
-        if (!g_store.category.empty() &&
-            std::find(a.categories.begin(), a.categories.end(), g_store.category) == a.categories.end()) {
-            continue;
-        }
-        int rank = 0;
-        if (!q.empty()) {
-            const std::wstring name = lower(store_name(a));
-            const size_t at = name.find(q);
-            if (name == q) rank = 0;
-            else if (at == 0) rank = 1;
-            else if (at != std::wstring::npos || lower(a.name).find(q) != std::wstring::npos) rank = 2;
-            else if (lower(store_summary(a)).find(q) != std::wstring::npos ||
-                     lower(utf8_to_wide(a.pkg)).find(q) != std::wstring::npos) rank = 3;
-            else continue;
-        }
-        ranked.emplace_back(rank, static_cast<int>(i));
-    }
-    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    g_store.shown.clear();
-    for (const auto& r : ranked) g_store.shown.push_back(r.second);
 }
 
 void rebuild_tiles() {
@@ -3385,7 +3314,6 @@ void rebuild_tiles() {
     for (size_t i = 0; i < g_apps.size(); ++i) {
         if (!system_app(g_apps[i].name)) g_tiles.push_back({static_cast<int>(i), L""});
     }
-    rebuild_store();
     compute_layout();
     InvalidateRect(g_main, nullptr, FALSE);
 }
@@ -3406,7 +3334,7 @@ uint64_t g_library_stamp = 0;
 void refresh() {
     g_library_stamp = library_stamp();
     g_apps = library();
-    scan_installed();
+    scan_packages();
     g_icons.clear();
     if (!find_app(g_selected)) g_selected.clear();
     rebuild_tiles();
@@ -3439,11 +3367,12 @@ const App* selected() { return g_selected.empty() ? nullptr : find_app(g_selecte
 bool empty_library() { return g_view == kLibraryView && g_tiles.empty(); }
 
 bool page_view() {
-    return g_view == kSettingsView || g_view == kAppView || g_view == kStoreAppView || g_view == kGmsSetupView;
+    return g_view == kSettingsView || g_view == kAppView || g_view == kGmsSetupView;
 }
 
+Hit panel_hit(float x, float y);
+
 Hit hit_test(float x, float y) {
-    const bool store = g_view == kStoreView;
     for (int i = 0; i < kNavCount; ++i) {
         if (g_l.nav[i].Width > 0 && contains(g_l.nav[i], x, y)) return {kHitNav, i};
     }
@@ -3456,34 +3385,12 @@ Hit hit_test(float x, float y) {
         if (contains(g_l.content, x, y)) return {kHitPage, -1};
         return {};
     }
-    if (g_view == kPlayView) {  // the panel takes the mouse while it is up; once Google Play closed, its buttons
-        const bool ended = g_play.state == PlayState::kClosed || g_play.state == PlayState::kFailed;
-        if (ended && contains(g_l.play_open, x, y)) return {kHitPlayOpen, -1};
-        if (g_play.state == PlayState::kFailed && contains(g_l.play_log, x, y)) return {kHitPlayLog, -1};
-        return {};
-    }
-    if (store && !query(g_view).empty() && contains(g_l.clear, x, y)) return {kHitClear, -1};
-    if (!store && contains(g_l.add, x, y)) return {kHitAdd, -1};
-    if (store && contains(g_l.refresh, x, y)) return {kHitRefresh, -1};
-    if (store && !g_store.apps.empty() && contains(g_l.category, x, y)) return {kHitCategory, -1};
+    if (g_view == kPlayView || g_view == kStoreView) return panel_hit(x, y);
+    if (contains(g_l.add, x, y)) return {kHitAdd, -1};
     if (!contains(g_l.grid, x, y)) return {};
     if (empty_library()) return {};
     if (g_l.max_scroll > 0 && x >= g_l.grid.GetRight() - px(12)) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
-    }
-    if (store) {
-        // Wherever paint_store_grid draws "Try again": no list, and none on its way.
-        if (g_store.apps.empty() && !g_store.first_load() && contains(g_l.retry, x, y)) return {kHitRetry, -1};
-        const int col = static_cast<int>((x - g_l.grid.X - px(8)) / (g_l.tile_w + g_l.gap));
-        const int row = static_cast<int>((y - g_l.grid.Y - px(4) + g_scroll) / (g_l.tile_h + g_l.gap));
-        const int i = row * g_l.cols + col;
-        if (col < 0 || col >= g_l.cols || row < 0 || i >= static_cast<int>(g_store.shown.size())) return {};
-        const RectF r = tile_rect(i);
-        if (!contains(r, x, y)) return {};
-        const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
-        const Offer offer = offer_for(a);
-        const bool button = offer == kOfferInstall || offer == kOfferUpdate;
-        return {button && contains(card_button(r), x, y) ? kHitCardButton : kHitCard, i};
     }
     for (size_t i = 0; i < g_tiles.size(); ++i) {
         if (contains(tile_rect(static_cast<int>(i)), x, y)) return {kHitTile, static_cast<int>(i)};
@@ -3518,7 +3425,7 @@ void paint_rail(Graphics& g) {
         // The setup page belongs to Google Play when that opened it, and to Settings when its switch did.
         const bool setup = g_view == kGmsSetupView;
         const bool on = (i == kNavLibrary && (g_view == kLibraryView || g_view == kAppView)) ||
-                        (i == kNavStore && (g_view == kStoreView || g_view == kStoreAppView)) ||
+                        (i == kNavStore && g_view == kStoreView) ||
                         (i == kNavSettings && (g_view == kSettingsView || (setup && g_setup_from_settings))) ||
                         (i == kNavPlay && ((setup && !g_setup_from_settings) || g_view == kPlayView));
         const bool hot = g_hot.kind == kHitNav && g_hot.tile == i;
@@ -3543,19 +3450,6 @@ void paint_layer(Graphics& g) {
     fill_round(g, card, px(kRadiusCard), g_t.layer);
     stroke_round(g, card, px(kRadiusCard), g_t.border);
     g.ResetClip();
-}
-
-void paint_search_box(Graphics& g) {
-    const bool focused = GetFocus() == g_search;
-    fill_round(g, g_l.search, px(kRadiusControl), g_t.card);
-    stroke_round(g, g_l.search, px(kRadiusControl), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
-    draw_text(g, kGlyphSearch, g_f.glyph12.get(), g_t.text2,
-              RectF(g_l.search.X + px(10), g_l.search.Y, px(16), g_l.search.Height), kCenter);
-    if (!query(g_view).empty()) {
-        const bool hot = g_hot.kind == kHitClear;
-        if (hot) fill_round(g, g_l.clear, px(4), g_t.hover);
-        draw_text(g, kGlyphClear, g_f.glyph12.get(), hot ? g_t.text : g_t.text2, g_l.clear, kCenter);
-    }
 }
 
 fs::path gms_dir();
@@ -3612,47 +3506,18 @@ void paint_account_button(Graphics& g) {
 // The page's title and what it holds, with the toolbar's controls at the end of the row.
 void paint_toolbar(Graphics& g) {
     const RectF& t = g_l.title;
-    const bool store = g_view == kStoreView;
-    std::wstring sub;
-    if (store) {
-        if (g_store.first_load()) sub = tr(L"Getting the app catalog from F-Droid…");
-        else if (g_store.apps.empty()) sub = tr(L"F-Droid could not be reached");
-        else if (g_store.loading()) sub = tr(L"Checking F-Droid for new apps…");
-        else sub = app_count(g_store.shown.size()) + L"  ·  f-droid.org";
-    } else {
-        size_t shown = 0, running = 0;  // the library's own apps: not Google's system components
-        for (const Tile& tile : g_tiles) shown += tile.app >= 0;
-        for (const std::wstring& r : run_names()) running += !system_app(r);
-        sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
-        if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
-        if (const std::wstring now = current_install(); !now.empty()) {
-            sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(now)});
-        }
+    size_t shown = 0, running = 0;  // the library's own apps: not the system components
+    for (const Tile& tile : g_tiles) shown += tile.app >= 0;
+    for (const std::wstring& r : run_names()) running += !system_app(r);
+    std::wstring sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
+    if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
+    if (const std::wstring now = current_install(); !now.empty() && !system_app(now) && !g_setup_names.count(now)) {
+        sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(now)});
     }
-    const float tw = (std::max)(px(60), g_l.search.X - t.X - px(16));
-    draw_text(g, tr(store ? L"Store" : L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
+    const float tw = (std::max)(px(60), g_l.add.X - t.X - px(16));
+    draw_text(g, tr(L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), tw, px(18)));
-    if (store) {
-        paint_search_box(g);
-        if (!g_store.apps.empty()) {
-            const RectF& c = g_l.category;
-            const bool hot = g_hot.kind == kHitCategory;
-            fill_round(g, c, px(kRadiusControl), hot ? g_t.hover : g_t.card);
-            stroke_round(g, c, px(kRadiusControl), g_store.category.empty() ? g_t.border : g_t.accent);
-            const std::wstring text = g_store.category.empty() ? tr(L"All categories") : g_store.category;
-            draw_text(g, text, g_f.body.get(), g_store.category.empty() ? g_t.text2 : g_t.text,
-                      RectF(c.X + px(12), c.Y, c.Width - px(40), c.Height));
-            draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2,
-                      RectF(c.GetRight() - px(30), c.Y, px(22), c.Height), kCenter);
-        }
-        if (g_store.loading() && !g_store.apps.empty()) {
-            spinner(g, inset(g_l.refresh, px(8), px(8)), g_t.accent, px(2));
-        } else {
-            draw_icon_button(g, g_l.refresh, kGlyphRefresh, g_hot.kind == kHitRefresh, g_t.text2);
-        }
-    } else {
-        draw_button(g, g_l.add, tr(L"Install app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
-    }
+    draw_button(g, g_l.add, tr(L"Install app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
 }
 
 void paint_scrollbar(Graphics& g, bool nearby) {
@@ -3750,88 +3615,6 @@ void paint_grid(Graphics& g) {
     paint_scrollbar(g, g_hot.kind == kHitTile);
 }
 
-void paint_card(Graphics& g, int i) {
-    const RectF r = tile_rect(i);
-    if (r.GetBottom() < g_l.grid.Y || r.Y > g_l.grid.GetBottom()) return;
-    const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
-    const bool hot = (g_hot.kind == kHitCard || g_hot.kind == kHitCardButton) && g_hot.tile == i;
-    fill_round(g, r, px(kRadiusCard), hot ? mix(g_t.card, g_t.hover, 0.5f) : g_t.card);
-    stroke_round(g, r, px(kRadiusCard), hot ? mix(g_t.border, g_t.accent, 0.4f) : g_t.border);
-    const float s = px(56);
-    const RectF ir(r.X + px(16), r.Y + px(16), s, s);
-    draw_icon(g, store_icon(a), store_name(a), ir);
-    const float tx = ir.GetRight() + px(16), tw = r.GetRight() - px(16) - tx;
-    draw_text(g, store_name(a), g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(14), tw, px(22)));
-    draw_text(g, store_summary(a), g_f.caption.get(), g_t.text2, RectF(tx, r.Y + px(37), tw, px(34)), kLeft, true,
-              false);
-    const RectF b = card_button(r);
-    std::wstring meta = a.version;
-    if (a.size > 0) meta += (meta.empty() ? L"" : L"  ·  ") + format_bytes(static_cast<uintmax_t>(a.size));
-    draw_text(g, meta, g_f.caption.get(), g_t.text2, RectF(r.X + px(16), b.Y, b.X - r.X - px(24), b.Height));
-    int percent = 0;
-    const bool on_button = g_hot.kind == kHitCardButton && g_hot.tile == i;
-    switch (offer_for(a, &percent)) {
-        case kOfferInstall: draw_button(g, b, tr(L"Install"), on_button, true, false); break;
-        case kOfferUpdate: draw_button(g, b, tr(L"Update"), on_button, true, false); break;
-        case kOfferOpen:  // installed: the library opens it
-            draw_text(g, kGlyphCheck, g_f.glyph12.get(), g_t.success, RectF(b.X, b.Y, px(20), b.Height), kCenter);
-            draw_text(g, tr(L"Installed"), g_f.caption.get(), g_t.text2, RectF(b.X + px(22), b.Y, b.Width - px(22), b.Height));
-            break;
-        case kOfferDownloading: {
-            fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 40 : 24));
-            if (percent > 0) {
-                const RectF bar(b.X, b.Y, b.Width * static_cast<float>(percent) / 100.0f, b.Height);
-                g.SetClip(bar, Gdiplus::CombineModeIntersect);
-                fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 120 : 80));
-                g.SetClip(g_l.grid);
-            }
-            draw_text(g, percent > 0 ? std::to_wstring(percent) + L"%" : std::wstring(tr(L"Waiting")),
-                      g_f.caption_semi.get(), g_t.text, b, kCenter);
-            break;
-        }
-        case kOfferInstalling: {
-            spinner(g, RectF(b.X + px(10), b.Y + b.Height / 2 - px(7), px(14), px(14)), g_t.accent, px(2));
-            draw_text(g, tr(L"Installing…"), g_f.caption.get(), g_t.text2,
-                      RectF(b.X + px(30), b.Y, b.Width - px(30), b.Height));
-            break;
-        }
-    }
-}
-
-void paint_store_grid(Graphics& g) {
-    const RectF& gr = g_l.grid;
-    if (g_store.shown.empty()) {
-        const std::wstring q = query(kStoreView);
-        if (g_store.first_load()) {
-            const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
-            spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
-            wchar_t mb[32];
-            swprintf(mb, 32, L"%.1f", static_cast<double>(g_store.got_kb) / 1024.0);
-            paint_empty(g, nullptr, tr(L"Getting the app catalog from F-Droid…"),
-                        fmt(L"{0} MB so far. This happens once; later the store opens at once.", {mb}));
-        } else if (g_store.apps.empty()) {
-            paint_empty(g, kGlyphError, tr(L"F-Droid could not be reached"),
-                        tr(L"Check the internet connection, then try again."));
-            draw_button(g, g_l.retry, tr(L"Try again"), g_hot.kind == kHitRetry, true, false);
-        } else {
-            paint_empty(g, kGlyphSearch, fmt(L"No apps match “{0}”", {q.empty() ? g_store.category : q}),
-                        tr(L"Try other words, or every category."));
-        }
-        return;
-    }
-    g.SetClip(gr);
-    const int first_row = (std::max)(0, static_cast<int>(g_scroll / (g_l.tile_h + g_l.gap)));
-    const int last = (std::min)(static_cast<int>(g_store.shown.size()),
-                                (first_row + static_cast<int>(gr.Height / (g_l.tile_h + g_l.gap)) + 2) * g_l.cols);
-    for (int i = first_row * g_l.cols; i < last; ++i) paint_card(g, i);
-    g.ResetClip();
-    if (g_scroll > 0) {
-        Gdiplus::Pen line(g_t.border, 1);
-        g.DrawLine(&line, gr.X + px(8), gr.Y, gr.GetRight() - px(8), gr.Y);
-    }
-    paint_scrollbar(g, g_hot.kind == kHitCard || g_hot.kind == kHitCardButton);
-}
-
 // While a file is dragged over the window the whole content area is the drop target.
 void paint_drop_overlay(Graphics& g) {
     const RectF& c = g_l.content;
@@ -3885,6 +3668,7 @@ void paint_infobar(Graphics& g) {
 void paint_page(Graphics& g);
 
 void paint_play(Graphics& g);
+void paint_store(Graphics& g);
 
 void paint_main(Graphics& g, float, float) {
     g.Clear(g_t.bg);
@@ -3894,18 +3678,21 @@ void paint_main(Graphics& g, float, float) {
         paint_page(g);
     } else if (g_view == kPlayView) {
         paint_play(g);
+    } else if (g_view == kStoreView) {
+        paint_store(g);
     } else {
         paint_toolbar(g);
-        if (g_view == kStoreView) paint_store_grid(g);
-        else paint_grid(g);
+        paint_grid(g);
     }
     if (g_drag_over) paint_drop_overlay(g);
     paint_infobar(g);
 }
 
+// Only what spins: an install's veil, the Store being set up, the Store or Google Play starting. A running app's
+// badge is still, and its starting window keeps its own timer, so a run alone repaints nothing.
 void update_timer() {
-    if (any_pending() || any_runs() || (g_view == kStoreView && g_store.loading()) ||
-        g_play.state == PlayState::kStarting) {
+    if (any_pending() || g_store_setup.busy() || g_store_app.state == Embedded::kStarting ||
+        g_play.state == Embedded::kStarting) {
         SetTimer(g_main, kAnimTimer, 16, nullptr);
     }
     else KillTimer(g_main, kAnimTimer);
@@ -4176,6 +3963,9 @@ int show_prompt(Prompt& p, const RECT& over) {
     const int corner = 2;  // DWMWCP_ROUND, Windows 11, as the splash and the menus
     DwmSetWindowAttribute(p.window, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, &corner, sizeof(corner));
     if (p.timeout) SetTimer(p.window, 1, kAskTimeoutMs, nullptr);
+    // The ring starts on what Enter answers, as a Windows dialog marks its default button: where that is
+    // Cancel under an accent Remove, the eye otherwise takes the accent one for Enter's.
+    if (!p.focus) p.focus = p.default_id;
     if (p.owner) EnableWindow(p.owner, FALSE);
     ShowWindow(p.window, SW_SHOW);
     SetForegroundWindow(p.window);
@@ -4249,6 +4039,21 @@ bool confirm(const std::wstring& main, const std::wstring& content, const wchar_
 
 
 std::string read_tail(const fs::path& p, size_t max_bytes);
+
+// A failure of Win.apk itself rather than of the app, from the log's last lines: the runtime did not start
+// (launcher_error_line), or a part of the install is missing or does not load (host/aosp_gfx.cpp's error
+// lines). Empty when it is not one: the app's own failure.
+std::wstring runtime_failure_reason(const fs::path& log) {
+    const std::string tail = read_tail(log, 64 * 1024);
+    if (tail.find("[E] launcher: could not start ") != std::string::npos)
+        return tr(L"Win.apk could not start its runtime. See the log for details.");
+    if (tail.find("[win.apk] error: AOSP graphics:") != std::string::npos ||
+        tail.find("[E] launcher: winapk-runtime.exe ended with 0xC0000135") != std::string::npos ||
+        tail.find("[E] launcher: winapk-runtime.exe ended with 0xC0000139") != std::string::npos ||
+        tail.find("[E] launcher: winapk-runtime.exe ended with 0xC000007B") != std::string::npos)
+        return tr(L"A part of Win.apk is missing or does not load. Install Win.apk again.");
+    return {};
+}
 
 // The lines of a log that say why an app failed: its errors, exceptions and the exit. Each line starts
 // with a left-to-right mark, so a Hebrew (mirrored) dialog keeps an English log line's own order.
@@ -4507,15 +4312,15 @@ std::wstring install_name(const fs::path& source) {
         while (!name.empty() && name.back() == L' ') name.pop_back();
         if (name.empty()) name = stem;
     }
-    const auto it = g_store.installed.find(wide_to_utf8(name));
-    if (it != g_store.installed.end() && find_app(it->second.first)) return it->second.first;
+    const auto it = g_packages.find(wide_to_utf8(name));
+    if (it != g_packages.end() && find_app(it->second)) return it->second;
     return file_name_safe(name);
 }
 
-// Queues an install. The store's (`from_store`) installs a download it then
-// removes, and shows its progress on the app's card rather than in the
-// install window.
-void install(const fs::path& source, std::wstring name = L"", fs::path replaces = {}, bool from_store = false) {
+// Queues an install. A quiet one (the Store's own app, which Win.apk downloads)
+// installs a download it then removes, and shows no install window: the Store's
+// page shows its progress.
+void install(const fs::path& source, std::wstring name = L"", bool quiet = false) {
     if (name.empty()) name = install_name(source);
     if (is_pending(name)) return;  // the same file twice
     if (!any_pending() && !g_install_wnd) g_jobs.clear();
@@ -4524,11 +4329,10 @@ void install(const fs::path& source, std::wstring name = L"", fs::path replaces 
     job.file = source.filename().wstring();
     job.update = find_app(name) != nullptr;
     g_jobs.push_back(job);
-    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, replaces, from_store}, 0,
-                             nullptr));
+    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, quiet}, 0, nullptr));
     update_timer();
     rebuild_tiles();
-    if (!from_store || g_install_wnd) show_install_window();
+    if (!quiet || g_install_wnd) show_install_window();
 }
 
 void add_from_dialog() {
@@ -4709,7 +4513,8 @@ void remove_tree(const fs::path& dir) {
     RemoveDirectoryW(dir.c_str());
 }
 
-// The app's own files: its library entry, converted code and shortcuts' icon. What it saved stays.
+// The app's own files: its library entry, installed copy, converted code and shortcuts' icon. What it saved
+// stays.
 void remove_app_files(const std::wstring& name) {
     std::error_code ec;
     fs::remove(label_file(name), ec);
@@ -4719,7 +4524,20 @@ void remove_app_files(const std::wstring& name) {
     fs::remove(start_activity_file(name), ec);
     fs::remove(orientation_file(name), ec);
     remove_tree(app_dir(name));
-    fs::remove(data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed"), ec);
+    // Its installed copy (android\data\app\~~<nonce>\<package>-<nonce>), as a phone's uninstall removes it. There
+    // is one per package, so it stays while another library name has the same package.
+    const fs::path copy = installed_copy(name);
+    fs::remove(install_record(name), ec);
+    if (!copy.empty()) {
+        const std::wstring dir = copy.filename().wstring();
+        const std::string pkg = wide_to_utf8(dir.substr(0, dir.rfind(L'-')));
+        bool other = false;
+        for (const App& a : library()) {
+            const std::vector<std::string> p = a.name == name ? std::vector<std::string>{} : package_of(a.name);
+            other = other || (!p.empty() && p[0] == pkg);
+        }
+        if (!other) remove_tree(copy);
+    }
 }
 
 // What the app saved, as Android's "Clear storage" and uninstall take it: its data folder
@@ -4743,7 +4561,7 @@ void remove_app_data(const std::string& pkg) {
 bool confirm_remove(const App& a, bool* with_data) {
     Prompt p;
     p.caption = L"Win.apk";
-    p.question = fmt(L"Remove {0}", {a.label});
+    p.question = fmt(L"Remove {0}?", {a.label});
     p.note = tr(L"Removes the app and its shortcuts.");
     p.switches = {{tr(L"Also remove accounts and data saved by the app"), false, true}};
     p.buttons = {{IDOK, tr(L"Remove")}, {IDCANCEL, tr(L"Cancel")}};
@@ -4767,8 +4585,9 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
     }
     // Its permissions go with it, unless another copy in the library is the same package.
     const std::vector<std::string> pkg = package_of(copy.name);
+    const fs::path registered = pkg.empty() ? fs::path() : registry_apk(pkg[0]);
+    bool other = false;
     if (!pkg.empty()) {
-        bool other = false;
         for (const App& a : library()) {
             const std::vector<std::string> p = a.name == copy.name ? std::vector<std::string>{} : package_of(a.name);
             other = other || (!p.empty() && p[0] == pkg[0]);
@@ -4777,9 +4596,12 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
         if (!other && with_data) remove_app_data(pkg[0]);
     }
     remove_app_shortcuts(copy);
-    fs::remove(copy.apk, ec);
+    for (const fs::path& p : winapk::launcher::app_entries(library_dir(), copy.name, false)) fs::remove_all(p, ec);
     remove_app_files(copy.name);
     write_registry();
+    // The package stays when another copy in the library is it; the registry then names that copy.
+    if (!pkg.empty() && !other) tell_broker(winapk::package_events::kRemoved, pkg[0], registered, with_data);
+    else if (!pkg.empty() && registered == copy.apk) tell_broker(winapk::package_events::kReplaced, pkg[0]);
     if (ask) {
         refresh();
         if (g_view == kAppView) set_view(kLibraryView);
@@ -4799,47 +4621,6 @@ void set_orientation(const App& app, int o) {
     info(fmt(now == kLandscape ? L"{0} opens in landscape from now on." : L"{0} opens in portrait from now on.",
                    {app.label}),
                kSuccess);
-}
-
-// Fetches the catalog: the one kept from last time at once, F-Droid's when
-// that is old or `force` asks for it.
-void store_start(bool force) {
-    if (g_store.loading()) return;
-    g_store.fetch = StoreState::Fetch::kLoading;
-    g_store.got_kb = 0;
-    if (HANDLE t = CreateThread(nullptr, 0, catalog_thread, force ? &g_store : nullptr, 0, nullptr)) CloseHandle(t);
-    else g_store.fetch = StoreState::Fetch::kFailed;  // no thread: nothing was fetched
-    update_timer();
-    InvalidateRect(g_main, nullptr, FALSE);
-}
-
-// The card's button: install or update the app (download, check, then the
-// library's install).
-void store_get(const StoreApp& a) {
-    const Offer offer = offer_for(a);
-    if (offer != kOfferInstall && offer != kOfferUpdate) return;
-    g_store.downloads[a.pkg] = -1;
-    CloseHandle(CreateThread(nullptr, 0, download_thread,
-                             new Download{a.pkg, a.sha256, std::wstring(kRepo) + utf8_to_wide(a.apk), store_name(a),
-                                          downloads_dir() / utf8_to_wide(a.apk)},
-                             0, nullptr));
-    info(fmt(L"Downloading {0}…", {store_name(a)}), kInfo);
-    InvalidateRect(g_main, nullptr, FALSE);
-}
-
-// A download is in and checked: it is installed as the app the library has
-// with that package, if any, else as a new one named after the package.
-void store_downloaded(const Download& d, bool ok) {
-    g_store.downloads.erase(d.pkg);
-    if (!ok) {
-        info(fmt(L"Downloading {0} failed. Check the internet connection, then try again.", {d.label}), kError);
-        return;
-    }
-    const auto it = g_store.installed.find(d.pkg);
-    const App* existing = it == g_store.installed.end() ? nullptr : find_app(it->second.first);
-    const std::wstring name = existing ? existing->name : file_name_safe(utf8_to_wide(d.pkg));
-    if (!existing) g_job_labels[name] = d.label;
-    install(d.file, name, existing ? existing->apk : fs::path(), true);
 }
 
 // ---------------------------------------------------------------------------
@@ -5094,35 +4875,6 @@ int run_choice_menu(const std::vector<std::wstring>& choices, int current, const
     return run_menu(m, pt, top.y);
 }
 
-// The categories, in a menu of a few columns so that a hundred of them fit.
-void choose_category() {
-    std::set<std::wstring, bool (*)(const std::wstring&, const std::wstring&)> all(
-        [](const std::wstring& a, const std::wstring& b) {
-            return CompareStringEx(LOCALE_NAME_USER_DEFAULT, NORM_IGNORECASE, a.c_str(), -1, b.c_str(), -1, nullptr,
-                                   nullptr, 0) == CSTR_LESS_THAN;
-        });
-    for (const StoreApp& a : g_store.apps) all.insert(a.categories.begin(), a.categories.end());
-    const std::vector<std::wstring> list(all.begin(), all.end());
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | (g_store.category.empty() ? MF_CHECKED : 0), 1, tr(L"All categories"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    const size_t per_column = (std::max)(size_t{20}, (list.size() + 4) / 5);
-    for (size_t i = 0; i < list.size(); ++i) {
-        const UINT flags = MF_STRING | (list[i] == g_store.category ? MF_CHECKED : 0) |
-                           (i > 0 && i % per_column == 0 ? MF_MENUBARBREAK : 0);
-        AppendMenuW(menu, flags, i + 2, list[i].c_str());
-    }
-    POINT pt{static_cast<LONG>(g_l.category.X), static_cast<LONG>(g_l.category.GetBottom() + px(2))};
-    ClientToScreen(g_main, &pt);
-    const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, g_main,
-                                    nullptr);
-    DestroyMenu(menu);
-    if (pick <= 0) return;
-    g_store.category = pick == 1 ? L"" : list[static_cast<size_t>(pick - 2)];
-    g_scroll = 0;
-    rebuild_tiles();
-}
-
 // ---------------------------------------------------------------------------
 // Pages: Settings, an app's details and a store app's details, drawn in the
 // content layer in place of the grid, as rows grouped in cards (Windows 11's
@@ -5136,6 +4888,8 @@ struct Row {
     int choice = 0;
     std::function<void(int)> act;  // button: act(0), toggle: act(new state), choice: act(index)
     const char* key = nullptr;     // names a row that an event changes in place (update_progress)
+    std::wstring link;             // a text link under the detail: a way on that is not the row's action
+    std::function<void()> link_act;
 };
 
 struct Section {
@@ -5156,6 +4910,7 @@ struct Page {
     struct Target {
         RectF r;
         int section, row;
+        bool link = false;  // the row's link, not its control
     };
     std::vector<Target> targets;
     RectF back_r, thumb, view;
@@ -5259,6 +5014,7 @@ void paint_page(Graphics& g) {
             const float tw = cw - 2 * pad - (cs.Width > 0 ? cs.Width + px(16) : 0);
             float h = px(20);
             if (!row.detail.empty()) h += px(2) + text_height(g, row.detail, g_f.caption.get(), tw);
+            if (!row.link.empty()) h += px(24);
             heights.push_back((std::max)(px(56), h + px(24)));
             controls.push_back(cs);
             total += heights.back();
@@ -5289,7 +5045,8 @@ void paint_page(Graphics& g) {
             }
             const float tw = cw - 2 * pad - (cs.Width > 0 ? cs.Width + px(16) : 0);
             const float dh = row.detail.empty() ? 0 : px(2) + text_height(g, row.detail, g_f.caption.get(), tw);
-            const float ty = ry + (h - px(20) - dh) / 2;
+            const float lh = row.link.empty() ? 0 : px(24);
+            const float ty = ry + (h - px(20) - dh - lh) / 2;
             draw_text(g, row.title, g_f.body.get(), row.destructive && row.kind == Row::kText ? g_t.danger : g_t.text,
                       RectF(m + pad, ty, tw, px(20)));
             if (!row.detail.empty()) {
@@ -5302,6 +5059,15 @@ void paint_page(Graphics& g) {
                 if (focused) draw_focus_ring(g, cr, row.kind == Row::kToggle ? cr.Height / 2 : px(kRadiusControl));
                 if (interactive) s.targets.push_back({row.kind == Row::kToggle ? rr : cr, static_cast<int>(si),
                                                       static_cast<int>(ri)});
+            }
+            if (!row.link.empty()) {
+                // Accent text under the detail, as the install window's links (draw_link).
+                const int li = static_cast<int>(s.targets.size());
+                const RectF lr(m + pad, ty + px(22) + dh + px(2),
+                               (std::min)(tw, text_width(g, row.link, g_f.body.get()) + px(4)), px(22));
+                draw_text(g, row.link, g_f.body.get(), s.hot == li ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent, lr);
+                if (s.focus == li) draw_focus_ring(g, inset(lr, -px(3), -px(1)), px(kRadiusControl));
+                s.targets.push_back({lr, static_cast<int>(si), static_cast<int>(ri), true});
             }
             ry += h;
         }
@@ -5373,6 +5139,10 @@ void page_click(int hit) {
     if (hit < 0 || hit >= static_cast<int>(s.targets.size())) return;
     const Page::Target t = s.targets[static_cast<size_t>(hit)];
     const Row row = s.sections[static_cast<size_t>(t.section)].rows[static_cast<size_t>(t.row)];  // act may rebuild
+    if (t.link) {
+        if (row.link_act) row.link_act();
+        return;
+    }
     if (!row.act) return;
     const int generation = s.generation;
     if (row.kind == Row::kButton) {
@@ -5502,6 +5272,12 @@ int run_runtime_captured(const std::wstring& args, std::wstring* out, const fs::
     PROCESS_INFORMATION pi{};
     const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
                                    root().c_str(), &si, &pi);
+    if (!ok && err != INVALID_HANDLE_VALUE) {
+        // The log would stay empty: the one line that says why.
+        const std::string line = launcher_error_line(L"could not start " + runtime_exe().wstring(), GetLastError());
+        DWORD n = 0;
+        WriteFile(err, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    }
     CloseHandle(write);
     if (err != INVALID_HANDLE_VALUE) CloseHandle(err);
     std::string bytes;
@@ -5617,11 +5393,81 @@ void google_signout(const std::wstring& account) {
         info(fmt(L"Signed out of {0}.", {account}), kInfo);
         refresh_account();
     } else {
-        error_with_log(tr(L"Could not sign out"), tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
+        // Signing out only removes what this PC keeps (GmsCli signout): no network is asked, so the cause is here.
+        error_with_log(tr(L"Could not sign out"),
+                       tr(L"Win.apk could not remove the account from this PC. The log says why."), gms_log());
     }
 }
 
+// The device ID Google's page for uncertified devices takes (google.com/android/uncertified): the Services
+// Framework's android_id, as `--gms device-id` reads it from gservices.db with the runtime's own SQLite (or the
+// layer's own checkin without the real GSF). Win.apk is not a Play Protect certified device and never claims to
+// be; registering the ID is Google's own way on for such a device (custom ROMs use it). Asked on a
+// thread (a JVM start) once per opening of Settings, and posted to the library's window, which owns these.
+std::wstring g_device_id;
+bool g_device_id_asking = false;
+int g_device_id_page = -1;  // the page generation it was last asked for
+
+DWORD WINAPI device_id_thread(void*) {
+    std::wstring text;
+    auto* out = new std::wstring();
+    if (run_gms(L"device-id", &text) == 0) {
+        if (const size_t at = text.find(L"DEVICE_ID\t"); at != std::wstring::npos) {
+            const size_t end = text.find_first_of(L"\t\r\n", at + 10);
+            *out = text.substr(at + 10, end == std::wstring::npos ? std::wstring::npos : end - at - 10);
+        }
+    }
+    if (!PostMessageW(g_main, kGmsDeviceId, 0, reinterpret_cast<LPARAM>(out))) delete out;
+    return 0;
+}
+
+void ask_device_id() {
+    if (g_device_id_asking || g_device_id_page == g_page.generation) return;
+    g_device_id_page = g_page.generation;
+    g_device_id_asking = true;
+    HANDLE t = CreateThread(nullptr, 0, device_id_thread, nullptr, 0, nullptr);
+    if (t) CloseHandle(t);
+    else g_device_id_asking = false;
+}
+
+// An older install kept the account's master token in plain text in gms_state.properties. The runtime's
+// owner side moves it into the sealed tokens.dat the first time it reads the file (com.macapk.gms.GmsStore);
+// an app's process has the token service do that first, which costs it a JVM start. So at its start the
+// launcher has `--gms accounts` read the file once, on a thread, when there is a file and no tokens.dat yet
+// (two stats: the launcher never reads either file). Nothing is shown.
+DWORD WINAPI seal_gms_tokens_thread(void*) {
+    std::wstring out;
+    run_gms(L"accounts", &out);
+    return 0;
+}
+
+void seal_gms_tokens() {
+    std::error_code ec;
+    if (!fs::exists(gms_dir() / L"gms_state.properties", ec) || fs::exists(gms_dir() / L"tokens.dat", ec)) return;
+    if (HANDLE t = CreateThread(nullptr, 0, seal_gms_tokens_thread, nullptr, 0, nullptr)) CloseHandle(t);
+}
+
+// The row: the ID, Copy, and the registration page as a link (the page is Google's, and the user signs in there).
+Row device_id_row() {
+    // Left to right in Hebrew too: a signed ID's minus stays in front of its digits.
+    Row r = button_row(tr(L"Device ID for Google"),
+                       L"\u202A" + g_device_id + L"\u202C\n" +
+                           tr(L"This device isn't Play Protect certified. Google lets you register it to your "
+                              L"account so that Google apps sign in."),
+                       tr(L"Copy"), [] {
+                           if (copy_text(g_main, g_device_id)) info(tr(L"Device ID copied."), kSuccess);
+                       });
+    r.link = tr(L"Register this device");
+    r.link_act = [] {
+        ShellExecuteW(nullptr, L"open", L"https://www.google.com/android/uncertified", nullptr, nullptr,
+                      SW_SHOWNORMAL);
+    };
+    return r;
+}
+
 bool google_apps_ready();
+bool background_updates_on();
+void maintenance_check();
 void show_gms_setup(bool from_settings);
 
 Section google_account_section() {
@@ -5636,7 +5482,7 @@ Section google_account_section() {
             sec.rows.push_back(button_row(a, L"", tr(L"Sign out"), [a] { google_signout(a); }, true));
         }
         sec.rows.push_back(button_row(accounts.empty() ? tr(L"Sign in with Google") : tr(L"Add another account"),
-                                      tr(L"One account for every app: Google sign-in, Play licence checks and "
+                                      tr(L"One account for every app: Google sign-in, Play license checks and "
                                          L"push notifications."),
                                       tr(L"Sign in…"), [] { start_google_signin(); }));
     }
@@ -5652,9 +5498,25 @@ Section google_account_section() {
     gms.act = [](int on) {
         set_setting(L"GoogleServices", static_cast<DWORD>(on));
         rebuild_tiles();  // Google Play in the pane comes and goes with it
+        maintenance_check();
         if (on && !google_apps_ready()) show_gms_setup(true);
     };
     sec.rows.push_back(gms);
+    // The launcher's maintenance windows while it runs (background_updates_on, maintenance_check).
+    if (gms.on) {
+        Row bg;
+        bg.kind = Row::kToggle;
+        bg.title = tr(L"Update apps in the background");
+        bg.detail = tr(L"While Win.apk is open, even in the background, Google services start for a few minutes "
+                       L"every few hours so the Play Store can update your apps, as a phone does. Only on mains "
+                       L"power.");
+        bg.on = setting(L"BackgroundUpdates", 1) != 0;
+        bg.act = [](int on) {
+            set_setting(L"BackgroundUpdates", static_cast<DWORD>(on));
+            maintenance_check();
+        };
+        sec.rows.push_back(bg);
+    }
     // The setup's one home is its page; this row only leads there.
     if (gms.on) {
         sec.rows.push_back(button_row(tr(L"Google services setup"),
@@ -5663,6 +5525,8 @@ Section google_account_section() {
                                                           : tr(L"Install Play services, Services Framework and "
                                                                L"Play Store from their downloads."),
                                       tr(L"Open"), [] { show_gms_setup(true); }));
+        ask_device_id();
+        if (!g_device_id.empty()) sec.rows.push_back(device_id_row());
     }
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
@@ -5709,8 +5573,8 @@ bool google_services_on() { return setting(L"GoogleServices", 0) != 0; }
 
 // The library app that is this package, or null.
 const App* app_of_package(const std::string& pkg) {
-    const auto it = g_store.installed.find(pkg);
-    return it == g_store.installed.end() ? nullptr : find_app(it->second.first);
+    const auto it = g_packages.find(pkg);
+    return it == g_packages.end() ? nullptr : find_app(it->second);
 }
 
 bool google_apps_ready() {
@@ -5718,6 +5582,144 @@ bool google_apps_ready() {
         if (!app_of_package(a.pkg)) return false;
     }
     return true;
+}
+
+// ---- Background updates ---------------------------------------------------------
+//
+// On a phone the Play Store keeps apps up to date with nothing on screen: JobScheduler starts its process for
+// its daily jobs (an update check, then the installs), at times Android picks (doze's maintenance windows), on
+// mains power and an unmetered network. Win.apk's system broker holds the apps' jobs (BrokerJobs) and starts
+// the Play Store's process for a job that is due, but it runs only while an app is open. So with "Use Google
+// services" and Settings > Google account > "Update apps in the background" on, the launcher opens a
+// maintenance window every few hours while it runs, shown or hidden: `winapk-runtime --system --maintenance`
+// boots Google services, runs the jobs that are due (their own constraints decide: network, unmetered,
+// charging) and stops a few minutes after the last. The rule: only while Win.apk runs, never from a
+// Windows scheduled task or a service; the launcher is not kept alive for it, but waits for a window it opened
+// (maybe_quit). When is decided in maintenance.h; the window's conditions are Android's too: only on mains
+// power, with a network. Logs: logs\maintenance.log.
+
+namespace mw = winapk::launcher::maintenance;
+
+DWORD unix_now();
+bool any_splash();
+
+// The scheduled task earlier builds made. Removed once, at the first start of a build without it; the
+// uninstaller removes it too (winapk.iss).
+constexpr wchar_t kMaintenanceTask[] = L"Win.apk\\Background updates";
+
+HANDLE g_maintenance = nullptr;  // the window this launcher opened, until kMaintenanceEnded
+
+bool background_updates_on() { return google_services_on() && setting(L"BackgroundUpdates", 1) != 0; }
+
+// Runs schtasks.exe (no window) with `args`; its exit code, or -1 when it did not run.
+long run_schtasks(const std::wstring& args) {
+    wchar_t sys[MAX_PATH] = {};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    std::wstring cmd = L"\"" + std::wstring(sys) + L"\\schtasks.exe\" " + args;
+    STARTUPINFOW si{sizeof(si)};
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        return -1;
+    CloseHandle(pi.hThread);
+    // Not run when it did not end in time: its exit code would read STILL_ACTIVE (259), taken for an answer.
+    const bool ended = WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0;
+    DWORD code = 1;
+    if (ended) GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return ended ? static_cast<long>(code) : -1;
+}
+
+// Off the library's thread: schtasks takes a moment. Noted as done once schtasks ran, whether or not there was
+// a task (it exits 1 when there is none).
+DWORD WINAPI remove_maintenance_task_thread(void*) {
+    if (run_schtasks(std::wstring(L"/Delete /TN \"") + kMaintenanceTask + L"\" /F") >= 0)
+        set_setting(L"MaintenanceTaskRemoved", 1);
+    return 0;
+}
+
+void remove_maintenance_task() {
+    if (setting(L"MaintenanceTaskRemoved", 0)) return;
+    if (HANDLE t = CreateThread(nullptr, 0, remove_maintenance_task_thread, nullptr, 0, nullptr)) CloseHandle(t);
+}
+
+// Not on battery: AC online, or a PC that does not know (a desktop with no battery reports online already).
+bool on_mains_power() {
+    SYSTEM_POWER_STATUS s{};
+    return !GetSystemPowerStatus(&s) || s.ACLineStatus != 0;
+}
+
+// Connected to some network, as the scheduled task's RunOnlyIfNetworkAvailable was. Network List Manager is
+// asked on the library's thread, where COM is up (OleInitialize); when it cannot be asked, the window is not
+// held back: the broker's jobs check their own network constraints.
+bool on_network() {
+    INetworkListManager* nlm = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_NetworkListManager, nullptr, CLSCTX_ALL, IID_INetworkListManager,
+                                reinterpret_cast<void**>(&nlm))) ||
+        !nlm)
+        return true;
+    // GetConnectivity: the one name MinGW's header and the SDK's agree on (IsConnected is get_IsConnected there).
+    NLM_CONNECTIVITY connectivity = NLM_CONNECTIVITY_DISCONNECTED;
+    const bool asked = SUCCEEDED(nlm->GetConnectivity(&connectivity));
+    nlm->Release();
+    return !asked || connectivity != NLM_CONNECTIVITY_DISCONNECTED;
+}
+
+// A system broker runs in this user session: an app's, or a window another launcher opened. Its mutex is the
+// runtime's own (runtime_main.cpp, --system).
+bool broker_running() {
+    HANDLE m = OpenMutexW(SYNCHRONIZE, FALSE, L"Local\\WinApk-system");
+    if (!m) return false;
+    CloseHandle(m);
+    return true;
+}
+
+// Waits for the window's broker, then tells the library (kMaintenanceEnded), which forgets it.
+DWORD WINAPI maintenance_wait_thread(void* p) {
+    WaitForSingleObject(static_cast<HANDLE>(p), INFINITE);
+    if (g_main) PostMessageW(g_main, kMaintenanceEnded, 0, 0);
+    return 0;
+}
+
+// At the launcher's start, every mw::kCheckMinutes, and when the setting or the setup changes: opens a
+// maintenance window when one is due and may run now. The library's thread only.
+void maintenance_check() {
+    if (!g_main) return;
+    mw::Conditions c;
+    c.setting_on = background_updates_on();
+    c.apps_ready = c.setting_on && google_apps_ready();
+    c.window_running = g_maintenance != nullptr;
+    c.app_starting = any_splash();
+    if (c.setting_on && c.apps_ready && !c.window_running) {
+        c.broker_running = broker_running();
+        c.on_mains = on_mains_power();
+        c.on_network = on_network();
+    }
+    const DWORD now = unix_now();
+    if (mw::decide(now, setting(L"LastMaintenance", 0), c) != mw::Decision::kStart) return;
+    HANDLE p = start_runtime(L"--system --maintenance", logs_dir() / L"maintenance.log");
+    if (!p) return;
+    set_setting(L"LastMaintenance", now);
+    HANDLE t = CreateThread(nullptr, 0, maintenance_wait_thread, p, 0, nullptr);
+    if (!t) {
+        CloseHandle(p);  // not waited for: the launcher does not hold its exit for it
+        return;
+    }
+    CloseHandle(t);
+    g_maintenance = p;
+}
+
+// kMaintenanceEnded: the window's broker exited.
+void maintenance_ended() {
+    if (g_maintenance) CloseHandle(g_maintenance);
+    g_maintenance = nullptr;
+    maybe_quit();
+}
+
+// `Win.apk.exe maintenance`, which the scheduled task of earlier builds ran: that task should not be there, so
+// it is removed and no window is opened (the launcher opens them now, while it runs).
+int maintenance_main() {
+    remove_maintenance_task_thread(nullptr);
+    return 0;
 }
 
 fs::path setup_log() { return logs_dir() / L"google-setup.log"; }
@@ -5871,6 +5873,13 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
     const std::wstring file = c->file.filename().wstring();
     if (c->code < 0) {
         error_with_log(tr(L"The file could not be checked"), tr(L"Win.apk's runtime did not start."), setup_log());
+    } else if (c->pkg.empty() && c->dropped) {
+        // ApkCheck read no package: a damaged or cut-off download, not "another app".
+        error_with_log(tr(L"The file could not be checked"),
+                       fmt(L"{0} could not be read as an Android app. It may be damaged or not fully downloaded; "
+                           L"download it again.",
+                           {file}),
+                       setup_log());
     } else if (!app) {
         // A download of something else is none of the page's business; a file dropped on it is.
         if (c->dropped) {
@@ -5925,8 +5934,10 @@ std::vector<Section> gms_setup_sections() {
         // While the page is open the Downloads folder is watched (and a file can be dropped here): each app's row
         // says which file to download, and the files that pass the checks install themselves.
         state.rows.push_back(text_row(tr(L"To use Google Play, install the following apps as described."), L"",
-                                      g_setup.checking.empty() ? tr(L"Waiting for the downloads")
-                                                               : fmt(L"Checking {0}…", {g_setup.checking})));
+                                      g_setup.checking.empty()
+                                          ? tr(L"Download each app to your Downloads folder, or drop it here. "
+                                               L"Win.apk checks that Google signed it, then installs it.")
+                                          : fmt(L"Checking {0}…", {g_setup.checking})));
     }
     out.push_back(std::move(state));
 
@@ -5966,111 +5977,146 @@ void show_gms_setup(bool from_settings) {
     open_page(kGmsSetupView, std::move(p));
 }
 
-// ---- Google Play, in the window ---------------------------------------------------
+// ---- Apps in the window: the Store and Google Play ------------------------------------------------
 //
-// Google Play in the pane opens the Play Store inside the library window, in the content area as the Store tab
-// is, not in a window of its own. The launcher puts a host panel (a child window, play_panel_proc) over the
-// content area under the title and starts the runtime with WINAPK_EMBED_PARENT=<the panel's handle> and
-// WINAPK_PHONE_SIZE the panel's size in dp; the runtime then makes its window a child of the panel
-// (win32_window.cpp, "embedded in the launcher") that fills it and follows its size, so the app lays itself
-// out for the area as it does for a resized window. The two processes' input queues are joined, as Windows
-// does for any parent and child, so the panel gives the app the keyboard focus when it is shown.
+// The Store and Google Play in the pane open their app inside the library window, in the content area, not in a
+// window of its own. The launcher puts a host panel (a child window, panel_proc) over the content area under the
+// title and starts the runtime with WINAPK_EMBED_PARENT=<the panel's handle> and WINAPK_PHONE_SIZE the panel's
+// size in dp; the runtime then makes its window a child of the panel (win32_window.cpp, "embedded in the
+// launcher") that fills it and follows its size, so the app lays itself out for the area as it does for a resized
+// window. The two processes' input queues are joined, as Windows does for any parent and child, so the panel gives
+// the app the keyboard focus when it is shown.
 //
-// Leaving for another tab hides the panel and the app keeps running, as a phone keeps an app in the
-// background; Google Play again shows it at once. Closing the library window stops it. If it exits, the area
-// says so, with Open Google Play (and Show log when it never came up). If the runtime could not embed its
-// window (an older runtime, or one already running in its own window), the window is a normal one: the
-// launcher sees the panel has no child once the app is up, says so and leaves the window as it is.
+// Leaving for another tab hides the panel and the app keeps running, as a phone keeps an app in the background;
+// its item again shows it at once. Closing the library window stops it. If it exits, the area says so, with Open
+// (and Show log when it never came up). If the runtime could not embed its window (an older runtime, or one
+// already running in its own window), the window is a normal one: the launcher sees the panel has no child once
+// the app is up, says so and leaves the window as it is.
 
-constexpr wchar_t kPlayPanelClass[] = L"WinApkPlayPanel";
+constexpr wchar_t kPanelClass[] = L"WinApkAppPanel";
 
-HWND play_window() { return g_play.panel ? GetWindow(g_play.panel, GW_CHILD) : nullptr; }
+HWND embedded_window(const Embedded& e) { return e.panel ? GetWindow(e.panel, GW_CHILD) : nullptr; }
 
-// The panel's place and visibility: over the content under the title while Google Play is the view and the app
-// is starting or up.
-void place_play_panel() {
-    if (!g_play.panel) return;
-    const RectF& r = g_l.play;
-    MoveWindow(g_play.panel, static_cast<int>(r.X), static_cast<int>(r.Y), static_cast<int>(r.Width),
-               static_cast<int>(r.Height), TRUE);
-    const bool show = g_view == kPlayView &&
-                      (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
-    if (show != (IsWindowVisible(g_play.panel) != FALSE)) ShowWindow(g_play.panel, show ? SW_SHOW : SW_HIDE);
+// The app in the window that runs as `name`, or null.
+Embedded* embedded_of(const std::wstring& name) {
+    for (Embedded* e : {&g_store_app, &g_play}) {
+        if (!e->name.empty() && e->name == name) return e;
+    }
+    return nullptr;
 }
 
-// Gives the app the keyboard while Google Play is the view.
-void focus_play() {
-    if (g_view != kPlayView) return;
-    if (HWND w = play_window()) SetFocus(w);
+// The app the view is, while the view is the Store or Google Play.
+Embedded* shown_embedded() {
+    if (g_view == kStoreView) return &g_store_app;
+    if (g_view == kPlayView) return &g_play;
+    return nullptr;
+}
+
+// Each panel's place and visibility: over the content under the title while its view is shown and the app is
+// starting or up.
+void place_panels() {
+    const RectF& r = g_l.panel;
+    for (Embedded* e : {&g_store_app, &g_play}) {
+        if (!e->panel) continue;
+        MoveWindow(e->panel, static_cast<int>(r.X), static_cast<int>(r.Y), static_cast<int>(r.Width),
+                   static_cast<int>(r.Height), TRUE);
+        const bool show = g_view == e->view && e->up();
+        if (show != (IsWindowVisible(e->panel) != FALSE)) ShowWindow(e->panel, show ? SW_SHOW : SW_HIDE);
+    }
+}
+
+// Gives the shown app the keyboard.
+void focus_embedded() {
+    if (Embedded* e = shown_embedded()) {
+        if (HWND w = embedded_window(*e)) SetFocus(w);
+    }
 }
 
 // The app's window fills the panel. Asynchronous: a busy app never holds the launcher's thread up.
-void fit_play_window() {
-    HWND w = play_window();
+void fit_embedded_window(const Embedded& e) {
+    HWND w = embedded_window(e);
     if (!w) return;
     RECT rc;
-    GetClientRect(g_play.panel, &rc);
+    GetClientRect(e.panel, &rc);
     SetWindowPos(w, nullptr, 0, 0, rc.right, rc.bottom, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
 }
 
-LRESULT CALLBACK play_panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                          reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+    }
+    Embedded* e = reinterpret_cast<Embedded*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!e) return DefWindowProcW(hwnd, msg, wp, lp);
     switch (msg) {
         case WM_ERASEBKGND: return 1;
         case WM_PAINT:  // under the app's window: the spinner until it is up
-            buffered_paint(hwnd, [](Graphics& g, float w, float h) {
+            buffered_paint(hwnd, [e](Graphics& g, float w, float h) {
                 g.Clear(g_t.layer);
-                if (g_play.state != PlayState::kStarting) return;
+                if (e->state != Embedded::kStarting) return;
                 const float s = px(32), cy = (std::min)(h / 2, px(220));
                 spinner(g, RectF((w - s) / 2, cy - px(48), s, s), g_t.accent, px(3));
-                draw_text(g, tr(L"Starting Google Play…"), g_f.body.get(), g_t.text2, RectF(0, cy, w, px(24)), kCenter);
+                draw_text(g, tr(e->starting), g_f.body.get(), g_t.text2, RectF(0, cy, w, px(24)), kCenter);
             });
             return 0;
-        case WM_SIZE: fit_play_window(); return 0;
+        case WM_SIZE: fit_embedded_window(*e); return 0;
         case WM_PARENTNOTIFY:  // the runtime made its window: it fills the panel at once
-            if (LOWORD(wp) == WM_CREATE) fit_play_window();
+            if (LOWORD(wp) == WM_CREATE) fit_embedded_window(*e);
             return 0;
-        case WM_SETFOCUS: focus_play(); return 0;
+        case WM_SETFOCUS: focus_embedded(); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-void ensure_play_panel() {
-    if (g_play.panel) return;
+void ensure_panel(Embedded& e) {
+    if (e.panel) return;
     static bool registered = false;
     if (!registered) {
         WNDCLASSEXW wc{sizeof(wc)};
-        wc.lpfnWndProc = play_panel_proc;
+        wc.lpfnWndProc = panel_proc;
         wc.hInstance = g_inst;
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = kPlayPanelClass;
+        wc.lpszClassName = kPanelClass;
         RegisterClassExW(&wc);
         registered = true;
     }
     // WS_EX_NOINHERITLAYOUT: the panel is mirrored with the window in Hebrew, the app's window in it never (the
     // app lays out its own right to left).
-    g_play.panel = CreateWindowExW(layout_style() | WS_EX_NOINHERITLAYOUT | WS_EX_CONTROLPARENT, kPlayPanelClass,
-                                   L"Google Play", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, g_main,
-                                   nullptr, g_inst, nullptr);
+    e.panel = CreateWindowExW(layout_style() | WS_EX_NOINHERITLAYOUT | WS_EX_CONTROLPARENT, kPanelClass, e.title,
+                              WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, g_main, nullptr, g_inst, &e);
 }
 
-void start_play(const App& store) {
-    ensure_play_panel();
-    if (!g_play.panel) {  // no panel: Google Play in its own window, as any app
-        launch(store);
+void start_embedded(Embedded& e, const App& app) {
+    ensure_panel(e);
+    if (!e.panel) {  // no panel: the app in its own window, as any app
+        launch(app);
         return;
     }
     compute_layout();
-    const int w = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Width), 96, static_cast<int>(g_dpi)));
-    const int h = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Height), 96, static_cast<int>(g_dpi)));
-    g_play.name = store.name;
-    g_play.state = PlayState::kStarting;
-    begin_run(store.name);  // open_google_play starts it only when it has no run
-    auto* job = new RunJob{store.name, store.apk, {}};
-    job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(g_play.panel)),
+    const int w = (std::max)(1, MulDiv(static_cast<int>(g_l.panel.Width), 96, static_cast<int>(g_dpi)));
+    const int h = (std::max)(1, MulDiv(static_cast<int>(g_l.panel.Height), 96, static_cast<int>(g_dpi)));
+    e.name = app.name;
+    e.state = Embedded::kStarting;
+    begin_run(app.name);  // open_store and open_google_play start it only when it has no run
+    auto* job = new RunJob{app.name, app.apk, {}};
+    job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(e.panel)),
                 L"WINAPK_PHONE_SIZE=" + std::to_wstring(w) + L"x" + std::to_wstring(h)};
     CloseHandle(CreateThread(nullptr, 0, run_thread, job, 0, nullptr));
-    place_play_panel();
+    place_panels();
     update_timer();
+}
+
+// Shows `app` in the window as `e`: at once when it is there already, else started there; an app running in a
+// window of its own is brought forward instead.
+void show_embedded(Embedded& e, const App& app) {
+    const bool here = e.name == app.name && e.up();
+    if (!here && run_active(app.name)) {
+        bring_forward(app.name);
+        return;
+    }
+    set_view(e.view);
+    if (!here) start_embedded(e, app);
+    focus_embedded();
 }
 
 // Google Play in the pane: the Play Store in the window once the three apps are installed, else the setup.
@@ -6080,62 +6126,388 @@ void open_google_play() {
         show_gms_setup(false);
         return;
     }
-    const bool here = g_play.name == store->name &&
-                      (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
-    if (!here && run_active(store->name)) {  // running in a window of its own
-        bring_forward(store->name);
-        return;
-    }
-    set_view(kPlayView);
-    if (!here) start_play(*store);
-    focus_play();
+    show_embedded(g_play, *store);
 }
 
 // The app's window is up (kRunReady): in the panel, or, when the runtime did not embed it, on its own.
-void play_ready() {
-    if (play_window()) {
-        g_play.state = PlayState::kShown;
-        InvalidateRect(g_play.panel, nullptr, FALSE);
-        fit_play_window();
-        place_play_panel();
-        focus_play();
+void embedded_ready(Embedded& e) {
+    if (embedded_window(e)) {
+        e.state = Embedded::kShown;
+        InvalidateRect(e.panel, nullptr, FALSE);
+        fit_embedded_window(e);
+        place_panels();
+        if (g_view == e.view) focus_embedded();
     } else {
-        g_play.state = PlayState::kIdle;
-        g_play.name.clear();
-        place_play_panel();
-        if (g_view == kPlayView) set_view(kLibraryView);
-        info(tr(L"Google Play opened in its own window."), kInfo);
+        e.state = Embedded::kIdle;
+        e.name.clear();
+        place_panels();
+        if (g_view == e.view) set_view(kLibraryView);
+        info(tr(&e == &g_store_app ? L"The Store opened in its own window." : L"Google Play opened in its own window."),
+             kInfo);
     }
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
-// The Play Store's runtime ended (kRunExited); `failed`: before its window came up, and not stopped by the
-// launcher (the window closing), which is simply over.
-void play_exited(bool failed) {
-    g_play.state = failed ? PlayState::kFailed : PlayState::kClosed;
+void store_app_may_install();
+
+// The app's runtime ended (kRunExited); `failed`: before its window came up, and not stopped by the launcher (the
+// window closing), which is simply over.
+void embedded_exited(Embedded& e, bool failed) {
+    e.state = failed ? Embedded::kFailed : Embedded::kClosed;
     compute_layout();
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
+    if (&e == &g_store_app) store_app_may_install();  // an update of the Store waited for it to stop
 }
 
-// The view under the panel: the title, and once Google Play closed, what happened and Open Google Play.
-void paint_play(Graphics& g) {
+// The view's title, and under it what it is starting or the app's version.
+void paint_embedded_title(Graphics& g, const Embedded& e, const App* app, const std::wstring& doing) {
     const RectF& t = g_l.title;
-    std::wstring sub;
-    if (g_play.state == PlayState::kStarting) {
-        sub = tr(L"Starting Google Play…");
-    } else if (const App* store = app_of_package("com.android.vending")) {
-        const std::vector<std::string> p = package_of(store->name);
+    std::wstring sub = doing;
+    if (sub.empty() && e.state == Embedded::kStarting) sub = tr(e.starting);
+    if (sub.empty() && app) {
+        const std::vector<std::string> p = package_of(app->name);
         if (p.size() > 2 && !p[2].empty()) sub = fmt(L"Version {0}", {utf8_to_wide(p[2])});
     }
-    draw_text(g, tr(L"Google Play"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, t.Width, px(26)));
+    draw_text(g, tr(e.title), g_f.title.get(), g_t.text, RectF(t.X, t.Y, t.Width, px(26)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), t.Width, px(18)));
-    const bool failed = g_play.state == PlayState::kFailed;
-    if (!failed && g_play.state != PlayState::kClosed) return;
-    paint_empty(g, kGlyphPlay, tr(failed ? L"Google Play didn't start" : L"Google Play closed"), L"");
-    draw_button(g, g_l.play_open, tr(L"Open Google Play"), g_hot.kind == kHitPlayOpen, true, false);
-    if (failed) draw_button(g, g_l.play_log, tr(L"Show log"), g_hot.kind == kHitPlayLog, false, false);
+}
+
+// Under the panel once the app ended: what happened, its Open, and Show log when it never came up.
+void paint_embedded_end(Graphics& g, const Embedded& e, const wchar_t* glyph, const wchar_t* closed,
+                        const wchar_t* failed_to_start, const wchar_t* open) {
+    const bool failed = e.state == Embedded::kFailed;
+    if (!failed && e.state != Embedded::kClosed) return;
+    paint_empty(g, glyph, tr(failed ? failed_to_start : closed), L"");
+    draw_button(g, g_l.panel_open, tr(open), g_hot.kind == kHitPanelOpen, true, false);
+    if (failed) draw_button(g, g_l.panel_log, tr(L"Show log"), g_hot.kind == kHitPanelLog, false, false);
+}
+
+// The view under Google Play's panel.
+void paint_play(Graphics& g) {
+    paint_embedded_title(g, g_play, app_of_package("com.android.vending"), L"");
+    paint_embedded_end(g, g_play, kGlyphPlay, L"Google Play closed", L"Google Play didn't start", L"Open Google Play");
+}
+
+// ---- the Store ---------------------------------------------------------------------------------------------
+//
+// The Store is Win.apk's own store app (israel2176/win.apk-store), a system component as Google's three apps are:
+// no tile, no shortcut, the Store item its one way in. The first opening of the Store item finds no store app: the
+// newest release is read from GitHub's REST API (GET /repos/israel2176/win.apk-store/releases/latest), its
+// apk-store.apk downloaded and kept only at the size and SHA-256 GitHub lists for it (store_app.h), then installed
+// quietly (install(..., quiet)); the page shows each step, then the app. The daily update check reads the release
+// again, and a release whose apk-store.apk is not the one installed (store-app\installed.sha256) is downloaded and
+// installed the same way, once the store app is not running. Nothing of what the user does is sent: the request is
+// GitHub's public list of releases.
+//
+// What the store app installs goes through the install helper (helper_main): the confirmation, the progress and
+// "App installed." with Open and Done, and the installer of record its runtime writes (PackageInstallerBackend).
+// Its "Install unknown apps" is allowed from its first install (grant_builtin_store), as a device's preinstalled
+// store is; the user's later answer to that switch is kept across its updates.
+
+constexpr wchar_t kStoreReleaseUrl[] = L"https://api.github.com/repos/israel2176/win.apk-store/releases/latest";
+
+fs::path store_app_dir() { return data_dir() / L"store-app"; }
+fs::path store_app_download() { return store_app_dir() / winapk::launcher::kStoreAsset; }
+fs::path store_app_sha_file() { return store_app_dir() / L"installed.sha256"; }
+
+// The release's apk-store.apk, as the check read it.
+struct StoreRelease {
+    std::wstring tag, url;
+    std::string sha256;
+    uint64_t size = 0;
+};
+
+// One check, from the library's thread to its thread and back (kStoreAppChecked).
+struct StoreAppCheck {
+    bool reached = false;  // GitHub answered with the release
+    bool found = false;    // it has an apk-store.apk with GitHub's SHA-256 of it
+    StoreRelease release;
+};
+
+// The Store's release being downloaded or waiting to be installed: the library's thread only.
+StoreRelease g_store_release;
+
+std::string installed_store_sha() {
+    std::ifstream f(store_app_sha_file(), std::ios::binary);
+    std::string s;
+    std::getline(f, s);
+    return s;
+}
+
+DWORD WINAPI store_app_check_thread(void* param) {
+    std::unique_ptr<StoreAppCheck> c(static_cast<StoreAppCheck*>(param));
+    const fs::path file = store_app_dir() / L"release.json";
+    const int status = http_get(kStoreReleaseUrl, file, L"", nullptr, {},
+                                L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28",
+                                updater_session());
+    if (status == 200) {
+        std::ifstream f(file, std::ios::binary);
+        const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+        Json j{json.data(), json.data() + json.size()};
+        auto text = [&j](std::string* out) {  // a string, or skips a null
+            j.ws();
+            if (j.p < j.end && *j.p == '"') j.str(out);
+            else j.skip();
+        };
+        winapk::launcher::ListedRelease l;
+        std::string url;
+        j.object([&](const std::string& key) {
+            std::string v;
+            if (key == "tag_name") {
+                text(&v);
+                l.tag = utf8_to_wide(v);
+            } else if (key == "draft" || key == "prerelease") {
+                j.scalar(&v);
+                (key == "draft" ? l.draft : l.prerelease) = v == "true";
+            } else if (key == "assets") {
+                j.array([&] {
+                    std::string name, link, size, digest, state;
+                    j.object([&](const std::string& k) {
+                        if (k == "name") text(&name);
+                        else if (k == "browser_download_url") text(&link);
+                        else if (k == "size") j.scalar(&size);
+                        else if (k == "digest") text(&digest);
+                        else if (k == "state") text(&state);
+                        else j.skip();
+                    });
+                    if (utf8_to_wide(name) == winapk::launcher::kStoreAsset && !link.empty() && !l.asset) {
+                        l.asset = true;
+                        l.asset_state = state;
+                        l.digest = digest;
+                        l.size = std::strtoull(size.c_str(), nullptr, 10);
+                        url = link;
+                    }
+                });
+            } else {
+                j.skip();
+            }
+        });
+        c->reached = j.ok;
+        // Only an https link on GitHub: the digest is GitHub's, so the file must come from GitHub too.
+        const bool github = url.rfind("https://github.com/", 0) == 0;
+        c->found = j.ok && !l.draft && github && winapk::launcher::store_asset_checkable(l);
+        if (c->found) c->release = {l.tag, utf8_to_wide(url), winapk::launcher::asset_sha256(l.digest), l.size};
+    }
+    std::error_code ec;
+    fs::remove(file, ec);
+    StoreAppCheck* out = c.release();
+    if (!PostMessageW(g_main, kStoreAppChecked, 0, reinterpret_cast<LPARAM>(out))) delete out;
+    return 0;
+}
+
+enum StoreAppDownload : WPARAM { kStoreDownloadBroke, kStoreDownloadUnverified, kStoreDownloadOk };
+
+// Downloads the release's apk-store.apk and keeps it only at the release's size and SHA-256.
+DWORD WINAPI store_app_download_thread(void* param) {
+    std::unique_ptr<StoreRelease> r(static_cast<StoreRelease*>(param));
+    const fs::path file = store_app_download();
+    int shown = -1;
+    const int status = http_get(r->url, file, L"", nullptr, [&](uint64_t got, uint64_t total) {
+        if (!total) total = r->size;
+        const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
+        if (pct == shown) return;
+        shown = pct;
+        PostMessageW(g_main, kStoreAppProgress, static_cast<WPARAM>(pct), 0);
+    }, L"", updater_session());
+    StoreAppDownload result = kStoreDownloadBroke;
+    if (status == 200) {
+        std::error_code ec;
+        uint64_t size = fs::file_size(file, ec);
+        if (ec) size = 0;
+        // The size first: a file of another size is refused without being hashed.
+        const std::string sha = size == r->size ? sha256_of(file) : std::string();
+        result = winapk::launcher::judge_store_file(size, sha, r->size, r->sha256) == winapk::launcher::StoreFile::kOk
+                     ? kStoreDownloadOk
+                     : kStoreDownloadUnverified;
+        if (result != kStoreDownloadOk) fs::remove(file, ec);
+    }
+    PostMessageW(g_main, kStoreAppDownloaded, result, 0);
+    return 0;
+}
+
+const App* store_app() { return app_of_package(winapk::launcher::kStorePackage); }
+
+// The library name the Store's app has, or is installed under.
+std::wstring store_app_name() {
+    const App* app = store_app();
+    return app ? app->name : file_name_safe(utf8_to_wide(winapk::launcher::kStorePackage));
+}
+
+bool store_app_running() {
+    const std::wstring name = store_app_name();
+    return run_active(name) || app_running(name);
+}
+
+// Reads the newest release: the Store item with no store app, Try again, or the daily update check.
+void store_app_check() {
+    if (!g_store_setup.begin_check()) return;  // one is under way
+    std::error_code ec;
+    fs::create_directories(store_app_dir(), ec);
+    auto* c = new StoreAppCheck;
+    if (HANDLE t = CreateThread(nullptr, 0, store_app_check_thread, c, 0, nullptr)) {
+        CloseHandle(t);
+    } else {
+        delete c;
+        g_store_setup.checked(false, false, false, store_app() != nullptr);
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+void store_app_checked(const StoreAppCheck& c) {
+    const bool installed = store_app() != nullptr;
+    const bool same = c.found && c.release.sha256 == installed_store_sha();
+    if (g_store_setup.checked(c.reached, c.found, same, installed)) {
+        g_store_release = c.release;
+        if (HANDLE t = CreateThread(nullptr, 0, store_app_download_thread, new StoreRelease(c.release), 0, nullptr)) {
+            CloseHandle(t);
+        } else {
+            g_store_setup.downloaded(false, false, false);
+        }
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// Installs the checked download, quietly: a system component, never a tile (g_setup_names) and never a shortcut
+// (system_app).
+void store_app_install() {
+    const std::wstring name = store_app_name();
+    g_setup_names.insert(name);
+    install(store_app_download(), name, true);
+}
+
+void store_app_downloaded(StoreAppDownload result) {
+    if (g_store_setup.downloaded(result != kStoreDownloadBroke, result == kStoreDownloadOk, store_app_running())) {
+        store_app_install();
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// A checked update waited for the store app to stop: it has.
+void store_app_may_install() {
+    if (g_store_setup.may_install(store_app_running())) store_app_install();
+}
+
+namespace appops {
+void grant_builtin_store();
+}
+
+void open_store();
+
+// kInstalled: true when `name` was the Store's own install, which the Store's page reports, not the library. Once
+// installed, its "Install unknown apps" is allowed (the first time) and the APK's SHA-256 noted for the daily check;
+// the page then shows the app.
+bool store_app_installed(const std::wstring& name, InstallEnd::Kind how) {
+    if (g_store_setup.step() != winapk::launcher::StoreSetup::Step::kInstalling || name != store_app_name())
+        return false;
+    const bool ok = how == InstallEnd::kDone;
+    g_store_setup.installed(ok);
+    if (ok) {
+        std::error_code ec;
+        fs::create_directories(store_app_dir(), ec);
+        std::ofstream(store_app_sha_file(), std::ios::binary | std::ios::trunc) << g_store_release.sha256;
+        appops::grant_builtin_store();
+        if (g_view == kStoreView && !g_store_app.up()) open_store();
+    }
+    InvalidateRect(g_main, nullptr, FALSE);
+    return true;
+}
+
+// The Store in the pane: the store app in the window; with none, it is got first (the page shows how far).
+void open_store() {
+    set_view(kStoreView);
+    const App* app = store_app();
+    if (!app) {
+        if (!g_store_setup.busy()) store_app_check();
+        return;
+    }
+    store_app_may_install();  // an update that waited for the store app to stop
+    if (g_store_setup.step() == winapk::launcher::StoreSetup::Step::kInstalling) return;  // shown once installed
+    show_embedded(g_store_app, *app);
+}
+
+// Whether the area under the panel offers Show log beside Open: the app never came up, or the Store's install
+// failed.
+bool panel_shows_log() {
+    if (g_view == kStoreView && !store_app() &&
+        g_store_setup.failure() == winapk::launcher::StoreSetup::Failure::kInstall)
+        return true;
+    const Embedded* e = shown_embedded();
+    return e && e->state == Embedded::kFailed;
+}
+
+void show_panel_log() {
+    if (g_view == kStoreView && !store_app()) show_logs(install_log(store_app_name()));
+    else if (const Embedded* e = shown_embedded()) show_logs(run_log(e->name));
+}
+
+// What the mouse is over in the Store's or Google Play's area: the panel takes it while it is up; else the
+// buttons under it.
+Hit panel_hit(float x, float y) {
+    const Embedded* e = shown_embedded();
+    const bool setup_failed = g_view == kStoreView && !store_app() &&
+                              g_store_setup.step() == winapk::launcher::StoreSetup::Step::kFailed;
+    const bool ended = e && (e->state == Embedded::kClosed || e->state == Embedded::kFailed) &&
+                       !(g_view == kStoreView && !store_app());
+    if ((setup_failed || ended) && contains(g_l.panel_open, x, y)) return {setup_failed ? kHitRetry : kHitPanelOpen, -1};
+    if (panel_shows_log() && (setup_failed || ended) && contains(g_l.panel_log, x, y)) return {kHitPanelLog, -1};
+    return {};
+}
+
+// The view under the Store's panel: while the store app is got or updated before it shows, how far that is; if
+// that failed, why and Try again; once it ran and ended, Open.
+void paint_store(Graphics& g) {
+    using Step = winapk::launcher::StoreSetup::Step;
+    using Failure = winapk::launcher::StoreSetup::Failure;
+    const App* app = store_app();
+    const Step step = g_store_setup.step();
+    const bool before = !app || (step == Step::kInstalling && !g_store_app.up());  // nothing to show yet
+    std::wstring doing;
+    if (before && step == Step::kChecking) doing = tr(L"Getting the Store…");
+    else if (before && step == Step::kDownloading)
+        doing = fmt(L"Downloading the Store… {0}%", {std::to_wstring((std::max)(0, g_store_setup.percent()))});
+    else if (before && (step == Step::kWaiting || step == Step::kInstalling)) doing = tr(L"Installing the Store…");
+    paint_embedded_title(g, g_store_app, before ? nullptr : app, doing);
+    if (before && !doing.empty()) {
+        const RectF& gr = g_l.grid;
+        const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
+        spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
+        paint_empty(g, nullptr, doing, tr(L"Win.apk's own store, from its page on GitHub. This happens once."));
+        return;
+    }
+    if (!app && step == Step::kFailed) {
+        const Failure f = g_store_setup.failure();
+        paint_empty(g, kGlyphError, tr(L"The Store couldn't be set up"),
+                    tr(f == Failure::kUnreached    ? L"GitHub could not be reached, or did not answer. Check the internet "
+                                                     L"connection, then try again later."
+                       : f == Failure::kNoRelease  ? L"GitHub lists no release of the Store that Win.apk can check."
+                       : f == Failure::kUnverified ? L"The downloaded file is not the one GitHub lists. It was deleted "
+                                                     L"and not installed."
+                                                   : L"Installing it failed. Its log says why."));
+        draw_button(g, g_l.panel_open, tr(L"Try again"), g_hot.kind == kHitRetry, true, false);
+        if (f == Failure::kInstall) draw_button(g, g_l.panel_log, tr(L"Show log"), g_hot.kind == kHitPanelLog, false, false);
+        return;
+    }
+    paint_embedded_end(g, g_store_app, kGlyphStore, L"The Store closed", L"The Store didn't start", L"Open the Store");
+}
+
+// The F-Droid catalog earlier versions kept in store\ (catalog.tsv, its icons, downloads): gone with the F-Droid
+// store, removed once, in the background.
+void remove_old_store_data() {
+    std::error_code ec;
+    if (!fs::exists(data_dir() / L"store", ec)) return;
+    if (HANDLE t = CreateThread(nullptr, 0, [](void*) -> DWORD {
+            std::error_code e;
+            fs::remove_all(data_dir() / L"store", e);
+            return 0;
+        }, nullptr, 0, nullptr)) {
+        CloseHandle(t);
+    }
 }
 
 // ---- Software updates ----------------------------------------------------------
@@ -6149,6 +6521,7 @@ void paint_play(Graphics& g) {
 using UpdateTracker = winapk::launcher::UpdateTracker<Release>;
 UpdateTracker g_update;
 size_t g_updates_section = 0;  // the Updates section's index in Settings, for the InfoBar's "What's new"
+size_t g_account_section = 0;  // the Google account section's index in Settings, for the pane's account item
 
 void show_settings();
 void save_window_size();
@@ -6202,9 +6575,20 @@ bool update_check_due() {
 void auto_update_check() {
     static bool read_kept = false;
     if (!g_main || !IsWindowVisible(g_main)) return;
-    if (setting(L"AutoUpdate", 1) && update_check_due()) start_update_check(true, false);
-    else if (!read_kept) start_update_check(false, false);
+    if (setting(L"AutoUpdate", 1) && update_check_due()) {
+        start_update_check(true, false);
+        if (store_app()) store_app_check();  // the Store's app is updated with Win.apk's own check (store_app.h)
+    } else if (!read_kept) {
+        start_update_check(false, false);
+    }
     read_kept = true;
+}
+
+// The pane's account item: Settings, scrolled to the Google account (its sign-in row), as the
+// Microsoft Store's profile button opens the account's own place.
+void show_account() {
+    show_settings();
+    g_page.reveal = static_cast<int>(g_account_section);
 }
 
 // The InfoBar's "What's new": Settings, scrolled to Updates.
@@ -6237,7 +6621,7 @@ void update_checked(UpdateCheck& c) {
 // Whether the installer may run now, else says why in the InfoBar: it replaces the runtime that running apps
 // use and the launcher that installs go through.
 bool update_can_start() {
-    if (installs_active() || any_pending() || !g_store.downloads.empty()) {
+    if (installs_active() || any_pending()) {
         info(tr(L"Wait for the installs to finish, then update Win.apk."), kError);
         return false;
     }
@@ -6286,26 +6670,41 @@ void start_update() {
     }
     if (!update_can_start()) return;
     std::error_code ec;
-    if (fs::file_size(setup_file(r.version), ec) == r.size && !ec) {  // downloaded and checked before
-        run_installer();
-        return;
-    }
+    // A copy downloaded before is checked again on the thread, as a new download is, before it runs.
+    const bool kept = fs::exists(setup_file(r.version), ec);
     remove_old_setups();
     fs::create_directories(updates_dir(), ec);
     auto* job = new Release(r);
     if (HANDLE t = CreateThread(nullptr, 0, update_download_thread, job, 0, nullptr)) {
         CloseHandle(t);
         g_update.begin_download();
-        info(fmt(L"Downloading Win.apk {0}…", {r.version}), kInfo);
+        info(kept ? fmt(L"Checking the Win.apk {0} installer…", {r.version})
+                  : fmt(L"Downloading Win.apk {0}…", {r.version}),
+             kInfo);
     } else {
         delete job;
     }
 }
 
-void update_downloaded(bool ok) {
+// The download thread is back: `result` is 0 when the download broke off, else updates.h's SetupVerdict + 1.
+void update_downloaded(int result) {
+    using winapk::launcher::SetupVerdict;
     g_update.downloaded();
-    if (ok && run_installer()) return;  // the library is gone
-    if (!ok) info(tr(L"Couldn't download the update. Check the internet connection."), kError);
+    const auto verdict = static_cast<SetupVerdict>(result - 1);
+    if (result > 0 && winapk::launcher::setup_runs(verdict) && run_installer()) return;  // the library is gone
+    if (result == 0 || verdict == SetupVerdict::kSize) {
+        info(tr(L"Couldn't download the update. Check the internet connection."), kError);
+    } else if (!winapk::launcher::setup_runs(verdict)) {
+        // Not the release's installer: it was deleted, and nothing ran.
+        const wchar_t* why = verdict == SetupVerdict::kDigest
+                                 ? L"The downloaded installer is not the one GitHub lists (its SHA-256 differs). It was "
+                                   L"deleted and not run."
+                             : verdict == SetupVerdict::kVersion
+                                 ? L"The downloaded installer is not of the version offered. It was deleted and not "
+                                   L"run."
+                                 : L"The downloaded installer's signature does not hold. It was deleted and not run.";
+        info(tr(why), kError);
+    }
     if (g_view == kSettingsView) rebuild_page();
 }
 
@@ -6359,15 +6758,22 @@ std::vector<Section> update_sections() {
                                                                    {std::to_wstring(g_update.percent())})
                                                              : tr(L"Update");
         Row up = button_row(fmt(L"Win.apk {0}", {r.version}),
-                            r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
-                                          : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
-                                               L"data are kept."),
+                            r.unchecked     ? tr(L"GitHub gives no SHA-256 checksum of this release's installer, so "
+                                                 L"Win.apk does not download it; its page on GitHub has its files.")
+                            : r.url.empty() ? tr(L"This release has no installer; its page on GitHub has its files.")
+                                            : tr(L"Win.apk closes and the installer replaces it. Your apps and their "
+                                                 L"data are kept."),
                             button, [] { start_update(); });
         up.primary = true;
         up.key = "update";
         sec.rows.push_back(up);
     }
     sec.footer = tr(L"The check reads the list of releases on GitHub. Nothing about you or your apps is sent.");
+    // Said as it is: no Win.apk build is code-signed yet, so the installer is held to GitHub's checksum.
+    if (own_signer().empty()) {
+        sec.footer += std::wstring(L" ") + tr(L"Win.apk's installers are not code-signed: an update runs only when its size, its "
+                                L"SHA-256 checksum and its version are the ones GitHub lists for the release.");
+    }
     out.push_back(std::move(sec));
     if (newer) {
         const bool dated = r.published.dwHighDateTime || r.published.dwLowDateTime;
@@ -6440,6 +6846,14 @@ std::vector<Section> settings_sections() {
                     L"priority.");
     aot.on = setting(L"AotBackground", 1) != 0;
     aot.act = [](int on) { set_setting(L"AotBackground", static_cast<DWORD>(on)); };
+    // Read by the runtime when an app opens (runtime_main.cpp, play_installer_setting -> WINAPK_PLAY_INSTALLER,
+    // InstallerOfRecord.reported): apps such as bit refuse to run unless a store installed them.
+    Row play;
+    play.kind = Row::kToggle;
+    play.title = tr(L"Report Google Play as the installer");
+    play.detail = tr(L"Apps you install appear to come from Google Play, as some banking apps require.");
+    play.on = setting(L"PlayInstaller", 1) != 0;
+    play.act = [](int on) { set_setting(L"PlayInstaller", static_cast<DWORD>(on)); };
     Row desktop;
     desktop.kind = Row::kToggle;
     desktop.title = tr(L"Desktop shortcut for new apps");
@@ -6454,8 +6868,9 @@ std::vector<Section> settings_sections() {
         types = button_row(tr(L"Open .apk, .apkm, .xapk and .apks files with Win.apk"), L"", tr(L"Make default"),
                            [] { register_file_types(true); });
     }
-    out.push_back({tr(L"Apps"), {size, orient, folders, aot, desktop, types}, L""});
+    out.push_back({tr(L"Apps"), {size, orient, folders, aot, play, desktop, types}, L""});
 
+    g_account_section = out.size();
     out.push_back(google_account_section());
 
     std::vector<Row> trouble = {
@@ -6557,10 +6972,9 @@ fs::path desktop_shortcut(const App& a) {
 // The installed app's arm64 libraries: lib\arm64 next to the base.apk that the install's record
 // (android\data\app\.<name>.installed, its path in UTF-8) names. Empty when it has none.
 fs::path arm64_libs_of(const std::wstring& name) {
-    std::ifstream f(data_dir() / L"android" / L"data" / L"app" / (L"." + name + L".installed"), std::ios::binary);
-    std::string path((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-    if (path.empty()) return {};
-    const fs::path libs = fs::path(utf8_to_wide(path)).parent_path() / L"lib" / L"arm64";
+    const fs::path copy = installed_copy(name);
+    if (copy.empty()) return {};
+    const fs::path libs = copy / L"lib" / L"arm64";
     std::error_code ec;
     return fs::is_directory(libs, ec) ? libs : fs::path();
 }
@@ -6613,7 +7027,11 @@ AotState aot_state(const std::wstring& name) {
 void show_info(const App& app) {
     const App a = app;
     std::error_code ec;
-    const std::wstring apk_size = format_bytes(fs::file_size(a.apk, ec));
+    // A bundle's app is its .apk and the splits beside it (library_files.h): hard links to the installed APKs,
+    // so this is what the app takes on disk, once.
+    const fs::path splits = library_dir() / (a.name + L".splits");
+    const bool has_splits = fs::is_directory(splits, ec);
+    const std::wstring apk_size = format_bytes(fs::file_size(a.apk, ec) + (has_splits ? folder_size(splits) : 0));
     const std::wstring files_size = format_bytes(folder_size(app_dir(a.name)));
     const std::vector<std::string> pkg = package_of(a.name);
     Page p;
@@ -6623,7 +7041,7 @@ void show_info(const App& app) {
     p.sub += pkg.empty() ? a.name : utf8_to_wide(pkg[0]);
     p.back = true;
     p.from = kLibraryView;
-    p.build = [a, apk_size, files_size] {
+    p.build = [a, apk_size, has_splits, files_size] {
         std::vector<Section> out;
         // The orientation the app opens in: what its manifest fixes, or the user's choice for it over the settings'.
         std::vector<Row> window;
@@ -6647,7 +7065,7 @@ void show_info(const App& app) {
             char x = 0;
             if (f >> w >> x >> h && w > 0 && h > 0) {
                 window.push_back(button_row(fmt(L"Window size  ·  {0} × {1} dp", {std::to_wstring(w), std::to_wstring(h)}),
-                                            tr(L"The size you last gave the app's window. Reset, it opens at the "
+                                            tr(L"The size you last gave the app's window. After a reset, it opens at the "
                                                L"app window size in Settings again."),
                                             tr(L"Reset"), [a] {
                                                 std::error_code ec;
@@ -6668,8 +7086,8 @@ void show_info(const App& app) {
             if (!list.empty()) {
                 window.insert(window.begin(),
                               button_row(std::wstring(tr(L"Screen it opens")) + L"  ·  " + shown,
-                                         tr(L"The app has no screen to open from a launcher; this is the screen it "
-                                            L"opens, of those other apps can open."),
+                                         tr(L"The app has no screen to open from a launcher, so it opens this one of the "
+                                            L"screens other apps can open."),
                                          tr(L"Change…"), [a, list] {
                                              std::wstring chosen;
                                              if (!choose_activity(a, list, &chosen)) return;
@@ -6737,7 +7155,9 @@ void show_info(const App& app) {
             out.push_back({tr(L"Troubleshooting"), std::move(trouble), L""});
         }
         out.push_back({tr(L"Storage"),
-                       {button_row(fmt(L"The app's file  ·  {0}", {apk_size}), a.apk.wstring(), tr(L"Show"),
+                       {button_row(fmt(has_splits ? L"The app's files  ·  {0}" : L"The app's file  ·  {0}",
+                                       {apk_size}),
+                                   a.apk.wstring(), tr(L"Show"),
                                    [a] { show_in_explorer(a.apk); }),
                         button_row(fmt(L"Run files  ·  {0}", {files_size}),
                                    fmt(L"What Win.apk prepared to run the app: {0}",  // a path reads left to right
@@ -6761,47 +7181,6 @@ void show_info(const App& app) {
         return out;
     };
     open_page(kAppView, std::move(p));
-}
-
-// A store app's details. Install and Update are the card's button; this says where the app stands.
-void show_store_info(const StoreApp& app) {
-    const StoreApp a = app;  // the catalog may be replaced while the page is open
-    Page p;
-    p.title = store_name(a);
-    p.sub = store_summary(a);
-    p.icon = [a] { return store_icon(a); };
-    p.back = true;
-    p.from = kStoreView;
-    p.build = [a] {
-        std::wstring cats;
-        for (const std::wstring& c : a.categories) cats += (cats.empty() ? L"" : L", ") + c;
-        std::wstring state;
-        int percent = 0;
-        switch (offer_for(a, &percent)) {
-            case kOfferInstall: state = tr(L"Not installed"); break;
-            case kOfferUpdate: state = tr(L"A newer version is out"); break;
-            case kOfferOpen: state = tr(L"Installed"); break;
-            case kOfferDownloading: state = tr(L"Downloading…"); break;
-            case kOfferInstalling: state = tr(L"Installing…"); break;
-        }
-        std::vector<Section> out;
-        out.push_back({tr(L"Details"),
-                       {text_row(tr(L"In your library"), state), text_row(tr(L"Version"), a.version),
-                        text_row(tr(L"Size"), format_bytes(static_cast<uintmax_t>(a.size))),
-                        text_row(tr(L"Updated"), java_date(a.updated)), text_row(tr(L"License"), a.license),
-                        text_row(tr(L"Categories"), cats), text_row(tr(L"Package"), utf8_to_wide(a.pkg))},
-                       L""});
-        const std::wstring page = L"https://f-droid.org/packages/" + utf8_to_wide(a.pkg) + L"/";
-        out.push_back({L"",
-                       {button_row(tr(L"F-Droid page"), tr(L"The app's description, screenshots and source code."),
-                                   tr(L"Open"),
-                                   [page] {
-                                       ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                                   })},
-                       L""});
-        return out;
-    };
-    open_page(kStoreAppView, std::move(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -6884,12 +7263,21 @@ struct InstallView {
     float need_h = 0;              // the height the last paint wanted, for fit_install_window
 } g_iv;
 
+// This process is the install helper, installing for an app that asked (a store): the window is Android's
+// package installer after its confirmation (InstallInstalling, then InstallSuccess or InstallFailed). The
+// same card, in that installer's words: "App installed." with Open and Done, or "App not installed." with
+// the reason; no batch, no library (helper_install_ui).
+bool g_helper_ui = false;
+void helper_install_ended(const std::wstring& name);
+void helper_progress(double fraction, const char* stage);
+
 enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActReport,
        kActRowOpen = 1000, kActRowLog = 2000 };
 constexpr UINT kFitInstall = WM_APP + 20;
 
 // How far an install got, from the lines the runtime writes, in the order it works (runtime_main.cpp):
-// 0 starting, 1 installing, 2 reading the name and icon, 3 converting the code, the long part.
+// 0 starting, 1 installing, 2 reading the name and icon, 3 converting the code, the long part (which starts
+// beside the name and icon, so 2 shows only until the conversion has said so).
 int install_phase(const fs::path& log) {
     const std::string tail = read_tail(log, 128 * 1024);
     if (tail.find("converting the app's code") != std::string::npos) return 3;
@@ -6916,6 +7304,12 @@ std::wstring install_failure_reason(const fs::path& log) {
     }
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
+    if (std::wstring why = runtime_failure_reason(log); !why.empty()) return why;
+    // The launcher's own lines (launcher_error_line): the file did not reach the library.
+    const std::string tail = read_tail(log, 4096);
+    if (tail.find("[E] launcher: could not ") != std::string::npos)
+        return tr(L"Win.apk could not copy this file into its library. Check that the disk has free space, then try "
+                  L"again.");
     return tr(L"Win.apk could not convert this app. See the log for details.");
 }
 
@@ -6930,6 +7324,14 @@ Gdiplus::Bitmap* job_icon(Job& j) {
     if (j.icon) return j.icon.get();
     if (const App* a = find_app(j.name)) return icon_for(*a);
     return nullptr;
+}
+
+// Whether the installed app has an Open: not one of Google's (a part of Google services), and for an app's
+// install not one with no launcher activity, as InstallSuccess offers Open only for an app with a launch
+// intent.
+bool job_opens(const Job& j) {
+    if (system_app(j.name)) return false;
+    return !g_helper_ui || !has_no_launcher(package_of(j.name));
 }
 
 bool installs_active() {
@@ -7006,19 +7408,31 @@ void paint_install(Graphics& g, float W, float H) {
                 sub = tr(phase_text(hero->phase));
                 break;
             case Job::kDone:
-                title = fmt(L"{0} is ready", {name});
-                sub = tr(system_app(hero->name)                ? L"It's part of Google services."
-                         : setting(L"DesktopShortcut", 1) != 0 ? L"It's in the Start menu and on the desktop."
-                                                               : L"It's in the Start menu.");
+                if (g_helper_ui) {  // InstallSuccess: the app's name over "App installed."
+                    title = name;
+                    sub = tr(hero->update ? L"App updated." : L"App installed.");
+                } else {
+                    title = fmt(L"{0} is ready", {name});
+                    const std::vector<std::string> pkg = package_of(hero->name);
+                    sub = tr(!pkg.empty() && pkg[0] == winapk::launcher::kStorePackage ? L"It's part of Win.apk."
+                             : system_app(hero->name)                ? L"It's part of Google services."
+                             : setting(L"DesktopShortcut", 1) != 0 ? L"It's in the Start menu and on the desktop."
+                                                                   : L"It's in the Start menu.");
+                }
                 draw_badge(g, ir, true, px(24));
                 break;
             case Job::kFailed:
-                title = fmt(L"Couldn't install {0}", {name});
-                sub = hero->reason;
+                if (g_helper_ui) {  // InstallFailed: "App not installed." and why
+                    title = name;
+                    sub = std::wstring(tr(L"App not installed.")) + L" " + hero->reason;
+                } else {
+                    title = fmt(L"Couldn't install {0}", {name});
+                    sub = hero->reason;
+                }
                 draw_badge(g, ir, false, px(24));
                 break;
             case Job::kCancelled:
-                title = fmt(L"{0} was not installed", {name});
+                title = g_helper_ui ? name : fmt(L"{0} was not installed", {name});
                 sub = tr(hero->update ? L"The install was cancelled. The app stays as it was."
                                       : L"The install was cancelled.");
                 break;
@@ -7144,19 +7558,41 @@ void paint_install(Graphics& g, float W, float H) {
     if (active) {
         button(tr(L"Cancel"), kActCancel, false);
     } else {
-        const bool single_ok = hero && hero->state == Job::kDone && !system_app(hero->name);
+        const bool single_ok = hero && hero->state == Job::kDone && job_opens(*hero);
         if (any_failed && hero && hero->state == Job::kFailed) {
             button(tr(L"Copy details"), kActCopy, false);
             button(tr(L"Show log"), kActShowLog, false);
         }
-        button(tr(L"Close"), kActClose, !single_ok);
+        // The helper's ends are InstallSuccess's and InstallFailed's: Done, and Open beside it.
+        button(tr(g_helper_ui ? L"Done" : L"Close"), kActClose, !single_ok);
         if (single_ok) button(tr(L"Open"), kActOpen, true);
-        if (shown_done > 0) draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
+        if (shown_done > 0 && !g_helper_ui)
+            draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
     }
 }
 
 void fit_install_window() {
     if (g_install_wnd) PostMessageW(g_install_wnd, kFitInstall, 0, 0);
+}
+
+// The install window's record of an install that ended `how`: its state, and why when it failed.
+void job_ended(const std::wstring& name, InstallEnd::Kind how) {
+    for (Job& j : g_jobs) {
+        if (j.name != name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
+        j.state = how == InstallEnd::kCancelled ? Job::kCancelled
+                  : how == InstallEnd::kDone    ? Job::kDone
+                                                : Job::kFailed;
+        j.end = GetTickCount64();
+        if (j.state == Job::kFailed) {
+            j.reason = how == InstallEnd::kAppRunning ? fmt(L"Close {0} first, then install it again.", {job_label(name)})
+                                                      : install_failure_reason(install_log(name));
+        }
+        break;
+    }
+    if (g_install_wnd) {
+        fit_install_window();
+        InvalidateRect(g_install_wnd, nullptr, FALSE);
+    }
 }
 
 // The window's title: what it is doing, for the taskbar.
@@ -7205,7 +7641,19 @@ void install_action(HWND hwnd, int act) {
     } else if (act == kActOpen) {
         const Job* hero = hero_job();
         const App* a = hero ? find_app(hero->name) : nullptr;
-        if (a) {
+        if (a && g_helper_ui) {
+            // InstallSuccess's Open starts the app's launch intent: here, as its shortcut does, in a
+            // Win.apk.exe of its own (this helper ends with its window).
+            std::wstring cmd = L"\"" + exe_path().wstring() + L"\" --run \"" + a->apk.wstring() + L"\"";
+            STARTUPINFOW si{sizeof(si)};
+            PROCESS_INFORMATION pi{};
+            if (CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+                AllowSetForegroundWindow(pi.dwProcessId);
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
+            DestroyWindow(hwnd);
+        } else if (a) {
             launch(*a);  // first: with the library hidden, closing this window last must not end the process
             DestroyWindow(hwnd);
         }
@@ -7255,7 +7703,11 @@ void install_action(HWND hwnd, int act) {
 void poll_install(HWND hwnd) {
     for (Job& j : g_jobs) {
         if (j.state != Job::kInstalling) continue;
-        j.phase = (std::max)(j.phase, install_phase(install_log(j.name)));
+        const int phase = (std::max)(j.phase, install_phase(install_log(j.name)));
+        // The asking app's session moves with the install's steps (its progress bar, onProgressChanged).
+        static const char* const kStages[] = {"", "installing", "reading", "converting"};
+        if (g_helper_ui && phase > j.phase) helper_progress(0.1 + 0.25 * phase, kStages[phase]);
+        j.phase = phase;
         if (!find_app(j.name)) {  // a new app: what its install has written of it so far
             const PendingLook& look = pending_look(j.name);
             if (!j.icon) j.icon = look.icon;
@@ -7325,9 +7777,14 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 install_action(hwnd, installs_active() ? kActCancel : kActClose);
             } else if (wp == VK_RETURN && !installs_active()) {
                 const Job* hero = hero_job();
-                install_action(hwnd, hero && hero->state == Job::kDone ? kActOpen : kActClose);
+                install_action(hwnd, hero && hero->state == Job::kDone && job_opens(*hero) ? kActOpen : kActClose);
             }
             return 0;
+        case kInstalled: {  // the install helper's install ended (helper_install_thread)
+            std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
+            if (g_helper_ui) helper_install_ended(*name);
+            return 0;
+        }
         case WM_CLOSE:
             if (installs_active()) {
                 if (ask_stop_installing(hwnd)) cancel_all_installs();
@@ -7338,6 +7795,7 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_install_wnd = nullptr;
             g_iv = InstallView{};
             if (!any_pending()) g_jobs.clear();
+            if (g_helper_ui) PostQuitMessage(0);  // the helper's one window: its run ends with it
             maybe_quit();
             return 0;
     }
@@ -8702,6 +9160,8 @@ struct Splash {
 };
 
 std::map<std::wstring, std::unique_ptr<Splash>> g_splashes;
+
+bool any_splash() { return !g_splashes.empty(); }
 enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3, kSplashReport = 4 };
 constexpr UINT kFitSplash = WM_APP + 21;
 
@@ -8720,17 +9180,26 @@ const wchar_t* run_phase(const fs::path& log) {
         tail.find("host natives:") == std::string::npos) {
         return L"Getting the app ready. This happens once.";
     }
+    // The first start after a new Win.apk's first install waits for the framework archive that install
+    // started (host/cds.cpp, wait_for_running_dump).
+    if (tail.find("this start waits for it") != std::string::npos && tail.find("host natives:") == std::string::npos)
+        return L"Getting Win.apk ready. This happens once.";
     return nullptr;
 }
 
 // Why the app did not come up, in a sentence: the log's own reason when it has a known one.
 std::wstring failure_reason(const fs::path& log, bool clean_exit) {
+    // No runtime started at all: "the app stopped with an error" would blame the app (as an install says).
+    std::error_code ec;
+    if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
     bool no_native_code = false;
     log_summary(log, &no_native_code);
     if (no_native_code) {
         return tr(L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes "
                   L"the arm64-v8a part.");
     }
+    // Not the app's fault: say so, rather than "the app stopped with an error".
+    if (std::wstring why = runtime_failure_reason(log); !why.empty()) return why;
     return tr(clean_exit ? L"The app closed before it showed a window." : L"The app stopped with an error.");
 }
 
@@ -9116,7 +9585,6 @@ void apply_theme() {
         show_debugger(app);
     }
     InvalidateRect(g_main, nullptr, FALSE);
-    InvalidateRect(g_search, nullptr, TRUE);
 }
 
 void command(int id);
@@ -9190,11 +9658,9 @@ std::wstring tooltip_text(const Hit& h) {
                       : h.tile == kNavStore ? L"Store"
                       : h.tile == kNavPlay  ? L"Google Play"
                                             : L"Settings");
-        case kHitClear: return tr(L"Clear the search");
         case kHitAccount:
             return g_account.empty() ? std::wstring(tr(L"Google account: not signed in"))
                                      : fmt(L"Google account: {0}", {g_account});
-        case kHitRefresh: return tr(L"Check F-Droid for new apps");
         case kHitTile: {
             const Tile& t = g_tiles[static_cast<size_t>(h.tile)];
             if (t.app < 0) return fmt(L"Installing {0}…", {job_label(t.job)});
@@ -9221,67 +9687,19 @@ void create_tooltip() {
     SendMessageW(g_tip, TTM_SETMAXTIPWIDTH, 0, ipx(320));
 }
 
-LRESULT CALLBACK search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
-    if (msg == WM_KEYDOWN && wp == VK_ESCAPE) {
-        SetWindowTextW(hwnd, L"");
-        SetFocus(g_main);
-        return 0;
-    }
-    if (msg == WM_KEYDOWN && (wp == VK_DOWN || wp == VK_RETURN)) {
-        SetFocus(g_main);
-        if (g_view == kLibraryView && !selected()) move_selection(0, 0);
-        return 0;
-    }
-    if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;  // no beep
-    return DefSubclassProc(hwnd, msg, wp, lp);
-}
-
-// The search box, made again when the language changes so it takes the new direction.
-void create_search() {
-    wchar_t text[256] = {};
-    if (g_search) {
-        GetWindowTextW(g_search, text, 256);
-        DestroyWindow(g_search);
-    }
-    g_search = CreateWindowExW(g_rtl ? WS_EX_RTLREADING : 0, L"EDIT", text, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                               0, 0, 0, 0, g_main, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)), g_inst,
-                               nullptr);
-    SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
-    SendMessageW(g_search, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(tr(L"Search F-Droid")));
-    SetWindowSubclass(g_search, search_proc, 1, 0);
-    if (g_view != kStoreView) ShowWindow(g_search, SW_HIDE);
-}
-
-bool grid_view(View v) { return v == kLibraryView || v == kStoreView; }
-
-// Shows a view. The library and the store share the scrolling: each keeps its own place. Only the
-// store has the search box; the library and a page (Settings, an app's details) hide it.
+// Shows a view. The library keeps its scroll position while another is shown; a page scrolls on its own, from its
+// top.
 void set_view(View view) {
-    if (view == g_view && grid_view(view)) return;
-    if (grid_view(g_view)) {
-        g_queries[g_view] = query(g_view);
-        g_scrolls[g_view] = g_scroll;
+    if (view == g_view && view == kLibraryView) return;
+    // Leaving the Store or Google Play: its panel hides (compute_layout) and the keyboard comes back to the window.
+    for (const Embedded* e : {&g_store_app, &g_play}) {
+        const HWND w = embedded_window(*e);
+        if (view != e->view && w && GetFocus() == w) SetFocus(g_main);
     }
-    // Leaving Google Play: the panel hides (compute_layout) and the keyboard comes back to the window.
-    if (view != kPlayView && play_window() && GetFocus() == play_window()) SetFocus(g_main);
     g_view = view;
     g_hot = {};
     setup_watch(view == kGmsSetupView);
-    if (grid_view(view)) {
-        const float scroll = g_scrolls[view];
-        SetWindowTextW(g_search, g_queries[view].c_str());  // its EN_CHANGE starts at the top; this view keeps its place
-        g_scroll = scroll;
-        if (view == kStoreView) {
-            ShowWindow(g_search, SW_SHOW);
-            InvalidateRect(g_search, nullptr, TRUE);
-            if (g_store.fetch == StoreState::Fetch::kNotStarted) store_start(false);
-        } else {
-            if (GetFocus() == g_search) SetFocus(g_main);
-            ShowWindow(g_search, SW_HIDE);
-        }
-    } else {
-        if (GetFocus() == g_search) SetFocus(g_main);
-        ShowWindow(g_search, SW_HIDE);
+    if (page_view()) {
         g_page.scroll = 0;
         g_page.hot = g_page.focus = -1;
     }
@@ -9291,7 +9709,7 @@ void set_view(View view) {
 
 void apply_language() {
     pick_language();
-    for (HWND w : {g_main, g_install_wnd, g_play.panel}) {
+    for (HWND w : {g_main, g_install_wnd, g_store_app.panel, g_play.panel}) {
         if (!w) continue;
         const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
         SetWindowLongPtrW(w, GWL_EXSTYLE, g_rtl ? (ex | WS_EX_LAYOUTRTL) : (ex & ~WS_EX_LAYOUTRTL));
@@ -9301,7 +9719,6 @@ void apply_language() {
     if (g_install_wnd) SetWindowTextW(g_install_wnd, install_title().c_str());
     if (g_log_wnd) DestroyWindow(g_log_wnd);
     if (g_debug_wnd) DestroyWindow(g_debug_wnd);
-    create_search();
     create_tooltip();
     // A page holds its words: Settings (where the language is picked) is made again, a details page goes back.
     if (g_view == kSettingsView) show_settings();
@@ -9334,14 +9751,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_main = hwnd;
             g_dpi = static_cast<float>(GetDpiForWindow(hwnd));
             make_fonts();
-            create_search();
             create_tooltip();
             apply_theme();
             g_drop_target = new DropTarget;
             RegisterDragDrop(hwnd, g_drop_target);
             refresh();
             refresh_account();
+            remove_old_store_data();
             SetTimer(hwnd, kUpdateTimer, 3600 * 1000, nullptr);
+            SetTimer(hwnd, kMaintenanceTimer, mw::kCheckMinutes * 60 * 1000, nullptr);
             return 0;
         }
         case WM_SIZE:
@@ -9351,9 +9769,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DPICHANGED: {
             g_dpi = HIWORD(wp);
             make_fonts();
-            SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
             g_icons.clear();
-            g_store.icons.clear();
             g_brand.reset();
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
@@ -9381,15 +9797,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_COMMAND:
-            if (LOWORD(wp) == kIdSearch) {
-                if (HIWORD(wp) == EN_CHANGE) {
-                    g_scroll = 0;
-                    rebuild_tiles();
-                } else if (HIWORD(wp) == EN_SETFOCUS || HIWORD(wp) == EN_KILLFOCUS) {
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                }
-                return 0;
-            }
             command(LOWORD(wp));
             return 0;
         case WM_MOUSEMOVE: {
@@ -9431,11 +9838,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
-                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAccount || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
-                                  g_hot.kind == kHitRefresh || g_hot.kind == kHitCategory || g_hot.kind == kHitCard ||
-                                  g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
-                                  g_hot.kind == kHitInfoClose || g_hot.kind == kHitInfoLink ||
-                                  g_hot.kind == kHitPlayOpen || g_hot.kind == kHitPlayLog ||
+                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAccount || g_hot.kind == kHitAdd ||
+                                  g_hot.kind == kHitRetry || g_hot.kind == kHitInfoClose || g_hot.kind == kHitInfoLink ||
+                                  g_hot.kind == kHitPanelOpen || g_hot.kind == kHitPanelLog ||
                                   (g_hot.kind == kHitPage && g_page.hot != -1 && g_page.hot != kPageThumb);
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
@@ -9444,10 +9849,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == kAnimTimer) {
                 InvalidateRect(hwnd, nullptr, FALSE);
-                if (g_play.panel && g_play.state == PlayState::kStarting) InvalidateRect(g_play.panel, nullptr, FALSE);
+                for (const Embedded* e : {&g_store_app, &g_play}) {
+                    if (e->panel && e->state == Embedded::kStarting) InvalidateRect(e->panel, nullptr, FALSE);
+                }
             }
             if (wp == kInfoBarTimer) info(L"", kInfo);
             if (wp == kUpdateTimer) auto_update_check();
+            if (wp == kMaintenanceTimer) maintenance_check();
             if (wp == kSetupScanTimer) {
                 KillTimer(hwnd, kSetupScanTimer);
                 if (g_view == kGmsSetupView) {
@@ -9465,19 +9873,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case kHitNav:
                     if (h.tile == kNavSettings) show_settings();
                     else if (h.tile == kNavPlay) open_google_play();
-                    else set_view(h.tile == kNavStore ? kStoreView : kLibraryView);
+                    else if (h.tile == kNavStore) open_store();
+                    else set_view(kLibraryView);
                     break;
                 case kHitAdd: add_from_dialog(); break;
-                case kHitPlayOpen: open_google_play(); break;
-                case kHitPlayLog: show_logs(run_log(g_play.name)); break;
-                case kHitAccount: show_settings(); break;
-                case kHitClear:
-                    SetWindowTextW(g_search, L"");
-                    SetFocus(g_search);
-                    break;
-                case kHitRefresh:
-                case kHitRetry: store_start(true); break;
-                case kHitCategory: choose_category(); break;
+                case kHitPanelOpen:
+                case kHitRetry: g_view == kStoreView ? open_store() : open_google_play(); break;
+                case kHitPanelLog: show_panel_log(); break;
+                case kHitAccount: show_account(); break;
                 case kHitInfoClose: info(L"", kInfo); break;
                 case kHitInfoLink: {
                     const std::function<void()> act = g_status_act;
@@ -9494,14 +9897,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         SetCapture(hwnd);
                     }
                     InvalidateRect(hwnd, nullptr, FALSE);
-                    break;
-                }
-                case kHitCardButton:
-                case kHitCard: {
-                    // a copy: opening the app or the page runs messages that may replace the catalog
-                    const StoreApp a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(h.tile)])];
-                    if (h.kind == kHitCardButton) store_get(a);
-                    else show_store_info(a);
                     break;
                 }
                 case kHitThumb:
@@ -9579,6 +9974,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 page_scroll(-GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60));
                 return 0;
             }
+            if (g_view != kLibraryView) return 0;  // the Store and Google Play scroll in their own windows
             g_scroll -= GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60);
             clamp_scroll();
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -9596,7 +9992,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_KEYDOWN: {
             const bool ctrl = GetKeyState(VK_CONTROL) < 0;
             if (ctrl && (wp == '1' || wp == '2')) {
-                set_view(wp == '2' ? kStoreView : kLibraryView);
+                if (wp == '2') open_store();
+                else set_view(kLibraryView);
                 return 0;
             }
             if (ctrl && wp == VK_OEM_COMMA) {
@@ -9633,26 +10030,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 return 0;
             }
-            if (ctrl && wp == 'F' && g_view == kStoreView) {
-                SetFocus(g_search);
-                return 0;
-            }
-            if (g_view == kStoreView) {
-                switch (wp) {
-                    case VK_UP:
-                    case VK_DOWN:
-                    case VK_PRIOR:
-                    case VK_NEXT: {
-                        const float page = wp == VK_PRIOR || wp == VK_NEXT ? g_l.grid.Height * 0.9f : px(60);
-                        g_scroll += wp == VK_UP || wp == VK_PRIOR ? -page : page;
-                        clamp_scroll();
-                        InvalidateRect(hwnd, nullptr, FALSE);
-                        return 0;
-                    }
-                    case VK_F5: store_start(true); return 0;
-                }
-                break;
-            }
+            if (g_view != kLibraryView) break;  // the Store and Google Play take their keys in their own windows
             switch (wp) {
                 case VK_LEFT: move_selection(g_rtl ? 1 : -1, 0); return 0;
                 case VK_RIGHT: move_selection(g_rtl ? -1 : 1, 0); return 0;
@@ -9674,12 +10052,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         }
-        case WM_CHAR:  // typing in the store searches it
-            if (wp > 32 && GetKeyState(VK_CONTROL) >= 0 && g_view == kStoreView) {
-                SetFocus(g_search);
-                SendMessageW(g_search, WM_CHAR, wp, lp);
-            }
-            return 0;
+        case WM_CHAR: return 0;  // no beep
         case kInstallStarted: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             for (Job& j : g_jobs) {
@@ -9693,34 +10066,25 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
+        case kMaintenanceEnded:
+            maintenance_ended();
+            return 0;
         case kInstalled: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             const InstallEnd end = finish_install(*name);
             const InstallEnd::Kind how = end.kind();
             refresh();
-            for (Job& j : g_jobs) {
-                if (j.name != *name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
-                j.state = how == InstallEnd::kCancelled ? Job::kCancelled
-                          : how == InstallEnd::kDone    ? Job::kDone
-                                                        : Job::kFailed;
-                j.end = GetTickCount64();
-                if (j.state == Job::kFailed) {
-                    j.reason = how == InstallEnd::kAppRunning
-                                   ? fmt(L"Close {0} first, then install it again.", {job_label(*name)})
-                                   : install_failure_reason(install_log(*name));
-                }
-                break;
-            }
-            if (g_install_wnd) {
-                fit_install_window();
-                InvalidateRect(g_install_wnd, nullptr, FALSE);
-            }
+            // The Store's own app: no word in the library, the Store's page says how it went.
+            const bool store = store_app_installed(*name, how);
+            // The last of Google's three apps installed: background updates can start.
+            if (how == InstallEnd::kDone && !store) maintenance_check();
+            job_ended(*name, how);
             update_timer();
-            if (how == InstallEnd::kDone) {
+            if (how == InstallEnd::kDone && !store) {
                 select_app(*name);
-                // A store install has no install window: the library says it.
+                // The install window closed meanwhile: the library says it.
                 if (!g_install_wnd) info(fmt(L"{0} is installed.", {label_of(*name)}), kSuccess);
-            } else if (how != InstallEnd::kCancelled && !g_install_wnd) {
+            } else if (how != InstallEnd::kCancelled && !g_install_wnd && !store) {
                 info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
             if (!any_pending()) {
@@ -9733,8 +10097,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case kRunReady: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            if (*name == g_play.name && g_play.state == PlayState::kStarting) {
-                play_ready();
+            if (Embedded* e = embedded_of(*name); e && e->state == Embedded::kStarting) {
+                embedded_ready(*e);
             } else {
                 bring_forward(*name);  // the app's window, over the starting window, before that one goes
                 close_splash(*name);
@@ -9747,9 +10111,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             update_timer();
             InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
-            if (*name == g_play.name &&
-                (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
-                play_exited(end.kind() == RunEnd::kDidNotStart);
+            if (Embedded* e = embedded_of(*name); e && e->up()) {
+                embedded_exited(*e, end.kind() == RunEnd::kDidNotStart);
             } else {
                 switch (end.kind()) {
                     case RunEnd::kQuiet: break;
@@ -9812,51 +10175,23 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
-        case kStoreCatalog:
-            if (wp == kCatalogList) {
-                std::unique_ptr<std::vector<StoreApp>> list(reinterpret_cast<std::vector<StoreApp>*>(lp));
-                g_store.apps = std::move(*list);
-                std::stable_sort(g_store.apps.begin(), g_store.apps.end(),
-                                 [](const StoreApp& a, const StoreApp& b) { return a.updated > b.updated; });
-                rebuild_tiles();
-            } else {
-                const bool failed = wp == kCatalogFailed;
-                g_store.fetch = failed ? StoreState::Fetch::kFailed : StoreState::Fetch::kDone;
-                if (failed && !g_store.apps.empty() && g_view == kStoreView) {
-                    info(tr(L"F-Droid could not be checked for new apps."), kError);
-                }
-                update_timer();
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
+        case kStoreAppChecked: {
+            std::unique_ptr<StoreAppCheck> c(reinterpret_cast<StoreAppCheck*>(lp));
+            store_app_checked(*c);
             return 0;
-        case kStoreProgress:
-            g_store.got_kb = wp;
-            return 0;
-        case kStoreIcon: {
-            std::unique_ptr<std::string> pkg(reinterpret_cast<std::string*>(lp));
-            g_store.icon_wait.erase(*pkg);
-            if (wp == kIconFailed) g_store.icons[*pkg] = nullptr;  // the monogram, for this session
+        }
+        case kStoreAppProgress:
+            g_store_setup.progress(static_cast<int>(wp));
             if (g_view == kStoreView) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        }
-        case kStoreDownload: {
-            std::unique_ptr<std::string> pkg(reinterpret_cast<std::string*>(lp));
-            g_store.downloads[*pkg] = static_cast<int>(wp);
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
-        case kStoreDownloaded: {
-            std::unique_ptr<Download> d(reinterpret_cast<Download*>(lp));
-            store_downloaded(*d, wp != 0);
-            return 0;
-        }
+        case kStoreAppDownloaded: store_app_downloaded(static_cast<StoreAppDownload>(wp)); return 0;
         case kUpdateChecked: {
             std::unique_ptr<UpdateCheck> c(reinterpret_cast<UpdateCheck*>(lp));
             update_checked(*c);
             return 0;
         }
         case kUpdateProgress: update_progress(static_cast<int>(wp)); return 0;
-        case kUpdateDownloaded: update_downloaded(wp != 0); return 0;
+        case kUpdateDownloaded: update_downloaded(static_cast<int>(wp)); return 0;
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
@@ -9879,6 +10214,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // An app may have added the account (its "Sign in with Google") or the user signed out.
             if (wp && google_account_present() != !g_account.empty()) refresh_account();
             break;
+        case kGmsDeviceId: {
+            std::unique_ptr<std::wstring> id(reinterpret_cast<std::wstring*>(lp));
+            g_device_id_asking = false;
+            if (*id != g_device_id) {
+                g_device_id = *id;
+                if (g_view == kSettingsView) rebuild_page();
+            }
+            return 0;
+        }
         case kGmsAccount: {
             std::unique_ptr<std::wstring> account(reinterpret_cast<std::wstring*>(lp));
             g_account = *account;
@@ -9886,17 +10230,17 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
-        case WM_ACTIVATE:  // back to the window: the keyboard goes to Google Play when it is the view
-            if (LOWORD(wp) != WA_INACTIVE && g_view == kPlayView && play_window()) {
-                focus_play();
+        case WM_ACTIVATE:  // back to the window: the keyboard goes to the Store or Google Play when it is the view
+            if (LOWORD(wp) != WA_INACTIVE && shown_embedded()) {
+                focus_embedded();
                 return 0;
             }
             break;
         case WM_CLOSE:
             save_window_size();
-            // Google Play lives in this window: it closes with it.
-            if (!g_play.name.empty() && (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
-                stop_run(g_play.name);
+            // The Store and Google Play live in this window: they close with it.
+            for (const Embedded* e : {&g_store_app, &g_play}) {
+                if (!e->name.empty() && e->up()) stop_run(e->name);
             }
             // Work still under way (an install, a splash) keeps the process; the library only hides.
             if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || g_debug_wnd || any_runs()) {
@@ -9956,6 +10300,20 @@ std::string iso_time(const fs::path& p) {
     return buf;
 }
 
+// The APK the registry names for `pkg`: of the library's copies of it, the first in library() order, as
+// write_registry picks it. Empty when the library has none.
+fs::path registry_apk(const std::string& pkg) {
+    for (const App& app : library()) {
+        const std::vector<std::string> p = package_of(app.name);
+        if (!p.empty() && p[0] == pkg) return app.apk;
+    }
+    return {};
+}
+
+namespace appops {
+std::string installed_at(const std::string& pkg);
+}
+
 // <data>\installed_apps.json, upstream's registry (launcher/InstallCore.swift
 // RegistryStore, schema 2) as MacApkPackageManager.InstalledRegistry reads
 // it: one row per library app whose package is known. Rewritten whole, to a
@@ -9970,6 +10328,11 @@ void write_registry() {
         if (std::find(seen.begin(), seen.end(), p[0]) != seen.end()) continue;
         seen.push_back(p[0]);
         const std::string when = iso_time(package_file(app.name));
+        // installedAt is Android's firstInstallTime: an update keeps the row's, so the app keeps what it was
+        // granted (the signed grants are keyed by package and installedAt); a removal drops the row, and the
+        // next install of the package starts with no grant.
+        std::string since = appops::installed_at(p[0]);
+        if (since.empty()) since = when;
         out += first ? "\n" : ",\n";
         first = false;
         out += "{\"package\":" + json_string(p[0]) + ",\"label\":" + json_string(wide_to_utf8(app.label)) +
@@ -9978,19 +10341,21 @@ void write_registry() {
                ",\"apkPath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
                ",\"bundlePath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
                ",\"dirName\":" + json_string(wide_to_utf8(app.name)) + ",\"state\":\"installed\"" +
-               ",\"installedAt\":" + json_string(when) + ",\"updatedAt\":" + json_string(when) + "}";
+               ",\"installedAt\":" + json_string(since) + ",\"updatedAt\":" + json_string(when) + "}";
     }
     out += "\n]}\n";
     std::error_code ec;
     fs::create_directories(data_dir(), ec);
     const fs::path file = data_dir() / L"installed_apps.json";
-    const fs::path tmp = data_dir() / L"installed_apps.json.tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f << out;
-        if (!f) return;
+    // Per process: the library and an install helper (another Win.apk.exe) may write it at once, and one
+    // shared temporary name would let them interleave into a file neither wrote.
+    const fs::path tmp = data_dir() / (L"installed_apps.json.tmp." + std::to_wstring(GetCurrentProcessId()));
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    f << out;
+    f.close();  // a full disk shows here, when the buffer is written
+    if (!f || !MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        fs::remove(tmp, ec);  // the old registry stays whole
     }
-    MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
 // Apps installed before the library recorded packages get theirs read now,
@@ -9999,16 +10364,29 @@ void write_registry() {
 DWORD WINAPI backfill_thread(void*) {
     bool changed = false;
     std::error_code ec;
+    std::set<std::string> registered, found;
     for (const App& app : library()) {
-        if (fs::exists(package_file(app.name), ec)) continue;
+        if (fs::exists(package_file(app.name), ec)) {
+            const std::vector<std::string> p = package_of(app.name);
+            if (!p.empty()) registered.insert(p[0]);
+            continue;
+        }
         HANDLE p = start_runtime(L"--apk \"" + app.apk.wstring() + L"\" --package-to \"" +
                                      package_file(app.name).wstring() + L"\"",
                                  logs_dir() / L"package-backfill.log");
-        if (p && wait_exit(p) == 0) changed = true;
-        else fs::remove(package_file(app.name), ec);
+        if (p && wait_exit(p) == 0) {
+            changed = true;
+            const std::vector<std::string> pkg = package_of(app.name);
+            if (!pkg.empty() && !pkg[0].empty()) found.insert(pkg[0]);
+        } else {
+            fs::remove(package_file(app.name), ec);
+        }
     }
     if (changed) {
         write_registry();
+        // A package the registry did not have until now was no app's to see, nor the broker's.
+        for (const std::string& pkg : found)
+            if (!registered.count(pkg)) tell_broker(winapk::package_events::kAdded, pkg);
         if (g_main) PostMessageW(g_main, kRefresh, 0, 0);  // the store sees these packages as installed
     }
     return 0;
@@ -10048,13 +10426,16 @@ const App* find_package(const std::vector<App>& apps, const std::string& pkg) {
 }
 
 // Asks the user, as the Mac's helper does before it acts for an app: the launcher's dialog, in front of
-// the app, Enter on Cancel. `app` heads it when the question is about one in the library. A no is
-// exit 3, which the installer reports as STATUS_FAILURE_ABORTED.
-bool helper_consent(const App* app, const std::wstring& question, const std::wstring& note, const std::wstring& action) {
+// the app, Enter on Cancel. `app` heads it when the question is about one in the library, else `heading`
+// when given. A no is exit 3, which the installer reports as STATUS_FAILURE_ABORTED.
+bool helper_consent(const App* app, const std::wstring& question, const std::wstring& note, const std::wstring& action,
+                    const std::wstring& heading = L"") {
     Prompt p;
     if (app) {
         p.app = app->label;
         p.icon = rounded_icon(app_dir(app->name) / L"icon.png", ipx(40));
+    } else {
+        p.app = heading;
     }
     p.caption = L"Win.apk";
     p.question = question;
@@ -10070,6 +10451,118 @@ void notify_library() {
 
 namespace appops {
 bool caller_is_play_store();
+bool installs_allowed_from_caller();
+}
+
+// The helper's end, once known: its one JSON line, then "[helper] exit <code>", which tells the asking app's
+// runtime that the install is over (PackageInstallerBackend.runHelper) while the window stays to show it, as
+// a device sends the session's status when the install ends, not when the user closes the installer.
+int g_helper_code = -1;
+std::string g_helper_pkg;
+bool g_helper_update = false;
+
+int helper_report(int code) {
+    helper_say("[helper] exit " + std::to_string(code));
+    g_helper_code = code;
+    return code;
+}
+
+DWORD WINAPI helper_install_thread(void* param) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(param));
+    bool running = false;
+    const bool ok = install_into_library(job->source, job->name, &running);
+    AcquireSRWLockExclusive(&g_installs_lock);
+    g_installs.ended(job->name, ok, running);
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    // The window outlives the install (it is closed only from a result), so it is there to tell.
+    PostMessageW(g_install_wnd, kInstalled, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+    CoUninitialize();
+    return 0;
+}
+
+// The install window, on its install's end: the result shown, and told to the app that asked.
+void helper_install_ended(const std::wstring& name) {
+    const InstallEnd::Kind how = finish_install(name).kind();
+    g_apps = library();  // the installed app's own name and icon, and Open
+    job_ended(name, how);
+    switch (how) {
+        case InstallEnd::kDone:
+            helper_progress(1.0, "installed");
+            notify_library();
+            helper_say("{\"ok\":true,\"package\":" + json_string(g_helper_pkg) + ",\"wasUpdate\":\"" +
+                       (g_helper_update ? "true" : "false") + "\"}");
+            helper_report(0);
+            break;
+        case InstallEnd::kCancelled:  // InstallInstalling's Cancel abandons the session: STATUS_FAILURE_ABORTED
+            helper_report(helper_fail(3, "cancelled", "the user cancelled the install"));
+            break;
+        case InstallEnd::kAppRunning:
+            helper_report(helper_fail(5, "install", "the app is running; close it, then update it"));
+            break;
+        default:
+            helper_report(helper_fail(5, "install", "installing failed; the log is " +
+                                                        wide_to_utf8(install_log(name).wstring())));
+            break;
+    }
+}
+
+// After the user agreed: Android's package installer shows the install (InstallInstalling: the app, a moving
+// bar, Cancel until it commits) and then its end (InstallSuccess: "App installed." with Done and Open;
+// InstallFailed: "App not installed." and why). Here that is the install window, alone in this process,
+// installing as the library does (install_into_library, cancelled through the same InstallTable). Returns
+// the helper's exit code, told to the app as soon as the install ends (helper_report).
+int helper_install_ui(const fs::path& apk, const std::wstring& name, const std::string& pkg, bool update,
+                      const std::wstring& shown) {
+    g_helper_ui = true;
+    g_helper_pkg = pkg;
+    g_helper_update = update;
+    g_apps = library();
+    WNDCLASSEXW sc{sizeof(sc)};
+    sc.hInstance = g_inst;
+    sc.hIcon = LoadIconW(g_inst, MAKEINTRESOURCEW(1));
+    sc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    sc.lpfnWndProc = install_proc;
+    sc.lpszClassName = L"WinApkInstall";
+    RegisterClassExW(&sc);
+
+    begin_install(name);
+    AcquireSRWLockExclusive(&g_installs_lock);
+    g_installs.start(name);
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    Job job{name};
+    job.file = shown;
+    job.update = update;
+    job.state = Job::kInstalling;
+    job.start = GetTickCount64();
+    g_jobs = {job};
+    show_install_window();
+    if (!g_install_wnd) {  // no window (no desktop): the install still runs and is told, with nothing shown
+        bool running = false;
+        const bool ok = install_into_library(apk, name, &running);
+        AcquireSRWLockExclusive(&g_installs_lock);
+        g_installs.ended(name, ok, running);
+        ReleaseSRWLockExclusive(&g_installs_lock);
+        helper_install_ended(name);
+        return g_helper_code;
+    }
+    auto* work = new InstallJob{apk, name, false};
+    if (HANDLE t = CreateThread(nullptr, 0, helper_install_thread, work, 0, nullptr)) {
+        CloseHandle(t);
+    } else {
+        delete work;
+        AcquireSRWLockExclusive(&g_installs_lock);
+        g_installs.ended(name, false, false);
+        ReleaseSRWLockExclusive(&g_installs_lock);
+        helper_install_ended(name);
+    }
+    MSG m;
+    while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    // The window closes only once the install has ended (WM_CLOSE asks to cancel while it runs).
+    return g_helper_code < 0 ? helper_report(helper_fail(5, "install", "the install window closed")) : g_helper_code;
 }
 
 int helper_main(int argc, wchar_t** argv) {
@@ -10122,6 +10615,9 @@ int helper_main(int argc, wchar_t** argv) {
         std::getline(f, pkg);
     }
     fs::remove(pkg_out, ec);
+    // Not the file's fault when the runtime never ran: STATUS_FAILURE, not STATUS_FAILURE_INVALID.
+    if (!probe) return helper_fail(5, "install", "the runtime could not be started; the log is " +
+                                                     wide_to_utf8((logs_dir() / L"install-helper.log").wstring()));
     if (pkg.empty()) return helper_fail(6, "invalid-apk", "no package name in the app");
     helper_progress(0.05, "parsed");
 
@@ -10131,18 +10627,34 @@ int helper_main(int argc, wchar_t** argv) {
     // The Play Store installs as a phone's system installer does, with no question: it holds INSTALL_PACKAGES
     // there, and the user already chose the app in it. Only the real one: the asking runtime runs the
     // library's com.android.vending and Google signed that APK (appops::caller_is_play_store).
+    const bool play = appops::caller_is_play_store();
+    // Any other app installs only from a source the user allowed ("Install unknown apps"), as Android's
+    // installer checks before its question (PackageInstallerActivity: the blocked dialog, Settings, back).
+    if (!play && !appops::installs_allowed_from_caller())
+        return helper_fail(3, "unknown-sources", "installs from this app are not allowed");
+    // PackageInstallerActivity's question: the app's name over "Do you want to install this app?" (a new app's
+    // name is not known before its install reads it: its package stands in).
     const bool agreed =
-        appops::caller_is_play_store() ||
-        (update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
-                                 fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
-                : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
-                                 tr(L"Install")));
+        play || (update ? helper_consent(existing, tr(L"Do you want to update this app?"),
+                                         fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}),
+                                         tr(L"Update"))
+                        : helper_consent(nullptr, tr(L"Do you want to install this app?"),
+                                         fmt(L"{0} asks to install it.", {who}), tr(L"Install"), wpkg));
     if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
+    // Everyone else's install is shown as Android's installer shows it after the question: its progress, then
+    // its end with Open and Done (helper_install_ui).
+    if (!play) return helper_install_ui(apk, name, pkg, update, update ? existing->label : wpkg);
+    // The Play Store's update of an app open in a window: PackageManagerService kills an app it replaces, and
+    // the Play Store has already waited for it when it asked to (an auto-update's InstallConstraints, "app not
+    // interacting"), or the user tapped Update in it. So the app is stopped, not the update refused. Any other
+    // installer's update leaves an open window to the user (stop_app_for_install).
+    if (update && !stop_app_for_update(name))
+        return helper_fail(5, "install", "the app is running and could not be stopped");
     bool running = false;
-    if (!install_into_library(apk, name, update ? existing->apk : fs::path(), &running)) {
+    if (!install_into_library(apk, name, &running)) {
         if (running) return helper_fail(5, "install", "the app is running; close it, then update it");
         return helper_fail(5, "install", "installing failed; the log is " +
                                              wide_to_utf8(install_log(name).wstring()));
@@ -10349,14 +10861,12 @@ bool read_bytes(const fs::path& p, Bytes* out) {
 bool write_bytes(const fs::path& p, const void* data, size_t n) {
     const fs::path tmp = p.parent_path() / (L"." + p.filename().wstring() + L".tmp." +
                                             std::to_wstring(GetCurrentProcessId()));
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f.write(static_cast<const char*>(data), static_cast<std::streamsize>(n));
-        if (!f) return false;
-    }
-    if (MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    f.write(static_cast<const char*>(data), static_cast<std::streamsize>(n));
+    f.close();  // a full disk shows here, when the buffer is written
+    if (f && MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
     std::error_code ec;
-    fs::remove(tmp, ec);
+    fs::remove(tmp, ec);  // no temporary file left behind, and the old file stays
     return false;
 }
 
@@ -10778,6 +11288,12 @@ bool identity_of(const std::string& pkg, Identity* id) {
     return j.ok && found == 1;
 }
 
+// The registry's installedAt of `pkg`, empty when it has no row (write_registry keeps it across updates).
+std::string installed_at(const std::string& pkg) {
+    Identity id;
+    return identity_of(pkg, &id) ? id.installed_at : std::string();
+}
+
 // ---- the caller ----------------------------------------------------------------
 
 struct Caller {
@@ -10835,8 +11351,8 @@ bool stop_runtime_of(const fs::path& apk) {
 }
 
 // Ends every runtime running the library app `name` (its APK is library\<name>.<ext>), whoever
-// started it. True when one was found.
-bool stop_library_app(const std::wstring& name) {
+// started it, with `exit_code`. True when one was found.
+bool stop_library_app(const std::wstring& name, UINT exit_code) {
     bool stopped = false;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -10848,7 +11364,7 @@ bool stop_library_app(const std::wstring& name) {
         if (!p) continue;
         const fs::path theirs = apk_of_command_line(command_line_of(p));
         if (!theirs.empty() && _wcsicmp(theirs.stem().c_str(), name.c_str()) == 0 &&
-            fs::equivalent(theirs.parent_path(), library_dir(), ec) && TerminateProcess(p, 1))
+            fs::equivalent(theirs.parent_path(), library_dir(), ec) && TerminateProcess(p, exit_code))
             stopped = true;
         CloseHandle(p);
     }
@@ -11219,14 +11735,9 @@ int special_access_info(const Caller& c, const std::string& op) {
 
 // Settings' "All files access" / "Media management" / "Display over other
 // apps" / "Install unknown apps" switch for the app. The default button keeps
-// the current state, as upstream's alert's Return does.
-int special_access(const std::string& op) {
-    if (!is_op(op) && !is_info_op(op))
-        return usage("--op must be " + kAllFiles + ", " + kManageMedia + ", " + kOverlay + " or " + kInstallApps);
-    Caller c;
-    std::string why;
-    if (!resolve(&c, &why)) return refused(why);
-    if (is_info_op(op)) return special_access_info(c, op);
+// the current state, as upstream's alert's Return does. 0 allowed, 3 not
+// allowed, 4 no answer (nothing changed), 5 the answer could not be recorded.
+int special_access_switch(const Caller& c, const std::string& op, std::string* why) {
     const std::string current = mode(c.id, op);
     const bool files = op == kAllFiles;
     std::wstring main, body;
@@ -11247,20 +11758,62 @@ int special_access(const std::string& op) {
     // Enter keeps what is set now.
     const int answer = ask(c, main, body, {{kAnswerAllow, tr(L"Allow")}, {kAnswerDeny, tr(L"Don't allow")}},
                            current == "allow" ? kAnswerAllow : kAnswerDeny);
-    if (answer == 0) {
+    if (answer == 0) return 4;
+    const std::string want = answer == kAnswerAllow ? "allow" : "deny";
+    // "Don't allow" writes only to turn an allowed switch off.
+    if (want != current && (want == "allow" || current == "allow") && !record(c.id, {}, {{op, want}}, "helper", why))
+        return 5;
+    return want == "allow" ? 0 : 3;
+}
+
+int special_access(const std::string& op) {
+    if (!is_op(op) && !is_info_op(op))
+        return usage("--op must be " + kAllFiles + ", " + kManageMedia + ", " + kOverlay + " or " + kInstallApps);
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return refused(why);
+    if (is_info_op(op)) return special_access_info(c, op);
+    const int code = special_access_switch(c, op, &why);
+    if (code == 4) {
         emit({{"status", "timeout"},
               {"op", op},
               {"message", "the dialog was closed without an answer; nothing changed"}});
-        return 4;
-    }
-    const std::string want = answer == kAnswerAllow ? "allow" : "deny";
-    // "Don't allow" writes only to turn an allowed switch off.
-    if (want != current && (want == "allow" || current == "allow") && !record(c.id, {}, {{op, want}}, "helper", &why)) {
+    } else if (code == 5) {
         emit({{"status", "error"}, {"message", "could not record the answer: " + why}});
-        return 5;
+    } else {
+        emit({{"status", code == 0 ? "allowed" : "denied"}, {"op", op}, {"dirName", c.id.dir_name}});
     }
-    emit({{"status", want == "allow" ? "allowed" : "denied"}, {"op", op}, {"dirName", c.id.dir_name}});
-    return want == "allow" ? 0 : 3;
+    return code;
+}
+
+// Before an app's install (the install helper): whether the app asking may install apps, as Android's
+// installer decides before its question (PackageInstallerActivity.checkIfAllowedAndInitiateInstall). Its
+// "Install unknown apps" switch on: yes. Off: the dialog Android shows for a blocked source, whose Settings
+// is that switch (special_access_switch, as the app's own MANAGE_UNKNOWN_APP_SOURCES opens it); turned on
+// there, the install goes on to its question. With no app identity (not a library app's runtime) there is no
+// switch to read: the install's own question still guards it.
+bool installs_allowed_from_caller() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return true;
+    if (mode(c.id, kInstallApps) == "allow") return true;
+    constexpr int kSettings = 103;
+    const int answer = ask(c, tr(L"For your security, your PC currently isn't allowed to install unknown apps "
+                                 L"from this source."),
+                           tr(L"You can change this in Settings."),
+                           {{kSettings, tr(L"Settings")}, {kAnswerDeny, tr(L"Cancel")}}, kSettings);
+    if (answer != kSettings) return false;
+    return special_access_switch(c, kInstallApps, &why) == 0;
+}
+
+// Win.apk's own Store (store_app.h) may install apps from its first install, as a device's preinstalled store
+// may: its "Install unknown apps" is set to allow while no answer is stored for it. A later "Don't allow" stays
+// (an update keeps installedAt, so the entry); a removal forgets it with the app.
+void grant_builtin_store() {
+    Identity id;
+    std::string why;
+    if (!identity_of(winapk::launcher::kStorePackage, &id) || !mode(id, kInstallApps).empty()) return;
+    record(id, {}, {{kInstallApps, "allow"}}, "system", &why);
 }
 
 // ---- app-details --------------------------------------------------------------------
@@ -11566,10 +12119,11 @@ void show_library(int show) {
 }
 
 // When the library is not shown, the process lives only for what it is doing: an install window,
-// a splash, an app it started (to report how it ended), the log window.
+// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened.
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
     if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
+    if (g_maintenance) return;  // a maintenance window it opened: waits for its end (kMaintenanceEnded)
     DestroyWindow(g_main);
 }
 
@@ -11581,6 +12135,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     OleInitialize(nullptr);
     int argc = 0;
     wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+    // Earlier builds' scheduled task for background updates, should it run before the launcher removed it.
+    if (argc >= 2 && wcscmp(argv[1], L"maintenance") == 0) {
+        const int code = maintenance_main();
+        LocalFree(argv);
+        OleUninitialize();
+        return code;
+    }
 
     // The install helper, for apps that install apps.
     if (argc >= 2 && (wcscmp(argv[1], L"install") == 0 || wcscmp(argv[1], L"uninstall") == 0)) {
@@ -11644,7 +12206,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         refresh_app_shortcuts();
         write_registry();  // apps installed before the registry existed, or by an older launcher
         if (HANDLE t = CreateThread(nullptr, 0, backfill_thread, nullptr, 0, nullptr)) CloseHandle(t);
+        remove_maintenance_task();  // earlier builds' scheduled task: background updates are the launcher's now
     }
+    seal_gms_tokens();  // an older install's plain Google token, sealed before an app opens
     theme_menus();
 
     WNDCLASSEXW wc{sizeof(wc)};
@@ -11692,6 +12256,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     } else {
         show_library(show);
     }
+    // At start, after the first thing asked for is under way: a window, if the last one is kIntervalSeconds old.
+    maintenance_check();
     LocalFree(argv);
 
     MSG m;

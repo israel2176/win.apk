@@ -133,10 +133,22 @@ jstring JNICALL Demux_trackInfo(JNIEnv* env, jclass, jlong h, jint index) {
     char buf[512];
     std::snprintf(buf, sizeof(buf),
                   "mime=%s\nvideo=%d\nwidth=%d\nheight=%d\nrotation=%d\nframe-rate=%.3f\nsample-rate=%d\n"
-                  "channel-count=%d\nbitrate=%d\nlanguage=%s\n",
+                  "channel-count=%d\nbitrate=%d\nlanguage=%s\ncolor-standard=%d\ncolor-range=%d\n"
+                  "color-transfer=%d\n",
                   t.mime.c_str(), t.video ? 1 : 0, t.width, t.height, t.rotation, t.frame_rate, t.sample_rate,
-                  t.channels, t.bitrate, t.language.c_str());
-    return env->NewStringUTF(buf);
+                  t.channels, t.bitrate, t.language.c_str(), t.color.standard, t.color.range, t.color.transfer);
+    // The container's HDR static metadata (MediaFormat's KEY_HDR_STATIC_INFO), as hex.
+    std::string text = buf;
+    if (!t.color.hdr_static_info.empty()) {
+        text += "hdr-static-info=";
+        for (uint8_t b : t.color.hdr_static_info) {
+            char two[3];
+            std::snprintf(two, sizeof(two), "%02x", b);
+            text += two;
+        }
+        text += "\n";
+    }
+    return env->NewStringUTF(text.c_str());
 }
 
 jbyteArray JNICALL Demux_trackCsd(JNIEnv* env, jclass, jlong h, jint index, jint which) {
@@ -145,7 +157,7 @@ jbyteArray JNICALL Demux_trackCsd(JNIEnv* env, jclass, jlong h, jint index, jint
     std::lock_guard<std::mutex> hold(s->lock);
     if (!s->object || index < 0 || index >= s->object->track_count()) return nullptr;
     const vd::Demuxer::Track& t = s->object->track(index);
-    const std::vector<uint8_t>& csd = which == 0 ? t.csd0 : t.csd1;
+    const std::vector<uint8_t>& csd = which == 0 ? t.csd0 : which == 1 ? t.csd1 : t.csd2;
     return csd.empty() ? nullptr : array_of(env, csd);
 }
 

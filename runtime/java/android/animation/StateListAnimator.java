@@ -60,7 +60,6 @@ public class StateListAnimator implements Cloneable {
      *  DIFFERENT tuple wins than last time, so a state change that keeps
      *  the same winning entry doesn't restart it). */
     public void setState(int[] state) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         Tuple match = null;
         for (int i = 0; i < tuples.size(); i++) {
             if (android.util.StateSet.stateSetMatches(tuples.get(i).specs, state)) {

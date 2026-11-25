@@ -215,8 +215,7 @@ public class HorizontalScrollView extends FrameLayout {
      *  Shift held) x the horizontal scroll factor, clamped, not while a drag is
      *  in progress; a MOUSE never overscrolls. WheelScroll.VIEWS=0: not handled. */
     @Override public boolean onGenericMotionEvent(android.view.MotionEvent event) {
-        if (com.macapk.loader.WheelScroll.VIEWS
-                && event.getAction() == android.view.MotionEvent.ACTION_SCROLL && !mIsBeingDragged) {
+        if (event.getAction() == android.view.MotionEvent.ACTION_SCROLL && !mIsBeingDragged) {
             final float axisValue;
             if (event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)) {
                 if ((event.getMetaState() & android.view.KeyEvent.META_SHIFT_ON) != 0) {
@@ -326,9 +325,18 @@ public class HorizontalScrollView extends FrameLayout {
             getPaddingTop() + getPaddingBottom() + heightUsed,
             lp != null ? lp.height
                        : android.view.ViewGroup.LayoutParams.WRAP_CONTENT);
+        // AOSP: makeSafeMeasureSpec(max(0, parentWidth - padding - margins -
+        // widthUsed), UNSPECIFIED): the viewport stays a hint (targetSdk >= 23).
+        // Size 0 made a FlexboxLayout inside shrink its items below nothing
+        // (Moovit's PIN boxes, -1 wide).
+        int hMargins = 0;
+        if (lp instanceof android.view.ViewGroup.MarginLayoutParams mlp)
+            hMargins = mlp.leftMargin + mlp.rightMargin;
         int childWidthMeasureSpec =
             android.view.View.MeasureSpec.makeMeasureSpec(
-                0, android.view.View.MeasureSpec.UNSPECIFIED);
+                Math.max(0, android.view.View.MeasureSpec.getSize(parentWidthMeasureSpec)
+                    - getPaddingLeft() - getPaddingRight() - hMargins - widthUsed),
+                android.view.View.MeasureSpec.UNSPECIFIED);
         child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
     }
 
@@ -434,24 +442,6 @@ public class HorizontalScrollView extends FrameLayout {
         return scrollToChildRect(rectangle, immediate);
     }
 
-    /** AOSP HorizontalScrollView.scrollToChild, verbatim (including AOSP's own
-     *  private visibility -- unlike ScrollView's public scrollToDescendant sibling,
-     *  AOSP never elevated this one to a public API, so this mirrors that exact
-     *  asymmetry rather than "fixing" it). Presently only reachable from a
-     *  subclass that calls it directly (AOSP's own only callers are the
-     *  mIsLayoutDirty-gated focus-search paths this lane does not port -- see
-     *  requestChildRectangleOnScreen above), but it is real, correct AOSP
-     *  geometry rather than a stub. */
-    private void scrollToChild(android.view.View child) {
-        android.graphics.Rect rect = new android.graphics.Rect();
-        child.getDrawingRect(rect);
-        // Offset from child's local coordinates to ScrollView coordinates
-        offsetDescendantRectToMyCoords(child, rect);
-        int scrollDelta = computeScrollDeltaToGetChildRectOnScreen(rect);
-        if (scrollDelta != 0) {
-            scrollBy(scrollDelta, 0);
-        }
-    }
 
     /** AOSP HorizontalScrollView.java:487 executeKeyEvent(KeyEvent) -- the x-axis
      *  twin of ScrollView's. Note AOSP's own asymmetries, kept: the no-scroll
@@ -496,5 +486,50 @@ public class HorizontalScrollView extends FrameLayout {
         final android.view.View child = getChildCount() > 0 ? getChildAt(0) : null;
         if (child == null) return false;
         return child.getWidth() > getWidth() - getPaddingLeft() - getPaddingRight();
+    }
+
+    // ---- Accessibility: AOSP HorizontalScrollView (android-14), for a screen reader ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        final int scrollRange = macapkScrollRangeX();
+        if (scrollRange > 0) {
+            info.setScrollable(true);
+            if (isEnabled() && getScrollX() > 0) {
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT);
+            }
+            if (isEnabled() && getScrollX() < scrollRange) {
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
+                info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT);
+            }
+        }
+    }
+
+    @Override
+    public boolean performAccessibilityActionInternal(int action, android.os.Bundle arguments) {
+        if (super.performAccessibilityActionInternal(action, arguments)) return true;
+        if (!isEnabled()) return false;
+        final int viewportWidth = getWidth() - getPaddingLeft() - getPaddingRight();
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                || action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.getId()) {
+            final int targetScrollX = Math.min(getScrollX() + viewportWidth, macapkScrollRangeX());
+            if (targetScrollX != getScrollX()) {
+                smoothScrollTo(targetScrollX, 0);
+                return true;
+            }
+            return false;
+        }
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                || action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_LEFT.getId()) {
+            final int targetScrollX = Math.max(0, getScrollX() - viewportWidth);
+            if (targetScrollX != getScrollX()) {
+                smoothScrollTo(targetScrollX, 0);
+                return true;
+            }
+            return false;
+        }
+        return false;
     }
 }

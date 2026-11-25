@@ -12,8 +12,9 @@
 // remaining approximation: NET_CAPABILITY_VALIDATED in particular means "the
 // platform proved this network reaches the internet", and nothing here runs
 // that probe -- we infer it from the presence of a default route. Same for
-// NOT_METERED (macOS does surface a per-interface "low data mode", which we do
-// not read yet) and the bandwidth estimates below.
+// the bandwidth estimates below. NOT_METERED is the host's answer on Win.apk
+// (Windows' connection cost); on the Mac it is still claimed (macOS does
+// surface a per-interface "low data mode", which we do not read yet).
 package android.net;
 
 public class NetworkCapabilities {
@@ -79,9 +80,11 @@ public class NetworkCapabilities {
 
     public boolean hasCapability(int capability) {
         switch (capability) {
+            case NET_CAPABILITY_NOT_METERED:
+                // The host's answer (Windows: the connection's cost), not a claim.
+                return !MacApkHostNetwork.get().metered;
             case NET_CAPABILITY_INTERNET:
             case NET_CAPABILITY_VALIDATED:
-            case NET_CAPABILITY_NOT_METERED:
             case NET_CAPABILITY_NOT_RESTRICTED:
             case NET_CAPABILITY_TRUSTED:
             case NET_CAPABILITY_NOT_VPN:
@@ -104,6 +107,16 @@ public class NetworkCapabilities {
     }
     public int[] getCapabilities() {
         // The set hasCapability() reports true for, in ascending order.
+        if (MacApkHostNetwork.get().metered) {
+            return new int[] {
+                NET_CAPABILITY_INTERNET,
+                NET_CAPABILITY_NOT_RESTRICTED, NET_CAPABILITY_TRUSTED,
+                NET_CAPABILITY_NOT_VPN, NET_CAPABILITY_VALIDATED,
+                NET_CAPABILITY_NOT_ROAMING, NET_CAPABILITY_FOREGROUND,
+                NET_CAPABILITY_NOT_CONGESTED, NET_CAPABILITY_NOT_SUSPENDED,
+                NET_CAPABILITY_NOT_VCN_MANAGED
+            };
+        }
         return new int[] {
             NET_CAPABILITY_NOT_METERED, NET_CAPABILITY_INTERNET,
             NET_CAPABILITY_NOT_RESTRICTED, NET_CAPABILITY_TRUSTED,

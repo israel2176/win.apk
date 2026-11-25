@@ -161,10 +161,67 @@ public class Handler {
         } catch (Throwable ignored) { /* NativeLog unavailable off-runtime */ }
     }
     public Handler(Looper looper, Callback callback) { this(looper, callback, false); }
-    private Handler(Looper looper, Callback callback, boolean async) {
+    /** AOSP's hidden public Handler(Looper, Callback, boolean async) (AOSP's own views make
+     *  their asynchronous handlers so, -Dwinapk.aosp.views=1); createAsync's body. */
+    public Handler(Looper looper, Callback callback, boolean async) {
         this.looper = looper;
         this.callback = callback;
         this.mAsynchronous = async;
+    }
+    /** AOSP's hidden Handler(boolean async) and Handler(Callback, boolean async), on the
+     *  current thread's looper (ViewRootImpl's synthetic input handlers). */
+    public Handler(boolean async) { this(macapkImplicitLooper(), null, async); }
+    public Handler(Callback callback, boolean async) { this(macapkImplicitLooper(), callback, async); }
+
+    private static volatile Handler sMain;
+    /** AOSP's hidden Handler.getMain(): one Handler on the main looper. */
+    public static Handler getMain() {
+        Handler h = sMain;
+        if (h == null) sMain = h = new Handler(Looper.getMainLooper());
+        return h;
+    }
+
+    /** AOSP's hidden executeOrSendMessage (AOSP's InputMethodManager.showSoftInput calls it on its
+     *  H): the message is dispatched at once on this handler's thread, else sent to it. */
+    public final boolean executeOrSendMessage(Message msg) {
+        if (Looper.myLooper() == looper) {
+            dispatchMessage(msg);
+            return true;
+        }
+        return sendMessage(msg);
+    }
+
+    /** AOSP's hidden runWithScissors: runs r on this handler's thread and waits for it (at most
+     *  timeout ms, 0 = no limit); at once when already on it. */
+    public final boolean runWithScissors(final Runnable r, long timeout) {
+        if (r == null) throw new IllegalArgumentException("runnable must not be null");
+        if (timeout < 0) throw new IllegalArgumentException("timeout must be non-negative");
+        if (Looper.myLooper() == looper) {
+            r.run();
+            return true;
+        }
+        final Object lock = new Object();
+        final boolean[] done = {false};
+        if (!post(() -> {
+            try { r.run(); } finally { synchronized (lock) { done[0] = true; lock.notifyAll(); } }
+        })) return false;
+        synchronized (lock) {
+            long until = timeout > 0 ? SystemClock.uptimeMillis() + timeout : 0;
+            while (!done[0]) {
+                try {
+                    if (timeout > 0) {
+                        long left = until - SystemClock.uptimeMillis();
+                        if (left <= 0) return false;
+                        lock.wait(left);
+                    } else {
+                        lock.wait();
+                    }
+                } catch (InterruptedException e) {
+                    // AOSP's BlockingRunnable keeps waiting.
+                }
+            }
+        }
+        return true;
     }
 
     /** MAC.APK: messages posted through this Handler are "owner-only" -- the
@@ -228,7 +285,7 @@ public class Handler {
     private MessageQueue queue() {
         if (looper == null) return null;
         if (!looper.isMain()) return looper.getQueue();
-        return Looper.MACAPK_REAL_LOOPER ? Looper.mainQueue() : null;
+        return Looper.mainQueue();
     }
 
     /** AOSP Handler.enqueueMessage (:770-779): stamp the target, apply the

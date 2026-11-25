@@ -103,7 +103,7 @@ public final class CreatorImpl extends Binder {
         } catch (RuntimeException e) {
             // an argument list this does not know: the application below
         }
-        return o instanceof Context ? (Context) o : android.app.Application.getInstance();
+        return o instanceof Context ? (Context) o : com.macapk.loader.app.Apps.current();
     }
 
     /** What an IObjectWrapper holds: the one field its binder declares, which is how the

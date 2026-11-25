@@ -44,7 +44,9 @@ Not in scope for now:
 
 ## 2. How Mac.apk works and what changes on Windows x64
 
-The fork was taken from upstream version 1.0.2238. Upstream has four parts:
+The fork was taken from upstream version 1.0.2238. Upstream has four parts (the
+Mac-only native sources named in this section are no longer in this tree; they
+are in Mac.apk's repository, and Win.apk keeps only the files it compiles):
 
 | Part | Location | Approx. size | Role |
 |---|---|---|---|
@@ -161,7 +163,7 @@ Everything in this section is merged on `main` and tested in CI on
 | `src/jni_variadic.cpp` | The `Call<T>Method`, `Call<T>MethodV` and `NewObject` families. Reads the argument stream against the method signature and calls HotSpot's `Call<T>MethodA` form |
 | `src/jni_bind.cpp` | Binds guest natives into HotSpot: the guest `RegisterNatives` slot wraps each function in a thunk, and a JVMTI `NativeMethodBind` hook swaps guest addresses for thunks. Thunks are cached per function and signature. Also the cached JVMTI signature provider |
 | `include/winapk/arm64_cpu.h`, `src/arm64/arm64_cpu.cpp`, `src/arm64/arm64_simd.cpp` | M10, stage 1: an AArch64 (A64) interpreter. The base integer ISA, branches (PAC and BTI hints as no-ops), every load/store form, exclusives as compare-and-swap, acquire/release, the LSE atomics, scalar FP with Arm's saturating conversions, and the Advanced SIMD forms compilers emit for C and C++. Unimplemented encodings stop the guest with their address |
-| `include/winapk/arm64_guest.h`, `src/arm64/arm64_guest.cpp` | The arm64 bridge: per-thread CPU state, a 4 MiB guest stack and bionic's TLS slots; guest calls to host (System V) functions with AAPCS64 arguments moved to System V registers and stack, and AAPCS64 `va_list`s rewritten for the functions that take one (the printf family, the JNI `...V` forms); host calls into guest code through an execute-fault handler, or `host_callable()` thunks |
+| `include/winapk/arm64_guest.h`, `src/arm64/arm64_guest.cpp` | The arm64 bridge: per-thread CPU state, a guest stack (4 MiB, or `pthread_create`'s size when larger, up to 64 MiB; what `pthread_getattr_np` reports to guest code) and bionic's TLS slots; guest calls to host (System V) functions with AAPCS64 arguments moved to System V registers and stack, and AAPCS64 `va_list`s rewritten for the functions that take one (the printf family, the JNI `...V` forms); host calls into guest code through an execute-fault handler, or `host_callable()` thunks |
 | `java/com/winapk/tools/AppInstall.java` | `winapk-tools.jar`: installs an APK or a split bundle (`.apkm`, `.xapk`, `.apks`) in the device layout upstream reads, `data/app/~~<nonce>/<package>-<nonce>/` with `base.apk` (a hard link for a plain APK), `split_<name>.apk` (chosen as upstream's `SelectBundleApks` does) and the host ABI's libraries in `lib/<isa>/` |
 | `host/guest_libs.cpp`, `host/guest_stub.cpp`, `host/translator_main.cpp` | An app's x86_64 native libraries (M4): `macapk-translator.exe` copies `winapk-guest-stub.dll` per library, the stub's `JNI_OnLoad` loads the ELF through the linker, `NativeLibrary.findEntry0` resolves natives by name, missing system functions become reporting stubs |
 | `host/runtime_main.cpp` | `winapk-runtime`, the host that runs an APK: installs the app first (above, once per input file), converts its DEX with upstream's converter (cached), creates the JVM in-process with upstream's options, binds the host natives and calls `Boot.run` |
@@ -169,7 +171,7 @@ Everything in this section is merged on `main` and tested in CI on
 | `host/native_log.cpp`, `host/native_cocoa.cpp` | `NativeLog`, and `NativeCocoa`: screen metrics, a 60 Hz render tick driving the app's renderer, presents, input delivery to `TouchDispatcher`, and headless mode (frames optionally written to a BMP) |
 | `compat/CoreFoundation/CoreFoundation.h`, upstream `runtime/src/native_sqlite.cpp` | SQLite for apps: upstream's `NativeSqlite` bridge compiled unchanged, with the few CoreFoundation string calls it makes implemented on Win32. SQLite is the official amalgamation, downloaded and hash-checked at configure time |
 | `host/win32_window.cpp` | The app's Win32 window on its own UI thread: frames painted with GDI and scaled to the per-monitor-DPI client area; mouse to `MotionEvent`, wheel to a short drag, keyboard to `KeyEvent` (Escape is BACK); minimize and restore for `moveTaskToBack`/`Front`; the app's launcher icon (Boot's `icon.png`, decoded with WIC) as the window and taskbar icon |
-| `scripts/build_java.sh`, `scripts/build_framework_res.sh`, `scripts/stage_runtime.sh` | Build upstream's Java runtime with a stock JDK, the platform resource APK with upstream's script and Google's `aapt2`, and stage `bin/` and `lib/` into a runnable folder |
+| `scripts/build_java.sh`, `scripts/stage_runtime.sh` | Build upstream's Java runtime with a stock JDK and stage `bin/` and `lib/` into a runnable folder (the platform resource APK came from upstream's `scripts/build_framework_res.sh` then; now from android-all, `scripts/build_aosp_res.sh`) |
 | `tools/elfrun_main.cpp` | `winapk-elfrun`, the loader and ABI test runner |
 | `tools/jvmrun_main.cpp` | `winapk-jvm-run`, the real-JVM end-to-end test |
 
@@ -182,7 +184,7 @@ Everything in this section is merged on `main` and tested in CI on
 | `winapk-jni-test` | The guest `JNIEnv` forwards correctly against a mock JVM, for several return types and argument shapes, and `JavaVM::GetEnv` hands back a guest env |
 | `winapk-jni-variadic-test` | The variadic bridge works for all four call kinds (virtual, static, nonvirtual, `NewObject`), for int, long, object, float and double arguments, through both `...` and `va_list` |
 | `winapk-linker-test` | A four-library tree (root, a `DT_NEEDED` cycle between two libraries, and a plugin opened at runtime) loads through the linker: constructors run dependencies first, symbols resolve across the cycle and in bionic's order (a library listed before `libc.so` interposes libc's names, one listed after does not, an `RTLD_GLOBAL` library comes first), `dlsym` on a library finds its dependencies' symbols, the registry tells guest from host addresses, and the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr` behave like bionic's |
-| `winapk-bionic-test` | `test/guest/bionic_guest.c` exercises the shim from guest code: string and ctype functions, `strerror` with Linux numbering, `snprintf` through the System V `va_list` (integers, floats, strings, `%n`, `*` widths), `sscanf` (64-bit `%ld`, sets, skips), mutexes, condition variables and threads, keys with destructors, files and `stat`, directories, `FILE` I/O, ELF TLS across threads (`.tdata` and `.tbss`, local- and general-dynamic), system properties, UTF-8 conversion and locales, `syscall` (futex wait, wake and timeout), an 8 GiB `PROT_NONE` reservation opened by `mprotect`, `environ`, Android paths under the android root, pipes and eventfd with `poll` and `epoll` across threads, loopback TCP sockets, `socketpair`, `getaddrinfo`, `ALooper` callbacks and wakes, `setenv`/`getenv`, clocks, `mmap` and `sysconf` |
+| `winapk-bionic-test` | `test/guest/bionic_guest.c` exercises the shim from guest code: string and ctype functions, `strerror` with Linux numbering, `snprintf` through the System V `va_list` (integers, floats, strings, `%n`, `*` widths), `sscanf` (64-bit `%ld`, sets, skips), mutexes, condition variables and threads, keys with destructors, files and `stat`, directories, `FILE` I/O, ELF TLS across threads (`.tdata` and `.tbss`, local- and general-dynamic), system properties, UTF-8 conversion and locales, `syscall` (futex wait, wake and timeout), an 8 GiB `PROT_NONE` reservation opened by `mprotect`, V8's page permissions (guard pages over reserved pages, ranges across two mappings), `environ`, Android paths under the android root, pipes and eventfd with `poll` and `epoll` across threads, loopback TCP sockets, `socketpair`, `getaddrinfo`, `ALooper` callbacks and wakes, `setenv`/`getenv`, clocks, `mmap` and `sysconf` |
 | `winapk-jvm-run` | With a real HotSpot JVM: a library loaded through the linker runs its `JNI_OnLoad`, which registers `nativeMix` through the guest `RegisterNatives`; `nativeAdd` is handed to HotSpot as a raw guest address and the `NativeMethodBind` hook has to replace it. Both are called from Java, and `nativeAdd` calls back into Java through a variadic `CallStaticIntMethod` and through `CallStaticIntMethodV` with its own `va_list`. `nativeAdd(3, 4)` must return 19. CI runs it twice: with the x86_64 build of the library and with the arm64 build, through the interpreter |
 | `winapk-arm64-test` | The arm64 interpreter against the host: `test/guest/arm64_isa.c` (integer, bitfield, division, 128-bit, atomics with and without LSE, scalar FP and conversions, half precision, auto-vectorized NEON loops) is built into the test and into three arm64 libraries (-O2, -O3, -O3 with ARMv8.1), and every function must return the same bits both ways. Then `test/guest/arm64_bridge_guest.c`: constructors, the stack protector, libc calls, variadic `snprintf` with stack arguments, the guest's `va_list` given to `vsnprintf`, a guest comparator in host `qsort` (also nested), four `pthread_create` threads, `__cxa_atexit`, and calls with ten integer and two double arguments in both directions. Every check runs on the interpreter and on the JIT. Last, `test/guest/arm64_bench.c` (compute, float/NEON, indirect calls, a memory chase, small libc calls, a guest `qsort` comparator) natively and on the JIT: the ratio, the JIT's first-call translation cost, and the share of time in host functions with the transitions per run |
 | `winapk-gl-test` | ANGLE (WARP or SwiftShader on CI) makes a context through `gl_surface`, clears and scissor-clears a pbuffer, and the read-back frame has the right colors, top row first |
@@ -265,9 +267,9 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
 | `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
-| `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: reports the engine unsupported; the `SL_IID_*` interface IDs are real | not started |
+| `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: Win.apk's own instead, from the 1.0.1 spec and AOSP's behaviour (players pulled by the mixer, file and http players, decoding to a queue, recorders), on `audio_engine.h`, `audio_pcm.h` and `audio_capture.h` | done |
 | `bionic_shim.cpp`: libjnigraphics | - | `AndroidBitmap_*` | `src/jnigraphics.cpp`: upstream's section, extracted at build time | done |
-| `pairip_*`, `art_jni_offsets.h` | 5,286 | Play Integrity emulation | later | - |
+| `pairip_*`, `art_jni_offsets.h` | 5,286 | an anti-tamper check's expectations | not ported: out of scope | - |
 | `arm32_lifter.cpp`, `bionic_shim_arm32*.cpp`, `bionic_shim_gles1.cpp`, `elf_reader.cpp`, `elf64_reader.cpp` | 19,296 | ARM translation | n/a (D8: the ARM stage) | - |
 
 **Launcher** (`launcher/*.swift`, 17,851 lines): the Mac app library, install
@@ -439,12 +441,14 @@ nobody has to find them again.
   vsync. Frames come back through `presentFrame` (the default) or
   `presentBitmap`.
 - The platform resource APK is required: without it every `@android:`
-  reference fails. Upstream's `scripts/build_framework_res.sh` builds it on
-  Linux and Windows unchanged given `aapt2` 9.x; 8.x rejects
+  reference fails. Upstream's `scripts/build_framework_res.sh` (since removed
+  from this tree) built it on Linux and Windows unchanged given `aapt2` 9.x; 8.x rejects
   `--feature-flags`. Without apktool's table as a reference, internal
   resource ids are assigned by `aapt2` rather than matching upstream's.
 - The runtime finds jars and the resource APK relative to each other
-  (`<lib>/../bin/tools/framework-res.apk`), and the Android file system under
+  (`<lib>/../bin/tools/framework-res.apk`; since November 2026 android-14's
+  own, `bin/aosp/framework-res-34.apk`, which the host passes to AOSP's
+  resources), and the Android file system under
   the `macapk.android.root` property, which the host points at
   `%LOCALAPPDATA%\Win.apk\android`.
 - `TouchDispatcher.dispatch(action, x, y, viewW, viewH)` takes AppKit view
@@ -756,7 +760,8 @@ How the display path works now, after a review of resizing and presentation
   pixel; a frame from before a resize is shown unscaled at the top left, with
   the window background where it does not reach, until the app draws the new
   one (`window_frame_present`); a frame is scaled only when the app is meant to
-  draw at another size (a monitor with another scale, `WINAPK_RESIZABLE=0`).
+  draw at another size (a density pinned by `WINAPK_DENSITY`, a test hook),
+  or for the moments after a density change (below).
   Touch goes to Java as the surface in points (pixels over the density), so a
   click lands on the pixel it was made on.
 - The app follows every step of a drag, as an Android freeform window does,
@@ -770,6 +775,32 @@ How the display path works now, after a review of resizing and presentation
   before, the fit was deferred to the next restore and then sized the window
   to the maximized dp. A window too big for another monitor's work area is
   made smaller and the app follows it, instead of being shown resampled.
+- The density follows the scale the window shows the phone at, as an Android
+  display's density changes (Settings > Display size, a desktop window moved
+  to a display of another density). A drag keeps the scale (more or fewer dp,
+  same density); maximizing (the phone turned: a turned phone's dp as large
+  as the screen), restoring and a monitor with another scale
+  (`WM_DPICHANGED`) change it, and the window then gives the app the density
+  of the new scale (`window_density_for`, a whole dpi) with its new size
+  (`WindowInput::resized`). The render thread sends both to
+  `DisplayConfig.macapkNoteDisplay`, which commits them as one configuration
+  change with the new `densityDpi` through AOSP's app layer
+  (`Tasks.configurationChanged`): `ResourcesImpl.updateConfiguration` takes
+  the DisplayMetrics' density from it and drops the density-dependent
+  drawable caches, `ActivityThread` updates `DisplayMetrics.DENSITY_DEVICE`
+  and Bitmap's default density, an activity that does not declare
+  `configChanges="density"` is relaunched with its saved state and the
+  others hear `onConfigurationChanged`; the in-process window manager reports
+  the new density in its `DisplayInfo` and in every window's configuration
+  (overlaid from the commit, so a window never applies the display it
+  replaced) and resizes every window at it. `DENSITY_DEVICE_STABLE` and
+  `macapkDeviceDensity()` stay the launch density, as the stable density stays
+  the device's on Android; touch keeps its points at that unit, so it is
+  unaffected. Until the app has drawn at the new density, its last frame is
+  shown larger or smaller by the densities' ratio from the window's top
+  left, then the new one pixel for pixel. Before this the density was fixed for the process
+  and a maximized window or another monitor's frames were resampled until
+  the next start: blurry text in a maximized window.
 - The composite never stretches: the content GL view's frame and the view
   tree, or an app's native frames and the tree, are blended only when they
   agree on the size; one from before a resize goes out alone, unscaled, and
@@ -796,15 +827,11 @@ How the display path works now, after a review of resizing and presentation
 
 Still open:
 
-- The density is a process constant. On a monitor with another scale
-  (`WM_DPICHANGED`) the window keeps its size in physical terms and the frames
-  are resampled, as a system-DPI-aware Windows program is bitmap-stretched.
-  Android treats it as a density configuration change and relaunches
-  activities that do not declare `density`. Here `DisplayMetrics
-  .DENSITY_DEVICE_STABLE` and `macapkDeviceDensity()` are read by hundreds of
-  framework call sites, `DisplayConfig.compute` keeps the density on purpose,
-  and the relaunch path (`MACAPK_RESIZE_RELAUNCH`) is off and untried on
-  native engines; a live density change needs those first.
+- A live density change is a relaunch for most activities, as on Android: an
+  app that keeps state badly loses it as it would on a phone whose display
+  size changed. Native engines (NativeActivity, a GL game's surface) are
+  relaunched too unless they declare `density`; untried on a real GL game
+  under Windows.
 - The window is painted with GDI from a readback of every frame (the GL views
   and the app's native frames included) and DWM composites it: no tearing,
   but a copy per frame and no vsync. A DXGI swap chain on the window with
@@ -812,11 +839,9 @@ Still open:
   and the stale-frame rule would move into it.
 - An invalidation costs a redraw, a copy and a blit of the whole window: one
   small animating view (a spinner, a caret, a pulsing hint) is a whole-window
-  frame 60 times a second. Partial redraw (`MACAPK_FRAMESPEED_DAMAGE=1`;
-  `docs/ARCHITECTURE.md`, "The view tree's frames") draws, copies and blits
-  only the damaged rectangle. It is off by default until a sweep with
-  `MACAPK_DAMAGE_VALIDATE=1` reports no `under-damage` and the app probe shows
-  what it saves; frames of GL or surface content are still read back whole.
+  frame 60 times a second. Win.apk's own views had a partial redraw behind a
+  switch, removed with them; AOSP's software renderer redraws its dirty area,
+  but the frame is still read back and blitted whole.
 - An app that fixed its orientation and runs in a maximized window gets a
   centred box; Android also offers a user-aspect-ratio override there, which
   the record's own orientation stands in for (`windowOverrideOrientation`).
@@ -994,7 +1019,7 @@ and `egl*` calls land in forwarders generated from the Khronos headers
 on first use, so the runtime still starts without it.
 
 The framework context is ANGLE on Direct3D 11, falling back to WARP and then
-to SwiftShader (`WINAPK_ANGLE_BACKEND=d3d11|swiftshader` forces one). Each GL
+to SwiftShader. Each GL
 view renders into its own pbuffer; after a frame the pixels are read back and
 shown, with the Java UI composited on top as the overlay layer. A swap chain
 on the window would skip the copy; that is left for later.
@@ -1011,39 +1036,22 @@ in software). The view tree goes over the guest layer through the hole the
 owning SurfaceView punches (`SurfaceView.macapkNativeWindowLayerZ`), as
 upstream composites its CAMetalLayer.
 
-The read-back on a presenting swap is synchronous by default (`glReadPixels` into
-client memory, as since the window surface was added): the GL thread stalls on
-the GPU->CPU copy (~2.5-3 ms/frame on WARP at 474x630), but every app draws.
+The read-back on a presenting swap is synchronous (`glReadPixels` into client
+memory, as since the window surface was added): the GL thread stalls on the
+GPU->CPU copy (~2.5-3 ms/frame on WARP at 474x630), but every app draws.
 
-`WINAPK_GL_ASYNC_READBACK=1` opts into an asynchronous read
-(`gl_read_current_async`, `host/gl/gl_surface.cpp`): each swap issues this
-frame's `glReadPixels` into one of two pixel pack buffers, which returns at once
-(the GPU DMAs into the buffer), and maps and presents the *previous* frame from
-the other buffer, whose copy finished a frame ago -- so the GL thread never
-stalls on the copy. The cost is one frame of latency on that layer. The pbuffer
-resize recreates the buffer at the new size; the previous one is still presented
-at its old size (the compositor handles the mismatch). Needs ES 3; on ES 2, a
-mapping failure, or any PBO error the context falls back to the synchronous read
-for good.
-
-It is off by default, and is not merely cadence-gated, because the one-frame
-pipeline is wrong for an app that renders on demand -- a Flutter UI (Impeller on
-OpenGL ES) draws a startup burst then idles. Its last, settled frame is issued
-into a buffer but never mapped: there is no next swap to map it, and no later
-tick on the app's own GL thread to flush it (the display loop runs on another
-thread and cannot touch that GL context), so the window stays blank. This made
-`org.localsend.localsend_app` go blank in the sweep (91/92) where it draws on
-`main`. Swap-cadence gating did not save it: its content frames are part of a
-quick burst, and the burst's final frame has no successor to present it. So the
-safe default is the synchronous read (no regression, the full sweep stays
-92/92), and the async path stays opt-in until it is correct for every app --
-even opted in it engages only after a sustained run of continuous swaps (a map
-or game), reverting to synchronous on any pause, so an on-demand UI keeps
-drawing. The timing line names the path it took (`... (async, avg of 120)` or
-`sync`). The full fix -- a swap chain on the window that skips the CPU copy
-entirely -- is a separate planned issue.
-`winapk-gl-test` draws, reads back (synchronously and through the async double
-buffer) and checks a frame on CI's software backends.
+An asynchronous read through two pixel pack buffers (each swap issuing its
+`glReadPixels` into one and presenting the previous frame from the other, one
+frame late) was tried behind an opt-in switch, `WINAPK_GL_ASYNC_READBACK=1`,
+and removed (November 2026: the project has no switches). The one-frame
+pipeline is wrong for an app that renders on demand: a Flutter UI (Impeller on
+OpenGL ES) draws a startup burst then idles, and its last, settled frame was
+issued into a buffer but never mapped, there being no next swap to map it and
+no later tick on the app's own GL thread, so the window stayed blank
+(`org.localsend.localsend_app` in the sweep). The fix that removes the stall
+for every app is a swap chain on the window that skips the CPU copy entirely,
+a separate planned issue.
+`winapk-gl-test` draws, reads back and checks a frame on CI's software backends.
 
 Exit: Java-only apps from the compatibility list draw and respond to input
 (for example a calculator, a sudoku game and the F-Droid client).
@@ -1128,9 +1136,9 @@ engine runtime, load and initialize.
 ### M6. Native graphics, audio and app types (6 to 10 weeks)
 
 Status: guest EGL and GLES (`host/gl/guest_gl.cpp`), `NativeActivity`
-(`host/native_activity.cpp`) and AAudio (`host/native_aaudio.cpp`) are done.
-Still planned: OpenSL ES (`host/native_opensles.cpp` reports the engine
-unsupported), Vulkan, sensors, `GameActivity`.
+(`host/native_activity.cpp`), AAudio (`host/native_aaudio.cpp`) and OpenSL ES
+(`host/native_opensles.cpp`, Win.apk's own) are done.
+Still planned: Vulkan, sensors, `GameActivity`.
 
 - Guest EGL and GLES bridged to ANGLE, using upstream's generated GLES bridge
   tables as the starting point.
@@ -1165,7 +1173,7 @@ GDI+ program (`launcher/launcher_main.cpp`), not WinUI or WPF; the installer
 is Inno Setup (`package/winapk.iss`); each app gets Start menu and desktop
 shortcuts that start it through `Win.apk.exe --run` (no stub executable per
 app); the four file types are associated; apps can be updated from an APK,
-reinstalled and removed, and the library has a Store (F-Droid). Still
+reinstalled and removed, and the library has a Store (Win.apk's own store app, shown in the window). Still
 planned: an update check for the runtime itself.
 
 - A control panel (WinUI 3 or WPF).
@@ -1227,8 +1235,11 @@ left:
   with the clang the package ships; `include/winapk/arm64_aot.h`). Still
   open: jump tables (BR into the function now leaves it), exclusives and LSE
   atomics without the interpreter, and coverage on real apps' libraries.
-- Raw `SVC` system calls, and signals (a guest `SIGSEGV` handler, Unity's and
-  Mono's null checks). ELF TLS through TLSDESC (libraries built for API 29 or
+- Signals (a guest `SIGSEGV` handler, Unity's and Mono's null checks). Raw
+  `SVC` system calls are answered by arm64's numbers (`arm64_abi.cpp`'s
+  `linux_syscall`: memory, futex, ids, clocks, files and the calls whose
+  structs both ABIs share; the rest `-ENOSYS`, logged once each); not done:
+  `clone`, `getdents64` and the socket calls. ELF TLS through TLSDESC (libraries built for API 29 or
   later that use `thread_local`) is done: `R_AARCH64_TLSDESC` points the
   descriptor at a bridge intrinsic that answers the offset from `TPIDR_EL0`
   through `elf_tls.cpp`'s blocks and changes only `x0`
@@ -1249,6 +1260,40 @@ The original plan:
   with AGPLv3 code.
 
 Exit: one ARM-only game is playable at an acceptable speed.
+
+### M11. AOSP's resources and views (plan; after graphics milestone 2)
+
+Replace the app-process framework's `android.content.res`, `android.view`,
+`android.widget` and `android.text` with AOSP's own classes, layer by layer.
+Win.apk's own code stays where Android talks to the system: windows, input,
+files, Binder and services, Google services, ELF/ARM. The plan, the inventory
+and the measurements are in `docs/research/aosp-views.md`. The spike is
+`windows/test/aospviews/`. On a plain JDK 21, AOSP 14's resources resolve the
+uiprobe app's themes 29 of 29 as the oracle does (Win.apk's own: 19), and its
+LayoutInflater and widgets lay out 8 probe cases 44 of 44 lines exactly and
+draw them pixel-identical.
+
+- Step 0: seams (`ResBackend`, `ViewHost`) for the 574 call sites into
+  Win.apk's own members of those packages, with nothing changed (as
+  `GfxBackend` did for graphics). Done: `com.macapk.loader.res.ResBackend`
+  (resources) and `com.macapk.loader.view.ViewHost` (views).
+- R1: resources on AOSP over Robolectric's Java port of libandroidfw
+  (built; the default, then the only resources, November 2026). R2: libandroidfw built for Windows. The port's 0.9 to 1.4 s
+  cold load of the framework table is the reason.
+- T: `android.text` with graphics.
+- V1: views and the real `ViewRootImpl` over Win.apk's `IWindowSession` and
+  in-process system services (built; the default, then the only views, November 2026).
+- V2: input, IME and accessibility (built).
+- V3: HWUI's pipeline.
+
+Each step is gated by `uiprobe/regress.py` and the screens sweep: no line
+further from Android.
+
+Exit: the smoke apps and the screens sweep run with both switches on, with no
+line further from Android than today, and start no slower. Met for R1, V1 and
+V2 (November 2026: the ten smoke apps draw, the UI probe's 2104 lines equal
+Android's, less memory): the switches are gone, Win.apk's own classes of
+those packages and its API-36 platform table leave the package.
 
 ## 9. Development workflow
 

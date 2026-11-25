@@ -33,7 +33,7 @@ Windows Features.
    - **`Win.apk-windows-x64.zip`**, the portable copy: unzip it anywhere and
      start `Win.apk.exe`.
 2. Run the installer. **Windows SmartScreen will warn** that it does not know
-   the publisher, because preview builds are not code-signed yet. Click
+   the publisher, because Win.apk's builds are not code-signed yet. Click
    **More info**, then **Run anyway**.
 3. The installer speaks English or Hebrew, following the Windows display
    language. So does Win.apk; Settings > Appearance > Language changes it.
@@ -44,10 +44,10 @@ Windows Features.
 
 There are three ways to add an app:
 
-- **From the Store.** Click **Store** in the left pane. It is the catalog of
-  [F-Droid](https://f-droid.org), free and open-source apps, and the easiest
-  place to start: it lists only apps that can run here and picks the right
-  build for you. Search, then click **Install**.
+- **From the Store.** Click **Store** in the left pane: Win.apk's own store,
+  in the Win.apk window, that searches Google Play's catalogue (the first time
+  it takes a moment to get it). Search, open the app, click **Download**, then
+  **Install**, and confirm.
 - **From a file.** Double-click an `.apk`, `.apkm`, `.xapk` or `.apks` file in
   Explorer, drag it onto the library, or click **Install app**. Before you download
   an app elsewhere, read [which build to install](arm-apps.md#which-build-to-install).

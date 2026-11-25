@@ -139,7 +139,6 @@ public final class GmsLocationService extends android.app.Service {
      *  binds), the host location bridge is bound, and MACAPK_GMS_LOCATION is
      *  not 0. */
     public static boolean enabled() {
-        if ("0".equals(System.getenv("MACAPK_GMS_LOCATION"))) return false;
         try {
             return com.macapk.loader.PlayServices.availability() == 0
                     && com.macapk.loader.LocationBridge.available();

@@ -1,0 +1,876 @@
+// AospGfx -- GfxBackend on AOSP's own android.graphics / android.text, the only graphics the
+// framework has (windows/README.md, "Milestone 2: the runtime on AOSP graphics").
+//
+// lib/aosp-graphics.jar is first on the class path, so android.graphics.Canvas, Paint, Bitmap,
+// Typeface... are AOSP's, drawn by Skia in robolectric-nativeruntime.dll; the rest of the framework
+// (View, TextView, Resources) is Win.apk's and draws through the public API in software, as
+// View.draw(Canvas) does into a bitmap on a device. This class answers the seam with the AOSP
+// equivalents. It was written while it compiled against Win.apk's own android.graphics (since
+// deleted), so what only AOSP has (Typeface.setSystemFontMap, SystemFonts, a drawable's state
+// fields) is still reached by reflection. Bidi, replacement spans and SurfaceTexture are Win.apk's
+// own classes, which the jar does not replace (MacApkBidi, MacApkReplacement, SurfaceTexture).
+package com.macapk.loader.gfx;
+
+import android.content.res.ColorStateList;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Matrix;
+import android.graphics.Outline;
+import android.graphics.Paint;
+import android.graphics.Path;
+import android.graphics.SurfaceTexture;
+import android.graphics.Typeface;
+import android.graphics.drawable.AnimatedImageDrawable;
+import android.graphics.drawable.AnimatedVectorDrawable;
+import android.graphics.drawable.Drawable;
+import android.graphics.drawable.GradientDrawable;
+import android.graphics.drawable.NinePatchDrawable;
+import android.graphics.drawable.ShapeDrawable;
+import android.graphics.drawable.VectorDrawable;
+import android.text.Spanned;
+import android.text.TextPaint;
+import android.text.style.MetricAffectingSpan;
+import android.text.style.ReplacementSpan;
+
+import java.io.File;
+import java.io.InputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.WeakHashMap;
+import java.util.function.Consumer;
+import java.util.function.Function;
+
+final class AospGfx implements GfxBackend {
+
+    static final AospGfx INSTANCE = new AospGfx();
+
+    private static final String TAG = "Win.apk.AospGfx";
+
+    /** VectorDrawables Resources made to stand in for a reference that did not resolve. */
+    private final Map<VectorDrawable, Boolean> stubs = Collections.synchronizedMap(new WeakHashMap<>());
+
+    /** drawOps' answer: AOSP's Canvas counts nothing, so every frame is taken to have drawn. */
+    private int ops;
+
+    private AospGfx() {}
+
+    private static void log(String s) {
+        try { com.macapk.loader.NativeLog.i(TAG, s); } catch (Throwable t) { System.err.println(TAG + ": " + s); }
+    }
+
+    // ---- Present a frame ----
+
+    @Override public Bitmap createFrameBitmap(int width, int height) {
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    }
+
+    /** Skia's pixels are native: one copy out, unpremultiplied ARGB, as the host's present takes them. */
+    @Override public int[] argbBuffer(Bitmap bitmap) {
+        return frameArgb(bitmap, null);
+    }
+
+    @Override public int[] liveArgbOrNull(Bitmap bitmap) { return null; }
+
+    @Override public int[] frameArgb(Bitmap bitmap, int[] reuse) {
+        int w = bitmap.getWidth(), h = bitmap.getHeight();
+        int[] out = reuse != null && reuse.length == w * h ? reuse : new int[w * h];
+        if (!RawPixels.copy(bitmap, out)) bitmap.getPixels(out, 0, w, 0, 0, w, h);
+        return out;
+    }
+
+    /** One row: getPixels reads only the rectangle it is asked for. */
+    @Override public void argbRow(Bitmap bitmap, int y, int[] out) {
+        int w = bitmap.getWidth();
+        bitmap.getPixels(out, 0, w, 0, y, w, 1);
+    }
+
+    /**
+     * A bitmap's pixels as getPixels gives them, without getPixels. AOSP's getPixels is Skia's
+     * readPixels into unpremultiplied ARGB through its raster pipeline, about 10 ns a pixel under
+     * Wine: 12 ms for a 720x1600 frame, so a frame bench on AOSP's graphics ran at 33 frames a
+     * second against Java2D's 60 (windows/README.md, "Frame time"). copyPixelsToBuffer is a memcpy
+     * of Skia's own premultiplied pixels into a direct buffer kept between frames. An opaque pixel
+     * is the same either way; any other (a frame has few) is unpremultiplied through a table that
+     * getPixels itself filled once, for every alpha and channel value, so every pixel comes out as
+     * getPixels would give it. The table is checked as it is built (getPixels must treat the three
+     * channels alike and leave opaque pixels as they are), and the first frames are also read
+     * through getPixels and compared; anything off and this is not used again.
+     */
+    private static final class RawPixels {
+        private static final int CHECKED_FRAMES = 3;
+
+        private static boolean tried, on, swapRB;
+        private static byte[] unpremul;                      // [alpha << 8 | channel]
+        private static int checksLeft = CHECKED_FRAMES;
+        private static java.nio.ByteBuffer buf;
+        private static java.nio.IntBuffer ints;
+
+        private RawPixels() {}
+
+        /** Whether this applies: Skia's bytes are then premultiplied 8888 in sRGB, getPixels' too. */
+        private static boolean plain(Bitmap b) {
+            if (b.getConfig() != Bitmap.Config.ARGB_8888 || !b.isPremultiplied() || !b.hasAlpha()) return false;
+            android.graphics.ColorSpace cs = b.getColorSpace();
+            return cs != null && cs.equals(android.graphics.ColorSpace.get(android.graphics.ColorSpace.Named.SRGB));
+        }
+
+        /** Fills out (width x height) and says true, or says false and the caller uses getPixels. */
+        static synchronized boolean copy(Bitmap b, int[] out) {
+            if (!tried) {
+                tried = true;
+                on = init();
+            }
+            if (!on) return false;
+            try {
+                if (!plain(b)) return false;
+                int w = b.getWidth(), h = b.getHeight(), n = w * h;
+                if (buf == null || buf.capacity() < n * 4) {
+                    buf = java.nio.ByteBuffer.allocateDirect(n * 4).order(java.nio.ByteOrder.nativeOrder());
+                    ints = buf.asIntBuffer();
+                }
+                buf.clear();
+                b.copyPixelsToBuffer(buf);
+                ints.get(0, out, 0, n);
+                if (swapRB) unpremultiplySwapped(out, n);
+                else unpremultiply(out, n);
+                if (checksLeft > 0) {
+                    checksLeft--;
+                    int[] want = new int[n];
+                    b.getPixels(want, 0, w, 0, 0, w, h);
+                    int at = java.util.Arrays.mismatch(want, 0, n, out, 0, n);
+                    if (at >= 0) {
+                        on = false;
+                        log("raw pixel copy off: pixel " + at + " of a " + w + "x" + h + " frame is "
+                            + Integer.toHexString(out[at]) + ", getPixels gives " + Integer.toHexString(want[at]));
+                        System.arraycopy(want, 0, out, 0, n);
+                    }
+                }
+                return true;
+            } catch (Throwable t) {
+                on = false;
+                log("raw pixel copy off: " + t);
+                return false;
+            }
+        }
+
+        private static void unpremultiply(int[] px, int n) {
+            final byte[] tab = unpremul;
+            for (int i = 0; i < n; i++) {
+                int p = px[i];
+                if ((p >>> 24) != 255) px[i] = fromTable(tab, p);
+            }
+        }
+
+        private static void unpremultiplySwapped(int[] px, int n) {
+            final byte[] tab = unpremul;
+            for (int i = 0; i < n; i++) {
+                int p = px[i];
+                p = (p & 0xFF00FF00) | ((p >>> 16) & 0xFF) | ((p & 0xFF) << 16);
+                px[i] = (p >>> 24) != 255 ? fromTable(tab, p) : p;
+            }
+        }
+
+        private static int fromTable(byte[] tab, int p) {
+            int a = p >>> 24, row = a << 8;
+            return a << 24 | (tab[row | ((p >>> 16) & 0xFF)] & 0xFF) << 16
+                    | (tab[row | ((p >>> 8) & 0xFF)] & 0xFF) << 8 | (tab[row | (p & 0xFF)] & 0xFF);
+        }
+
+        /**
+         * Builds the table from a 256x257 bitmap whose row a holds (a, c, c, c) for every c, written
+         * as Skia's raw bytes, and one more pixel with three different channels that tells Skia's
+         * channel order. False when anything does not hold.
+         */
+        private static boolean init() {
+            Bitmap t = null;
+            try {
+                final int w = 256, h = 257, n = w * h;
+                t = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888);
+                if (!plain(t)) return false;
+                java.nio.ByteBuffer src = java.nio.ByteBuffer.allocateDirect(n * 4)
+                        .order(java.nio.ByteOrder.nativeOrder());
+                java.nio.IntBuffer si = src.asIntBuffer();
+                for (int a = 0; a < 256; a++) {
+                    for (int c = 0; c < 256; c++) si.put(a << 8 | c, a << 24 | c << 16 | c << 8 | c);
+                }
+                final int probe = 0xFF102030;
+                si.put(w * 256, probe);
+                t.copyPixelsFromBuffer(src);
+                // The way back must give the same bytes, as the frame's copy relies on.
+                java.nio.ByteBuffer back = java.nio.ByteBuffer.allocateDirect(n * 4)
+                        .order(java.nio.ByteOrder.nativeOrder());
+                java.nio.IntBuffer bi = back.asIntBuffer();    // before the copy moves back's position
+                t.copyPixelsToBuffer(back);
+                int[] raw = new int[n], rawBack = new int[n];
+                si.get(0, raw, 0, n);
+                bi.get(0, rawBack, 0, n);
+                if (!java.util.Arrays.equals(raw, rawBack)) {
+                    log("raw pixel copy off: copyPixelsToBuffer does not give back copyPixelsFromBuffer's bytes");
+                    return false;
+                }
+                int[] px = new int[n];
+                t.getPixels(px, 0, w, 0, 0, w, h);
+                int got = px[w * 256];
+                if (got == probe) swapRB = false;
+                else if (got == 0xFF302010) swapRB = true;
+                else {
+                    log("raw pixel copy off: Skia's channel order unknown (" + Integer.toHexString(got) + ")");
+                    return false;
+                }
+                byte[] tab = new byte[256 * 256];
+                for (int a = 0; a < 256; a++) {
+                    for (int c = 0; c < 256; c++) {
+                        int p = px[a << 8 | c], v = p & 0xFF;
+                        boolean ok = (p >>> 24) == a && ((p >>> 16) & 0xFF) == v && ((p >>> 8) & 0xFF) == v
+                                && (a != 255 || v == c);
+                        if (!ok) {
+                            log("raw pixel copy off: getPixels gives " + Integer.toHexString(p) + " for alpha " + a
+                                + ", channels " + c);
+                            return false;
+                        }
+                        tab[a << 8 | c] = (byte) v;
+                    }
+                }
+                unpremul = tab;
+                log("raw pixel copy on (Skia's order " + (swapRB ? "RGBA" : "BGRA") + ")");
+                return true;
+            } catch (Throwable e) {
+                log("raw pixel copy off: " + e);
+                return false;
+            } finally {
+                if (t != null) {
+                    try { t.recycle(); } catch (Throwable ignored) {}
+                }
+            }
+        }
+    }
+
+    @Override public int drawOps(Canvas canvas) { return ++ops; }
+
+    // ---- Fonts and Typeface creation ----
+
+    /**
+     * AOSP's Typeface has no default until someone hands it the system font map (its static
+     * initializer only preloads files): on a device the zygote does, under Robolectric
+     * loadPreinstalledSystemFontMap. Until then a Paint with no typeface measures through HWUI's
+     * Typeface::resolveDefault(nullptr), which aborts the process ("Assertion failed: src ==
+     * nullptr && gDefaultTypeface == nullptr"). So: the families of the runtime's own fonts.xml
+     * (bin/aosp/fonts, -Dwinapk.aosp.fonts), as the aospgfx test does, and that folder is
+     * /system/fonts for native code too, so both read the same files. The install carries no CJK
+     * font: its four families are Windows' own (HostCjkFonts), in a fonts.xml of the cache that both
+     * read, with /system/fonts finding a name in the folder and then in %WINDIR%\Fonts.
+     */
+    @Override public String materializeSystemFonts(Function<String, String> hostFontFile) {
+        String dir = System.getProperty("winapk.aosp.fonts");
+        if (dir == null || dir.isEmpty()) {
+            log("no -Dwinapk.aosp.fonts: the system fonts are not set up");
+            return null;
+        }
+        String d = dir.replace('\\', '/');
+        if (!d.endsWith("/")) d += "/";
+        String xml = d + "fonts.xml";
+        Map<String, File> windowsFiles = new java.util.HashMap<>();
+        // What native code's /system/fonts is: the folder alone, or "<fonts.xml>|<folder>|<Windows'
+        // fonts>" when the CJK families are Windows' (paths.cpp, set_system_fonts_dir).
+        String published = new File(dir).getAbsolutePath();
+        try {
+            File windowsFonts = HostCjkFonts.windowsFontsDir();
+            HostCjkFonts.Result cjk = HostCjkFonts.setUp(new File(dir), windowsFonts,
+                    com.macapk.loader.HostAppSupport.file("cache/aosp-fonts"));
+            if (cjk != null) {
+                xml = cjk.fontsXml.getAbsolutePath().replace('\\', '/');
+                windowsFiles.putAll(cjk.files);
+                published = cjk.fontsXml.getAbsolutePath() + "|" + published
+                        + (windowsFonts != null ? "|" + windowsFonts.getAbsolutePath() : "");
+                log("CJK fonts from Windows: " + cjk.summary);
+            }
+        } catch (Throwable t) {
+            log("CJK fonts from Windows failed (CJK text draws boxes): " + t);
+        }
+        // That folder is /system/fonts and /system/etc/fonts.xml before anything below touches
+        // Typeface: its static initializer reads the device's config by those names
+        // (SystemFonts.getSystemPreinstalledFontConfig), for the families' locales and the fonts it
+        // preloads; Boot sets the same folder again from what this returns.
+        try {
+            com.macapk.loader.NativeCocoa.setSystemFontsDir(published);
+        } catch (Throwable t) {
+            log("/system/fonts not mapped: " + t);
+        }
+        try {
+            Class<?> systemFonts = Class.forName("android.graphics.fonts.SystemFonts");
+            Method config = systemFonts.getDeclaredMethod("getSystemFontConfigInternal", String.class,
+                    String.class, String.class, String.class, Map.class, long.class, int.class);
+            config.setAccessible(true);
+            // The Windows files by the PostScript name their elements carry: SystemFonts'
+            // updatableFontMap, the way a device's /data/fonts names a font outside /system/fonts.
+            Object cfg = config.invoke(null, xml, d, "/nonexistent.xml", "/nonexistent/",
+                    windowsFiles, 0L, 0);
+            Class<?> fontConfig = Class.forName("android.text.FontConfig");
+            Object fallback = systemFonts.getMethod("buildSystemFallback", fontConfig).invoke(null, cfg);
+            Object map = systemFonts.getMethod("buildSystemTypefaces", fontConfig, Map.class)
+                    .invoke(null, cfg, fallback);
+            Typeface.class.getMethod("setSystemFontMap", Map.class).invoke(null, map);
+            log("system fonts from " + xml + ": " + ((Map<?, ?>) map).size() + " families");
+        } catch (Throwable t) {
+            Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
+                    ? t.getCause() : t;
+            log("system fonts from " + xml + " failed: " + c);
+            return null;
+        }
+        return published;
+    }
+
+    @Override public Typeface.Builder typefaceBuilderFromStream(InputStream in) {
+        // AOSP's Builder takes a file; an app's font resource is a stream.
+        try {
+            File f = File.createTempFile("font", ".ttf");
+            f.deleteOnExit();
+            try (java.io.OutputStream out = new java.io.FileOutputStream(f)) { in.transferTo(out); }
+            return new Typeface.Builder(f);
+        } catch (java.io.IOException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    /** The app font families built so far (registerAppFamily), by the name handed back, and the
+     *  names by what they were built from. */
+    private final Map<String, Typeface> appFamilies = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, String> appFamilyNames = new java.util.concurrent.ConcurrentHashMap<>();
+
+    @Override public Typeface typefaceFromAppFamily(String registeredFamilyName) {
+        return registeredFamilyName == null ? null : appFamilies.get(registeredFamilyName);
+    }
+
+    /** A font file of an app's family: AOSP's Font over its bytes, whose weight and slant come from
+     *  the file's own OS/2 table (the native runtime reads it), as RESOLVE_BY_FONT_TABLE does. */
+    @Override public FontFace loadFontFace(InputStream in) {
+        try {
+            byte[] bytes = in.readAllBytes();
+            android.graphics.fonts.Font font = new android.graphics.fonts.Font.Builder(direct(bytes)).build();
+            android.graphics.fonts.FontStyle style = font.getStyle();
+            return new FontFace(bytes, style.getWeight(),
+                    style.getSlant() == android.graphics.fonts.FontStyle.FONT_SLANT_ITALIC);
+        } catch (Throwable t) {
+            log("font file: " + t);
+            return null;
+        }
+    }
+
+    /**
+     * An app's {@code <font-family>} (res/font/*.xml) as AOSP's Typeface.createFromResources builds a
+     * FontFamilyFilesResourceEntry: a Font per {@code <font>} with its declared (or the file's) weight
+     * and slant, one FontFamily of them all in the file's order, and a Typeface over it whose style is
+     * the face closest to 400 upright (FontStyle.getMatchScore). Paint and minikin then pick the
+     * family's own bold or italic file. Only the source differs: the file's bytes, where AOSP opens
+     * it through its AssetManager. {@code faces}: {weight, italic, bytes} per {@code <font>}.
+     */
+    @Override public synchronized String registerAppFamily(List<Object[]> faces) {
+        // One family per distinct list of faces (as Typeface's resource cache keeps one per font
+        // resource): a family's fonts are native memory, and every getFont of it asks again.
+        StringBuilder key = new StringBuilder();
+        for (Object[] f : faces) {
+            byte[] b = (byte[]) f[2];
+            key.append(f[0]).append(f[1]).append(b.length).append('/').append(java.util.Arrays.hashCode(b)).append(';');
+        }
+        String known = appFamilyNames.get(key.toString());
+        if (known != null) return known;
+        try {
+            android.graphics.fonts.FontFamily.Builder family = null;
+            for (Object[] f : faces) {
+                android.graphics.fonts.Font font = new android.graphics.fonts.Font.Builder(direct((byte[]) f[2]))
+                        .setWeight((Integer) f[0])
+                        .setSlant((Boolean) f[1] ? android.graphics.fonts.FontStyle.FONT_SLANT_ITALIC
+                                : android.graphics.fonts.FontStyle.FONT_SLANT_UPRIGHT)
+                        .build();
+                if (family == null) family = new android.graphics.fonts.FontFamily.Builder(font);
+                else family.addFont(font);
+            }
+            if (family == null) return null;
+            android.graphics.fonts.FontFamily built = family.build();
+            android.graphics.fonts.FontStyle best = built.getFont(0).getStyle();
+            int bestScore = matchScore(best);
+            for (int i = 1; i < built.getSize(); i++) {
+                android.graphics.fonts.FontStyle candidate = built.getFont(i).getStyle();
+                int score = matchScore(candidate);
+                if (score < bestScore) {
+                    best = candidate;
+                    bestScore = score;
+                }
+            }
+            Typeface tf = new Typeface.CustomFallbackBuilder(built).setStyle(best).build();
+            String name = "winapk-app-family-" + appFamilies.size();
+            appFamilies.put(name, tf);
+            appFamilyNames.put(key.toString(), name);
+            return name;
+        } catch (Throwable t) {
+            log("app font family: " + t);
+            return null;
+        }
+    }
+
+    /** AOSP FontStyle.getMatchScore (hidden) against 400 upright, the style createFromResources keeps. */
+    private static int matchScore(android.graphics.fonts.FontStyle s) {
+        return Math.abs(s.getWeight() - android.graphics.fonts.FontStyle.FONT_WEIGHT_NORMAL) / 100
+                + (s.getSlant() == android.graphics.fonts.FontStyle.FONT_SLANT_UPRIGHT ? 0 : 2);
+    }
+
+    /** Font.Builder(ByteBuffer) wants a direct buffer (the native runtime reads it in place). */
+    private static java.nio.ByteBuffer direct(byte[] bytes) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocateDirect(bytes.length);
+        b.put(bytes).flip();
+        return b;
+    }
+
+    // ---- The view's clip and transform ----
+
+    @Override public boolean clipChildRect(Canvas canvas, int l, int t, int r, int b) {
+        return canvas.clipRect(l, t, r, b);
+    }
+
+    @Override public boolean quickRejectChild(Canvas canvas, float l, float t, float r, float b) {
+        if (!(r > l) || !(b > t)) return false;
+        return canvas.quickReject(l, t, r, b);
+    }
+
+    // Only a cache's key in View (its recording epoch); false turns that cache off.
+    @Override public boolean deviceOrigin(Canvas canvas, int[] out6) { return false; }
+
+    @Override public float currentTx(Canvas canvas) { return matrixValue(canvas, Matrix.MTRANS_X); }
+
+    @Override public float currentTy(Canvas canvas) { return matrixValue(canvas, Matrix.MTRANS_Y); }
+
+    private static float matrixValue(Canvas canvas, int index) {
+        Matrix m = new Matrix();
+        canvas.getMatrix(m);
+        float[] v = new float[9];
+        m.getValues(v);
+        return v[index];
+    }
+
+    @Override public Path outlineClipPath(Outline outline) {
+        if (outline.mMode == Outline.MODE_PATH && outline.mPath != null) return outline.mPath;
+        if (outline.mMode == Outline.MODE_ROUND_RECT && !outline.mRect.isEmpty()) {
+            Path p = new Path();
+            float r = Math.max(0f, outline.mRadius);
+            p.addRoundRect(outline.mRect.left, outline.mRect.top, outline.mRect.right, outline.mRect.bottom,
+                    r, r, Path.Direction.CW);
+            return p;
+        }
+        return null;
+    }
+
+    @Override public float outlinePathShadowRadius(Outline outline) { return Float.NaN; }
+
+    // ---- Text ----
+
+    @Override public boolean isLocaleRtl(Locale locale) { return android.text.TextUtils.macapkIsLocaleRtl(locale); }
+
+    /** AOSP's Layout.getDesiredWidth: TextLine over the spans, as a line is measured for drawing. */
+    @Override public float measureSpanned(CharSequence src, int start, int end, TextPaint base, TextPaint work) {
+        return android.text.Layout.getDesiredWidth(src, start, end, base);
+    }
+
+    // The AWT side of TextView's fallback line spacing: no AWT font here, so the line keeps its
+    // paint's own metrics.
+    @Override public java.awt.Font resolvedFont(Paint paint) { return null; }
+
+    @Override public java.awt.font.FontRenderContext textFontRenderContext() {
+        return new java.awt.font.FontRenderContext(null, true, true);
+    }
+
+    @Override public java.awt.Font fallbackFontFor(int codePoint, java.awt.Font primary) { return null; }
+
+    @Override public java.awt.Font deriveFont(java.awt.Font base, float sizePx, int awtStyle) {
+        return base.deriveFont(awtStyle, sizePx);
+    }
+
+    @Override public boolean hasRtl(CharSequence s, int start, int end) {
+        return android.text.MacApkBidi.hasRtl(s, start, end);
+    }
+
+    @Override public boolean isRtlParagraph(CharSequence s, int pos, boolean defaultRtl) {
+        return android.text.MacApkBidi.isRtlParagraph(s, pos, defaultRtl);
+    }
+
+    @Override public int[] bidiVisualPieces(String line, int[] bounds, int n, boolean paraRtl) {
+        return android.text.MacApkBidi.visualPieces(line, bounds, n, paraRtl);
+    }
+
+    @Override public MetricAffectingSpan replacementCovering(Spanned sp, int start, int end) {
+        return android.text.MacApkReplacement.covering(sp, start, end);
+    }
+
+    @Override public float drawReplacement(Canvas canvas, ReplacementSpan r, Spanned sp, int start, int end,
+                                           float x, float baselineY, TextPaint p) {
+        return android.text.MacApkReplacement.draw(canvas, r, sp, start, end, x, baselineY, p);
+    }
+
+    // ---- SurfaceTexture: Win.apk's, left out of the AOSP jar ----
+
+    @Override public int defaultWidth(SurfaceTexture st) { return st.macapkGetDefaultWidth(); }
+
+    @Override public int defaultHeight(SurfaceTexture st) { return st.macapkGetDefaultHeight(); }
+
+    @Override public void attachCameraSource(SurfaceTexture st, long sessionHandle, int width, int height) {
+        st.macapkAttachCameraSource(sessionHandle, width, height);
+    }
+
+    @Override public void detachCameraSource(SurfaceTexture st) { st.macapkDetachCameraSource(); }
+
+    @Override public boolean hasCameraSource(SurfaceTexture st) { return st.macapkHasCameraSource(); }
+
+    @Override public void queueFrame(SurfaceTexture st, long timestampNanos, float[] transform, int dataSpace) {
+        st.macapkQueueFrame(timestampNanos, transform, dataSpace);
+    }
+
+    @Override public boolean connectProducer(SurfaceTexture st, Object producer) {
+        return st.macapkConnectProducer(producer);
+    }
+
+    @Override public void disconnectProducer(SurfaceTexture st, Object producer) {
+        st.macapkDisconnectProducer(producer);
+    }
+
+    @Override public boolean hasProducer(SurfaceTexture st) { return st.macapkHasProducer(); }
+
+    @Override public void queueProducerFrame(SurfaceTexture st, int[] argb, int width, int height,
+                                             int strideInPixels, float[] transform, Consumer<int[]> recycler,
+                                             boolean premultipliedSource) {
+        st.macapkQueueProducerFrame(argb, width, height, strideInPixels, transform, recycler, premultipliedSource);
+    }
+
+    @Override public void registerVideoTarget(SurfaceTexture st) { st.macapkRegisterVideoTarget(); }
+
+    @Override public void unregisterVideoTargetIfSelf(SurfaceTexture st) { st.macapkUnregisterVideoTargetIfSelf(); }
+
+    @Override public boolean hasActiveVideoTarget() { return SurfaceTexture.macapkHasActiveVideoTarget(); }
+
+    @Override public boolean offerDecodedFrame(int[] argb, int width, int height, int strideInPixels) {
+        return SurfaceTexture.macapkOfferDecodedFrame(argb, width, height, strideInPixels);
+    }
+
+    @Override public Bitmap latchBitmap(SurfaceTexture st) { return st.macapkLatchBitmap(); }
+
+    @Override public int latchGeneration(SurfaceTexture st) { return st.macapkLatchGeneration(); }
+
+    // ---- Resources' colours and drawable setters ----
+
+    /** "#rgb", "#argb", "#rrggbb", "#aarrggbb", as aapt accepts them (Color.parseColor takes the long two). */
+    @Override public int parseResourceColor(String s) {
+        if (s.charAt(0) != '#') return android.graphics.Color.parseColor(s);
+        String h = s.substring(1).trim();
+        if (h.length() == 3 || h.length() == 4) {
+            StringBuilder e = new StringBuilder(h.length() * 2);
+            for (int i = 0; i < h.length(); i++) e.append(h.charAt(i)).append(h.charAt(i));
+            h = e.toString();
+        }
+        long c = Long.parseLong(h, 16);
+        if (h.length() == 6) return (int) (c | 0xff000000L);
+        if (h.length() == 8) return (int) c;
+        throw new IllegalArgumentException("Unknown color");
+    }
+
+    /**
+     * The drawable inflates itself, as on Android: AOSP's Drawable.createFromXmlInner hands the element
+     * to AOSP's DrawableInflater (Resources.getDrawableInflater), which makes the drawable of its tag
+     * (or class) and calls its inflate(), which reads its own attributes through
+     * com.android.internal.R.styleable and Win.apk's TypedArray, its children through the same parser
+     * and its references (android:drawable="@...") through Resources.getDrawable, so back here. A
+     * failure is logged once per resource and answered null: Resources' own inflater then builds it.
+     */
+    @Override public Drawable inflateXmlDrawable(android.content.res.Resources res, org.w3c.dom.Element root,
+                                                 android.content.res.Resources.Theme theme, int id) {
+        org.xmlpull.v1.XmlPullParser parser = res.macapkXmlParserAt(root);
+        if (parser == null) return null;
+        try {
+            return Drawable.createFromXmlInner(res, parser, (android.util.AttributeSet) parser, theme);
+        } catch (Throwable t) {
+            Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
+                    ? t.getCause() : t;
+            if (inflateFailures.add(id)) {
+                String name;
+                try { name = res.getResourceName(id); } catch (Throwable ignored) { name = "0x" + Integer.toHexString(id); }
+                log("drawable " + name + " <" + root.getTagName() + ">: AOSP's inflate failed (" + c
+                        + "); Resources' inflater builds it");
+            }
+            return null;
+        }
+    }
+
+    /** Resources whose AOSP inflate failed, logged once. */
+    private final java.util.Set<Integer> inflateFailures = Collections.synchronizedSet(new java.util.HashSet<>());
+
+    /** AOSP's AnimatorInflater.getPVH for VALUE_TYPE_PATH, over AOSP's android.util.PathParser (in the
+     *  jar; Win.apk's framework has none, so by reflection). */
+    @Override public android.animation.PropertyValuesHolder pathDataValues(String propertyName, String from,
+                                                                         String to) {
+        try {
+            Class<?> parser = Class.forName("android.util.PathParser");
+            Class<?> data = Class.forName("android.util.PathParser$PathData");
+            java.lang.reflect.Constructor<?> fromString = data.getConstructor(String.class);
+            Object nodesFrom = from == null ? null : fromString.newInstance(from);
+            Object nodesTo = to == null ? null : fromString.newInstance(to);
+            if (nodesFrom == null && nodesTo == null) return null;
+            android.animation.TypeEvaluator<Object> evaluator = new PathDataEvaluator(parser, data);
+            if (nodesFrom != null && nodesTo != null) {
+                Method canMorph = parser.getMethod("canMorph", data, data);
+                if (!(Boolean) canMorph.invoke(null, nodesFrom, nodesTo)) {
+                    throw new android.view.InflateException(" Can't morph from " + from + " to " + to);
+                }
+                return android.animation.PropertyValuesHolder.ofObject(propertyName, evaluator, nodesFrom, nodesTo);
+            }
+            return android.animation.PropertyValuesHolder.ofObject(propertyName, evaluator,
+                    nodesFrom != null ? nodesFrom : nodesTo);
+        } catch (ReflectiveOperationException e) {
+            Throwable c = e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null
+                    ? e.getCause() : e;
+            if (c instanceof RuntimeException) throw (RuntimeException) c;
+            throw new android.view.InflateException("pathType values: " + c);
+        }
+    }
+
+    @Override public Path pathFromPathData(String pathData) {
+        try {
+            return (Path) Class.forName("android.util.PathParser").getMethod("createPathFromPathData", String.class)
+                    .invoke(null, pathData);
+        } catch (ReflectiveOperationException e) {
+            Throwable c = e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null
+                    ? e.getCause() : e;
+            if (c instanceof RuntimeException) throw (RuntimeException) c;
+            throw new android.view.InflateException("pathData: " + c);
+        }
+    }
+
+    /** AOSP AnimatorInflater.PathDataEvaluator: one PathData, interpolated into at each fraction. */
+    private static final class PathDataEvaluator implements android.animation.TypeEvaluator<Object> {
+        private final Object pathData;
+        private final Method interpolate;
+
+        PathDataEvaluator(Class<?> parser, Class<?> data) throws ReflectiveOperationException {
+            pathData = data.getConstructor().newInstance();
+            interpolate = parser.getMethod("interpolatePathData", data, data, data, float.class);
+        }
+
+        @Override public Object evaluate(float fraction, Object start, Object end) {
+            boolean ok;
+            try {
+                ok = (Boolean) interpolate.invoke(null, pathData, start, end, fraction);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+            if (!ok) throw new IllegalArgumentException("Can't interpolate between two incompatible pathData");
+            return pathData;
+        }
+    }
+
+    /** AOSP's GradientColor.createFromXmlInner (package-private) over the element. */
+    @Override public android.content.res.ComplexColor gradientColor(android.content.res.Resources res,
+                                                                    org.w3c.dom.Element root,
+                                                                    android.content.res.Resources.Theme theme) {
+        org.xmlpull.v1.XmlPullParser parser = res.macapkXmlParserAt(root);
+        if (parser == null) return null;
+        try {
+            Method m = Class.forName("android.content.res.GradientColor").getDeclaredMethod("createFromXmlInner",
+                    android.content.res.Resources.class, org.xmlpull.v1.XmlPullParser.class,
+                    android.util.AttributeSet.class, android.content.res.Resources.Theme.class);
+            m.setAccessible(true);
+            return (android.content.res.ComplexColor) m.invoke(null, res, parser, parser, theme);
+        } catch (Throwable t) {
+            Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
+                    ? t.getCause() : t;
+            log("gradient colour: " + c);
+            return null;
+        }
+    }
+
+    /** AOSP's VectorDrawable from the resource's XML (AospVector); an empty one when it is not a <vector>. */
+    @Override public Drawable vectorFromResource(android.content.res.Resources res, int id,
+                                                 android.content.res.Resources.Theme theme) {
+        org.w3c.dom.Document doc = res.macapkDrawableXml(id);
+        org.w3c.dom.Element root = doc == null ? null : doc.getDocumentElement();
+        String tag = root == null ? null : root.getLocalName() != null ? root.getLocalName() : root.getTagName();
+        if ("vector".equals(tag)) return vectorFromElement(root, theme, res);
+        return new VectorDrawable();
+    }
+
+    @Override public Drawable vectorFromElement(org.w3c.dom.Element e, android.content.res.Resources.Theme theme,
+                                                android.content.res.Resources res) {
+        try {
+            return AospVector.build(e, theme, res);
+        } catch (Throwable t) {
+            Throwable c = t instanceof java.lang.reflect.InvocationTargetException && t.getCause() != null
+                    ? t.getCause() : t;
+            log("vector: " + c);
+            return new VectorDrawable();
+        }
+    }
+
+    @Override public android.graphics.drawable.LayerDrawable layerDrawable() {
+        return new android.graphics.drawable.LayerDrawable(new Drawable[0]);
+    }
+
+    /** AOSP's public constructor wants a colour; Resources sets the real one after. */
+    @Override public android.graphics.drawable.RippleDrawable rippleDrawable() {
+        return new android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(0), null, null);
+    }
+
+    @Override public android.graphics.drawable.RotateDrawable rotateDrawable(Drawable child) {
+        android.graphics.drawable.RotateDrawable r = new android.graphics.drawable.RotateDrawable();
+        r.setDrawable(child);
+        return r;
+    }
+
+    /** The picture's folder density on its bitmap, the screen's as the target: AOSP scales a nine-patch
+     *  (and its padding) from one to the other itself. The drawable was made over a bitmap that had
+     *  the decoder's density then, and works its size out once, as it is made and when its target
+     *  density changes: when the target is already the screen's, nothing would work it out again
+     *  and a bitmap decoded for the first time kept its size unscaled (an mdpi button background
+     *  29 px wide on an xhdpi screen, where every later load of the cached picture was 58), so it
+     *  is worked out here, as AOSP's own decode (bitmap density first, drawable after) has it. */
+    @Override public void setNinePatchDensities(NinePatchDrawable d, int source, int screen) {
+        try {
+            Object state = field(d, "mNinePatchState");
+            Object ninePatch = field(state, "mNinePatch");
+            ((android.graphics.NinePatch) ninePatch).getBitmap().setDensity(source);
+        } catch (Throwable t) {
+            log("nine-patch density: " + t);
+        }
+        d.setTargetDensity(screen);
+        computeNinePatchSize(d);
+    }
+
+    /** NinePatchDrawable.computeBitmapSize: its size, padding and insets from the bitmap's density to
+     *  the target's. */
+    private static void computeNinePatchSize(NinePatchDrawable d) {
+        try {
+            Method compute = NinePatchDrawable.class.getDeclaredMethod("computeBitmapSize");
+            compute.setAccessible(true);
+            compute.invoke(d);
+        } catch (Throwable t) {
+            log("nine-patch size: " + t);
+        }
+    }
+
+    @Override public void setNinePatchOpticalInsets(NinePatchDrawable d, int left, int top, int right, int bottom) {
+        try {
+            Object state = field(d, "mNinePatchState");
+            setField(state, "mOpticalInsets", android.graphics.Insets.of(left, top, right, bottom));
+        } catch (Throwable t) {
+            log("nine-patch optical insets: " + t);
+            return;
+        }
+        // The drawable's own insets are the state's scaled to its density, made here.
+        computeNinePatchSize(d);
+    }
+
+    /** AOSP's AnimatedVectorDrawable drawing the base vector (its state's mVectorDrawable, which its
+     *  own inflate sets), for Resources' own inflater, which builds an <animated-vector> only when AOSP's
+     *  inflate failed: the <target> animators are not read, as on the Java2D side. */
+    @Override public AnimatedVectorDrawable animatedVector(Drawable inner) {
+        AnimatedVectorDrawable avd = new AnimatedVectorDrawable();
+        if (inner instanceof VectorDrawable) {
+            try {
+                Object state = field(avd, "mAnimatedVectorState");
+                setField(state, "mVectorDrawable", inner);
+                inner.setCallback((Drawable.Callback) field(avd, "mCallback"));
+            } catch (Throwable t) {
+                log("animated-vector: " + t);
+            }
+        }
+        return avd;
+    }
+
+    // Win.apk's own inflation of <animated-image>: not on AOSP's classes yet.
+
+    @Override public void setAnimatedImageBitmap(AnimatedImageDrawable aid, Bitmap bm) {}
+
+    @Override public void setUseLevelForShape(GradientDrawable gd, boolean useLevel) {
+        try {
+            setField(field(gd, "mGradientState"), "mUseLevelForShape", useLevel);
+        } catch (Throwable t) {
+            log("useLevel: " + t);
+        }
+    }
+
+    @Override public boolean getUseLevelForShape(GradientDrawable gd) {
+        try {
+            return (Boolean) field(field(gd, "mGradientState"), "mUseLevelForShape");
+        } catch (Throwable t) {
+            return true;
+        }
+    }
+
+    @Override public boolean readsShapeRing() { return true; }
+
+    @Override public boolean readsShapeTint() { return true; }
+
+    @Override public ColorStateList tintList(Drawable d) {
+        // AOSP keeps the tint in each drawable's own state; only the common kinds say.
+        for (String state : new String[] {"mGradientState", "mBitmapState", "mVectorState", "mColorState",
+                "mNinePatchState", "mShapeState"}) {
+            try {
+                Object s = field(d, state);
+                Object tint = field(s, "mTint");
+                return tint instanceof ColorStateList ? (ColorStateList) tint : null;
+            } catch (Throwable ignored) {
+            }
+        }
+        return null;
+    }
+
+    @Override public boolean vectorPaintsNothing(VectorDrawable vd) { return false; }
+
+    @Override public boolean isUnresolvedStub(VectorDrawable vd) { return stubs.containsKey(vd); }
+
+    @Override public void setUnresolvedStub(VectorDrawable vd, boolean stub) {
+        if (stub) stubs.put(vd, Boolean.TRUE); else stubs.remove(vd);
+    }
+
+    // ---- Debug dumps: Win.apk's old graphics had them; AOSP's classes keep no such counters ----
+
+    @Override public void renderNodeStatsDump(String where) {}
+
+    @Override public int dumpFillColor(GradientDrawable gd) { return 0; }
+
+    @Override public boolean dumpHasFill(GradientDrawable gd) { return false; }
+
+    @Override public int dumpTint(GradientDrawable gd) { return 0; }
+
+    @Override public int dumpStroke(GradientDrawable gd) { return 0; }
+
+    @Override public int dumpPaintColor(ShapeDrawable sd) { return sd.getPaint().getColor(); }
+
+    @Override public String dumpShape(ShapeDrawable sd) {
+        return sd.getShape() == null ? "null" : sd.getShape().getClass().getSimpleName();
+    }
+
+    @Override public int dumpAlpha(ShapeDrawable sd) { return sd.getAlpha(); }
+
+    @Override public int dumpTint(ShapeDrawable sd) { return 0; }
+
+    // ---- Reflection on AOSP's members Win.apk's classes do not declare ----
+
+    private static Field find(Class<?> c, String name) throws NoSuchFieldException {
+        for (Class<?> k = c; k != null; k = k.getSuperclass()) {
+            try {
+                Field f = k.getDeclaredField(name);
+                f.setAccessible(true);
+                return f;
+            } catch (NoSuchFieldException ignored) {
+            }
+        }
+        throw new NoSuchFieldException(c.getName() + "." + name);
+    }
+
+    private static Object field(Object o, String name) throws ReflectiveOperationException {
+        return find(o.getClass(), name).get(o);
+    }
+
+    private static void setField(Object o, String name, Object v) throws ReflectiveOperationException {
+        find(o.getClass(), name).set(o, v);
+    }
+}

@@ -17,7 +17,7 @@ public final class MediaSelfTest {
     private MediaSelfTest() {}
 
     public static void run() {
-        String path = System.getenv("MACAPK_MEDIA_SELFTEST_FILE");
+        String path = null;
         if (path == null || path.isEmpty()) path = "/tmp/mdtest.m4a";
         try {
             MediaExtractor ex = new MediaExtractor();

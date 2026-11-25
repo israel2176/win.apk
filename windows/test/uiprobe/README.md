@@ -22,6 +22,19 @@ windows/test/uiprobe/run_ours.sh <out> <winapk-runtime.exe> [--lib <dir>]   # <o
 python windows/test/uiprobe/compare.py <out>/oracle.txt <out>/ours.txt
 ```
 
+On Linux, the Win.apk side runs under Wine instead, on any staged runtime: a
+build's stage, or the `runtime-stage` artifact of a CI run (no Windows build
+needed). It needs wine64 and mingw-w64 gcc:
+
+```sh
+windows/test/uiprobe/run_ours_wine.sh <out> <stage dir>   # <stage>/bin/winapk-runtime.exe, lib/, jre/
+```
+
+To try a change to `runtime/java` without a full build, compile the changed
+class against the stage's `lib/android-framework.jar` (and `macapk-loader.jar`)
+with a JDK 21 `javac`, put it into a copy of that jar with `jar uf`, and run the
+probe on the copy.
+
 - `build.sh` is a Gradle build (AGP 8.5, `build.gradle` beside it): it copies
   the project to `<out>/project`, assembles the APK and runs the Robolectric
   test that writes the oracle. The libraries (AppCompat, Material,
@@ -32,6 +45,26 @@ python windows/test/uiprobe/compare.py <out>/oracle.txt <out>/ours.txt
   Robolectric both fail on those).
 - Needs an Android SDK (build-tools and a platform), a JDK 17 and Gradle 8.9.
 - Win.apk's pictures are in `<out>/data/android/data/data/probe/files/probe`.
+
+A change meant to bring Win.apk closer to Android is checked with
+`regress.py`, which takes Android's lines and Win.apk's before and after it,
+and classes every line that moved: `fixed`, `closer`, or `REGRESSED` (matched
+Android before, not now), `FARTHER` (further from Android's numbers) and
+`MISSING` (a case no longer printed), which make it exit 1. The screens sweep's
+files (`windows/test/screens`) go through it the same way:
+
+```sh
+python windows/test/uiprobe/regress.py <oracle.txt> <before/ours.txt> <after/ours.txt> [--quiet]
+```
+
+CI does this for every pull request that touches the framework or the host
+(`ci.yml`, the UI gate; `windows/README.md`, "The UI gate"): `gate_oracle.sh`
+makes Android's side on Linux, `gate_side.sh` runs Win.apk's at the base and at
+the head (a short run once more), and `gate.py report` runs regress.py and
+writes the job summary. `run_ours.sh` and `screens.sh` end Win.apk once it has
+printed `PROBE done` (`run_until.py`; some processes hang at exit after it) or
+at a timeout (`UIPROBE_TIMEOUT`, default 900 s); they need Python 3 (`PYTHON`,
+default `python3`).
 
 A new layout case is a file under `res/layout/` plus its name in
 `Probes.LAYOUTS`. A widget or a LayoutParams class of the probe's own

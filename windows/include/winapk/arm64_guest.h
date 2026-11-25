@@ -28,9 +28,13 @@
 //     advance. host_callable() gives the same entry without the fault, for hot
 //     paths such as native-method thunks.
 //
-// Each host thread that runs guest code gets its own CPU state, a 4 MiB guest
-// stack and bionic's TLS slot array (TPIDR_EL0, with the stack guard in slot 5),
-// created on first use and freed when the thread exits. Guest -> host -> guest
+// Each host thread that runs guest code gets its own CPU state, a guest stack
+// (4 MiB, or what pthread_create asked for when that is more, up to 64 MiB:
+// set_stack_request) and bionic's TLS slot array (TPIDR_EL0, with the stack
+// guard in slot 5), created on first use and freed when the thread exits.
+// Guest code runs on that stack, not the host thread's, so the shim's
+// pthread_getattr_np answers it to guest callers (current_guest_stack): Dart,
+// ART and V8 check their sp against the bounds it gives. Guest -> host -> guest
 // nesting (a qsort comparator inside qsort inside guest code) continues on the
 // same guest stack.
 //
@@ -69,6 +73,17 @@ uint64_t call(const void* fn, const uint64_t* args = nullptr, size_t nargs = 0);
 // or `fn` itself if it is not arm64 code.
 void* host_callable(void* fn);
 
+// The stack size the calling thread's creator asked for (pthread_attr's), for
+// the guest stack it gets when it first enters guest code. Call it before
+// that; later calls change nothing.
+void set_stack_request(size_t bytes);
+
+// The calling thread's guest stack, [*lo, *hi) without its guard, when guest
+// code is running on the thread (the caller is guest code or a host function
+// it called); false otherwise, and for x86_64 guest code, which runs on the
+// host thread's own stack.
+bool current_guest_stack(uint64_t* lo, uint64_t* hi);
+
 // `host_fn` takes a va_list as argument number `index` (0-based); calls from
 // guest code get it converted from AAPCS64 to System V.
 void register_va_list_function(const void* host_fn, unsigned index);
@@ -76,7 +91,7 @@ void register_va_list_function(const void* host_fn, unsigned index);
 // The engine that runs guest code. kAot, the default: the code translated at
 // install time (arm64_aot.h) where a library has it, and for the rest the JIT
 // (dynarmic, arm64_jit.h) when the build has it, else the interpreter.
-// WINAPK_ARM64_ENGINE=interp, =jit or =aot chooses. set_engine returns false
+// Tests choose another with set_engine, which returns false
 // if the JIT is not built in. Threads pick the engine up the next time they
 // enter guest code; code the JIT has already translated stays as it is.
 enum class Engine { kInterpreter, kJit, kAot };

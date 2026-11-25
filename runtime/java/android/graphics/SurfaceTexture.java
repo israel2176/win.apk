@@ -309,15 +309,12 @@ public class SurfaceTexture {
             // instead, the only reading that leaves the stream usable.
             // BISECT GATE: MACAPK_TEXTUREVIEW_BUFSIZE=0 (the switch for the
             // whole default-buffer-size change) stores every value, as before.
-            if (sDefaultSizeGuard && (mAbandoned || width <= 0 || height <= 0)) return; /*BAD_VALUE*/
+            if ((mAbandoned || width <= 0 || height <= 0)) return; /*BAD_VALUE*/
             mDefaultWidth = width;
             mDefaultHeight = height;
         }
     }
 
-    /** MACAPK_TEXTUREVIEW_BUFSIZE (default ON): see setDefaultBufferSize. */
-    private static final boolean sDefaultSizeGuard =
-        !"0".equals(System.getenv("MACAPK_TEXTUREVIEW_BUFSIZE"));
 
     /**
      * Update the texture image to the most recent frame from the image stream.

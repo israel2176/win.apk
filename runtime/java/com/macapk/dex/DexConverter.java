@@ -469,7 +469,7 @@ public final class DexConverter {
     static boolean overflowsAlone(DexClass cls, DexMethod m, DexType.ClassHierarchy hierarchy,
                                   InitRepointPlan plan, SuperInterfacePlan superIfaces,
                                   boolean allowOutlining) {
-        ClassFileWriter scratch = new ClassFileWriter(classAccessFlags(cls), cls.name(),
+        ClassFileWriter scratch = new ClassFileWriter(classAccessFlags(cls, plan), cls.name(),
             cls.superclassName(), cls.interfaceNames().toArray(new String[0]));
         ClassFileWriter.MethodWriter smw =
             scratch.addMethod(m.accessFlags() & METHOD_FLAGS_MASK, m.name(), m.descriptor());
@@ -508,7 +508,7 @@ public final class DexConverter {
                              NestIndex nestIndex, boolean allowOutlining,
                              boolean stubOversize) {
         ClassFileWriter cw = new ClassFileWriter(
-            classAccessFlags(cls),
+            classAccessFlags(cls, plan),
             cls.name(),
             cls.superclassName() == null ? null : cls.superclassName(),
             cls.interfaceNames().toArray(new String[0]));
@@ -1048,10 +1048,14 @@ public final class DexConverter {
      * class_def carries ACC_SUPER's slot as something else, and the JVM wants
      * ACC_SUPER set on every non-interface class so invokespecial resolves the
      * modern way (JVMS 4.1: "the ACC_SUPER flag ... for backward compatibility").
+     * A class the plan publicizes (CrossPackageTypes: a shrinker left its name in
+     * another package's signatures, where an inserted checkcast may need it)
+     * gets ACC_PUBLIC.
      */
-    static int classAccessFlags(DexClass cls) {
+    static int classAccessFlags(DexClass cls, InitRepointPlan plan) {
         int f = cls.accessFlags() & CLASS_FLAGS_MASK;
         if (!cls.isInterface()) f |= ClassFileWriter.ACC_SUPER;
+        if (plan != null && plan.publicizes(cls.name())) f |= ClassFileWriter.ACC_PUBLIC;
         return f;
     }
 

@@ -7,6 +7,7 @@ import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
+import com.macapk.loader.view.ViewHost;
 
 /**
  * HOST GAME CONTROLLERS -> Android gamepads (MACAPK_GAMEPAD, default ON;
@@ -63,7 +64,6 @@ import android.view.View;
 public final class GamepadBridge {
     private static final String TAG = "Mac.apk.Gamepad";
 
-    public static final boolean ON = !"0".equals(System.getenv("MACAPK_GAMEPAD"));
 
     /** Starts GameController.framework observation (connect/disconnect + the
      *  controllers already connected). Idempotent; registered by
@@ -76,10 +76,6 @@ public final class GamepadBridge {
     public static synchronized void macapkStart() {
         if (sStarted) return;
         sStarted = true;
-        if (!ON) {
-            NativeLog.i(TAG, "MACAPK_GAMEPAD=0: host game controllers are not bridged");
-            return;
-        }
         try {
             nativeStart();
         } catch (Throwable t) {
@@ -176,7 +172,7 @@ public final class GamepadBridge {
             final int number = nextControllerNumber();
             pad = new Pad(handle, id, number, mask);
             final String devName = (name == null || name.isEmpty()) ? "Gamepad" : name;
-            device = new InputDevice(id, 0, number, devName, vendor, product,
+            device = ViewHost.get().newInputDevice(id, 0, number, devName, vendor, product,
                     descriptor(vendor, product, uniqueId, devName),
                     true,                                   // isExternal
                     SOURCES, InputDevice.KEYBOARD_TYPE_NON_ALPHABETIC,
@@ -268,17 +264,6 @@ public final class GamepadBridge {
         onState(handle, buttons, lx, ly, rx, ry, lt, rt, hatX, hatY, true);
     }
 
-    /** MACAPK_GAMEPAD_REAL_INPUT (default ON; =0 = the old path, where a button
-     *  never counted): a button press on a PHYSICAL controller is user input,
-     *  so it opens ActivityHost's real-input window that a cross-app or host
-     *  hand-off needs (macapkLaunchAllowed), as a click or a host key does. On a
-     *  device a gamepad key is an InputDispatcher event like any other, and the
-     *  background-activity-launch rules treat the focused app as in use. A
-     *  frontend driven only by a controller (iiSU, ES-DE on a handheld) had
-     *  every emulator launch silently dropped. The test / virtual-pad entry
-     *  (macapkTestState) passes real = false: a harness press must not count. */
-    private static final boolean REAL_INPUT =
-        !"0".equals(System.getenv("MACAPK_GAMEPAD_REAL_INPUT"));
 
     private static void onState(long handle, int buttons, float lx, float ly, float rx, float ry,
                         float lt, float rt, float hatX, float hatY, boolean real) {
@@ -297,7 +282,7 @@ public final class GamepadBridge {
                 if ((changed & bit) == 0) continue;
                 final boolean down = (buttons & bit) != 0;
                 if (down) pad.downTime[i] = now;
-                if (down && real && REAL_INPUT) TouchDispatcher.noteRealInputFromHostView();
+                if (down && real) TouchDispatcher.noteRealInputFromHostView();
                 KeyEvent ev = new KeyEvent(pad.downTime[i], now,
                         down ? KeyEvent.ACTION_DOWN : KeyEvent.ACTION_UP, BUTTONS[i][1], 0, 0,
                         pad.deviceId, BUTTONS[i][2], KeyEvent.FLAG_FROM_SYSTEM, SOURCE_KEYS);
@@ -320,16 +305,6 @@ public final class GamepadBridge {
             if (moved) out.add(joystickEvent(pad, now));
             stickX = pad.axes[AX_X];
             stickY = pad.axes[AX_Y];
-        }
-        // Tilt Control (Controls menu): a real controller's LEFT STICK also
-        // tilts the virtual device, the way the arrow keys do -- right = roll
-        // right, pushed up (Android AXIS_Y negative) = pitch forward. Only when
-        // the stick itself moved, so a button press cannot re-centre a tilt the
-        // arrow keys are holding. The stick still reaches the app as a joystick
-        // too; a tilt-steered game simply does not read one. Not the virtual
-        // "Mac Arrow Keys" pad (it has no stick, and it excludes Tilt anyway).
-        if (stickMoved && handle != ArrowPad.HANDLE && TiltControl.isEnabled()) {
-            TiltControl.setStick(stickX, -stickY);
         }
         if (out.isEmpty()) return;
         if (sLoggedEvents < LOG_CAP) {
@@ -437,8 +412,8 @@ public final class GamepadBridge {
     static void route(Runnable r) {
         final Activity active = ActivityHost.peek();
         boolean toLoop = false;
-        if (android.os.Looper.MACAPK_REAL_LOOPER && active != null) {
-            View root = active.macapkContentView();
+        if (active != null) {
+            View root = com.macapk.loader.ActivityHost.contentRoot(active);
             toLoop = root != null && !TouchDispatcher.hostInputTree(root);
         }
         if (toLoop) {
@@ -539,6 +514,7 @@ public final class GamepadBridge {
      *  synthetic d-pad stage below do not run -- the queue owns the event. */
     private static boolean deliverToFocusedWindow(Activity active, KeyEvent ev) {
         try {
+            if (ViewHost.get().deliverInput(ev)) return true;  // AOSP's views: the focused window
             int ov = WindowOverlayStack.deliverKeyResult(ev);
             if (ov != WindowOverlayStack.OVERLAY_NONE) return ov == WindowOverlayStack.OVERLAY_HANDLED;
             if (active == null) return false;
@@ -559,6 +535,7 @@ public final class GamepadBridge {
         final Activity active = ActivityHost.peek();
         boolean handled = false;
         try {
+            if (ViewHost.get().deliverInput(ev)) return;  // AOSP's views: the focused window
             int ov = WindowOverlayStack.deliverGenericMotion(ev);
             if (ov != WindowOverlayStack.OVERLAY_NONE) {
                 handled = ov == WindowOverlayStack.OVERLAY_HANDLED;
@@ -588,7 +565,7 @@ public final class GamepadBridge {
     private static String focusNote(Activity active) {
         try {
             if (active == null) return " (no activity)";
-            View root = active.macapkContentView();
+            View root = com.macapk.loader.ActivityHost.contentRoot(active);
             View f = root != null ? root.findFocus() : null;
             return " focus=" + (f == null ? "none" : f.getClass().getName());
         } catch (Throwable t) {
@@ -754,13 +731,4 @@ public final class GamepadBridge {
                 false);
     }
     public static void macapkTestDisconnect(long handle) { onDisconnected(handle); }
-
-    /** A virtual controller driven from inside Mac.apk (ArrowPad, "Arrow Keys
-     *  as D-pad"): registered and delivered exactly like a real one; its state
-     *  goes through macapkTestState and its removal through
-     *  macapkTestDisconnect. Not gated on MACAPK_GAMEPAD: it is a user choice
-     *  of its own and touches no host controller. */
-    public static void macapkVirtualConnect(long handle, String name) {
-        onConnected(handle, name, 0, 0, "", 0);
-    }
 }

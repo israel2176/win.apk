@@ -40,7 +40,7 @@ public class MenuInflater {
         if (r == null) return;
         InputStream in = null;
         try {
-            in = r.openRawResource(menuRes);
+            in = com.macapk.loader.res.ResBackend.get().openXmlText(r, menuRes);
             if (in == null) return;
             DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
             f.setNamespaceAware(true);

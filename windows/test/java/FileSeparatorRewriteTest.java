@@ -3,10 +3,9 @@
 // on a Windows host, while the host's own classes keep the JDK's values.
 //
 //   javac -cp <runtime>/lib/macapk-loader.jar -d out windows/test/java/FileSeparatorRewriteTest.java
-//   java  -cp "<runtime>/lib/macapk-loader.jar;out" FileSeparatorRewriteTest [off]
+//   java  -cp "<runtime>/lib/macapk-loader.jar;out" FileSeparatorRewriteTest
 //
-// "off": the run has MACAPK_ANDROID_FILE_SEPARATOR=0 set, and guest code
-// must then see the JDK's values. Exits 0 when every check passes.
+// Exits 0 when every check passes.
 
 import com.macapk.loader.ClassFileRewriter;
 
@@ -83,7 +82,6 @@ public final class FileSeparatorRewriteTest {
     }
 
     public static void main(String[] args) throws Exception {
-        boolean off = args.length > 0 && args[0].equals("off");
         boolean windows = System.mapLibraryName("x").endsWith(".dll");
         String res = Guest.class.getName().replace('.', '/') + ".class";
         byte[] raw;
@@ -91,9 +89,9 @@ public final class FileSeparatorRewriteTest {
             raw = in.readAllBytes();
         }
         ClassFileRewriter.Result r = ClassFileRewriter.maybeRewrite(raw.clone(), Guest.class.getName());
-        boolean expectRewrite = windows && !off;
+        boolean expectRewrite = windows;
         System.out.println("host: " + (windows ? "Windows" : "not Windows") + ", File.separatorChar '"
-                + File.separatorChar + "', switch " + (off ? "off" : "on") + "; rewriter: " + r.reason);
+                + File.separatorChar + "'; rewriter: " + r.reason);
         check("rewritten", r.rewritten, expectRewrite);
 
         Class<?> g = new GuestLoader(r.bytes).loadClass(Guest.class.getName());

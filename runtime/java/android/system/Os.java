@@ -259,17 +259,6 @@ public class Os {
      *  each launch deleted every core the user had downloaded.
      *  MACAPK_OS_READLINK_ERRNO=0 restores the old answer. */
     public static String readlink(String path) throws android.system.ErrnoException {
-        if (!READLINK_ERRNO) {
-            try {
-                java.nio.file.Path p = java.nio.file.Paths.get(path);
-                if (java.nio.file.Files.isSymbolicLink(p)) {
-                    return java.nio.file.Files.readSymbolicLink(p).toString();
-                }
-                return path;
-            } catch (Exception e) {
-                return path;
-            }
-        }
         if (path == null) throw new NullPointerException("path == null");
         final java.nio.file.Path p;
         try {
@@ -302,8 +291,6 @@ public class Os {
         }
     }
 
-    private static final boolean READLINK_ERRNO =
-        !"0".equals(System.getenv("MACAPK_OS_READLINK_ERRNO"));
 
 
     // --- raw-fd operations (JNI via com.macapk.loader.NativeOs -> Darwin libc). ---

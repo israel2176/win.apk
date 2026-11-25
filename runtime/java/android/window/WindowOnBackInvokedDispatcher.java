@@ -54,14 +54,7 @@ import java.util.function.Supplier;
 public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
     private static final String TAG = "WindowOnBackDispatcher";
 
-    /** Mac.apk bisect gate, read once per process (see the file header). */
-    public static final boolean MACAPK_BACK_INVOKED =
-            !"0".equals(System.getenv("MACAPK_BACK_INVOKED"));
 
-    /** AOSP persist.wm.debug.predictive_back_always_enforce, as an env var: every
-     *  window behaves as opted in. Diagnostic only; default off, like AOSP. */
-    private static final boolean ALWAYS_ENFORCE_PREDICTIVE_BACK =
-            "1".equals(System.getenv("MACAPK_PREDICTIVE_BACK_ALWAYS_ENFORCE"));
 
     // android.os.Build.VERSION_CODES values, spelled out so this file does not
     // depend on which named constants our Build.java happens to carry.
@@ -251,7 +244,7 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
      *  it is an UP (the android16 `keyEvent.cancel()`, done by the caller with
      *  KeyEvent.changeFlags because the event object is shared). */
     public int macapkOnBackKey(KeyEvent keyEvent, Executor invoker) {
-        if (!MACAPK_BACK_INVOKED || keyEvent == null
+        if (keyEvent == null
                 || keyEvent.getKeyCode() != KeyEvent.KEYCODE_BACK
                 || !isOnBackInvokedCallbackEnabled()) {
             return MACAPK_KEY_LEGACY;
@@ -440,13 +433,10 @@ public class WindowOnBackInvokedDispatcher implements OnBackInvokedDispatcher {
          *  ManifestBackFlags until our parser records them; see that file. */
         static boolean isOnBackInvokedCallbackEnabled(Context context) {
             // AOSP ENABLE_PREDICTIVE_BACK (persist.wm.debug.predictive_back,
-            // default 1) -- our gate plays that role.
-            if (!MACAPK_BACK_INVOKED) return false;
             // The API does not exist below Android 13; an app presented a lower
             // level cannot have opted in to it.
             final int sdk = sdkInt();
             if (sdk < TIRAMISU) return false;
-            if (ALWAYS_ENFORCE_PREDICTIVE_BACK) return true;
             // If the context is null, return false to use legacy back.
             if (context == null) return false;
             // Check if the context is from an activity.

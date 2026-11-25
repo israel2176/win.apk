@@ -15,11 +15,16 @@
 #include <cstdint>
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace winapk {
 
 // Host address of a shim export, or nullptr if the shim does not have it.
 void* mini_bionic_resolve(const char* name);
+// Every name that resolves to `addr`: one shim function can stand for several
+// names (no-op stubs do), which matters to a caller that rewrites a function's
+// arguments by its address (the arm64 bridge's va_list ones).
+std::vector<std::string> mini_bionic_names_of(const void* addr);
 
 // Runs the destructors guest code registered with __cxa_atexit, newest first.
 void mini_bionic_run_atexit();
@@ -57,7 +62,9 @@ int bionic_unsetenv(const char* name);
 
 // Where Android's absolute paths live (src/bionic/paths.cpp): "/x" is
 // <android root>/x, and /system/fonts and /system/etc/fonts.xml are the fonts
-// directory Boot writes. UTF-8 host paths.
+// directory Boot writes. UTF-8 host paths. The fonts may also be given as
+// "<fonts.xml>|<folder>|<folder>...": a font is then the first folder's that
+// has it (Android's fonts, then Windows' for the CJK families).
 void set_android_root(const char* dir);
 void set_system_fonts_dir(const char* dir);
 // The running app: /data/user/0/<package> and /data/data/<package> are
@@ -94,5 +101,16 @@ struct GuestThread {
     const void* start;
 };
 size_t guest_threads(GuestThread* out, size_t max);
+
+// set_tid_address(2) for the calling thread: when it ends, 0 is written to `clear_child_tid` and one
+// futex waiter on it woken, as the kernel does (null: nothing). Returns the caller's tid. The raw
+// system call paths (the shim's syscall(), the arm64 bridge's SVCs) come here.
+int64_t set_tid_address(uint32_t* clear_child_tid);
+
+// rt_sigaction(2) and rt_sigprocmask(2) as the kernel takes them (the kernel's struct sigaction, a
+// sigsetsize that must be 8), over the shim's signal state (src/bionic/signal.cpp): what sigaction and
+// sigprocmask record and deliver by. -1 and the guest's errno on failure.
+int raw_rt_sigaction(int sig, const void* kernel_act, void* kernel_old, size_t sigsetsize);
+int raw_rt_sigprocmask(int how, const uint64_t* set, uint64_t* old, size_t sigsetsize);
 
 }  // namespace winapk

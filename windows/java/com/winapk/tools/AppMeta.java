@@ -38,6 +38,7 @@ import android.util.DisplayMetrics;
 import com.macapk.loader.ApkVerification;
 import com.macapk.loader.Boot;
 import com.macapk.loader.Manifest;
+import com.macapk.loader.res.ResBackend;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
@@ -124,15 +125,17 @@ public final class AppMeta {
         return out;
     }
 
-    // A literal label stays as it is; "@0x7f..." or "@string/name" is looked up.
+    // A literal label stays as it is; "@0x7f..." or "@string/name" is looked up, through the
+    // process's resource backend as Boot.extractIconOnly reads the icon (AOSP's AssetManager has no
+    // AssetManager(String) of Win.apk's own: every install named the app by its package).
     static String resolve(String raw, String apkPath, String pkg) throws Exception {
         if (raw == null || !raw.startsWith("@")) return raw;
-        AssetManager assets = new AssetManager(apkPath);
+        AssetManager assets = ResBackend.get().openAssets(apkPath);
         DisplayMetrics metrics = new DisplayMetrics();
         metrics.setToDefaults();
-        Configuration cfg = Configuration.macapkPhoneDefaults();
+        Configuration cfg = ResBackend.get().phoneDefaults();
         Resources res = new Resources(assets, metrics, cfg);
-        Resources.macapkSetPackageName(pkg);
+        ResBackend.get().setPackageName(pkg);
         String ref = raw.substring(1);
         int id = 0;
         if (ref.startsWith("0x") || ref.startsWith("0X")) {

@@ -39,28 +39,4 @@ void* gl_shared_display();
 // thread until the GPU has copied the frame to the CPU.
 void gl_read_current(std::vector<uint32_t>* argb, int w, int h);
 
-// The asynchronous read for a presenting swap (guest_eglSwapBuffers). Issues
-// this frame's readback into one of two pixel pack buffers (returns at once:
-// the GPU DMAs into the buffer) and hands back the PREVIOUS frame, mapped from
-// the other buffer, so the GL thread never blocks on the GPU->CPU copy. The
-// cost is one frame of latency on that layer. Keyed by the current EGL context
-// (each app GL thread gets its own pair); the buffers follow a lost or
-// recreated context. Needs ES 3; on ES 2, a mapping failure, or any PBO error
-// it falls back to gl_read_current for that context from then on.
-//
-// Fills *argb (0xAARRGGBB, top row first) and *pw/*ph with the presented
-// frame's size and returns true when there is one. Returns false on the very
-// first frame of a context (nothing buffered yet: skip the present). Any thread
-// with a current context.
-bool gl_read_current_async(std::vector<uint32_t>* argb, int w, int h, int* pw, int* ph);
-
-// Whether the asynchronous readback is opted into (WINAPK_GL_ASYNC_READBACK=1).
-// Off by default: a presenting swap reads the frame back synchronously, as it
-// has since the window surface was added, so no app regresses. The async path
-// trades one frame of latency for a non-stalling readback, which on-demand
-// renderers (a Flutter UI that draws a burst then idles) cannot take -- their
-// final frame is left in a buffer, never presented -- so it stays opt-in until
-// it is correct for every app.
-bool gl_async_readback_enabled();
-
 }  // namespace winapk::host

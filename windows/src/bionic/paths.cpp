@@ -9,7 +9,10 @@
 // runtime/translator/src/bionic_shim.cpp) solves the same problem the same way:
 //
 //   /system/etc/fonts.xml, /system/fonts/...  -> the fonts directory Boot wrote
-//                                                (setSystemFontsDir)
+//                                                (setSystemFontsDir); or its fonts.xml
+//                                                and folders, a font the first's that
+//                                                has it (Windows' CJK faces after
+//                                                Android's, AospGfx)
 //   /system/etc/security/cacerts,
 //   /apex/com.android.conscrypt/cacerts       -> the CA store cacerts.cpp builds
 //                                                from the roots Windows trusts
@@ -33,11 +36,14 @@
 
 #include "bionic_internal.h"
 
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include <windows.h>
+#include <tlhelp32.h>
 
 #include "winapk/mini_bionic.h"
 
@@ -47,7 +53,8 @@ namespace {
 
 std::mutex g_lock;
 std::wstring g_android_root;  // no trailing separator
-std::wstring g_fonts_dir;
+std::wstring g_fonts_xml;                // /system/etc/fonts.xml
+std::vector<std::wstring> g_fonts_dirs;  // /system/fonts: a font is the first of these that has it
 std::string g_app_package;     // the running app's package, for /data/user/0/<package>
 std::wstring g_app_data_dir;   // its data directory on the host (set_app_data)
 
@@ -195,7 +202,94 @@ bool is_android_path(const char* p) {
     return p[0] == '/' && p[1] != '/';
 }
 
+namespace {
+
+// /proc/<this pid>/status, as the kernel makes it at each open: Boot writes its
+// fixed part (Name, Umask, State, the ids, Uid and Gid: what Java knows) when
+// the process starts, and every time the path is mapped -- an open, a stat --
+// the lines that change are put back after it, from Windows' own counters:
+// VmSize (the address space in use), VmHWM and VmRSS (the working set's peak
+// and size, Linux's resident set), Threads. Google's Primes reads VmRSS there
+// with a FileReader and logged "Error reading proc status" on every start.
+// No file from Boot (a process that is not an app's run), nothing written.
+void refresh_own_status(const std::wstring& file) {
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    std::string text;
+    char buf[4096];
+    DWORD got = 0;
+    while (ReadFile(h, buf, sizeof buf, &got, nullptr) && got > 0 && text.size() < 65536) text.append(buf, got);
+    CloseHandle(h);
+    // The fixed part is everything before the first line this function writes.
+    const size_t vm = text.find("\nVm");
+    if (vm != std::string::npos) text.resize(vm + 1);
+    const size_t threads = text.find("\nThreads:");
+    if (threads != std::string::npos) text.resize(threads + 1);
+    if (text.empty() || text.back() != '\n') text.push_back('\n');
+
+    MEMORYSTATUSEX mem{};
+    mem.dwLength = sizeof mem;
+    const unsigned long long vm_size =
+        GlobalMemoryStatusEx(&mem) ? (mem.ullTotalVirtual - mem.ullAvailVirtual) / 1024 : 0;
+    // psapi's PROCESS_MEMORY_COUNTERS, through the entry kernel32 has had since Windows 7 (misc.cpp's getrusage).
+    struct Counters {
+        DWORD cb, PageFaultCount;
+        SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage,
+            QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage;
+    } c{};
+    using Fn = BOOL(WINAPI*)(HANDLE, Counters*, DWORD);
+    static const Fn counters = reinterpret_cast<Fn>(reinterpret_cast<void*>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "K32GetProcessMemoryInfo")));
+    if (counters) counters(GetCurrentProcess(), &c, sizeof c);
+    int thread_count = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap != INVALID_HANDLE_VALUE) {
+        THREADENTRY32 te{};
+        te.dwSize = sizeof te;
+        const DWORD self = GetCurrentProcessId();
+        for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID == self) ++thread_count;
+        }
+        CloseHandle(snap);
+    }
+    char lines[256];
+    std::snprintf(lines, sizeof lines, "VmSize:\t%8llu kB\nVmHWM:\t%8llu kB\nVmRSS:\t%8llu kB\nThreads:\t%d\n",
+                  vm_size, static_cast<unsigned long long>(c.PeakWorkingSetSize / 1024),
+                  static_cast<unsigned long long>(c.WorkingSetSize / 1024), thread_count);
+    text += lines;
+
+    // Written in place, not replaced: a reader that has the file open keeps its handle, and two
+    // opens at once each write a whole, current text.
+    h = CreateFileW(file.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &wrote, nullptr);
+    SetEndOfFile(h);
+    CloseHandle(h);
+}
+
+std::wstring mapped_path(const char* p);
+
+}  // namespace
+
 std::wstring host_path(const char* p) {
+    std::wstring host = mapped_path(p);
+    if (p && std::strncmp(p, "/proc/", 6) == 0) {
+        size_t len = std::strlen(p);
+        if (len > 7 && std::strcmp(p + len - 7, "/status") == 0) {
+            const std::string self = std::to_string(GetCurrentProcessId());
+            const std::string pid(p + 6, len - 13);
+            if (pid == "self" || pid == self) refresh_own_status(host);
+        }
+    }
+    return host;
+}
+
+namespace {
+
+std::wstring mapped_path(const char* p) {
     if (!p) return {};
     size_t len = std::strlen(p);
     p = meant_path(p, &len);
@@ -223,10 +317,18 @@ std::wstring host_path(const char* p) {
     }
 
     std::lock_guard<std::mutex> hold(g_lock);
-    if (!g_fonts_dir.empty()) {
-        if (std::strcmp(p, "/system/etc/fonts.xml") == 0) return g_fonts_dir + L"\\fonts.xml";
+    if (!g_fonts_dirs.empty()) {
+        if (std::strcmp(p, "/system/etc/fonts.xml") == 0) return g_fonts_xml;
         if (starts_with(p, "/system/fonts") && (p[13] == '\0' || p[13] == '/')) {
-            return g_fonts_dir + host_names(p + 13, len - 13);
+            const std::wstring rest = host_names(p + 13, len - 13);
+            // A font is the first folder's that has it: Android's, then Windows' (the CJK faces
+            // the fonts.xml names, set_system_fonts_dir). The folder itself is Android's.
+            for (size_t i = 0; g_fonts_dirs.size() > 1 && p[13] != '\0' && i < g_fonts_dirs.size(); i++) {
+                if (GetFileAttributesW((g_fonts_dirs[i] + rest).c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    return g_fonts_dirs[i] + rest;
+                }
+            }
+            return g_fonts_dirs[0] + rest;
         }
     }
     if (g_android_root.empty()) return to_wide(p, len);
@@ -236,6 +338,28 @@ std::wstring host_path(const char* p) {
         return g_android_root + L"\\data\\data" + host_names(p + 12, len - 12);
     }
     return g_android_root + host_names(p, len);
+}
+
+}  // namespace
+
+// A path near MAX_PATH by the long-path form of its full path (normalized first:
+// under "\\?\" Windows takes '/' and ".." as names); a shorter one as it is.
+// An app's data folder sits under %LOCALAPPDATA%\Win.apk\android\data\data\<package>,
+// and its own deep files (Crashlytics' sessions name the package twice, Dart's caches,
+// a WebView's) pass 260 characters with a long user name or package; without the
+// long-path policy (off on most PCs) every such file call failed.
+std::wstring file_path(const char* p) {
+    std::wstring w = host_path(p);
+    if (w.size() < MAX_PATH - 12 || w.rfind(L"\\\\?\\", 0) == 0) return w;
+    const DWORD n = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
+    if (n == 0) return w;
+    std::wstring full(n, L'\0');
+    const DWORD m = GetFullPathNameW(w.c_str(), n, &full[0], nullptr);
+    if (m == 0 || m >= n) return w;
+    full.resize(m);
+    if (full.rfind(L"\\\\?\\", 0) == 0) return full;
+    if (full.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + full.substr(2);
+    return L"\\\\?\\" + full;
 }
 
 }  // namespace winapk::bionic
@@ -257,8 +381,26 @@ std::wstring android_file_name(std::wstring host_name) {
     return host_name;
 }
 void set_system_fonts_dir(const char* dir) {
+    // "<folder>", or "<fonts.xml>|<folder>|<more folders>" ('|' is in no Windows path).
+    std::wstring spec = bionic::to_wide(dir, dir ? std::strlen(dir) : 0);
+    std::vector<std::wstring> parts;
+    for (size_t start = 0;;) {
+        const size_t bar = spec.find(L'|', start);
+        std::wstring part = bionic::trimmed(spec.substr(start, bar == std::wstring::npos ? bar : bar - start));
+        if (!part.empty()) parts.push_back(std::move(part));
+        if (bar == std::wstring::npos) break;
+        start = bar + 1;
+    }
     std::lock_guard<std::mutex> hold(bionic::g_lock);
-    bionic::g_fonts_dir = bionic::trimmed(bionic::to_wide(dir, dir ? std::strlen(dir) : 0));
+    bionic::g_fonts_dirs.clear();
+    bionic::g_fonts_xml.clear();
+    if (parts.size() == 1) {
+        bionic::g_fonts_xml = parts[0] + L"\\fonts.xml";
+        bionic::g_fonts_dirs = std::move(parts);
+    } else if (parts.size() > 1) {
+        bionic::g_fonts_xml = parts[0];
+        bionic::g_fonts_dirs.assign(parts.begin() + 1, parts.end());
+    }
 }
 
 std::wstring android_proc_file(const char* path) {

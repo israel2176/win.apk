@@ -593,7 +593,7 @@ public final class Settings {
         // "the Reddit auth bottom sheet is frozen at its hidden offset". NOT a
         // shipping flag; see Current_State Per-APK-patches notes.
         private static float animScaleOverride(String name, float def) {
-            if (name != null && "1".equals(java.lang.System.getenv("MACAPK_FORCE_ANIM_SCALE_0"))
+            if (name != null && false
                 && (ANIMATOR_DURATION_SCALE.equals(name)
                     || TRANSITION_ANIMATION_SCALE.equals(name)
                     || WINDOW_ANIMATION_SCALE.equals(name))) {

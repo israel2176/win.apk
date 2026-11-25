@@ -148,7 +148,7 @@ public class ViewPropertyAnimator {
                 ends[i] = p.by ? s + p.value : p.value;
             }
         }
-        if (target == null || !android.os.Looper.MACAPK_REAL_LOOPER) {
+        if (target == null) {
             // Shipped path: snap to the final values and run actions immediately.
             if (startAction != null) try { startAction.run(); } catch (Throwable ignored) {}
             for (int i = 0; i < n; i++) setProp(ps[i].kind, ends[i]);

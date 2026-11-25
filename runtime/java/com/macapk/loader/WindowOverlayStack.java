@@ -14,6 +14,7 @@
 // before the Activity. Both call into here so the ordering lives in one place.
 package com.macapk.loader;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Rect;
 import android.view.Gravity;
 import android.view.View;
@@ -22,6 +23,7 @@ import android.view.WindowManager;
 
 import java.util.ArrayList;
 import java.util.List;
+import com.macapk.loader.view.ViewHost;
 
 public final class WindowOverlayStack {
 
@@ -90,17 +92,14 @@ public final class WindowOverlayStack {
     // given back when the stack empties or the surface resizes. A new Canvas is
     // still made per present, so the transform and clip start clean exactly as
     // before. Only the GL thread that drives presentForGl touches it.
-    // MACAPK_FRAMESPEED_OVERLAY=0 restores the per-present allocate + recycle.
-    static final boolean OVERLAY_REUSE =
-        !"0".equals(System.getenv("MACAPK_FRAMESPEED_OVERLAY"));
     private static volatile android.graphics.Bitmap sOverlayBmp;
 
     /** The bitmap one GL-overlay present draws into: all-transparent, w x h. */
     static android.graphics.Bitmap overlayBitmap(int w, int h) {
-        if (OVERLAY_REUSE) {
+        {
             android.graphics.Bitmap b = sOverlayBmp;
             if (b != null && b.getWidth() == w && b.getHeight() == h) {
-                int[] live = b.macapkLiveArgbOrNull();
+                int[] live = GfxBackend.get().liveArgbOrNull(b);
                 if (live != null) {
                     java.util.Arrays.fill(live, 0);
                     return b;
@@ -109,41 +108,13 @@ public final class WindowOverlayStack {
         }
         android.graphics.Bitmap b = android.graphics.Bitmap.createBitmap(
                 w, h, android.graphics.Bitmap.Config.ARGB_8888);
-        if (OVERLAY_REUSE) {
-            // Install the canvas backing now, so the next present finds the live
-            // array (a fresh Bitmap has no AWT image until a Canvas wraps it).
-            new android.graphics.Canvas(b);
-            sOverlayBmp = b;
-        }
+        // Install the canvas backing now, so the next present finds the live
+        // array (a fresh Bitmap has no AWT image until a Canvas wraps it).
+        new android.graphics.Canvas(b);
+        sOverlayBmp = b;
         return b;
     }
-    /** MACAPK_OVERLAY_RERASTER_ON_RELAYOUT (default ON; =0 restores the raster
-     *  that only an add / update / remove / key / inside-touch refreshes, for
-     *  bisecting). presentForGl re-measures and re-lays out every layer on EVERY
-     *  frame -- touch hit-testing reads those bounds -- but used to re-rasterize
-     *  only on those explicit events. So a layer whose measured size or position
-     *  changed on its own kept its OLD picture while touches followed the NEW
-     *  layout. MEASURED on GD Meltdown's consent dialog (a GL game, so this is
-     *  the only compositor it has): drawn 676px tall at y 512..1124 while hit
-     *  tested as Rect(588, 629 - 2772, 1007), 378 tall, so the drawn CONTINUE sat
-     *  149px above where a tap on it landed and the first click on it only
-     *  re-dirtied the raster
-     *  (docs/fleet-games-smashhit-gd-meltdown-jumplite_2026-09-26.md, G4). AOSP
-     *  has no "re-laid out but picture kept" state: ViewRootImpl
-     *  .performTraversals draws after any layout that moved or resized the
-     *  window. Now a layer whose bounds or visibility differ from its last
-     *  raster marks the stack dirty. (A per-view invalidate inside an unmoved
-     *  layer -- a spinner, a caret -- still needs a per-root invalidate signal;
-     *  our View.invalidate() is process-global, see the lane report.) */
-    static final boolean RERASTER_ON_RELAYOUT =
-        !"0".equals(System.getenv("MACAPK_OVERLAY_RERASTER_ON_RELAYOUT"));
 
-    /** MACAPK_WINDOW_SHADOW (default ON; =0 draws a window's tree with no
-     *  shadow, the pre-change overlay). A window whose root has a Z (a dialog
-     *  decor with its theme's windowElevation) casts its outline's shadow under
-     *  itself, as the window's renderer does on a device -- see drawWindow. */
-    static final boolean WINDOW_SHADOW =
-        !"0".equals(System.getenv("MACAPK_WINDOW_SHADOW"));
 
     /** Test seam for the offline gate (debug/w5alertdialog_gate.sh): when set,
      *  presentForGl hands its raster here instead of to NativeCocoa, which a
@@ -162,24 +133,9 @@ public final class WindowOverlayStack {
 
     private WindowOverlayStack() { }
 
-    /** AOSP WindowManagerGlobal (android14-release) gives the window's root view
-     *  the params it was added with: addView does `view.setLayoutParams(wparams)`
-     *  (:403) before mViews.add, and updateViewLayout does the same (:433). So on
-     *  a device `root.getLayoutParams()` IS the WindowManager.LayoutParams, and
-     *  apps read their window flags back through it. Ours never did, so the
-     *  root answered null. Measured: King's usdk PopupDialog.open (Candy Crush's
-     *  first-run Terms of Use) calls wndManager.addView(decorView, lp), then
-     *  reads `((WindowManager.LayoutParams) decorView.getLayoutParams()).flags`
-     *  (bytecode 479-510, source line 172) to clear FLAG_NOT_FOCUSABLE and
-     *  updateViewLayout -- and died there with an NPE ("Cannot read field
-     *  flags because <local2> is null", run.log 2026-09-26), leaving the popup
-     *  window added but never focusable (BACK and keys went to the game). MACAPK_WM_SET_LAYOUT_PARAMS=0 restores
-     *  the pre-change registry that leaves the root's LayoutParams untouched. */
-    static final boolean SET_LAYOUT_PARAMS =
-        !"0".equals(System.getenv("MACAPK_WM_SET_LAYOUT_PARAMS"));
 
     private static void giveRootItsParams(View view, WindowManager.LayoutParams wlp) {
-        if (!SET_LAYOUT_PARAMS || wlp == null) return;
+        if (wlp == null) return;
         // View.setLayoutParams only stores and resolves (no parent: a window
         // root has none), so it cannot fail on a root; guarded anyway, since a
         // throw here would lose the window the app just asked for.
@@ -198,7 +154,7 @@ public final class WindowOverlayStack {
             }
             LAYERS.add(new Layer(view, wlp));
         }
-        android.view.WindowManagerGlobal.getInstance().macapkWindowAdded(view, wlp);
+        ViewHost.get().windowAdded(view, wlp);
         // Tell the view it is attached. A window we put on screen genuinely IS
         // attached, but only ViewCanvasDriver ever dispatched this, and only for
         // the content root -- so every Dialog, PopupWindow and Spinner popup
@@ -208,8 +164,8 @@ public final class WindowOverlayStack {
         // detached branch became REAL, and ProgressBar.setVisible(isShown())
         // would blank a spinner inside a dialog while popup anchoring and IME
         // cursor anchoring computed from 0,0.
-        view.macapkClearWindowRemoved();   // a new window for this root
-        try { view.macapkDispatchAttachedToWindow(); }
+        ViewHost.get().clearWindowRemoved(view);   // a new window for this root
+        try { ViewHost.get().dispatchAttachedToWindow(view); }
         catch (Throwable ignored) { /* a view that refuses to attach still shows */ }
         sDirty = true;
         try {
@@ -308,7 +264,7 @@ public final class WindowOverlayStack {
         // unknown view alone.
         if (found) {
             giveRootItsParams(view, wlp);
-            android.view.WindowManagerGlobal.getInstance().macapkWindowAdded(view, wlp);
+            ViewHost.get().windowAdded(view, wlp);
         }
     }
 
@@ -333,15 +289,15 @@ public final class WindowOverlayStack {
         // Scheduling a traversal here defeats the idle-skip for one frame, so
         // whichever compositor painted the overlay repaints without it.
         if (removed) {
-            android.view.WindowManagerGlobal.getInstance().macapkWindowRemoved(view);
+            ViewHost.get().windowRemoved(view);
             // AOSP WindowManagerGlobal.removeViewLocked -> ViewRootImpl.die ->
             // doDie -> dispatchDetachedFromWindow: a removed window's tree is
             // detached (Dialog.dismissDialog uses removeViewImmediate, so this is
             // synchronous). v1.0.1643: add() attached but remove() never
             // detached, so a dismissed dialog's ProgressBar kept ticking forever,
             // pinning its activity and forcing a traversal 20x a second.
-            try { view.macapkDispatchDetachedFromWindow(); } catch (Throwable ignored) { }
-            try { android.view.ViewRootImpl.schedule(); } catch (Throwable ignored) { }
+            try { ViewHost.get().dispatchDetachedFromWindow(view); } catch (Throwable ignored) { }
+            try { ViewHost.get().scheduleTraversal(); } catch (Throwable ignored) { }
         }
         // Symmetric with add()'s log above: unambiguous proof a dialog/overlay
         // was actually dismissed (vs. just not re-logged). Cheap (fires only on
@@ -488,10 +444,8 @@ public final class WindowOverlayStack {
                 sDirty = true;
                 return true;
             }
-            final boolean nonModal = NOT_FOCUSABLE_IS_NOT_MODAL
-                ? (flags & (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0
-                : (flags & WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL) != 0;
+            final boolean nonModal = ((flags & (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0);
             if (nonModal) continue;
             return true;
         }
@@ -513,10 +467,8 @@ public final class WindowOverlayStack {
             int flags = layer.params != null ? layer.params.flags : 0;
             if ((flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE) != 0) continue;
             if (layer.bounds.contains((int) contentX, (int) contentY)) return v;
-            final boolean nonModal = NOT_FOCUSABLE_IS_NOT_MODAL
-                ? (flags & (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0
-                : (flags & WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL) != 0;
+            final boolean nonModal = ((flags & (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0);
             if (nonModal) continue;
             return HOVER_SWALLOWED;
         }
@@ -754,9 +706,7 @@ public final class WindowOverlayStack {
      */
     public static void drawWindow(android.graphics.Canvas canvas, Layer layer) {
         if (layer == null || layer.view == null) return;
-        if (WINDOW_SHADOW) {
-            try { drawWindowShadow(canvas, layer.view); } catch (Throwable ignored) { }
-        }
+        try { drawWindowShadow(canvas, layer.view); } catch (Throwable ignored) { }
         layer.view.draw(canvas);
     }
 
@@ -788,7 +738,7 @@ public final class WindowOverlayStack {
             r.set(outline.mRect);
             radius = Math.max(0f, outline.mRadius);
         } else if (outline.mMode == android.graphics.Outline.MODE_PATH && outline.mPath != null
-                && !Float.isNaN(outline.macapkPathShadowRadius)) {
+                && !Float.isNaN(GfxBackend.get().outlinePathShadowRadius(outline))) {
             // A rect with mixed corner radii (GradientDrawable's radius array, a
             // usual popup-menu background): cast the round rect of its bounds and
             // its largest corner radius, which lies inside the shape, so the
@@ -797,7 +747,7 @@ public final class WindowOverlayStack {
             outline.mPath.computeBounds(pb, true);
             r.set(Math.round(pb.left), Math.round(pb.top), Math.round(pb.right), Math.round(pb.bottom));
             if (r.isEmpty()) return;
-            radius = Math.max(0f, outline.macapkPathShadowRadius);
+            radius = Math.max(0f, GfxBackend.get().outlinePathShadowRadius(outline));
         } else {
             // EMPTY casts nothing (AOSP too). Any other convex PATH is skipped
             // rather than approximated: a square shadow under a rounded panel
@@ -888,27 +838,13 @@ public final class WindowOverlayStack {
      * NOT something to pay 60x/sec for a mostly-static dialog. See
      * docs/gl-overlay-dialog-compositing_2026-07-23.md.
      */
-    /** MACAPK_OVERLAY_OWNER_THREAD (default ON, 2026-10-05; =0 = measure, lay out
-     *  and draw on the calling OS-main render thread, as before). A window's
-     *  views belong to the thread that created them (AOSP ViewRootImpl.checkThread):
-     *  measure, layout and draw run on the app's main thread, never on the
-     *  compositor. The GL path called this from SurfaceView.macapkDrawFrame on
-     *  the OS-main thread every frame while the app's main thread was filling the
-     *  same dialog, so two threads ran one ConstraintLayout solver at once:
-     *  Asphalt Legends' Didomi consent dialog threw ArrayIndexOutOfBounds /
-     *  NullPointerException inside androidx.constraintlayout.core on both threads
-     *  and the game stayed on its title screen after it. Now the render thread
-     *  posts ONE coalesced owner-only message and the owner does the whole pass;
-     *  the native present it ends in already dispatches to the AppKit thread. */
-    static final boolean OVERLAY_OWNER_THREAD =
-        !"0".equals(System.getenv("MACAPK_OVERLAY_OWNER_THREAD"));
     private static final java.util.concurrent.atomic.AtomicBoolean sOwnerPassPending =
         new java.util.concurrent.atomic.AtomicBoolean(false);
     private static volatile int sPendingW, sPendingH;
     private static android.os.Handler sOwnerHandler;
 
     public static void presentForGl(int surfaceW, int surfaceH) {
-        if (OVERLAY_OWNER_THREAD && !android.os.Looper.macapkIsActivityThread()
+        if (!android.os.Looper.macapkIsActivityThread()
                 && android.os.Looper.macapkRealMainLoopRunning()) {
             // Nothing showing and nothing left on screen: stay off the queue.
             if (!sGlOverlayShowing && isEmpty()) return;
@@ -982,7 +918,7 @@ public final class WindowOverlayStack {
             } catch (Throwable ignored) { }
         }
 
-        if (RERASTER_ON_RELAYOUT && !sDirty) {
+        if (!sDirty) {
             for (Layer layer : layers) {
                 final boolean drawn = layer.view != null
                         && layer.view.getVisibility() == View.VISIBLE;
@@ -1032,7 +968,7 @@ public final class WindowOverlayStack {
             // available (Bitmap.macapkLiveArgbOrNull: read-only, on this drawing
             // thread, before any further draw), and BEFORE recycle -- the native
             // present copies synchronously. The copying fallback is unchanged.
-            int[] pixels = bmp.macapkLiveArgbOrNull();
+            int[] pixels = GfxBackend.get().liveArgbOrNull(bmp);
             if (pixels == null) {
                 pixels = new int[surfaceW * surfaceH];
                 bmp.getPixels(pixels, 0, surfaceW, 0, 0, surfaceW, surfaceH);
@@ -1040,7 +976,6 @@ public final class WindowOverlayStack {
             final PresentSink sink = sPresentSink;
             if (sink != null) sink.present(pixels, surfaceW, surfaceH);
             else NativeCocoa.presentOverlayBitmap(pixels, surfaceW, surfaceH);
-            if (!OVERLAY_REUSE) bmp.recycle();
             sGlOverlayShowing = true;
             sDirty = false;
             // What this raster drew, for RERASTER_ON_RELAYOUT's next comparison.
@@ -1073,38 +1008,7 @@ public final class WindowOverlayStack {
         }
     }
 
-    /** MACAPK_OVERLAY_NOTFOCUSABLE_NONMODAL, default ON (2026-09-29): a
-     *  FLAG_NOT_FOCUSABLE overlay is not touch-modal (AOSP LayoutParams.isModal),
-     *  so an outside touch falls through to the layers / activity below it.
-     *  The same test also delivers ACTION_OUTSIDE to a FLAG_NOT_TOUCH_MODAL layer
-     *  that asked for it (FLAG_WATCH_OUTSIDE_TOUCH), on the DOWN only. */
-    static final boolean NOT_FOCUSABLE_IS_NOT_MODAL =
-        !"0".equals(System.getenv("MACAPK_OVERLAY_NOTFOCUSABLE_NONMODAL"));
 
-    /** MACAPK_OVERLAY_GESTURE_PIN, default ON (2026-09-29): a touch gesture belongs
-     *  to the window that took its DOWN for its whole life, as on a device.
-     *  Native InputDispatcher records the touched window(s) at ACTION_DOWN and
-     *  sends every later MOVE/UP/CANCEL of that pointer to them, wherever the
-     *  pointer is and whatever has been added or removed since; a window that is
-     *  REMOVED mid-gesture gets a CANCEL and the rest of the gesture is not
-     *  redirected to whatever is now underneath (TouchState /
-     *  InputDispatcher::dispatchMotionLocked, frameworks/native/services/
-     *  inputflinger/dispatcher). This stack instead re-hit-tested every event
-     *  against the CURRENT layers, so (a) a popup / balloon / dropdown that
-     *  dismissed itself on the DOWN handed the matching UP to the layer or the
-     *  Activity behind it -- a tap on Wikipedia's tooltip balloon closed it AND
-     *  clicked the article header image behind both windows, opening the gallery
-     *  (owner hand test 2026-09-29: "Gets stuck on pop ups"), and a tap outside
-     *  a Spinner dropdown dismissed it and pressed the widget under it; (b) a
-     *  dialog that appeared mid-gesture received an orphan UP for a DOWN it never
-     *  saw; (c) a drag that left its window's bounds turned into ACTION_OUTSIDE
-     *  events and its UP never arrived. =0 restores the per-event hit test. */
-    static final boolean GESTURE_PIN = !"0".equals(System.getenv("MACAPK_OVERLAY_GESTURE_PIN"));
-    /** MACAPK_OVERLAY_RAW_SCREEN (default ON): a floating window's MotionEvent
-     *  carries SCREEN coordinates as its raw values and the window frame as its
-     *  offset, as AOSP's InputDispatcher delivers it (see dispatchTo). =0: raw
-     *  equals the window-local point, the pre-2026-09-30 behaviour. */
-    static final boolean RAW_SCREEN = !"0".equals(System.getenv("MACAPK_OVERLAY_RAW_SCREEN"));
     private static final int PIN_NONE = 0, PIN_ACTIVITY = 1, PIN_OVERLAY = 2;
     private static int sPinKind = PIN_NONE;
     private static Layer sPinLayer;
@@ -1119,7 +1023,6 @@ public final class WindowOverlayStack {
      *  until deliverTouch pins an overlay, the new gesture is the Activity's
      *  (a dialog that appears mid-gesture must not steal it). */
     public static void macapkGestureDown() {
-        if (!GESTURE_PIN) return;
         sPinKind = PIN_ACTIVITY; sPinLayer = null; sPinOutside = false;
     }
 
@@ -1127,7 +1030,7 @@ public final class WindowOverlayStack {
      *  that has since been removed, so the stack may be EMPTY and the rest of the
      *  gesture still has to be swallowed rather than handed to the Activity. */
     public static boolean gesturePinnedToOverlay() {
-        return GESTURE_PIN && sPinKind == PIN_OVERLAY;
+        return sPinKind == PIN_OVERLAY;
     }
 
     /**
@@ -1170,35 +1073,31 @@ public final class WindowOverlayStack {
     public static boolean deliverTouch(int action, float contentX, float contentY) {
         final List<Layer> layers = snapshot();
         final boolean end = action == 1 /* UP */ || action == 3 /* CANCEL */;
-        if (GESTURE_PIN) {
-            if (action == 0 /* DOWN */) {
-                clearPin();
-            } else if (sPinKind == PIN_ACTIVITY) {
-                // The Activity's gesture: an overlay that showed up after its DOWN
-                // does not receive the rest of it.
+        if (action == 0 /* DOWN */) {
+            clearPin();
+        } else if (sPinKind == PIN_ACTIVITY) {
+            // The Activity's gesture: an overlay that showed up after its DOWN
+            // does not receive the rest of it.
+            if (end) clearPin();
+            return false;
+        } else if (sPinKind == PIN_OVERLAY) {
+            final Layer pinned = sPinLayer;
+            if (pinned == null || !layers.contains(pinned)) {
+                // Removed mid-gesture: AOSP cancels the window and the rest of the
+                // gesture goes nowhere.
                 if (end) clearPin();
-                return false;
-            } else if (sPinKind == PIN_OVERLAY) {
-                final Layer pinned = sPinLayer;
-                if (pinned == null || !layers.contains(pinned)) {
-                    // Removed mid-gesture: AOSP cancels the window and the rest of the
-                    // gesture goes nowhere.
-                    if (end) clearPin();
-                    return true;
-                }
-                if (!sPinOutside && pinned.view != null) {
-                    dispatchTo(pinned.view, pinned, action, contentX, contentY, 0);
-                    sDirty = true;
-                    if (end) clearPin();
-                    return true;
-                }
+                return true;
+            }
+            if (!sPinOutside && pinned.view != null) {
+                dispatchTo(pinned.view, pinned, action, contentX, contentY, 0);
+                sDirty = true;
+                if (end) clearPin();
+                return true;
             }
         }
         final boolean consumed = hitTestDeliver(layers, action, contentX, contentY);
-        if (GESTURE_PIN) {
-            if (action == 0 && !consumed) sPinKind = PIN_ACTIVITY;
-            if (end) clearPin();
-        }
+        if (action == 0 && !consumed) sPinKind = PIN_ACTIVITY;
+        if (end) clearPin();
         return consumed;
     }
 
@@ -1212,7 +1111,7 @@ public final class WindowOverlayStack {
 
             boolean inside = layer.bounds.contains((int) contentX, (int) contentY);
             if (inside) {
-                if (GESTURE_PIN && action == 0) { sPinKind = PIN_OVERLAY; sPinLayer = layer; sPinOutside = false; }
+                if (action == 0) { sPinKind = PIN_OVERLAY; sPinLayer = layer; sPinOutside = false; }
                 dispatchTo(v, layer, action, contentX, contentY, 0 /* MotionEvent.ACTION_DOWN base */);
                 sDirty = true;  // e.g. a Button's pressed-state drawable changed
                 return true;
@@ -1236,13 +1135,10 @@ public final class WindowOverlayStack {
             // tooltip, owner hand test 2026-09-29: "Gets stuck on pop ups").
             // MACAPK_OVERLAY_NOTFOCUSABLE_NONMODAL=0 restores the old treatment
             // (NOT_TOUCH_MODAL only, and no ACTION_OUTSIDE to it).
-            final boolean nonModal = NOT_FOCUSABLE_IS_NOT_MODAL
-                ? (flags & (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
-                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0
-                : (flags & WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL) != 0;
+            final boolean nonModal = ((flags & (WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                        | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)) != 0);
             if (nonModal) {
-                if (NOT_FOCUSABLE_IS_NOT_MODAL
-                        && (flags & WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH) != 0
+                if ((flags & WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH) != 0
                         && action == 0 /* ACTION_DOWN */) {
                     dispatchTo(v, layer, 4 /* ACTION_OUTSIDE */, contentX, contentY, 4);
                     sDirty = true;
@@ -1260,7 +1156,7 @@ public final class WindowOverlayStack {
                         + " at (" + contentX + "," + contentY + ")");
                 } catch (Throwable ignored) { }
             }
-            if (GESTURE_PIN && action == 0) { sPinKind = PIN_OVERLAY; sPinLayer = layer; sPinOutside = true; }
+            if (action == 0) { sPinKind = PIN_OVERLAY; sPinLayer = layer; sPinOutside = true; }
             dispatchTo(v, layer, 4 /* ACTION_OUTSIDE */, contentX, contentY, 4);
             // AOSP Window.shouldCloseOnTouch: an ACTION_OUTSIDE (or an ACTION_UP
             // landing outside the decor) cancels a dialog that is cancelable and
@@ -1327,12 +1223,8 @@ public final class WindowOverlayStack {
         // (contentX + (D - left)) and the old one twice ((contentX - left) + D).
         // MACAPK_OVERLAY_RAW_SCREEN=0 restores raw == local, exact.
         android.view.MotionEvent ev;
-        if (RAW_SCREEN) {
-            ev = TouchDispatcher.touchEvent(down, t, action, contentX, contentY, 0);
-            ev.offsetLocation(-layer.bounds.left, -layer.bounds.top);
-        } else {
-            ev = TouchDispatcher.touchEvent(down, t, action, lx, ly, 0);
-        }
+        ev = TouchDispatcher.touchEvent(down, t, action, contentX, contentY, 0);
+        ev.offsetLocation(-layer.bounds.left, -layer.bounds.top);
         try { v.dispatchTouchEvent(ev); }
         catch (Throwable thr) { try { NativeLog.w("Mac.apk.Overlay", "overlay touch threw: " + thr); } catch (Throwable ig) {} }
         finally { ev.recycle(); }

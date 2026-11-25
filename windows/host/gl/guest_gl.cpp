@@ -16,6 +16,10 @@
 //   * eglChooseConfig asks for pbuffer configs instead of window ones and drops
 //     the Android-only attributes ANGLE rejects (upstream drops
 //     EGL_RECORDABLE_ANDROID too);
+//   * eglSwapBuffers on a window surface returns at the display's rate for its
+//     swap interval (eglSwapInterval, 1 unless the app sets it), as a
+//     BufferQueue that SurfaceFlinger empties once per vsync makes it on a
+//     device (swap_pacing.h); a pbuffer has no vsync of its own;
 //   * eglGetProcAddress answers with the System V functions, and the debug
 //     callback, which ANGLE would call with the Microsoft convention, is not
 //     installed.
@@ -26,6 +30,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <GLES3/gl32.h>
@@ -33,11 +38,15 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include <windows.h>
+
 #include "winapk/guest_abi.h"
 
 #include "gl/gl_loader.h"
 #include "gl/gl_surface.h"
+#include "gl/guest_gl_extensions.h"
 #include "native_window.h"
+#include "swap_pacing.h"
 
 typedef khronos_int32_t GLclampx;
 
@@ -74,6 +83,9 @@ struct WindowSurface {
     // its handle is bound by EGL14 itself, which knows no pbuffer behind it,
     // so it is never replaced by a larger one.
     bool fixed = false;
+    // eglSwapInterval's, clamped to the config's range: the vsync periods a
+    // presenting swap takes (swap_pacing.h). EGL's default is 1.
+    int interval = 1;
 };
 
 // The window's size: what the app should draw (eglQuerySurface) and what the
@@ -275,6 +287,40 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglCopyBuffers(EGLDisplay dpy, EGLSurface surf
     return eglCopyBuffers(dpy, real_of(surface), target);
 }
 
+// The swap interval of the surface current on this thread. A window surface
+// keeps it for its swaps (ANGLE's pbuffer would ignore it); any other is
+// ANGLE's.
+WINAPK_GUEST_ABI EGLBoolean guest_eglSwapInterval(EGLDisplay dpy, EGLint interval) {
+    const EGLSurface handle = handle_of(eglGetCurrentSurface(EGL_DRAW));
+    std::lock_guard<std::mutex> hold(g_lock);
+    auto it = g_window_surfaces.find(handle);
+    if (it == g_window_surfaces.end()) return eglSwapInterval(dpy, interval);
+    EGLint lo = 0, hi = 1;
+    eglGetConfigAttrib(dpy, it->second.config, EGL_MIN_SWAP_INTERVAL, &lo);
+    eglGetConfigAttrib(dpy, it->second.config, EGL_MAX_SWAP_INTERVAL, &hi);
+    it->second.interval = interval < lo ? lo : interval > hi ? hi : interval;
+    return EGL_TRUE;
+}
+
+// Blocks the calling thread for ns on a high-resolution waitable timer, the
+// thread's own (Windows 10 1803 and later; a plain one, at the scheduler's
+// granularity, before).
+void wait_ns(int64_t ns) {
+    if (ns <= 0) return;
+    thread_local HANDLE timer = [] {
+        HANDLE t = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
+        return t ? t : CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+    }();
+    if (!timer) {
+        Sleep(static_cast<DWORD>(ns / 1000000));
+        return;
+    }
+    LARGE_INTEGER due;
+    due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
+    SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+    WaitForSingleObject(timer, INFINITE);
+}
+
 WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     WindowSurface ws;
     {
@@ -288,55 +334,34 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     if (eglGetCurrentSurface(EGL_DRAW) != ws.real) return EGL_TRUE;
     int w = 0, h = 0;
     live_size(ws, &w, &h);
-    // The readback hands the frame to the CPU for the window's GDI compositor.
-    // Synchronous by default (glReadPixels, as since the window surface was
-    // added): the GL thread stalls on the GPU->CPU copy, but every app draws.
-    //
-    // WINAPK_GL_ASYNC_READBACK=1 opts into the asynchronous double pixel pack
-    // buffer, which hides that stall at a cost of one frame of latency. It is
-    // not the default because an on-demand renderer (a Flutter UI that draws a
-    // burst then idles, e.g. localsend) swaps too rarely for a one-frame
-    // pipeline -- its final frame is left in a buffer, never presented, and the
-    // window stays blank, with no later tick on the app's own GL thread to flush
-    // it. Even opted in, async engages only once the app has proven it renders
-    // continuously (a long run of swaps under 40 ms apart); any pause reverts to
-    // synchronous at once, so an on-demand UI keeps drawing. Timed on the GL
-    // thread so the two are comparable.
+    // The readback hands the frame to the CPU for the window's GDI compositor:
+    // glReadPixels, which stalls the GL thread on the GPU->CPU copy. An
+    // asynchronous double pixel pack buffer was tried behind an opt-in switch
+    // (WINAPK_GL_ASYNC_READBACK) and removed: its one frame of latency left an
+    // on-demand renderer's last frame (a Flutter UI that draws a burst, then
+    // idles) in a buffer, never presented. Timed on the GL thread.
     using clock = std::chrono::steady_clock;
     thread_local std::vector<uint32_t> argb;
     thread_local long long frames = 0, read_ns = 0, present_ns = 0;
-    thread_local clock::time_point last_swap{};
-    thread_local bool have_last = false;
-    thread_local int fast_streak = 0;
     const auto t0 = clock::now();
-    const double gap_ms = have_last ? std::chrono::duration<double, std::milli>(t0 - last_swap).count() : 1e9;
-    last_swap = t0;
-    have_last = true;
-    constexpr int kAsyncAfter = 90;  // ~1.5 s of unbroken 60 fps before trusting the stream
-    if (gap_ms < 40.0) {
-        if (fast_streak <= kAsyncAfter) ++fast_streak;
-    } else {
-        fast_streak = 0;
-    }
-    const bool use_async = gl_async_readback_enabled() && fast_streak >= kAsyncAfter;
-    int pw = w, ph = h;
-    bool present = true;
-    if (use_async) {
-        present = gl_read_current_async(&argb, w, h, &pw, &ph);
-    } else {
-        gl_read_current(&argb, w, h);
-    }
+    gl_read_current(&argb, w, h);
     const auto t1 = clock::now();
-    if (present) guest_frame_present(argb.data(), pw, ph);
+    guest_frame_present(argb.data(), w, h);
     const auto t2 = clock::now();
     read_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
     present_ns += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
     if (++frames % 120 == 0) {
         std::fprintf(stderr,
-                     "[win.apk] GL: window surface frames %lld: readback %.2f ms present %.2f ms (%s, avg of 120)\n",
-                     frames, read_ns / 120.0 / 1e6, present_ns / 120.0 / 1e6, use_async ? "async" : "sync");
+                     "[win.apk] GL: window surface frames %lld: readback %.2f ms present %.2f ms (avg of 120)\n",
+                     frames, read_ns / 120.0 / 1e6, present_ns / 120.0 / 1e6);
         read_ns = present_ns = 0;
     }
+    // The frame is out; the producer waits for its next vsync slot, as a full
+    // BufferQueue would make it (swap_pacing.h). Timed on this thread, whose
+    // swaps these are.
+    thread_local SwapPacer pacer;
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count();
+    wait_ns(pacer.wait_ns(now_ns, ws.interval));
     // The window outgrew the pbuffer (this frame was read from the part that
     // fits): the next frame gets one that holds it.
     int ww = 0, wh = 0;
@@ -402,6 +427,46 @@ WINAPK_EGL_EXT(EGLint, eglWaitSyncKHR, (EGLDisplay d, EGLSyncKHR s, EGLint f), (
 WINAPK_EGL_EXT(EGLBoolean, eglGetSyncAttribKHR, (EGLDisplay d, EGLSyncKHR s, EGLint a, EGLint* v), (d, s, a, v))
 #undef WINAPK_EGL_EXT
 
+// ---- the extension lists a guest is told (guest_gl_extensions.h) ----
+
+WINAPK_GUEST_ABI const GLubyte* guest_glGetString(GLenum name) {
+    const GLubyte* s = glGetString(name);
+    if (name != GL_EXTENSIONS || !s) return s;
+    return reinterpret_cast<const GLubyte*>(guest_extensions_filtered(reinterpret_cast<const char*>(s)));
+}
+
+// The driver's indices of the extensions a guest may see, in order, for the current context.
+std::vector<GLuint> allowed_indices() {
+    GLint n = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    std::vector<GLuint> out;
+    for (GLint i = 0; i < n; ++i) {
+        const GLubyte* e = glGetStringi(GL_EXTENSIONS, static_cast<GLuint>(i));
+        if (e && guest_extension_allowed(reinterpret_cast<const char*>(e))) out.push_back(static_cast<GLuint>(i));
+    }
+    return out;
+}
+
+WINAPK_GUEST_ABI const GLubyte* guest_glGetStringi(GLenum name, GLuint index) {
+    if (name != GL_EXTENSIONS) return glGetStringi(name, index);
+    const std::vector<GLuint> allowed = allowed_indices();
+    if (index >= allowed.size()) return glGetStringi(name, 0x7fffffff);  // the driver's GL_INVALID_VALUE
+    return glGetStringi(name, allowed[index]);
+}
+
+WINAPK_GUEST_ABI void guest_glGetIntegerv(GLenum pname, GLint* data) {
+    if (pname == GL_NUM_EXTENSIONS && data) {
+        *data = static_cast<GLint>(allowed_indices().size());
+        return;
+    }
+    glGetIntegerv(pname, data);
+}
+
+WINAPK_GUEST_ABI const char* guest_eglQueryString(EGLDisplay dpy, EGLint name) {
+    const char* s = eglQueryString(dpy, name);
+    return name == EGL_EXTENSIONS ? guest_extensions_filtered(s) : s;
+}
+
 WINAPK_GUEST_ABI void guest_glDebugMessageCallback(GLDEBUGPROC, const void*) {}
 WINAPK_GUEST_ABI void guest_glDebugMessageCallbackKHR(GLDEBUGPROCKHR, const void*) {}
 
@@ -428,6 +493,7 @@ const std::unordered_map<std::string, void*>& symbols() {
         WINAPK_GUEST_GL(eglReleaseTexImage),
         WINAPK_GUEST_GL(eglCopyBuffers),
         WINAPK_GUEST_GL(eglSwapBuffers),
+        WINAPK_GUEST_GL(eglSwapInterval),
         WINAPK_GUEST_GL(eglQuerySurface),
         {"eglSwapBuffersWithDamageKHR", reinterpret_cast<void*>(&guest_eglSwapBuffersWithDamage)},
         {"eglSwapBuffersWithDamageEXT", reinterpret_cast<void*>(&guest_eglSwapBuffersWithDamage)},
@@ -444,6 +510,10 @@ const std::unordered_map<std::string, void*>& symbols() {
         WINAPK_GUEST_GL(eglGetProcAddress),
         WINAPK_GUEST_GL(glDebugMessageCallback),
         WINAPK_GUEST_GL(glDebugMessageCallbackKHR),
+        WINAPK_GUEST_GL(glGetString),
+        WINAPK_GUEST_GL(glGetStringi),
+        WINAPK_GUEST_GL(glGetIntegerv),
+        WINAPK_GUEST_GL(eglQueryString),
     };
     return m;
 }
@@ -453,7 +523,13 @@ const std::unordered_map<std::string, void*>& symbols() {
 WINAPK_GUEST_ABI __eglMustCastToProperFunctionPointerType guest_eglGetProcAddress(const char* name) {
     if (!name) return nullptr;
     auto it = symbols().find(name);
-    return it == symbols().end() ? nullptr : reinterpret_cast<__eglMustCastToProperFunctionPointerType>(it->second);
+    if (it != symbols().end()) return reinterpret_cast<__eglMustCastToProperFunctionPointerType>(it->second);
+    // Each name once: what an app looked for and could not get is what to add next.
+    static std::mutex lock;
+    static std::unordered_set<std::string> told;
+    std::lock_guard<std::mutex> hold(lock);
+    if (told.insert(name).second) std::fprintf(stderr, "[win.apk] GL: eglGetProcAddress(%s): no such function here\n", name);
+    return nullptr;
 }
 
 }  // namespace
@@ -498,6 +574,11 @@ int surface_view_window_swap(void* dpy, void* surface) {
 void surface_view_window_destroyed(void* surface) {
     std::lock_guard<std::mutex> hold(g_lock);
     g_window_surfaces.erase(surface);
+}
+
+bool guest_window_surface_held() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return !g_window_surfaces.empty();
 }
 
 void* guest_gl_resolve(const char* name) {

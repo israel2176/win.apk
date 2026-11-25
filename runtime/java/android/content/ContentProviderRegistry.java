@@ -43,7 +43,7 @@ public final class ContentProviderRegistry {
      *  `authorities` is the raw android:authorities string, which may be
      *  a ';'-separated list (AOSP ContentProvider supports multiple
      *  authorities per provider). Called from
-     *  com.macapk.loader.Boot.installAutoInitProviders after the
+     *  ActivityThread.installContentProviders after the
      *  provider's attachInfo()+onCreate() succeed, mirroring the point
      *  where ActivityThread.installProvider publishes into mProviderMap. */
     public static void register(String authorities, ContentProvider provider) {

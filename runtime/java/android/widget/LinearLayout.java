@@ -174,7 +174,7 @@ public class LinearLayout extends ViewGroup {
         try {
             android.content.pm.ApplicationInfo ai =
                     (context != null) ? context.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                 targetSdkVersion = ai.targetSdkVersion;
                 resolved = true;
             }
@@ -438,11 +438,6 @@ public class LinearLayout extends ViewGroup {
         // Tier 3 M5 is gated on MACAPK_REAL_LOOPER so the SHIPPED (flag-off)
         // build keeps the historical behavior exactly: LinearLayout inherited
         // the generic ViewGroup.onMeasure/onLayout and the ViewCanvasDriver
-        // fixup hacks did the real stacking. Flag-on takes the faithful path.
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-            return;
-        }
         if (macapkOrientation == VERTICAL) {
             measureVertical(widthMeasureSpec, heightMeasureSpec);
         } else {
@@ -451,10 +446,6 @@ public class LinearLayout extends ViewGroup {
     }
 
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            super.onLayout(changed, l, t, r, b);
-            return;
-        }
         if (macapkOrientation == VERTICAL) {
             layoutVertical(l, t, r, b);
         } else {
@@ -1222,12 +1213,6 @@ public class LinearLayout extends ViewGroup {
         // Flag-off: keep the historical (inherited ViewGroup) default so the
         // shipped build is unchanged. Flag-on: AOSP LinearLayout default --
         // HORIZONTAL -> WRAP x WRAP, VERTICAL -> MATCH x WRAP (so an
-        // addView-without-LP child fills the cross axis as on real Android).
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            // Historical default (WRAP x WRAP), now typed as LinearLayout.LayoutParams
-            // to match AOSP's covariant override (the demanded descriptor).
-            return new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-        }
         if (macapkOrientation == HORIZONTAL) {
             return new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
         }
@@ -1240,11 +1225,8 @@ public class LinearLayout extends ViewGroup {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof LinearLayout.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
 
     /** AOSP LinearLayout.generateLayoutParams(AttributeSet), android14-release
      *  LinearLayout.java:1977-1980:
@@ -1286,16 +1268,10 @@ public class LinearLayout extends ViewGroup {
      *  answer here AND the unseeded 0x0 LayoutParams(Context, AttributeSet). */
     @Override
     public ViewGroup.LayoutParams generateLayoutParams(android.util.AttributeSet attrs) {
-        if (!LayoutParams.MACAPK_GENLP_ATTRS) return super.generateLayoutParams(attrs);
         return new LayoutParams(getContext(), attrs);
     }
 
     public static class LayoutParams extends ViewGroup.MarginLayoutParams {
-        /** The MACAPK_LL_GENLP_ATTRS bisect gate (see generateLayoutParams(AttributeSet)
-         *  above). Lives here rather than on LinearLayout so constructing a
-         *  LayoutParams never forces LinearLayout's own class initialisation. */
-        static final boolean MACAPK_GENLP_ATTRS =
-            !"0".equals(System.getenv("MACAPK_LL_GENLP_ATTRS"));
 
         public float weight = 0f;
         public int   gravity = -1;
@@ -1323,7 +1299,7 @@ public class LinearLayout extends ViewGroup {
          *  can see this default move. */
         public LayoutParams(Context c, android.util.AttributeSet attrs) {
             super();
-            if (MACAPK_GENLP_ATTRS) { width = WRAP_CONTENT; height = WRAP_CONTENT; } // w5linearlp-seed
+            { width = WRAP_CONTENT; height = WRAP_CONTENT; } // w5linearlp-seed
         }
 
         /** AOSP LinearLayout.java:2146 -- the ViewGroup.LayoutParams.debug()

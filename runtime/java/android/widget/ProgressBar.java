@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.AttributeSet;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 
 public class ProgressBar extends View {
     private static final String ANDROID_NS = "http://schemas.android.com/apk/res/android";
@@ -138,9 +139,6 @@ public class ProgressBar extends View {
     //     progressBarLoadingPanel.getIndeterminateDrawable().setColorFilter(WHITE, MULTIPLY)
     // and threw NullPointerException out of PlayerService.onStartCommand, so no
     // video ever played. AbsSeekBar reads `thumb` the same way.
-    // =0: no styled read at all, exactly as before.
-    static final boolean PROGRESS_STYLED_DRAWABLES =
-        !"0".equals(System.getenv("MACAPK_PROGRESS_STYLED_DRAWABLES"));
     /** android.R.attr.progressDrawable / indeterminateDrawable (SDK-34 R$attr). */
     private static final int[] MACAPK_STYLED_PROGRESS_ATTRS = { 0x0101013c, 0x0101013b };
     /** True while mIndeterminateDrawable is the one the STYLE supplied (not an
@@ -154,7 +152,7 @@ public class ProgressBar extends View {
 
     private void macapkApplyStyledDrawables(Context context, AttributeSet attrs,
                                             int defStyleAttr, int defStyleRes) {
-        if (!PROGRESS_STYLED_DRAWABLES || context == null) return;
+        if (context == null) return;
         android.content.res.TypedArray a = null;
         try {
             a = context.obtainStyledAttributes(attrs, MACAPK_STYLED_PROGRESS_ATTRS,
@@ -208,8 +206,6 @@ public class ProgressBar extends View {
      *  the primary level of a drawable with no layers. */
     private void macapkRefreshLevel(int id) {
         // Under MACAPK_PROGRESS_STYLED_DRAWABLES=0 no level is ever set, so the
-        // =0 arm is the pre-change widget for an app-installed drawable too.
-        if (!PROGRESS_STYLED_DRAWABLES) return;
         final android.graphics.drawable.Drawable cur = mCurrentDrawable;
         if (cur == null || indeterminate) return;
         final int range = max - min;
@@ -546,7 +542,7 @@ public class ProgressBar extends View {
             float left = (w - d) / 2f, top = (h - d) / 2f;
             mPaint.setStyle(android.graphics.Paint.Style.STROKE);
             mPaint.setStrokeWidth(Math.max(2f, d * 0.1f));
-            mPaint.setColor(android.content.res.Resources.macapkThemeColor(
+            mPaint.setColor(ResBackend.get().themeColor(
                 "colorPrimary", 0xFF1976D2));
             long phase = SystemClock.uptimeMillis() % INDETERMINATE_PERIOD_MS;
             float startAngle = phase * 360f / INDETERMINATE_PERIOD_MS;
@@ -563,7 +559,7 @@ public class ProgressBar extends View {
                 canvas.drawRect(0, 0, w * secFrac, h, mPaint);
             }
             if (progFrac > 0f) {
-                mPaint.setColor(android.content.res.Resources.macapkThemeColor(
+                mPaint.setColor(ResBackend.get().themeColor(
                     "colorPrimary", 0xFF1976D2));
                 canvas.drawRect(0, 0, w * progFrac, h, mPaint);
             }
@@ -922,5 +918,16 @@ public class ProgressBar extends View {
             drawable = newBg;
         }
         return drawable;
+    }
+
+    // ---- Accessibility: AOSP ProgressBar (android-14), for a screen reader ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        if (!isIndeterminate()) {
+            info.setRangeInfo(android.view.accessibility.AccessibilityNodeInfo.RangeInfo.obtain(android.view.accessibility.AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT, getMin(), getMax(),
+                    getProgress()));
+        }
     }
 }

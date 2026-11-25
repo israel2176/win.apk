@@ -45,7 +45,7 @@ public class ContextThemeWrapper extends ContextWrapper {
     // one AntennaPod boot (MACAPK_TRACE_DEFSTYLE, 2026-08-01), the M2-shaped
     // 63dp bottom bar, and the unstyled toolbar title.
     public static final boolean MACAPK_VIEW_THEME =
-        macapkFlagOn(System.getenv("MACAPK_VIEW_THEME"), true);
+        macapkFlagOn(null, true);
 
     private static boolean macapkFlagOn(String v, boolean dflt) {
         if (v == null || v.isEmpty()) return dflt;
@@ -218,6 +218,16 @@ public class ContextThemeWrapper extends ContextWrapper {
      *  its state contract. */
     private android.content.res.Configuration macapkOverrideConfiguration;
 
+    /** AOSP ContextThemeWrapper.getResourcesInternal: the base's Resources, or with an override
+     *  configuration the Resources createConfigurationContext(override) has
+     *  (ResBackend.resourcesForConfiguration: the base's own with Win.apk's single-configuration
+     *  resources, so this answers what ContextWrapper's did). */
+    @Override public android.content.res.Resources getResources() {
+        android.content.res.Resources base = super.getResources();
+        if (macapkOverrideConfiguration == null || base == null) return base;
+        return com.macapk.loader.res.ResBackend.get().resourcesForConfiguration(base, macapkOverrideConfiguration);
+    }
+
     public void applyOverrideConfiguration(
             android.content.res.Configuration overrideConfiguration) {
         if (macapkOverrideConfiguration != null) {
@@ -267,8 +277,7 @@ public class ContextThemeWrapper extends ContextWrapper {
         if (macapkLocalTheme == null) {
             // v1.0.110: Theme is now a non-static inner class of
             // Resources; allocate a backing Resources for it.
-            android.content.res.Resources r =
-                new android.content.res.Resources(null, null, null);
+            android.content.res.Resources r = com.macapk.loader.res.ResBackend.get().placeholderResources();
             macapkLocalTheme = r.newTheme();
         }
         return macapkLocalTheme;
@@ -290,7 +299,7 @@ public class ContextThemeWrapper extends ContextWrapper {
     /** Gate MACAPK_CTW_INFLATER_SERVICE (default ON; =0 restores the old
      *  forward-to-base answer byte for byte). */
     static final boolean MACAPK_CTW_INFLATER_SERVICE =
-        macapkFlagOn(System.getenv("MACAPK_CTW_INFLATER_SERVICE"), true);
+        macapkFlagOn(null, true);
 
     /** AOSP ContextThemeWrapper.getSystemService (android14-release
      *  core/java/android/view/ContextThemeWrapper.java:181-189):

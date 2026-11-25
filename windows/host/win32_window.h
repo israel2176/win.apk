@@ -8,7 +8,7 @@
 // size of the box the window shows the app in (the whole client area, or a
 // letterbox inside it), so a frame at the right size is copied pixel for
 // pixel; GDI scales only when the app is meant to draw at another size (a
-// monitor with another scale, WINAPK_RESIZABLE=0). Input goes back out through
+// monitor with another scale). Input goes back out through
 // WindowInput, already translated to Android's MotionEvent and KeyEvent terms:
 //
 //   the mouse's left button   one finger on the touchscreen (pointer)
@@ -30,8 +30,10 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "pointer_input.h"
+#include "text_input_model.h"
 
 namespace winapk::host {
 
@@ -87,10 +89,13 @@ public:
     // unhide observer, which brings back a task that went to the back.
     virtual void restored() {}
     // The user gave the window another size (an edge dragged, maximized,
-    // snapped): the app's display is now w by h dp, as an Android desktop
-    // window's is, and its frames are expected w by h pixels. Called for
+    // snapped) or it moved to a monitor of another scale: the app's display
+    // is now w by h dp at density_dpi, as an Android desktop window's is, and
+    // its frames are expected w_px by h_px pixels. The density changes only
+    // with the scale the window shows the phone at (maximized: the phone
+    // turned; restored; another monitor's scale), never in a drag. Called for
     // every step of a drag.
-    virtual void resized(int /*w_dp*/, int /*h_dp*/, int /*w_px*/, int /*h_px*/) {}
+    virtual void resized(int /*w_dp*/, int /*h_dp*/, int /*w_px*/, int /*h_px*/, int /*density_dpi*/) {}
     // A size the user settled on (a drag ended, a snap), to keep for the
     // app's next start; not a maximized window's.
     virtual void remember_size(int /*w_dp*/, int /*h_dp*/) {}
@@ -101,33 +106,33 @@ public:
 
 // The box, in client pixels, that the app draws in, for a client area of cw by
 // ch pixels showing a phone of phone_w by phone_h (its aspect is all that
-// counts): the whole client area when the app follows the window; the largest
+// counts): the whole client area, as the app follows the window; the largest
 // box of the phone's aspect, centred, when the app fixed the other orientation
-// (lock: 0 any, 1 portrait, 2 landscape) or does not follow the window
-// (resizable false). With letterbox false the box is always the whole client
-// area (MACAPK_LETTERBOX=0). Pure; exposed for the window test.
+// (lock: 0 any, 1 portrait, 2 landscape). Pure; exposed for the window test.
 struct AppBox {
     int x = 0, y = 0, w = 0, h = 0;
 };
-AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool resizable, bool letterbox);
+AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock);
 
 // How a frame of fw by fh pixels is shown in a box of bw by bh when the app was
 // asked to draw sw by sh: copied pixel for pixel (the frame fills the box, up
 // to a pixel or two of rounding, centred), scaled to the box (the app draws at
 // the size it was asked to and the box has another: a monitor with another
-// scale, WINAPK_RESIZABLE=0), or copied unscaled at the box's top left (the
+// scale, a pinned density), or copied unscaled at the box's top left (the
 // frame is from before the last resize; the app has not drawn at the new size
-// yet, and a stretched frame would only pretend it has). Pure.
-enum class FramePresent { kExact, kScaled, kStale };
-FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh);
+// yet, and a stretched frame would only pretend it has). A frame of ow by oh,
+// the size asked before the last density change, is rescaled: the same
+// picture at the old density, made larger or smaller by the densities' ratio
+// from the box's top left, shown until the app draws at the new one. Pure.
+enum class FramePresent { kExact, kScaled, kStale, kRescaled };
+FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh, int ow = 0, int oh = 0);
 
 // The scale, in pixels per dp, the window will open at for a phone of phone_w
 // by phone_h dp: the scale of the monitor the app is started on, or less, so
 // that the whole window fits that monitor's work area (the screen without the
 // taskbar) with a small margin. Remembered for window_start. The runtime
 // makes the app's density from it (window_density_dpi), so the frames come at
-// the window's own pixel size. WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y>], in
-// pixels, stands in for the work area (testing; see win32_window.cpp).
+// the window's own pixel size.
 float window_plan(int phone_w, int phone_h);
 // Before window_plan: the app's window opens maximized (it was when the app
 // last ran), so the plan is for the phone turned to fill the screen.
@@ -137,7 +142,8 @@ void window_set_start_maximized(bool maximized);
 int window_density_dpi(float scale);
 
 // Creates the window (hidden) for a phone of phone_w by phone_h points, whose
-// frames come at surface_scale pixels per point (the app's density / 160).
+// frames come at surface_scale pixels per point (the app's density / 160; the
+// density follows the scale the window shows the phone at later on).
 // The window is fitted to its monitor's work area, at launch and whenever the
 // monitor, the work area or the phone's orientation changes. When the user
 // resizes it, the app follows (WindowInput::resized).
@@ -162,6 +168,18 @@ void* window_handle();
 // or a centred rect with the phone's aspect when the window has another shape
 // (maximized), with black bars around it. False when there is no window.
 bool window_phone_rect(int* x, int* y, int* w, int* h);
+// The inject driver's mouse (MACAPK_INJECT_FILE's hosttap, hostswipe, hostmouse, hostwheel and
+// magnify verbs): the window's own mouse messages posted to it, at (fx, fy), a fraction of the
+// phone's area. False with no window (headless) or a point outside [0,1].
+enum PostedMouse {
+    kPostLeftDown = 0, kPostLeftUp = 1, kPostMove = 2,  // NativeCocoa.postHostMouse's own three
+    kPostRightDown = 3, kPostRightUp = 4, kPostMiddleDown = 5, kPostMiddleUp = 6, kPostLeave = 7,
+};
+bool window_post_mouse(int action, float fx, float fy);
+// A wheel turned by `notches` (positive away from the user, or right), with Ctrl held: the pinch.
+bool window_post_wheel(float fx, float fy, float notches, bool horizontal, bool ctrl);
+// A trackpad's magnification (the scale grows by 1 + m) as the Ctrl+wheel notches that zoom as much.
+bool window_post_magnify(float fx, float fy, float magnification);
 // The app moved its task to the back or front (Activity.moveTaskToBack), or
 // is quitting.
 void window_minimize();
@@ -175,18 +193,12 @@ void window_set_background(uint32_t argb);
 // Where Ctrl+Shift+F12 saves a snapshot of the display (window_snapshot), and
 // the app's name for the files: the data directory's logs folder.
 void window_set_snapshot_dir(const std::wstring& dir, const std::wstring& app);
-// Copies the frame; it is painted on the UI thread. A frame at the size the
-// app was asked to draw is shown pixel for pixel (window_frame_present).
-void window_present(const uint32_t* argb, int w, int h);
-// A frame that differs from the one window_present last copied only inside
-// [l, r) x [t, b): `rows` holds that rectangle's pixels, row after row. Only
-// that part is copied, and repainted. False, with nothing done, when no frame
-// of this size is held (the caller then presents the whole frame).
-bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r, int b);
-// A layer drawn over the frame (dialogs over GL or surface content), scaled to
-// the frame, alpha-blended; cleared with window_clear_overlay.
-void window_set_overlay(const uint32_t* argb, int w, int h);
-void window_clear_overlay();
+// A frame the graphics DLL composed on the GPU reached the window (hwui_host.h).
+void window_gpu_presented(bool first);
+// A snapshot waits for the compositor's next frame as pixels (the box's, 0xAARRGGBB, top row
+// first): whether one is wanted, and the frame, from the render thread.
+bool window_frame_wanted();
+void window_frame_pixels(const uint32_t* argb, int w, int h);
 // Keeps the window out of screenshots and screen sharing (FLAG_SECURE).
 void window_set_secure(bool secure);
 
@@ -198,6 +210,46 @@ void window_set_secure(bool secure);
 // window forward. Without the variable both do nothing (headless runs, tests).
 void take_launcher_ready_event();
 void signal_launcher_ready();
+
+// ---- text input: the focused editor for Windows' text services, and the touch keyboard ----
+//
+// The editor side (WindowsTextInput.java, on the editor's thread) tells the window which
+// editor has the focus and sends a copy of it (text_input_model.h's Snapshot) and where it drew
+// its characters (Layout) whenever they changed; the window's thread keeps a TSF document over
+// it for Windows' input methods (tsf_session.h), whose edits go back to the editor through the
+// TextInputClient, one per TSF lock. Nothing of TSF exists before the first editor takes the
+// focus. Where TSF cannot be set up, input methods compose through IMM32 ("input methods" in
+// win32_window.cpp). Any thread; nothing happens without a window.
+
+struct WindowTextField {
+    int epoch = 0;        // the editor: a new one, a new epoch
+    int input_type = 0;   // EditorInfo.inputType
+    int ime_options = 0;  // EditorInfo.imeOptions
+    // The editor side hears of every change itself (an Editable it watches): no need to ask it
+    // after each key and touch (TextInputClient::sync).
+    bool watched = false;
+};
+
+// Called on the window's thread.
+class TextInputClient {
+public:
+    virtual ~TextInputClient() = default;
+    // What a text service did in one lock, for the editor.
+    virtual void edit(const textinput::Edit& e) = 0;
+    // A key, a character or a touch went to an editor whose changes the editor side does not
+    // watch: it sends a fresh copy.
+    virtual void sync(int epoch) = 0;
+};
+void window_text_client(TextInputClient* client);
+
+void window_text_focus(const WindowTextField& field, const textinput::Snapshot& snapshot);
+void window_text_blur(int epoch);
+void window_text_snapshot(const textinput::Snapshot& snapshot);
+void window_text_layout(const textinput::Layout& layout);
+// InputMethodManager.showSoftInput / hideSoftInput: Windows' touch keyboard (input_pane.h),
+// shown only for the focused editor, after a touch or a pen on the app, on a PC with a
+// touchscreen, and then only if Windows' own policy lets it.
+void window_soft_input(bool show);
 
 // Translates a Windows virtual key to an Android KEYCODE_* (0 if none), as
 // upstream's host_keymap.h does for macOS key codes.

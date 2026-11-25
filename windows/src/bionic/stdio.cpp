@@ -229,7 +229,7 @@ std::wstring fifo_key(const std::wstring& w) {
 }
 
 WINAPK_GUEST_ABI int g_mkfifo(const char* path, unsigned) {
-    const std::wstring w = host_path(path);
+    const std::wstring w = file_path(path);
     const HANDLE h = CreateFileW(w.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                  nullptr, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
@@ -262,7 +262,7 @@ WINAPK_GUEST_ABI int g_mknod(const char* path, unsigned mode, uint64_t) {
 WINAPK_GUEST_ABI int g_open(const char* path, int flags, unsigned mode) {
     if (is_random_device(path)) return fd_install(std::make_shared<RandomDevice>());
     if (is_proc_maps(path)) return open_temp_with(proc_maps_text());
-    const std::wstring w = host_path(path);
+    const std::wstring w = file_path(path);
     if (is_fifo_marker(w)) return fifo_open(fifo_key(w), flags);
     // Linux opens a directory read-only without O_DIRECTORY too (O_PATH or
     // plain O_RDONLY, then fstat or fdopendir); _wopen would refuse it.
@@ -544,7 +544,7 @@ WINAPK_GUEST_ABI int g_stat(const char* path, GuestStat* g) {
         g->st_blksize = 4096;
         return 0;
     }
-    const std::wstring w = host_path(path);
+    const std::wstring w = file_path(path);
     struct _stat64 s;
     if (_wstat64(w.c_str(), &s) < 0) return fail_crt();
     fill_stat(s, g);
@@ -652,7 +652,7 @@ int statvfs_of(const std::wstring& path, GuestStatvfs* out) {
     out->f_namemax = 255;
     return 0;
 }
-WINAPK_GUEST_ABI int g_statvfs(const char* path, GuestStatvfs* out) { return statvfs_of(host_path(path), out); }
+WINAPK_GUEST_ABI int g_statvfs(const char* path, GuestStatvfs* out) { return statvfs_of(file_path(path), out); }
 WINAPK_GUEST_ABI int g_fstatvfs(int fd, GuestStatvfs* out) {
     const HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
     wchar_t path[MAX_PATH + 8];
@@ -714,7 +714,7 @@ int to_statfs(const GuestStatvfs& v, GuestStatfs* out) {
 }
 WINAPK_GUEST_ABI int g_statfs(const char* path, GuestStatfs* out) {
     GuestStatvfs v;
-    return statvfs_of(host_path(path), &v) < 0 ? -1 : to_statfs(v, out);
+    return statvfs_of(file_path(path), &v) < 0 ? -1 : to_statfs(v, out);
 }
 WINAPK_GUEST_ABI int g_fstatfs(int fd, GuestStatfs* out) {
     GuestStatvfs v;
@@ -739,7 +739,7 @@ WINAPK_GUEST_ABI int g_access(const char* path, int mode) {
         return 0;
     }
     // _waccess knows no X_OK (1); anything readable counts.
-    return _waccess(host_path(path).c_str(), mode & 6) < 0 ? fail_crt() : 0;
+    return _waccess(file_path(path).c_str(), mode & 6) < 0 ? fail_crt() : 0;
 }
 WINAPK_GUEST_ABI int g_faccessat(int dirfd, const char* path, int mode, int) {
     std::string p;
@@ -747,28 +747,28 @@ WINAPK_GUEST_ABI int g_faccessat(int dirfd, const char* path, int mode, int) {
 }
 
 // ---- the file system -------------------------------------------------------------------
-WINAPK_GUEST_ABI int g_mkdir(const char* path, unsigned) { return _wmkdir(host_path(path).c_str()) < 0 ? fail_crt() : 0; }
+WINAPK_GUEST_ABI int g_mkdir(const char* path, unsigned) { return _wmkdir(file_path(path).c_str()) < 0 ? fail_crt() : 0; }
 WINAPK_GUEST_ABI int g_mkdirat(int dirfd, const char* path, unsigned mode) {
     std::string p;
     return at_path(dirfd, path, &p) ? g_mkdir(p.c_str(), mode) : -1;
 }
-WINAPK_GUEST_ABI int g_rmdir(const char* path) { return _wrmdir(host_path(path).c_str()) < 0 ? fail_crt() : 0; }
+WINAPK_GUEST_ABI int g_rmdir(const char* path) { return _wrmdir(file_path(path).c_str()) < 0 ? fail_crt() : 0; }
 WINAPK_GUEST_ABI int g_unlink(const char* path) {
     // POSIX unlinks an open file; Windows deletes one only when every open
     // handle shares delete access, and otherwise reports EBUSY
     // (ERROR_SHARING_VIOLATION) through set_errno_from_win32.
-    const std::wstring w = host_path(path);
+    const std::wstring w = file_path(path);
     if (DeleteFileW(w.c_str())) return 0;
     set_errno_from_win32(GetLastError());
     return -1;
 }
 WINAPK_GUEST_ABI int g_rename(const char* from, const char* to) {
-    if (MoveFileExW(host_path(from).c_str(), host_path(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
+    if (MoveFileExW(file_path(from).c_str(), file_path(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
     set_errno_from_win32(GetLastError());
     return -1;
 }
 WINAPK_GUEST_ABI int g_remove(const char* path) {
-    const std::wstring w = host_path(path);
+    const std::wstring w = file_path(path);
     const DWORD a = GetFileAttributesW(w.c_str());
     if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY)) return g_rmdir(path);
     return g_unlink(path);
@@ -843,7 +843,7 @@ int set_times(HANDLE h, const GuestTimespecFt* times) {
     return -1;
 }
 int set_path_times(const char* path, const GuestTimespecFt* times) {
-    const HANDLE h = CreateFileW(host_path(path).c_str(), FILE_WRITE_ATTRIBUTES,
+    const HANDLE h = CreateFileW(file_path(path).c_str(), FILE_WRITE_ATTRIBUTES,
                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                                  FILE_FLAG_BACKUP_SEMANTICS, nullptr);  // (a directory opens with it too)
     if (h == INVALID_HANDLE_VALUE) return set_errno_from_win32(GetLastError()), -1;
@@ -962,7 +962,7 @@ GuestDir* open_dir(std::wstring path) {
 }
 
 WINAPK_GUEST_ABI GuestDir* g_opendir(const char* path) {
-    GuestDir* d = open_dir(host_path(path));
+    GuestDir* d = open_dir(file_path(path));
     if (d) d->android_names = is_android_path(path);
     return d;
 }
@@ -1158,7 +1158,7 @@ std::wstring link_target(const char* path) {
         }
         return final_path_of_handle(h);
     }
-    const std::wstring w = host_path(path);
+    const std::wstring w = file_path(path);
     const DWORD a = GetFileAttributesW(w.c_str());
     if (a == INVALID_FILE_ATTRIBUTES) {
         set_errno_from_win32(GetLastError());
@@ -1213,7 +1213,7 @@ WINAPK_GUEST_ABI int g_lstat(const char* path, GuestStat* g) {
     }
     const int rc = g_stat(path, g);
     if (rc == 0) {
-        const DWORD a = GetFileAttributesW(host_path(path).c_str());
+        const DWORD a = GetFileAttributesW(file_path(path).c_str());
         if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT)) g->st_mode = (g->st_mode & 0777) | 0120000;
     }
     return rc;
@@ -1229,7 +1229,7 @@ WINAPK_GUEST_ABI int g_unlinkat(int dirfd, const char* path, int flags) {
 // directory with EPERM, and so does a file system without hard links (FAT,
 // exFAT: ERROR_INVALID_FUNCTION here).
 WINAPK_GUEST_ABI int g_link(const char* from, const char* to) {
-    const std::wstring src = host_path(from), dst = host_path(to);
+    const std::wstring src = file_path(from), dst = file_path(to);
     const DWORD a = GetFileAttributesW(src.c_str());
     if (a == INVALID_FILE_ATTRIBUTES) {
         set_errno_from_win32(GetLastError());
@@ -1768,7 +1768,7 @@ WINAPK_GUEST_ABI FILE* g_fopen(const char* path, const char* mode) {
         }
         return f;
     }
-    FILE* f = _wfopen(host_path(path).c_str(), crt_mode(mode).c_str());
+    FILE* f = _wfopen(file_path(path).c_str(), crt_mode(mode).c_str());
     if (!f) set_errno_from_crt(errno);
     return f;
 }
@@ -1784,7 +1784,7 @@ WINAPK_GUEST_ABI FILE* g_freopen(const char* path, const char* mode, void* f) {
     // to it rather than taking it away (fd_is_host_std).
     FILE* file = host_file(f);
     if (file == stdout || file == stderr) return file;
-    FILE* r = _wfreopen(host_path(path).c_str(), crt_mode(mode).c_str(), file);
+    FILE* r = _wfreopen(file_path(path).c_str(), crt_mode(mode).c_str(), file);
     if (!r) set_errno_from_crt(errno);
     return r;
 }
@@ -2110,7 +2110,7 @@ WINAPK_GUEST_ABI int g_renameat2(int from_dir, const char* from, int to_dir, con
     if (flags != 1) return *guest_errno() = kEINVAL, -1;
     std::string a, b;
     if (!at_path(from_dir, from, &a) || !at_path(to_dir, to, &b)) return -1;
-    if (MoveFileExW(host_path(a.c_str()).c_str(), host_path(b.c_str()).c_str(), MOVEFILE_COPY_ALLOWED)) return 0;
+    if (MoveFileExW(file_path(a.c_str()).c_str(), file_path(b.c_str()).c_str(), MOVEFILE_COPY_ALLOWED)) return 0;
     const DWORD error = GetLastError();
     if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) return *guest_errno() = kEEXIST, -1;
     set_errno_from_win32(error);

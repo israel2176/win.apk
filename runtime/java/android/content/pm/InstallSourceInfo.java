@@ -8,11 +8,11 @@ import android.os.Parcelable;
  * and the current installing package.
  *
  * Apps use this for two things -- attribution ("installed from Play?") and
- * tamper checks ("refuse to run if sideloaded"). Mac.apk has no package
- * installer at all, which is the same state AOSP reports for an app installed
- * by adb or by a caller that has since been uninstalled: every name null. That
- * is a legitimate value AOSP itself returns and which apps must already handle,
- * rather than a fabricated installer identity.
+ * tamper checks ("refuse to run if sideloaded"). What PackageManager fills in
+ * is com.macapk.loader.InstallerOfRecord's answer: the installer that really
+ * committed a PackageInstaller session, else on Win.apk Google Play for an app
+ * the user installed (a setting, on by default), else every name null, as AOSP
+ * reports for an adb install.
  *
  * Source: frameworks/base/core/java/android/content/pm/InstallSourceInfo.java
  * https://raw.githubusercontent.com/aosp-mirror/platform_frameworks_base/main/core/java/android/content/pm/InstallSourceInfo.java
@@ -97,11 +97,11 @@ public final class InstallSourceInfo implements Parcelable {
      *
      *  UPDATE OWNERSHIP is Android 14's "the store that installed this app gets
      *  first refusal on updating it" mechanism, requested per-session via
-     *  SessionParams.setRequestUpdateOwnership. Mac.apk grants it to nobody --
-     *  our PackageInstaller does not record an update owner, and the macOS
-     *  install helper enforces no such policy -- so null is the honest answer,
-     *  and it is exactly what AOSP returns for any package whose installer never
-     *  requested ownership (the overwhelming majority on a real device too).
+     *  SessionParams.setRequestUpdateOwnership. Google Play requests it, so an
+     *  app reported as installed by Play names Play here
+     *  (MacApkPackageManager.getInstallSourceInfo); any other installer's
+     *  session is not recorded with ownership, so null, which is what AOSP
+     *  returns for a package whose installer never requested it.
      *
      *  Aurora Store 4.8.4 reads it in its app-detail path. */
     public String getUpdateOwnerPackageName() { return mUpdateOwnerPackageName; }

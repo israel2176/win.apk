@@ -1,17 +1,17 @@
-// CameraBridge -- JNI seam to the macOS AVFoundation capture engine
-// (runtime/src/camera_capture.mm).
+// CameraBridge -- JNI seam to the host's capture engine: on Windows,
+// windows/host/native_camera.cpp over Media Foundation (upstream Mac.apk's was
+// runtime/src/camera_capture.mm on AVFoundation).
 //
 // This is the layer BELOW android.hardware.camera2. It deliberately exposes no
 // camera2 types: a camera2 implementation (CameraManager / CameraDevice /
 // CameraCaptureSession / ImageReader) is written on top of these primitives,
 // and nothing here needs to change when it lands.
 //
-// Native methods are bound at boot via RegisterNatives
-// (native_methods.cpp -> camera::RegisterCameraBridgeMethods), because the JVM
-// does not auto-resolve Java_* symbols from the main executable on macOS. Same
-// pattern as NativeAudio and NativeSqlite.
+// Native methods are bound at boot via RegisterNatives (native_camera.cpp's
+// method table, registered with the other host natives), because the JVM does
+// not resolve Java_* symbols from the main executable.
 //
-// HONESTY RULE: this class reports a camera only when AVFoundation reports one,
+// HONESTY RULE: this class reports a camera only when the host reports one,
 // and reports a frame only once one has actually been delivered. Nothing here
 // declares android.hardware.camera; an app that is handed a camera id and then
 // never receives a frame fails deeper and more confusingly than one that is
@@ -55,12 +55,14 @@ public final class CameraBridge {
 
     /** android.hardware.camera2.CameraMetadata.LENS_FACING_FRONT. */
     public static final int FACING_FRONT = 0;
-    /** LENS_FACING_BACK. Never reported on a Mac, kept for completeness. */
+    /** LENS_FACING_BACK: every webcam's first role (see getDeviceFacing). */
     public static final int FACING_BACK = 1;
     /** LENS_FACING_EXTERNAL -- what Android reports for a USB/UVC camera. */
     public static final int FACING_EXTERNAL = 2;
 
-    // Mirrors AVAuthorizationStatus. The values are AVFoundation's.
+    // The host's camera access, in AVAuthorizationStatus's values (upstream's).
+    // On Windows only AUTHORIZED and DENIED occur: the privacy switches either
+    // let a desktop program open the camera or not, and nothing is asked.
     public static final int AUTH_NOT_DETERMINED = 0;
     public static final int AUTH_RESTRICTED     = 1;
     public static final int AUTH_DENIED         = 2;
@@ -76,7 +78,7 @@ public final class CameraBridge {
 
     /**
      * Whether the native camera layer is actually bound. False when the
-     * runtime was built without camera_capture.mm, or when its natives have
+     * runtime was built without the capture natives, or when they have
      * not been registered yet -- in which case every method here degrades to
      * "no cameras" rather than throwing UnsatisfiedLinkError into app code.
      *
@@ -101,66 +103,266 @@ public final class CameraBridge {
 
     // ---- Enumeration -----------------------------------------------------
     //
-    // Verified on macOS 26 (2026-08-10): device discovery and format
-    // enumeration work with authorization status NotDetermined, from a process
-    // with no bundle Info.plist, WITHOUT raising a TCC prompt and without being
-    // killed. So these are safe to call eagerly, including in a headless
-    // runtime run. Only open() touches the protected resource.
+    // Enumeration never prompts. On Windows, listing the devices is free; the
+    // first query of a camera's sizes or controls opens the device once (the
+    // only way Media Foundation lists them) and remembers the answer.
 
     /** Number of cameras. 0 when there is none, or when access is denied. */
     public static int getDeviceCount() {
-        return nat() ? nativeDeviceCount() : VIRTUAL ? Virtual.DeviceCount() : 0;
+        return nat() ? nativeDeviceCount() : Virtual.DeviceCount();
     }
 
     /** Stable unique id, suitable for use as a camera2 camera id string. */
     public static String getDeviceId(int index) {
-        return nat() ? nativeDeviceId(index) : VIRTUAL ? Virtual.DeviceId(index) : null;
+        return nat() ? nativeDeviceId(index) : Virtual.DeviceId(index);
     }
 
     /** Human-readable name, e.g. "FaceTime HD Camera". */
     public static String getDeviceName(int index) {
-        return nat() ? nativeDeviceName(index) : VIRTUAL ? Virtual.DeviceName(index) : null;
+        return nat() ? nativeDeviceName(index) : Virtual.DeviceName(index);
     }
 
-    /** One of FACING_*. A Mac's built-in camera faces the user, so FRONT. */
+    /** One of FACING_*. Win.apk offers every webcam twice, as a BACK and a
+     *  FRONT camera (native_camera.cpp, kRolesPerDevice). By design:
+     *  a PC's camera serves both roles, so apps that ask for the rear camera
+     *  (cheque scanners) work. */
     public static int getDeviceFacing(int index) {
-        return nat() ? nativeDeviceFacing(index) : VIRTUAL ? Virtual.DeviceFacing(index) : -1;
+        return nat() ? nativeDeviceFacing(index) : Virtual.DeviceFacing(index);
     }
 
     /**
-     * camera2's SENSOR_ORIENTATION, in degrees. Always 0 on a Mac: the sensor
-     * does not rotate with the device, so no preview rotation is implied.
+     * camera2's SENSOR_ORIENTATION and camera1's CameraInfo.orientation, in
+     * degrees: how far the camera's picture is turned from the virtual phone's
+     * NATURAL orientation (portrait).
+     *
+     * <p>The webcam's picture is upright on the PC's screen, and the app's
+     * window shows it upright whichever shape the window has. Android's display
+     * rotation (Display.getRotation) says the phone is turned: ROTATION_90 for
+     * a landscape window. For a picture that is upright on the turned screen,
+     * the sensor must be turned the same way relative to the phone, so the
+     * true answer is the rotation itself for a back camera, and its mirror
+     * image for a front one (AOSP mirrors a front camera's preview, so its
+     * compensation runs the other way). Then every app's own arithmetic --
+     * camera1's documented setDisplayOrientation formula, Scanovate's
+     * (orientation - rotation * 90) mod 360, CameraX's
+     * getRelativeImageRotation -- comes out at 0: no turn.
+     *
+     * <p>On a phone this is fixed per device. Here it follows the display
+     * rotation of the moment it is asked: the window's shape is fixed when an
+     * activity starts but an app can move between a portrait and a
+     * landscape-fixed activity (a cheque scanner's scan screen), and the
+     * camera is opened, and these values read, by the activity that shows the
+     * picture. A value latched for the whole run would rotate the picture of
+     * any activity whose shape differs from the first. An app that keeps a
+     * value across a rotation of its own computes with a stale one, as it
+     * would with a stale display rotation on a phone.
      */
     public static int getSensorOrientation(int index) {
-        return nat() ? nativeDeviceSensorOrientation(index) : VIRTUAL ? Virtual.DeviceSensorOrientation(index) : 0;
+        int mount = nat() ? nativeDeviceSensorOrientation(index) : 0;
+        return (mount + sensorOrientationFor(getDeviceFacing(index), displayRotation())) % 360;
+    }
+
+    /** The sensor orientation for a camera facing `facing` (FACING_*) on a
+     *  display turned by `rotation` (Surface.ROTATION_*): see above. */
+    public static int sensorOrientationFor(int facing, int rotation) {
+        int degrees = (rotation & 3) * 90;
+        return facing == FACING_FRONT ? (360 - degrees) % 360 : degrees;
+    }
+
+    /** The default display's rotation as Display.getRotation reports it (the
+     *  same committed size and the same rule: a landscape display is
+     *  ROTATION_90), ROTATION_0 when there is none yet (a plain JVM). Read
+     *  from DisplayConfig rather than a Display, so it holds whichever
+     *  android.view classes are loaded (-Dwinapk.aosp.views=1). */
+    static int displayRotation() {
+        try {
+            return DisplayConfig.realWidthPx() > DisplayConfig.realHeightPx() ? 1 : 0;
+        } catch (Throwable t) {
+            return 0;
+        }
+    }
+
+    // ---- Buffer transforms -------------------------------------------------
+    //
+    // How a camera's frames are turned on their way to a preview, as AOSP's
+    // camera service tells the consumer (NATIVE_WINDOW_TRANSFORM_* flags, which
+    // a SurfaceTexture hands on as its transform matrix and SurfaceView's
+    // compositor applies). Flips come before the rotation.
+
+    public static final int TRANSFORM_FLIP_H = 1, TRANSFORM_FLIP_V = 2, TRANSFORM_ROT_90 = 4,
+            TRANSFORM_ROT_180 = 3, TRANSFORM_ROT_270 = 7;
+
+    /** camera1's preview transform for setDisplayOrientation(degrees):
+     *  frameworks/av services/camera/libcameraservice/api1/client2/
+     *  Parameters.cpp degToTransform, a front camera mirrored. */
+    public static int previewTransform(int degrees, boolean front) {
+        if (!front) {
+            switch (degrees) {
+                case 90: return TRANSFORM_ROT_90;
+                case 180: return TRANSFORM_ROT_180;
+                case 270: return TRANSFORM_ROT_270;
+                default: return 0;
+            }
+        }
+        switch (degrees) {
+            case 90: return TRANSFORM_FLIP_H | TRANSFORM_ROT_90;
+            case 180: return TRANSFORM_FLIP_V;
+            case 270: return TRANSFORM_FLIP_V | TRANSFORM_ROT_90;
+            default: return TRANSFORM_FLIP_H;
+        }
+    }
+
+    /** camera2's transform for a preview output (SurfaceView, SurfaceTexture)
+     *  with the default MIRROR_MODE_AUTO: frameworks/av camera/CameraUtils.cpp
+     *  getRotationTransform. The sensor orientation is undone and a front
+     *  camera is mirrored. */
+    public static int outputTransform(int sensorOrientation, boolean front) {
+        if (!front) {
+            switch (sensorOrientation) {
+                case 90: return TRANSFORM_ROT_90;
+                case 180: return TRANSFORM_ROT_180;
+                case 270: return TRANSFORM_ROT_270;
+                default: return 0;
+            }
+        }
+        switch (sensorOrientation) {
+            case 90: return TRANSFORM_FLIP_H ^ TRANSFORM_ROT_270;
+            case 180: return TRANSFORM_FLIP_H ^ TRANSFORM_ROT_180;
+            case 270: return TRANSFORM_FLIP_H ^ TRANSFORM_ROT_90;
+            default: return TRANSFORM_FLIP_H;
+        }
+    }
+
+    /** The SurfaceTexture transform matrix for a buffer with these transform
+     *  flags and no crop: libgui GLConsumer::computeTransformMatrix (column
+     *  major, for glUniformMatrix4fv). The final flip-V maps GL's bottom-up
+     *  texture onto the buffer's top-down rows. */
+    public static float[] consumerMatrix(int transform) {
+        final float[] flipH = { -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1 };
+        final float[] flipV = { 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 1 };
+        final float[] rot90 = { 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1 };
+        float[] x = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
+        if ((transform & TRANSFORM_FLIP_H) != 0) x = mul(x, flipH);
+        if ((transform & TRANSFORM_FLIP_V) != 0) x = mul(x, flipV);
+        if ((transform & TRANSFORM_ROT_90) != 0) x = mul(x, rot90);
+        return mul(flipV, x);
+    }
+
+    /** a * b, both column-major 4x4 (GLConsumer's mtxMul). */
+    private static float[] mul(float[] a, float[] b) {
+        float[] r = new float[16];
+        for (int col = 0; col < 4; col++) {
+            for (int row = 0; row < 4; row++) {
+                float v = 0;
+                for (int k = 0; k < 4; k++) v += a[k * 4 + row] * b[col * 4 + k];
+                r[col * 4 + row] = v;
+            }
+        }
+        return r;
+    }
+
+    // ---- Focus and torch ---------------------------------------------------
+    //
+    // What the driver says the webcam can do (native_camera.cpp, "focus and
+    // torch"); nothing here is assumed. The virtual camera has neither.
+
+    /** getControls bit: a one-shot focus can be started and its end seen. */
+    public static final int CONTROL_AUTOFOCUS = 1;
+    /** getControls bit: a torch (the extended TORCHMODE control). */
+    public static final int CONTROL_TORCH = 2;
+
+    /** setFocusMode: the lens stays where it is. */
+    public static final int FOCUS_HOLD = 0;
+    /** setFocusMode: the camera keeps focusing by itself. */
+    public static final int FOCUS_CONTINUOUS = 1;
+
+    /** autoFocus results. */
+    public static final int AF_FOCUSED = 1, AF_NOT_FOCUSED = 0, AF_FAILED = -1;
+
+    /** focusState values. */
+    public static final int FOCUS_STATE_UNKNOWN = 0, FOCUS_STATE_SEARCHING = 1,
+            FOCUS_STATE_FOCUSED = 2, FOCUS_STATE_FAILED = 3;
+
+    /** CONTROL_* bits of camera `index`. */
+    public static int getControls(int index) {
+        return nat() ? nativeDeviceControls(index) : 0;
+    }
+
+    public static boolean hasAutofocus(int index) {
+        return (getControls(index) & CONTROL_AUTOFOCUS) != 0;
+    }
+
+    public static boolean hasTorch(int index) {
+        return (getControls(index) & CONTROL_TORCH) != 0;
+    }
+
+    /** android.hardware.camera.autofocus: some camera really autofocuses. */
+    public static boolean anyCameraHasAutofocus() {
+        int n = getDeviceCount();
+        for (int i = 0; i < n; i++) if (hasAutofocus(i)) return true;
+        return false;
+    }
+
+    /** android.hardware.camera.flash: some camera really has a torch. */
+    public static boolean anyCameraHasTorch() {
+        int n = getDeviceCount();
+        for (int i = 0; i < n; i++) if (hasTorch(i)) return true;
+        return false;
+    }
+
+    /** FOCUS_HOLD or FOCUS_CONTINUOUS; applied while the session captures. */
+    public static void setFocusMode(long session, int mode) {
+        if (session > 0) nativeSetFocusMode(session, mode);
+    }
+
+    /** A one-shot focus on a capturing session: blocks up to timeoutMs (call
+     *  it off the app's threads). AF_FOCUSED (the lens is then held),
+     *  AF_NOT_FOCUSED, or AF_FAILED (no autofocus, not capturing, cancelled). */
+    public static int autoFocus(long session, int timeoutMs) {
+        return session > 0 ? nativeAutoFocus(session, timeoutMs) : AF_FAILED;
+    }
+
+    public static void cancelAutoFocus(long session) {
+        if (session > 0) nativeCancelAutoFocus(session);
+    }
+
+    /** FOCUS_STATE_*: the camera's own focusing while it focuses by itself. */
+    public static int focusState(long session) {
+        return session > 0 ? nativeFocusState(session) : FOCUS_STATE_UNKNOWN;
+    }
+
+    /** Turns the torch of a capturing session on or off; false when the
+     *  camera has none or the driver refused. */
+    public static boolean setTorch(long session, boolean on) {
+        return session > 0 && nativeSetTorch(session, on);
     }
 
     /** Number of (resolution, frame-rate range) entries the device advertises. */
     public static int getFormatCount(int index) {
-        return nat() ? nativeFormatCount(index) : VIRTUAL ? Virtual.FormatCount(index) : 0;
+        return nat() ? nativeFormatCount(index) : Virtual.FormatCount(index);
     }
 
     public static int getFormatWidth(int device, int format) {
-        return nat() ? nativeFormatWidth(device, format) : VIRTUAL ? Virtual.FormatWidth(device, format) : 0;
+        return nat() ? nativeFormatWidth(device, format) : Virtual.FormatWidth(device, format);
     }
 
     public static int getFormatHeight(int device, int format) {
-        return nat() ? nativeFormatHeight(device, format) : VIRTUAL ? Virtual.FormatHeight(device, format) : 0;
+        return nat() ? nativeFormatHeight(device, format) : Virtual.FormatHeight(device, format);
     }
 
     public static double getFormatMinFps(int device, int format) {
-        return nat() ? nativeFormatMinFps(device, format) : VIRTUAL ? Virtual.FormatMinFps(device, format) : 0;
+        return nat() ? nativeFormatMinFps(device, format) : Virtual.FormatMinFps(device, format);
     }
 
     public static double getFormatMaxFps(int device, int format) {
-        return nat() ? nativeFormatMaxFps(device, format) : VIRTUAL ? Virtual.FormatMaxFps(device, format) : 0;
+        return nat() ? nativeFormatMaxFps(device, format) : Virtual.FormatMaxFps(device, format);
     }
 
     // ---- Authorization ---------------------------------------------------
 
-    /** Current TCC authorization: one of AUTH_*. Never prompts, never blocks. */
+    /** Current camera access: one of AUTH_*. Never prompts, never blocks. */
     public static int getAuthStatus() {
-        return nat() ? nativeAuthStatus() : VIRTUAL ? Virtual.AuthStatus() : AUTH_DENIED;
+        return nat() ? nativeAuthStatus() : Virtual.AuthStatus();
     }
 
     /**
@@ -170,7 +372,8 @@ public final class CameraBridge {
      * would deadlock an app that requested permission from its UI thread,
      * which is what an Android app does.
      *
-     * <p>No-op when the status is already decided -- macOS does not re-prompt.
+     * <p>No-op when the status is already decided. Windows has nothing to ask
+     * (see AUTH_*).
      */
     public static void requestAuth() {
         if (isAvailable()) nativeRequestAuth();
@@ -180,13 +383,13 @@ public final class CameraBridge {
 
     /**
      * Open a capture session on a device. This is the call that touches the
-     * protected resource and so may raise the TCC prompt.
+     * protected resource.
      *
      * @return a session handle, or {@link #NO_SESSION} when the device does not
      *         exist or access is denied. Never blocks indefinitely.
      */
     public static long open(int index) {
-        return nat() ? nativeOpen(index) : VIRTUAL ? Virtual.Open(index) : NO_SESSION;
+        return nat() ? nativeOpen(index) : Virtual.Open(index);
     }
 
     /**
@@ -224,7 +427,7 @@ public final class CameraBridge {
     }
 
     /**
-     * Frames AVFoundation has delivered since start(), including ones dropped
+     * Frames the host has delivered since start(), including ones dropped
      * because the consumer did not drain in time. A counter that advances is
      * the only honest proof that capture is actually live -- use it rather than
      * assuming a started session is producing frames.
@@ -301,8 +504,8 @@ public final class CameraBridge {
     // to the NEWEST delivered frame, so a SurfaceTexture latch never steals a
     // frame from an ImageReader in the same session and never fails because an
     // Image is outstanding. The NV12 -> RGB conversion happens in native code,
-    // where the CVPixelBuffer row strides are still authoritative (CoreVideo
-    // pads rows; a row offset must never be computed from the width).
+    // where the capture buffer's row strides are still authoritative (rows may
+    // be padded; a row offset must never be computed from the width).
     //
     // Row 0 of the output is the TOP image row -- Android buffer memory
     // layout -- which is why the transform matrix handed to SurfaceTexture
@@ -341,8 +544,8 @@ public final class CameraBridge {
 
     // ---- Virtual camera (Win.apk) ------------------------------------------
     //
-    // The Windows host has no capture engine behind these natives (the Mac one
-    // is camera_capture.mm), so every app saw ZERO cameras -- and apps whose
+    // With no webcam (or before the Windows host had a capture engine) every
+    // app saw ZERO cameras -- and apps whose
     // screen IS a camera preview refuse to open that screen at all. WhatsApp's
     // Settings > Linked devices > Link a device toasts "can't start the camera,
     // restart the device" and finishes, which also hides the "link with phone
@@ -353,9 +556,6 @@ public final class CameraBridge {
     // frames at 30 fps, so preview screens stay up and their camera-free
     // controls work. MACAPK_VIRTUAL_CAMERA=0 restores the old "no camera".
     // Virtual session handles are negative, so they never collide with a native
-    // pointer and the session-level calls dispatch on the sign alone.
-    private static final boolean VIRTUAL =
-            !"0".equals(System.getenv("MACAPK_VIRTUAL_CAMERA"));
 
     // The Windows host binds every unimplemented native to a stub that returns
     // 0 ("native not implemented on Windows yet"), so isAvailable() is true
@@ -366,7 +566,6 @@ public final class CameraBridge {
     private static volatile boolean sNativeHasDevices;
     private static boolean nat() {
         if (!isAvailable()) return false;
-        if (!VIRTUAL) return true;
         long now = System.nanoTime();
         if (sNativeCheckedAt == 0 || now - sNativeCheckedAt > 2_000_000_000L) {
             sNativeHasDevices = nativeDeviceCount() > 0;
@@ -397,7 +596,6 @@ public final class CameraBridge {
         static String DeviceId(int i) { return i == 0 ? "winapk-virtual-0" : null; }
         static String DeviceName(int i) { return i == 0 ? "Win.apk Virtual Camera" : null; }
         static int DeviceFacing(int i) { return i == 0 ? FACING_BACK : -1; }
-        static int DeviceSensorOrientation(int i) { return 0; }
         static int FormatCount(int i) { return i == 0 ? FORMATS.length : 0; }
         static int FormatWidth(int d, int f) { return d == 0 && f >= 0 && f < FORMATS.length ? FORMATS[f][0] : 0; }
         static int FormatHeight(int d, int f) { return d == 0 && f >= 0 && f < FORMATS.length ? FORMATS[f][1] : 0; }
@@ -518,6 +716,12 @@ public final class CameraBridge {
     private static native String nativeDeviceName(int index);
     private static native int    nativeDeviceFacing(int index);
     private static native int    nativeDeviceSensorOrientation(int index);
+    private static native int    nativeDeviceControls(int index);
+    private static native void   nativeSetFocusMode(long session, int mode);
+    private static native int    nativeAutoFocus(long session, int timeoutMs);
+    private static native void   nativeCancelAutoFocus(long session);
+    private static native int    nativeFocusState(long session);
+    private static native boolean nativeSetTorch(long session, boolean on);
 
     private static native int    nativeFormatCount(int index);
     private static native int    nativeFormatWidth(int device, int format);

@@ -2,7 +2,7 @@
 
 **🇮🇱 [לדף הזה בעברית — לחצו כאן](he/troubleshooting.md)**
 
-Win.apk is a preview: some apps will not work yet. This page helps you tell a
+Win.apk does not run every app yet. This page helps you tell a
 known limit from a new bug, and send a report we can act on.
 
 - [First steps](#first-steps)
@@ -22,14 +22,14 @@ known limit from a new bug, and send a report we can act on.
 
 ## Common problems
 
-**Windows protected your PC (SmartScreen) when running the installer.** The
-preview is not code-signed yet. Click **More info**, then **Run anyway**, if
+**Windows protected your PC (SmartScreen) when running the installer.** Win.apk
+is not code-signed yet. Click **More info**, then **Run anyway**, if
 you downloaded it from this repository's
 [Releases](https://github.com/israel2176/win.apk/releases) page.
 
 **An antivirus flags Win.apk or an app.** Win.apk writes code (the ARM
-translation) and then runs it, which some scanners dislike, and the preview is
-not signed. Allow it if you trust the download.
+translation) and then runs it, which some scanners dislike, and Win.apk is
+not signed yet. Allow it if you trust the download.
 
 **The app does not start.** An app with only 32-bit ARM code installs but
 stops as soon as it loads that code; its log says `this is a 32-bit ARM library
@@ -46,13 +46,27 @@ translation is ready; on a busy PC a large app's first translation can take an
 hour or more. Leave the PC alone for a while, or install an x86_64 build.
 `logs\aot-<app>.log` shows the progress. [More](arm-apps.md#how-arm-only-apps-run)
 
-**No sound in a native game.** Its engine plays sound through OpenSL ES, which
-is not implemented yet. AAudio and Java audio work.
+**No sound in a native game.** AAudio, OpenSL ES and Java audio all play
+through Windows' default output device. If a game is still silent, look in its
+log for `[opensles]` or `[aaudio]` lines that say what it asked for and did not
+get (an effect, a MIDI player), and report it with the log.
 
 **A video does not play, or plays silent.** Windows decodes the video: H.264
-with AAC always; HEVC, VP9 and AV1 only with Microsoft's codec packs from the
-Microsoft Store. A stream whose audio is Opus, Vorbis or FLAC plays silent in an
-ExoPlayer app; video from an app's native code (`AMediaCodec`) is not there yet.
+with AAC always; HEVC only with Microsoft's codec pack from the Microsoft Store.
+In apps that decode for themselves (ExoPlayer and others), VP8, VP9 and AV1
+video and Opus sound play without any codec pack, on decoders built into
+Win.apk; they are slower than the codec packs, so a 1080p VP9 or AV1 video can
+stutter on a slow PC (the log says `decoding with libvpx VP9` or `dav1d AV1`).
+A video played by `MediaPlayer` or `VideoView` still needs the codec packs for
+VP9 and AV1, and does not play from a WebM file. A stream whose audio is Vorbis
+or FLAC plays silent in an ExoPlayer app; video from an app's native code
+(`AMediaCodec`) is not there yet.
+
+**A phone photo (HEIC) or an AVIF picture does not show.** Windows decodes
+them: HEIC/HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video
+Extension, both from the Microsoft Store. Without them the app is told the
+picture cannot be read, and its log says `HostImageDecode: HEIF picture:
+Windows has no decoder for it`.
 
 **An app cannot record, or its recording is empty.** Apps record sound as AAC
 and video as H.264 into MP4 files, with Windows' own encoders; a few Windows
@@ -75,6 +89,14 @@ has not checked in with Google yet, so the store has no device id (its log says
 `PKIX path building failed` there means a server's certificate was refused;
 the line tagged `MacApkTrust` just before it names the server, the certificates
 it sent and who issued them, which is what to attach to a report.
+
+**Gmail or the Play Store says "This device isn't Play Protect certified".**
+Win.apk is not a certified device and does not pretend to be. Register its
+device ID with your Google account on Google's own page: **Settings > Google
+account > Device ID for Google**, **Copy**, then **Register this device**
+([the steps](google-services.md#play-protect-certification)). No such row:
+Google services are off, or have not checked in with Google yet (open the
+Play Store once).
 
 **The camera, location or Wi-Fi names are missing.** Windows' privacy switches
 apply: Settings > Privacy & security > Camera, Microphone or Location, with
@@ -102,9 +124,10 @@ before it is `run-<app>.1.log`). The most useful lines:
 |---|---|
 | `native not implemented on Windows yet` | A piece of the Android host that is still missing |
 | `not implemented on Windows yet` (about a system function) | A C library function the app's native code needs |
+| `not implemented on Windows yet, called this run (<n>):` | At the end of the log: every missing piece the app reached in this run, with how many times it called it, the busiest first. The lines above name each one once, when it is first called; this list says which ones the app kept asking for. Include it when you report a problem. An app that was stopped by force (Task Manager, Stop) ends without it |
 | `there is no /system/bin/sh on Windows` | The app's native code ran a shell command (`popen`, `system`). There is no Android shell, so the command reports "not found" (exit status 127), as on a phone without one |
 | `fork(): the app tried to start a child process` (also `posix_spawn()`, `exec()`, `clone()`) | The app's native code tried to run part of itself in another process (Firefox-family browsers do). Win.apk does not support that yet, so such an app usually ends at start |
-| `[win.apk] <call>(): ... the call fails with <error>` | The app's native code used a C library call Win.apk does not do yet: a pseudo-terminal (`openpty()`), watching files (`inotify_init()`), `signalfd()`, `iconv_open()`, `regcomp()`, `symlink()`, `mremap()`, `glob()`, `nftw()`, `splice()`, `shmget()`, `gethostbyname_r()`. The call fails the way Android reports such a failure, and the line is written once. Most apps carry on another way; when the feature that needs it does not work, this line says why |
+| `[win.apk] <call>(): ... the call fails with <error>` | The app's native code used a C library call Win.apk does not do yet: a pseudo-terminal (`openpty()`), watching files (`inotify_init()`), `signalfd()`, `iconv_open()`, `regcomp()`, `symlink()`, `mremap()` of a file's mapping, `mlockall()`, `glob()`, `nftw()`, `splice()`, `shmget()`, `gethostbyname_r()`. The call fails the way Android reports such a failure, and the line is written once. Most apps carry on another way; when the feature that needs it does not work, this line says why |
 | `sendmsg(): ancillary data ... is not sent` | The app's native code passed a file descriptor or credentials over a socket; only the message's bytes arrive |
 | `the app set an alarm timer; its signal (SIGALRM) is not delivered yet`, `guest created a POSIX timer; timers do not fire yet` | The app's native code set a timer that would interrupt it with a signal. The timer is accepted and never fires, so something that waits for it does not happen |
 | `TextToSpeech: there is no speech engine here yet` | The app asked Android to read text aloud. Nothing is spoken; the app is told that the utterance failed |
@@ -112,11 +135,19 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only (`this is a 32-bit ARM library`), packed or encrypted, or for another CPU |
 | `Exception` or `FATAL` | The app crashed; the lines after it say where |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed. A minidump was written next to the log (`crash-<app>-<time>.dmp`): attach it too |
+| `[win.apk] guest called abort(); abort message: <text>` | The app's native code ended the app on purpose, and the text says why (what Android shows as "Abort message" in a crash report): `terminating due to uncaught exception of type ...` is a C++ error nothing caught. A `crash dump:` line follows |
+| `[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | This Windows has no `icu.dll` (Windows 10 before version 1903, or Wine). Apps keep working: numbers are still written the language's way, but units are written with their international symbols ("5 km", "3 h") rather than in the language's own words, and some locale details are generic |
 | `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice with its translation, so it runs on the JIT ([details](arm-apps.md#if-an-arm-app-crashes)) |
-| `[win.apk] cds:` and `[cds]` | Class-data sharing: which archives the start maps, and HotSpot's reason when one does not map (Win.apk then deletes it and makes it again; the start goes on without it). `WINAPK_CDS=0` turns it off |
+| `[win.apk] AOSP graphics:` | `on` is Android's own graphics and text, the only drawing code Win.apk has. `[win.apk] error: AOSP graphics: ... is missing` or `does not load`, then `cannot start`, means this copy of Win.apk lacks those files or could not load them, and nothing starts: reinstall Win.apk |
+| `[win.apk] cds:` and `[cds]` | Class-data sharing: which archives the start maps, and HotSpot's reason when one does not map (Win.apk then deletes it and makes it again; the start goes on without it) |
+| `[E] launcher: could not start ...` or `could not copy ...` | The library itself failed before Win.apk's runtime ran, with Windows' own reason: the runtime could not be started (an antivirus blocked it, a damaged install: reinstall Win.apk), or the app file could not be copied into the library (a full disk, a file another program holds) |
+| `[win.apk] audio:` | The sound output: `no output device` (sound plays silently and Win.apk looks for a device again every few seconds), and when the device went away or is no longer the default, the new default being opened |
+| `[win.apk] microphone: cannot open` | The app asked for the microphone and Windows did not give it, with the step that failed. `IAudioClient` usually means microphone access is off for desktop apps in Windows Settings > Privacy & security > Microphone |
 | `[win.apk] close:` | The window was closed: `the app was paused, stopped and destroyed in <n> ms` is the normal end; `the app did not answer in time` means its main thread was busy or stuck, so it was ended without the chance to save |
 | `[win.apk] java.nio sockets: <folder> refuses AF_UNIX connections, using <folder>` | Windows would not connect the local sockets Java makes in the temporary folder (seen where a filter driver guards `%LOCALAPPDATA%`), so Win.apk pointed Java at another folder. Nothing to do; without it apps that use Ktor or another `java.nio` selector failed at start with `Unable to establish loopback connection` |
-| `[win.apk] startup:` | When the Java VM was up and when the first frame came, with the memory then |
+| `[win.apk] startup:` | When the Java VM was up and when the first frame came, with the memory then; then how busy the whole PC was until that first frame, the app's own share, and the other programs that used the most processor time meanwhile (`busiest others`). A slow start with the PC near 100% busy and another program at the top (an antivirus scan, Windows Update) was slowed by that program, not by the app |
+| `[win.apk] webview2:` | The WebView2 Runtime found (`found in <n> ms`), and when an app first shows a web page, its folder and how long WebView2 took to start (`environment ready in <n> ms`; the first time on a PC it sets up its profile and takes longer). The app's own screen does not wait for it |
+| `[win.apk] frame times (<graphics> graphics):` | At the end of the log: how many frames the app drew and how long they took, in milliseconds (the median, the slowest 10% and 1%, and the slowest): `layout` and `draw` are the app's screen being laid out and drawn, `pixels` and `present` reading the picture and copying it to the window, `total` the whole frame. The first second and a half of each window is left out. A slow or jerky app shows it here; include it when you report one. An app that was stopped by force ends without it |
 | `[win.apk]` | Any other message from Win.apk itself |
 
 The [user guide](USER_GUIDE.md#logs) lists every log file.

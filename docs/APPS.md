@@ -24,7 +24,7 @@ keeping a copy.
 | Native code: x86_64 | ✅ | `lib/x86_64` libraries load directly, at full speed | | `windows/src/` |
 | Native code: arm64-v8a only | ⚠️ | Translated to x64 in the background; the app runs on a slower ARM JIT until then. See [ARM apps](arm-apps.md) | A library over 1 million instructions is translated only where the app ran | `winapk-aot`, `src/arm64/` |
 | Native code: armeabi-v7a only | ❌ | | 32-bit ARM code does not run. Look for another build of the app | |
-| Input | ⚠️ | Mouse as one finger; touchscreen fingers as Android pointers (up to 10); pen with pressure and eraser; the wheel and touchpad scroll as `ACTION_SCROLL`; Ctrl+wheel and the touchpad pinch as a two-finger pinch; right and middle buttons; hover; the keyboard with dead keys, AltGr and IME composition; Escape as Back; Xbox (XInput) controllers | Touch, pen, touchpad pinch and IME are checked by unit tests only, not yet on real hardware. No pen tilt. Controllers that are not XInput | `win32_window.cpp`, `pointer_input.h`, `native_gamepad.cpp` |
+| Input | ⚠️ | Mouse as one finger; touchscreen fingers as Android pointers (up to 10); pen with pressure and eraser; the wheel and touchpad scroll as `ACTION_SCROLL`; Ctrl+wheel and the touchpad pinch as a two-finger pinch; right and middle buttons; hover; the keyboard with dead keys, AltGr and IME composition (TSF: the focused field is a text services document, reconversion included; IMM32 when TSF is not there); Windows' touch keyboard for a touched text field; Escape as Back; Xbox (XInput) controllers | Touch, pen, touchpad pinch and IME are checked by unit tests only, not yet on real hardware (the TSF document attaches and follows typing under Wine; a real IME's composition and the touch keyboard need real Windows). No pen tilt. Controllers that are not XInput | `win32_window.cpp`, `pointer_input.h`, `native_gamepad.cpp` |
 
 ### Graphics, sound and video
 
@@ -33,22 +33,24 @@ keeping a copy.
 | OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
 | `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
 | Vulkan | ❌ | | Not implemented | |
-| AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg, MP3, AAC and what Windows decodes | | `native_audio.cpp` |
+| Pictures (`BitmapFactory`, `ImageDecoder`) | ✅ | PNG, JPEG, WebP, GIF, BMP and ICO by Android's own decoders; HEIF/HEIC (a phone's photos) and AVIF through Windows | HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video Extension (Microsoft Store); without them such a picture does not open, as on a phone that cannot read it | `windows/java/aosp_gfx/` (`HostImageDecode`), `native_image.cpp` |
+| AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg Vorbis, Ogg Opus (libopus), MP3, AAC and what Windows decodes | | `native_audio.cpp`, `audio_decode.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
 | Microphone (`AudioRecord`) | ✅ | WASAPI capture | | `native_audio_input.cpp` |
-| OpenSL ES | ❌ | | The engine reports itself unsupported, so native games that use it are silent (#132) | `native_opensles.cpp` |
-| `MediaPlayer`, `VideoView` | ✅ | MP4, MOV, MKV with H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs; from a file or an http(s) URL | | `video_player.cpp` |
-| `MediaCodec` (ExoPlayer and others) | ⚠️ | Decoding: H.264 video (and the codec packs' formats), AAC and MP3 audio. Encoding: H.264 and AAC-LC on Windows' software encoders, from byte buffers, a camera2 session or a Canvas on the input Surface | Opus, Vorbis and FLAC audio (such a stream plays silent). No OpenGL ES input to an encoder, so screen and game recorders and GL filter pipelines record nothing. The encoders have run only in the unit test | `native_media_video.cpp`, `native_media_codec.cpp`, `media_encode.cpp` |
-| `MediaExtractor`, `MediaMuxer`, `MediaRecorder` | ⚠️ | Extractor: MP4, MOV, MKV tracks with H.264, HEVC, AAC, MP3 from a file, URL, descriptor or `content://`. Muxer: MP4 and 3GPP with H.264 and AAC. Recorder: the microphone to AAC, a Surface (camera2) to H.264 | WebM and Ogg output; AMR, Opus; the old `Camera` API as a recorder's source; tags and embedded pictures in `MediaMetadataRetriever` | `video_decode.cpp`, `mp4_writer.cpp` |
+| OpenSL ES | ⚠️ | Buffer-queue PCM players (8-bit, 16/24/32-bit, float; mono to 7.1), players of a file descriptor (an asset's), a file or an http(s) URL, decoding to a buffer queue; volume, mute/solo, stereo position, playback rate, seek, loop, play and prefetch events; recorders on the microphone, with `RECORD_AUDIO` | No effects (reverb, equalizer, virtualizer, bass boost), MIDI, 3D, or http streams without an end. Checked by a unit test, not yet with a game (#132) | `native_opensles.cpp` |
+| `MediaPlayer`, `VideoView` | ✅ | MP4, MOV, MKV with H.264 and AAC always; HEVC, VP9 and AV1 with Microsoft's codec packs; from a file or an http(s) URL | WebM, VP8/VP9/AV1 without the codec packs, Opus: the player is Media Foundation's alone (the built-in decoders serve `MediaCodec`) | `video_player.cpp` |
+| `MediaCodec` (ExoPlayer and others) | ⚠️ | Decoding: H.264 video and the codec packs' formats (HEVC); VP8, VP9 (8 and 10-bit) and AV1 always, on Media Foundation's decoder when installed, else on the built-in libvpx and dav1d (software with SIMD, on every core; up to 4096 wide or tall); without a Surface the output buffer and Image hold I420, or P010 when asked for, with stride, crop and colour in the output format; AAC, MP3 and Opus (libopus, surround included) audio. Encoding: H.264 and AAC-LC on Windows' software encoders, from byte buffers, a camera2 session or a Canvas on the input Surface | Vorbis and FLAC audio (such a stream plays silent). HDR video (PQ, HLG) is shown as SDR, not tone-mapped, so the HDR profiles are not offered. No OpenGL ES input to an encoder, so screen and game recorders and GL filter pipelines record nothing. The encoders have run only in the unit test | `native_media_video.cpp`, `soft_codecs.cpp`, `native_media_codec.cpp`, `media_encode.cpp` |
+| `MediaExtractor`, `MediaMuxer`, `MediaRecorder` | ⚠️ | Extractor: MP4, MOV tracks with H.264, HEVC, AAC, MP3; WebM and MKV (libwebm's mkvparser) with VP8, VP9, AV1, H.264, HEVC, Opus, Vorbis, AAC; from a file, URL (MP4/MOV), descriptor or `content://`. Muxer: MP4 and 3GPP with H.264 and AAC. Recorder: the microphone to AAC, a Surface (camera2) to H.264 | A WebM from an http(s) URL; WebM and Ogg output; AMR, Opus encoding; the old `Camera` API as a recorder's source; tags and embedded pictures in `MediaMetadataRetriever` | `video_decode.cpp`, `webm_demux.cpp`, `mp4_writer.cpp` |
 | NDK media (`AMediaCodec`, `AMediaExtractor`) | ❌ | | Not implemented: video from an app's native code (#133) | `native_media.cpp` |
 
 ### The PC's hardware
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation); a virtual camera when there is none. Preview, analysis frames and JPEG stills; video through `MediaRecorder` or an encoder's Surface from camera2. The system camera's capture screen (`ACTION_IMAGE_CAPTURE`): a window on the webcam with Take photo, or a picture file chosen instead | | `native_camera.cpp`, `CameraCaptureHandler.java` |
+| Camera | ✅ | Webcams through Camera, camera2 and CameraX (Media Foundation), each offered as a back and a front camera (by design, so apps that want the rear camera work); a virtual camera when there is none. Preview, analysis frames and JPEG stills; video through `MediaRecorder` or an encoder's Surface from camera2. The camera's orientation follows the window's (90° in landscape), so apps' own rotation comes out at none for the upright webcam picture. Autofocus where the webcam's driver offers it (camera1's "auto" and continuous modes with a real one-shot focus, camera2's AF modes and states, `android.hardware.camera.autofocus`); otherwise a fixed-focus camera. A torch only where the driver has one. The system camera's capture screen (`ACTION_IMAGE_CAPTURE`): a window on the webcam with Take photo, or a picture file chosen instead | Focus and torch have not been tried on a real webcam yet (written to the drivers' documented controls; the unit test covers the fixed-focus path). No zoom, face detection, exposure or white-balance control | `native_camera.cpp`, `CameraBridge.java`, `CameraCaptureHandler.java` |
+| Cheque deposit (Israeli banks) | ⚠️ | Hapoalim, Leumi and Mercantile scan cheques with Scanovate's scanner on the old `Camera` API: camera 0 (a back camera here), a SurfaceView preview, NV21 preview frames, a landscape-only scan screen. It turns the preview by (`CameraInfo.orientation` − rotation × 90) mod 360, which is 0 here in both orientations (`CameraOrientationTest`); it autofocuses only when `android.hardware.camera.autofocus` is declared and "auto" is listed, which follows the webcam; it prefers 1280×720 | Not yet tried in the banks' apps on a real webcam. Its native code rejects blurry frames, so a webcam that cannot focus close (most fixed-focus ones) may never accept a cheque; it needs one that autofocuses at short range and does 1280×720 | `native_camera.cpp`, `Camera.java` |
 | Location | ✅ | Windows' location service, behind Windows' privacy switch | | `native_location.cpp` |
-| Sensors | ❌ | | The sensors exist but report a phone lying still; tilt controls do nothing | `runtime/java/android/hardware/` |
+| Sensors | ❌ | | None of the PC's sensors is passed on, and none is made up: no accelerometer, gyroscope or any other sensor is reported (as on an Android device without them), so tilt games find none. Windows' own sensor API (2-in-1s) is not wired | `runtime/java/android/hardware/SensorManager.java`, `native_sensor.cpp` |
 | Bluetooth | ⚠️ | Paired devices; serial (RFCOMM) connections both ways; LE scans and the GATT client (read, write, notifications) | Discovery and pairing from the app, LE advertising, the GATT server, audio and HID profiles, L2CAP | `native_bluetooth.cpp` |
 | Wi-Fi and the network | ⚠️ | On or off, the current network, the DHCP configuration, scan results; `ConnectivityManager` reports the PC's real default adapter (cable or Wi-Fi), its addresses and DNS servers; multicast and broadcast sockets for finding devices on the local network | Connecting the PC to a network (a device's own setup hotspot); `NsdManager` (mDNS) reports failure | `native_radios.cpp`, `src/bionic/socket.cpp` |
 | Clipboard, file pickers | ✅ | Text, HTML and links; Windows' open and save dialogs | | `native_clipboard.cpp`, `native_picker.cpp` |
@@ -57,10 +59,11 @@ keeping a copy.
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| WebView, Custom Tabs | ✅ | Microsoft Edge WebView2, with `shouldInterceptRequest` (Cordova, Capacitor) | Needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have | `native_webview.cpp` |
+| WebView, Custom Tabs | ✅ | Microsoft Edge WebView2, with `shouldInterceptRequest` (Cordova, Capacitor); `file:///android_asset/` and `file:///android_res/` served from the APK, the app's own files with `setAllowFileAccess`; a download goes to the app's `DownloadListener`, never saved by the engine | Needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have. A `file:` page's script sees an https origin (`location.protocol` is `https:`) | `native_webview.cpp`, `webview_file_urls.h` |
 | Notifications | ⚠️ | Windows notifications with the app's name and icon, text, large icon and progress; a click opens the app while it runs | Action buttons are not shown | `native_notifications.cpp` |
 | Storage | ✅ | Files, SharedPreferences, SQLite. Downloads, Pictures, Documents, Music and Movies are your Windows folders (a setting turns this off) | | `user_folders.cpp` |
 | Permissions | ✅ | Android's dialogs for every dangerous group and special access, remembered per app | | `launcher_main.cpp` (`appops`) |
+| Screen readers | ⚠️ | Narrator, NVDA and other UI Automation readers read an app's views from Android's accessibility nodes (names as TalkBack speaks them, roles, states, values, lists' positions, Compose's semantics), in Android's reading order and the app's language; they can press, toggle, type, select, set a slider, expand and collapse, scroll, and read a field by character, word and line; focus, live regions, announcements and toasts are spoken | Checked by unit tests, a UI Automation client and AOSP's views on a JVM; not yet tried with Narrator, NVDA or JAWS on real apps | `uia_tree.cpp`, `uia_provider.cpp`, `HostAccessibility.java`, `AccessibilityTree.java` |
 | Hebrew and right to left | ⚠️ | Win.apk itself and its installer are fully Hebrew and mirrored. Apps see the Windows language and region, and the framework lays out right-to-left apps as Android does | Few Hebrew apps have been tried by hand | `launcher_main.cpp` (`tr()`) |
 
 ### Google and app stores
@@ -70,8 +73,8 @@ keeping a copy.
 | Google sign-in and basic Play services | ✅ | Built-in stand-ins: Google sign-in, Play licence checks, push messages (FCM), Firebase Analytics, fused location | | `runtime/java/com/macapk/gms/` |
 | Google's real Play services and Play Store | ⚠️ | Experimental, off by default, with Google's own APKs that you install. Tried: FCM tokens, the Play Store signed in, installing a free app from it. See [Google services](google-services.md) | Untested on most apps | `binder_win.cpp`, `SystemServer` |
 | In-app purchases, Play Integrity, Maps SDK | ❌ | | Billing reports unavailable, there is no attestation, and the Maps SDK lays out a blank map (the app itself starts and runs; the map never reports ready). Not planned: Win.apk does not forge Google's checks | |
-| F-Droid (the built-in Store) | ✅ | Search, categories, Install and Update; downloads checked against F-Droid's index | | `launcher_main.cpp` (Store) |
-| Store apps (F-Droid, Aurora Store) | ⚠️ | An app that installs other apps asks you first and installs into the library | Being tested in [#66](https://github.com/israel2176/win.apk/issues/66) | `PackageInstallerBackend` |
+| The built-in Store (Win.apk's own store app) | ⚠️ | Shown in the Win.apk window; got from its GitHub release at the first opening and updated with the daily check, kept only at GitHub's size and SHA-256; allowed to install apps from the start; its installs go through the install window and name it as their installer | New: checked under Wine (got, shown, an app installed from it), not yet on Windows | `launcher_main.cpp` (the Store), `store_app.h` |
+| Other store apps (F-Droid's app, Droid-ify, Aurora Store) | ⚠️ | An app that installs other apps goes through Android's steps: "Install unknown apps" for it the first time, "Do you want to install this app?", then the install window with its progress and "App installed." with Open and Done (or the reason it failed) | Being tested in [#66](https://github.com/israel2176/win.apk/issues/66) | `PackageInstallerBackend` |
 
 ## Needs improvement, by importance
 
@@ -80,15 +83,15 @@ issue has none yet; please open one before working on it.
 
 | # | Gap | Effect | Issue |
 |---|---|---|---|
-| 1 | OpenSL ES | Games whose engine plays sound through OpenSL ES are silent | |
-| 2 | The NDK media API, `MediaExtractor`, Opus/Vorbis/FLAC in `MediaCodec` | Video from native code does not play; some streams play without sound | |
-| 3 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
-| 4 | Vulkan | Games that need Vulkan do not draw | |
-| 5 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
-| 6 | Multi-touch | Pinch-to-zoom and two-finger gestures cannot be made | |
-| 7 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
-| 8 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
-| 9 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+| 1 | The NDK media API, Vorbis/FLAC in `MediaCodec`, WebM in `MediaPlayer` | Video from native code does not play; some streams play without sound | |
+| 2 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
+| 3 | Vulkan | Games that need Vulkan do not draw | |
+| 4 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
+| 5 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
+| 6 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
+| 7 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
+| 8 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+| 9 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
 
 ## The automated sweep
 
@@ -129,22 +132,21 @@ what to look for in the app or in its log.
 |---|---|---|
 | The APK has only `lib/armeabi-v7a` | 32-bit ARM code, which Win.apk cannot run | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
 | The APK has only `lib/arm64-v8a` | Runs, slowly at first, while it is translated | Give it a few minutes on its first runs |
-| A native game has no sound | OpenSL ES | None yet |
-| A video plays without sound in an ExoPlayer app | Opus, Vorbis or FLAC audio | Pick a stream with AAC audio, if the app lets you |
+| A video plays without sound in an ExoPlayer app | Vorbis or FLAC audio | Pick a stream with AAC or Opus audio, if the app lets you |
 | "Sign in with Google" fails, or the app says Play services are missing | The app checks for Google's own Play services | Try [Google services](google-services.md) (experimental) |
 | In-app purchases, a Play Integrity error, a blank Google map | Not available | Use an open-source build without Play services, where there is one |
 | `not implemented on Windows yet` in the log | A C library function the app's native code needs | [Report it](troubleshooting.md#reporting-a-problem) with the log; adding one is usually small |
 | `native not implemented` in the log | A piece of the Android host that is still missing | Report it with the log |
 | `[win.apk] cannot load <library>` in the log | A native library the loader could not load: packed, encrypted, or for another CPU | Report it with the log and the APK's `lib/` folders |
 | The app opens sideways, or narrow | Apps open in landscape; an app that fixes portrait opens portrait | The app's details page, **Window > Orientation**; or Settings > Apps > Default orientation for all apps |
-| SmartScreen or an antivirus warns | The preview is not code-signed, and Win.apk writes then runs translated code | Allow it if you downloaded Win.apk from this repository |
+| SmartScreen or an antivirus warns | Win.apk is not code-signed yet, and Win.apk writes then runs translated code | Allow it if you downloaded Win.apk from this repository |
 
 ## Apps people have tried
 
 One row per app and version that someone actually used. Newest test first
 within an app. The results of [#69](https://github.com/israel2176/win.apk/issues/69)
 (20 very different apps) are added here. The rows dated 2026-11-10 are
-from the app probe (`.github/workflows/app-probe.yml`): each app a minute in
+from the app probe (a by-hand workflow, since retired): each app a minute in
 a window on a Windows machine without a graphics card, looked at in
 screenshots and its log. Nobody used the app, so the status is *Boots* at
 most.

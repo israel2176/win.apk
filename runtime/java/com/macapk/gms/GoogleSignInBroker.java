@@ -92,7 +92,6 @@ public final class GoogleSignInBroker {
     /** MACAPK_GMS_SIGNIN (default ON). Also requires that we claim Play services
      *  at all: with MACAPK_GMS_HONEST_MISSING=1 no client ever gets here. */
     public static boolean enabled() {
-        if ("0".equals(System.getenv("MACAPK_GMS_SIGNIN"))) return false;
         try { return com.macapk.loader.PlayServices.availability() == 0; }
         catch (Throwable t) { return false; }
     }
@@ -321,9 +320,6 @@ public final class GoogleSignInBroker {
     /** Test seam: forget every backoff (debug/onetapgrant_gate.sh runs scenarios back to back). */
     static void clearGrantBackoff() { sGrantBackoff.clear(); }
 
-    static boolean remoteGrantEnabled() {
-        return !"0".equals(System.getenv("MACAPK_GMS_REMOTE_GRANT"));
-    }
 
     static String grantKey(Request r) {
         return GRANT_PREFIX + r.callerPkg + "|" + r.serverClientId;
@@ -332,7 +328,7 @@ public final class GoogleSignInBroker {
     /** Google's cached answer for (account, app, client): TRUE / FALSE while it is
      *  fresh, null when unknown (never asked, expired, or the gate is off). */
     static Boolean cachedGrant(String account, Request r) {
-        if (!remoteGrantEnabled() || r == null || r.callerPkg == null || r.serverClientId == null) return null;
+        if (r == null || r.callerPkg == null || r.serverClientId == null) return null;
         String v = GmsStore.accountData(account, grantKey(r));
         if (v == null) return null;
         String[] f = v.trim().split(" ");
@@ -351,7 +347,7 @@ public final class GoogleSignInBroker {
      *  GetGoogleIdOption with filterByAuthorizedAccounts, and only for an account
      *  with neither a local record nor a fresh cached answer. */
     static boolean needsGrantProbe(Request r) {
-        if (!remoteGrantEnabled() || r == null || r.kind != Kind.GOOGLE_ID || !r.filterByAuthorized
+        if (r == null || r.kind != Kind.GOOGLE_ID || !r.filterByAuthorized
                 || r.callerPkg == null || r.serverClientId == null || r.serverClientId.isEmpty()) return false;
         for (String a : GmsStore.accountNames()) {
             if (a == null || a.startsWith("_") || !hostedDomainAllows(r, a)) continue;
@@ -422,7 +418,7 @@ public final class GoogleSignInBroker {
      *  message is byte-identical). debug/owner_issue_scan.py ONETAP-LOCAL-ONLY reads
      *  the bare message as "Google was never asked". */
     static String grantBasis(Request r) {
-        if (!remoteGrantEnabled() || r == null || r.kind != Kind.GOOGLE_ID || !r.filterByAuthorized) return "";
+        if (r == null || r.kind != Kind.GOOGLE_ID || !r.filterByAuthorized) return "";
         int no = 0, unknown = 0;
         for (String a : GmsStore.accountNames()) {
             if (a == null || a.startsWith("_")) continue;
@@ -480,7 +476,7 @@ public final class GoogleSignInBroker {
             String pkg = null;
             try { pkg = android.app.ActivityThread.currentPackageName(); } catch (Throwable ignored) { }
             if (pkg == null) {
-                android.app.Application a = android.app.Application.getInstance();
+                android.app.Application a = com.macapk.loader.app.Apps.current();
                 if (a != null) pkg = a.getPackageName();
             }
             disableAutoSignIn(pkg);
@@ -580,7 +576,7 @@ public final class GoogleSignInBroker {
     public static Result signIn(Request r, String account, String appSigSha1, boolean consented) {
         Result res = new Result();
         res.email = account;
-        if (account == null || GmsStore.masterToken(account) == null) {
+        if (account == null || !GmsStore.hasAccount(account)) {
             res.error = "no such account";
             return res;
         }

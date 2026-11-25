@@ -39,7 +39,10 @@ Win.apk installs four formats:
 
 A bundle holds a base APK and split APKs (languages, screen densities, CPU
 architectures). Win.apk picks the splits the app needs here, the way the
-Android installer does.
+Android installer does. Once the app is installed, the library keeps those
+APKs, not the bundle: `<app>.apk` and the folder `<app>.splits` beside it,
+the very files the app runs from, so the app takes its space on disk once.
+Keep the bundle you downloaded if you may want its other parts later.
 
 Any of these starts an install:
 
@@ -47,7 +50,7 @@ Any of these starts an install:
   Only the install window opens, not the library;
 - drag one or more files onto the library window;
 - click **Install app** in the library's toolbar (or press Ctrl+O) and choose files;
-- click **Install** on an app's card in the [Store](#the-store);
+- install it from the [Store](#the-store);
 - run `Win.apk.exe <file>` from a command line, which is the same as
   double-clicking it.
 
@@ -93,7 +96,41 @@ Installs run one at a time, in a small install window:
 Two apps with the same library name (the app's label) cannot coexist: a
 second install of the same app replaces the first and keeps the app's data.
 To update an app, open or drop a newer file of it: there is no separate
-update button.
+update button. An app open in a window has to be closed first; what runs of
+it with no window (started in the background for another app, with Google
+services on, and Google's own apps) is stopped for the update, as Android
+stops an app it updates.
+
+### Apps that install apps
+
+An app store (the built-in [Store](#the-store), Droid-ify, Aurora Store, any
+app that installs other apps) installs into the library through Win.apk, the
+way Android's package installer does it:
+
+1. The first time, if the store is not allowed to install apps, Win.apk says
+   so, as Android does: **For your security, your PC currently isn't allowed
+   to install unknown apps from this source.** **Settings** opens the store's
+   **Install unknown apps** switch ("Allow ... to install other apps?");
+   **Allow** goes on to the install, **Cancel** or **Don't allow** stops it.
+   The answer is kept (see [Permissions](#permissions)), so this comes once
+   per store, and an update of the store keeps it. The built-in Store is
+   allowed from the start, as a phone's own store is.
+2. **Do you want to install this app?** (or **Do you want to update this
+   app?** when the library has the app): **Install** / **Update**, or
+   **Cancel**.
+3. The install window shows the install as for a file you opened: the app's
+   icon and name, a moving bar, its steps, and **Cancel** until it is too late
+   to undo.
+4. At the end, **App installed.** (or **App updated.**) with **Open**, which
+   starts the app (apps with no launcher icon have none), and **Done**; or
+   **App not installed.** with the reason, **Show log**, **Copy details** and
+   **Report a problem**.
+
+The store learns the outcome when the install ends, as on a phone, not when
+you close the window: it can show the app as installed while the window still
+says so. A cancelled install is reported to the store as cancelled. The Play
+Store (Google's own, with Google services on) installs and updates with
+nothing shown, as it does on a phone.
 
 ### Native code and CPU architectures
 
@@ -117,34 +154,40 @@ settings and variables that control it.
 
 ## The Store
 
-![The Store: F-Droid's apps as cards with Install buttons, a search box and a category list](images/store.png)
+![The Store: Win.apk's own store app inside the library window, its home page with rows of apps by category](images/store.png)
 
-The **Store** tab is [F-Droid](https://f-droid.org)'s catalog of free and
-open-source apps, usually Java-only and a good place to start. It lists the
-apps that can run here: those without native code, with an x86_64 build, or
-with an arm64-v8a build (translated). Where F-Droid offers one build per CPU
-architecture, the x86_64 one is used. Type to search, or pick a category.
+The **Store** item in the pane opens Win.apk's own store app
+([win.apk-store](https://github.com/israel2176/win.apk-store)) inside the
+library window, as **Google Play** opens there with Google services on. It is
+a Play-style store in Hebrew or English: search any app in Google Play's
+catalogue, see its page (screenshots, what's new, ratings and reviews, data
+safety and permissions), and download free apps, whose files come from
+APKPure. It is part of Win.apk, not an app of your library: it has no tile and
+no shortcut, and the Store item is its one way in.
 
-- **Install** downloads the APK from f-droid.org, checks it against the
-  SHA-256 hash in F-Droid's index (a file that does not match is not
-  installed) and installs it like a dropped file. The card shows the download
-  and the install; then it says **Installed**, and the app opens from the
-  library.
-- **Update** appears when F-Droid has a newer version (by version code) of an
-  app you have with the same package name, however you installed it. The
-  app's data stays.
-- Click a card for the app's details page: whether it is in your library, its
-  version, size, license and categories, and a link to its F-Droid page.
-  **Back** (the arrow, Esc or Alt+Left) returns to the Store.
+- **The first time** you open the Store, Win.apk downloads the store app from
+  its newest release on GitHub and installs it; the page says how far it is
+  (**Getting the Store…**, **Downloading the Store…**, **Installing the
+  Store…**). The file is installed only at the size and SHA-256 checksum
+  GitHub lists for it; one that does not match is deleted and not installed,
+  and the page says why, with **Try again**.
+- **Updates**: the daily update check (Settings > Updates, **Check for updates
+  automatically**) also looks for a newer release of the store app, and
+  installs it the same way, once the Store is not open.
+- **Installing an app** from the Store goes through Win.apk as for any store
+  (see [Apps that install apps](#apps-that-install-apps)): **Do you want to
+  install this app?**, the install window, then **App installed.** with
+  **Open** and **Done**. The Store is allowed to install apps from the start,
+  as a phone's own store is, and the apps it installs name it as their
+  installer.
+- Leaving for another item keeps the Store running, as a phone keeps an app
+  in the background; the Store item shows it again at once. Closing the
+  library window closes it. If it closes, the page says so, with **Open the
+  Store**.
 
-The first time, the Store downloads F-Droid's index (tens of megabytes) and
-keeps a summary of it in `%LOCALAPPDATA%\Win.apk\store\catalog.tsv`. After
-that it opens at once and checks for a newer index in the background when
-the saved one is more than six hours old; **F5** or the refresh button
-checks now.
-
-The Store needs an internet connection and reaches only f-droid.org. The
-downloaded APK is deleted after the install.
+The Store needs an internet connection. An older Win.apk's Store (F-Droid's
+catalog, `%LOCALAPPDATA%\Win.apk\store\`) is removed the first time this
+version starts.
 
 ## Running an app
 
@@ -169,13 +212,13 @@ or later with an error, the window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
-Starts get quicker after the first app start of each Win.apk version: in
-the background, Win.apk keeps the Java classes every app loads (the JDK's and
-the Android framework's) ready in a file it maps at the next starts, instead
-of reading and checking them again each time (class-data sharing): a fifth
-off a typical start, and about 30 MB less memory per running app. Making that
-file takes a few seconds of one core at low priority, once, and about 40 MB in
-`%LOCALAPPDATA%\Win.apk\cds`.
+Win.apk keeps the Java classes every app loads (the JDK's and the Android
+framework's) ready in a file every app start maps, instead of reading and
+checking them again each time (class-data sharing): a fifth off a typical
+start, and about 30 MB less memory per running app. The installer makes that
+file once per Win.apk version, before any app starts (else Win.apk makes it in
+the background at the first app install): a few seconds of one core at low
+priority, and about 40 MB in `%LOCALAPPDATA%\Win.apk\cds`.
 
 The library marks a running app with a green badge on its tile and counts
 them under its title. **Stop** in the tile's right-click menu, or on the
@@ -195,7 +238,8 @@ In an app:
 | Right click | A mouse's secondary button: what a long press opens (a context menu, a list item's long-click action), and an app that reads mouse buttons gets it. The middle button is the tertiary one |
 | Move the pointer over the app | The pointer hovers: tooltips and hover highlights |
 | Keyboard | Key presses, and the characters your keyboard layout types, into text fields: dead keys (an accent, then the letter), AltGr, Caps Lock |
-| An input method (Chinese, Japanese, Korean, the emoji panel) | Text. The text being composed shows in the field itself when the field supports it (most do), otherwise in a small window of Windows' until it is final |
+| An input method (Chinese, Japanese, Korean, handwriting, dictation, the emoji panel) | Text. The text being composed shows in the field itself, as on a phone; the input method can also reread and change text already typed (reconversion, corrections), and it is told what the field is for (a number, a phone number, an e-mail address, a web address, a search). In a password field no input method composes: what you type goes in as typed. A field that is not a text field the app draws itself shows it in a small window of Windows' until it is final |
+| Touch a text field on a PC with a touchscreen | Windows' touch keyboard opens, where a phone would open its keyboard (with digits for a number field, the @ key for an e-mail address, as Windows lays it out for its own fields), and closes when the app closes its keyboard or the field goes. Windows decides as for its own programs: with a keyboard attached it may not open (Settings > Time & language > Typing > Touch keyboard) |
 | **Escape**, **Alt+Left**, the mouse's back button | Android's Back |
 | **Ctrl+Shift+F12** | A snapshot of the display for a problem report: the app's picture as it drew it and the window as you see it, in the logs folder (`snapshot-<app>-<time>-frame.png` and `-window.png`), with a line in the app's log giving its density and the scale it is shown at. A short sound says it is saved |
 | Close the window | The app quits as an Android app leaves the screen: the window goes at once, the app is paused, stopped and destroyed (so it saves what it saves on a phone), and then it ends. An app that does not answer is ended after two seconds |
@@ -242,13 +286,11 @@ phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md
 | Enter | Open the selected app |
 | Alt+Enter | The selected app's details |
 | Menu key, Shift+F10 | The selected app's right-click menu |
-| Typing, Ctrl+F | In the Store: search it; Esc shows everything again |
 | Ctrl+O | Add an app from a file |
 | Ctrl+1, Ctrl+2 | The Library and the Store |
 | Ctrl+, | Settings |
 | Ctrl+L | The log window, on the newest log |
 | Ctrl+T | The Threads window, on every running app (with **Debug mode** on) |
-| F5 | In the Store: check F-Droid for new apps |
 | Esc, Backspace, Alt+Left, the mouse's back button | On a details page: back |
 | Tab, Space, Enter | On a page: move between its controls and use them |
 
@@ -264,8 +306,8 @@ library, light or dark and mirrored in Hebrew: **Remove**, **Clear library**,
 **Stop installing?**, signing out of Google, an error with **Show log**, an
 app asking to install, update or remove another app, and the permission
 questions apps ask. The accent button comes first; for anything that removes
-something, Enter picks **Cancel**. Esc or the window's ✕ closes a dialog
-without an answer.
+something, Enter picks **Cancel**. The button Enter picks has the focus ring
+when the dialog opens. Esc or the window's ✕ closes a dialog without an answer.
 
 **App details** (also Alt+Enter) is a page in the library, with a back arrow:
 
@@ -278,7 +320,7 @@ without an answer.
 | Shortcut | **Desktop shortcut**: adds or removes the app's desktop shortcut. The Start menu one is always there |
 | Performance | Only for an app with only ARM code: **Optimizing for this PC…** while its translation runs in the background (with the parts done so far), and **This app has only ARM code** when a library is too large to translate whole, so an x86_64 build of the app, if one exists, runs faster. See [ARM apps](arm-apps.md) |
 | Troubleshooting | **Log** (View the app's recent logs): **Show log** opens the log window on the app's last run (or its install, before the first run). **Report a problem** (opens a GitHub issue with the app's details and log): for a problem met inside the app; see [Reporting a problem](troubleshooting.md#reporting-a-problem). With **Debug mode** on in Settings, **Threads** opens the [Threads window](#debug-mode-the-threads-window) on this app |
-| Storage | **The app's file**: its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
+| Storage | **The app's file** (**The app's files** for one that came as a bundle: its `.apk` and splits): its size, and **Show** opens Explorer on it. **Run files**: what Win.apk prepared to run the app, its folder under `apps\`, and **Open** |
 | Manage | **Stop** (while it runs) and **Remove** |
 
 Each action has one place: the details page, plus the right-click menu for
@@ -296,19 +338,20 @@ its own. Each setting takes effect the next time an app opens unless noted.
 |---|---|---|
 | Appearance | **Theme** | Follow Windows (the default), Light or Dark. Applies at once |
 | Appearance | **Language** | Follow Windows (the default), Hebrew (עברית) or English. Applies at once; see [Hebrew and right-to-left](#hebrew-and-right-to-left) |
-| Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp, or the size given by `WINAPK_PHONE_SIZE` when that variable is set. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
+| Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
 | Apps | **Default orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen. Apps that require an orientation always open in it; an app's details page changes it for that app |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
+| Apps | **Report Google Play as the installer** (on) | Apps you install are told Google Play installed them, as `adb install -i com.android.vending` does on a phone; some apps (banks such as bit and Bank Hapoalim) otherwise stop at "reinstall the app from the store". An app another store installed (F-Droid, Aurora) still names that store. Off: apps installed from Win.apk name no installer, as a sideloaded app. Takes effect the next time an app opens |
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Google services setup** | See [Google account and Google services](google-services.md) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; nothing runs once Win.apk is closed: there is no scheduled task or service), **Google services setup**, and **Device ID for Google** (once Google services have checked in: the Services Framework's ID, **Copy**, and **Register this device**, Google's page for devices that are not Play Protect certified) | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
 | Troubleshooting | **Clear library** | Uninstalls every app of the library and removes its shortcuts (app data is kept; Google's apps stay with Google services) |
 | Updates | **Check** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
-| Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar |
+| Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar. The same check updates the [Store](#the-store)'s app |
 | Updates | **Update** | Shown when a newer version is out, with **What's new in** that version below it. Downloads the installer, then runs it and closes Win.apk |
 | About | | The version, **Project page** (github.com/israel2176/win.apk) and **Credits and licenses**, which opens `THIRD_PARTY_NOTICES.txt` beside the program (Mac.apk, which Win.apk is built on, and every project the package ships, with their licences; `LICENSE.txt` is Win.apk's own, the GNU AGPL v3.0) |
 
@@ -339,9 +382,14 @@ cheque scanner in a portrait app), the screen under it gets its own back.
 Maximizing is turning the phone: the app's display keeps the phone's short
 side and becomes as long as the screen is wide (360 x 800 dp becomes about
 700 x 360 dp on a 16:9 monitor), so the app shows its landscape layout large,
-not a tablet-sized display with its content small. In the run where you
-maximize it the picture is enlarged, which softens it; an app that was
-maximized when it closed opens maximized the next time, drawn sharp.
+not a tablet-sized display with its content small. It is drawn sharp, pixel
+for pixel: the app gets the density at which that display fills the screen,
+as an Android phone whose display size setting changes does (most screens are
+made again, keeping what you typed and where you were, as Android does; for
+a moment the old picture is shown enlarged). Restoring the window brings back
+the phone's own size and density, and so does moving the window to a monitor
+with another scale. An app that was maximized when it closed opens maximized
+the next time.
 
 The size you settle on is remembered per app and used the next time the app
 opens, before the App window size setting. The app's details page shows it and
@@ -361,6 +409,33 @@ An app's window follows Windows' reading layout for right-to-left users: its
 title bar is mirrored, while the app draws its own layout as it would on a
 phone.
 
+## Screen readers
+
+Narrator, NVDA, JAWS and any other UI Automation tool can read an app's
+window: its buttons, texts, fields, check boxes, switches, sliders, lists,
+tabs and dialogs, as TalkBack reads them on a phone. Each view is named by its
+description or its text; a field by the label next to it (or its hint), with
+its text as the value; a list row by the texts inside it, read once. Items of
+a list say where they are ("3 of 12"), headings are headings, and everything
+is read in the order Android reads it (right to left in a Hebrew layout) and in
+the app's language, so the screen reader picks a Hebrew voice for a Hebrew
+app.
+
+The reader can press a button, check a box, flip a switch, type into a field,
+select text, move a slider, open or close what expands, choose a list item or
+a tab, and scroll a list or a page. In a text field it reads by character, by
+word and by line as the field shows them, and follows the caret and the
+selection. It follows the keyboard focus, and speaks what the app announces,
+a toast, and a live region's new text (a counter, a status line) as they
+change. Apps built with Compose, and other views that describe themselves to
+accessibility services, are read the same way. A web page in an app is read
+through Edge WebView2's own support.
+
+Nothing of this runs until a screen reader asks for the window: then the app
+is told an accessibility service is on, as when TalkBack is turned on, and the
+app's log says `a screen reader reads the app`. After a minute in which no
+screen reader asks or listens, it is turned off again.
+
 ## Shortcuts and file types
 
 - Every installed app gets a shortcut in **Start > Win.apk Apps** with its
@@ -372,6 +447,14 @@ phone.
   **Open .apk, .apkm, .xapk and .apks files with Win.apk** extends that to the
   other three, and takes the `.apk` association back if another program took
   it. Double-clicking such a file opens the install window.
+- In Explorer's medium, large and extra large icons, and in its preview pane,
+  each of these files shows its own app's icon, read from the file without
+  installing or running anything (a bundle's own `icon.png` first, else its
+  base APK's launcher icon). An icon Android draws as a vector shows the icon
+  Win.apk made when the same app was installed, or else Win.apk's file icon;
+  WebP icons need Windows' WebP support (the Webp Image Extensions, built
+  into Windows 10 1809 and later). Small icons and the details view show
+  Win.apk's file icon.
 - When Win.apk is updated, it writes every app's Start menu and desktop
   shortcuts again once, so they carry what the new version needs.
 
@@ -415,12 +498,22 @@ is running, as Android does.
 
 Granting a permission does not create the data behind it: a PC has no
 contacts, SIM, SMS or sensors, so an app that is granted those finds them
-empty. The camera and microphone use the PC's webcam and microphone, behind
+empty. Apps are told of no sensor at all (no accelerometer, gyroscope,
+compass, light or step sensor), as on a phone without them: a tilt-steered
+game finds none, and an app that needs one says so or leaves that part out.
+The camera and microphone use the PC's webcam and microphone, behind
 Windows' own privacy switches (Settings > Privacy). An app that asks the
 system camera for a picture (a "take a photo" button) gets Win.apk's camera
 window: the webcam's picture, **Take photo**, then **Use photo** or
 **Retake**; **Choose a file…** sends a picture file instead, for a PC with no
-camera or one that faces you. Location comes from
+camera or one that faces you. Every webcam is offered to apps both as the
+phone's back camera and as its front one, so an app that wants the rear
+camera finds one. An app sees the webcam's autofocus and light only when the
+webcam's driver offers them; otherwise it is a fixed-focus camera without a
+flash. **Cheque scanning** in the banks' apps (Hapoalim, Leumi, Mercantile)
+needs a webcam that autofocuses at short range and does 1280×720: the
+scanner rejects blurry pictures, and most fixed-focus webcams cannot focus
+on a cheque held close. Location comes from
 Windows' location service; when Windows denies it, Win.apk opens the Windows
 location settings page once per run.
 
@@ -450,13 +543,20 @@ phone's browser. Closing the window, or leaving it for 10 minutes, cancels the
 sign-in. One account serves every app, and the account's item at the foot
 of the navigation pane, above **Settings**, shows who is signed in (only the
 account's picture, or its initial when Google gave none, or the person icon when
-no one is; the address shows when you point at it) and opens Settings. **Use Google
+no one is; the address shows when you point at it) and opens Settings at the
+Google account section. **Use Google
 services (experimental)** runs Google's own Play services and Play Store,
 which you install through the **Google services setup** page; with it on,
 **Google Play** appears under **Store** in the navigation pane and opens the
 Play Store inside the Win.apk window, where the library is. Google's three
 apps are system components: they have no tile in the library and no
-shortcut.
+shortcut. The Play Store updates your apps as on a phone, in the background
+too (**Update apps in the background**); an app you have open is updated
+once you close it when the Play Store asks to wait, else closed for its update.
+Win.apk is not a Play Protect certified device and does not pretend to be, so
+Gmail and the Play Store may say so; **Device ID for Google** shows the ID to
+register with your account on Google's page for such devices (**Register this
+device**), after which Google apps sign in.
 
 [Google account and Google services](google-services.md) explains both, the
 setup step by step, and what does not work.
@@ -471,15 +571,22 @@ on (the default), the library checks about once a day when it opens and every
 hour while it stays open, once a day has passed since the last check. The
 check downloads only GitHub's list of releases and sends nothing about you or
 your apps (the request names itself `Win.apk-updater`). Versions are compared
-by their numbers: `v0.3.0-preview` is newer than 0.2.0.
+by their numbers: `v1.1.0-rc1` is newer than 1.0.0.
 
 When a newer version is out, the InfoBar says so with **What's new**, which
 opens Settings at Updates: the new version's row with **Update**, and its
 release notes as plain text under **What's new in** that version, with a link
 to its page on GitHub. **Update** downloads `Win.apk-Setup.exe` from the
-release (the button shows how far it is), checks that it is complete (its
-size, and its SHA-256 when GitHub gives one), runs it and closes Win.apk so
-that the installer can replace it. Your apps and their data are kept. The
+release (the button shows how far it is), checks it, runs it and closes
+Win.apk so that the installer can replace it. The installer runs only when
+its size, its SHA-256 checksum and the version written inside it are the ones
+GitHub lists for the release; otherwise it is deleted and the InfoBar says
+why. Win.apk's installers are not code-signed yet, and Settings > Updates
+says so; a code-signed build of Win.apk will take only an installer signed
+by the same signer. A release whose installer has no SHA-256 checksum on
+GitHub is not downloaded: its row opens the release page instead. Drafts are
+never offered, and pre-releases only while Win.apk has no full release. An installer downloaded earlier is checked
+again in the same way before it runs. Your apps and their data are kept. The
 update does not start while an app is running or an install is under way:
 close the app or wait, then press **Update** again. A downloaded installer is
 kept in `%LOCALAPPDATA%\Win.apk\updates` until the update has been installed.
@@ -498,6 +605,17 @@ network with its own code can join multicast groups as on a phone (Windows
 Firewall may first ask whether to let Win.apk through). Android's built-in
 service discovery (`NsdManager`, mDNS) is not available yet: an app that
 relies on it alone finds nothing.
+
+Apps use Windows' proxy, as a phone's apps use the one its Wi-Fi settings
+name: whatever **Windows Settings > Network & internet > Proxy** says (a
+proxy server and its exceptions, a setup script, or automatic detection)
+applies to every app's connections made through Android's Java networking
+(`HttpURLConnection`, OkHttp and the libraries built on them), and Win.apk
+has no proxy setting of its own. An app that picks its own proxy keeps it.
+Not covered: an app whose native code opens its own connections, and the
+push connection, which takes `WINAPK_PROXY` ([Command line](#command-line)).
+Web pages inside apps (WebView, the Google sign-in window) follow Windows'
+proxy through Edge's WebView2.
 
 ## Shared storage
 
@@ -532,8 +650,9 @@ and the launch window open the right log themselves when something fails.
 | `install-<app>.log` | That app's install or update |
 | `gms.log` | The Google account operations run from the settings |
 | `google-setup.log` | The checks of the Google services setup |
-| `system.log`, `services\` | With Google services on: the system broker, and the apps it starts for other apps |
-| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (F-Droid installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
+| `system.log`, `services\` | With Google services on: the system broker (its `jobs:` lines: the apps' background jobs it keeps and starts, the Play Store's update checks among them), and the apps it starts for other apps |
+| `maintenance.log` | With **Update apps in the background** on: the last background window Win.apk opened |
+| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 
@@ -546,7 +665,7 @@ the **Threads** row under the switch (every running app), from an app's
 details page (**Troubleshooting > Threads**, that app only) or with Ctrl+T.
 
 - **The app** is picked at the top left: one app, **All apps**, or **Win.apk
-  services** (the system broker of "Use Google services"). An app is all its
+  services** (the system broker of "Use Google services (experimental)"). An app is all its
   processes: each `winapk-runtime.exe` that runs it and whatever those
   started (WebView2's processes, an ARM translation worker).
 - **Every thread is a row.** The list comes from Windows itself, once a
@@ -590,28 +709,28 @@ nothing is started in the apps: no agent, no pipe.
 - **Settings > Troubleshooting > Clear library** uninstalls every app of the
   library and removes its shortcuts (app data is kept).
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
-  Start menu shortcuts and the `.apk` association, and keeps
+  Start menu shortcuts, the `.apk` association and the app files' thumbnails, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
-  the Store's catalog and the Google account.
+  the Store and the Google account.
 
 ## Where things are
 
 | What | Where |
 |---|---|
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
-| Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk` |
+| Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk`, and for an app that came as a bundle its splits in `<app>.splits` beside it (the installed APKs themselves, not a second copy) |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
 | Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
-| The Store's catalog and icons | `%LOCALAPPDATA%\Win.apk\store` |
+| The Store's app, as installed (no tile; its download and checksum) | `%LOCALAPPDATA%\Win.apk\library\app.apkstore.*`, `%LOCALAPPDATA%\Win.apk\store-app` |
 | The installed-apps registry | `%LOCALAPPDATA%\Win.apk\installed_apps.json` |
 | Permission grants | `%LOCALAPPDATA%\Win.apk\appops` |
 | The Google account and its tokens | `%LOCALAPPDATA%\Win.apk\gms` |
 | The last update check and a downloaded update | `%LOCALAPPDATA%\Win.apk\updates` (`releases.json`, `Win.apk-Setup-<version>.exe`) |
 | Shared ARM translations | `%LOCALAPPDATA%\Win.apk\aot-cache` |
 | The runtime's caches (fonts, resources) | `%LOCALAPPDATA%\Win.apk\cache` |
-| The Java classes every app shares, ready to map (class-data sharing) | `%LOCALAPPDATA%\Win.apk\cds` (`framework-<key>.jsa`; delete the folder to have it made again) |
+| The Java classes every app shares, ready to map (class-data sharing) | `%LOCALAPPDATA%\Win.apk\cds` (`framework-aosp-<key>.jsa`; a `framework-java2d-<key>.jsa` from an older Win.apk is no longer used; delete the folder to have them made again) |
 | Settings | `HKEY_CURRENT_USER\Software\Win.apk` (`Theme`, `Language`, `PhoneSize`, `Landscape`, `DesktopShortcut`, `UserFolders`, `AotBackground`, `AutoUpdate`, `LastUpdateCheck`, `GoogleServices`, `DebugMode`, and the library window's size) |
 | With Google services on: app uids, the account service, the installer of record, the broker's readiness | `%LOCALAPPDATA%\Win.apk` (`app_uids.properties`, `system_ce\`, `installer-of-record.properties`, `run\`) |
 | Start menu shortcuts | `Start > Win.apk Apps` |
@@ -645,10 +764,10 @@ bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <
 |---|---|
 | `--apk` | The app to install and run |
 | `--data` | The data folder (default `%LOCALAPPDATA%\Win.apk`) |
-| `--jdk` | The Java runtime (default: the `jre` folder next to `bin`, else `WINAPK_JAVA_HOME` or `JAVA_HOME`) |
+| `--jdk` | The Java runtime (default: the `jre` folder next to `bin`, else `JAVA_HOME`) |
 | `--lib` | The folder with the framework jars (default: `lib` next to `bin`) |
 | `--install-only` | Install and convert the app, write its icon and name, and exit |
-| `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `license <package> <versionCode>`, `gcmtoken <package>` and the rest of `com.macapk.gms.GmsCli` |
+| `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `device-id` (`DEVICE_ID`, the Services Framework's `android_id` from its `gservices.db` as a signed decimal, else the layer's own checkin's, and `gsf` or `checkin`; no line when there is none), `license <package> <versionCode>`, `gcmtoken <package>`, `token-service` (the Google token service apps ask for their tokens, started by the first app that needs one; it exits when idle) and the rest of `com.macapk.gms.GmsCli` |
 | `--verify-apk <file>` | Print an app file's package and whether its signature verifies and Google signed it (`PACKAGE`, `VERIFIED`, `REASON`, `SCHEME`, `LINEAGE`, `GOOGLE` lines), as the Google services setup asks |
 
 Exit codes: 0 done, 2 wrong arguments, 3 when `--install-only` finds the app
@@ -660,24 +779,17 @@ Environment variables the launcher and the runtime read:
 
 | Variable | Effect |
 |---|---|
-| `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; set it yourself for the **Auto** preset or a direct run |
-| `WINAPK_RESIZABLE=0` | The window letterboxes the phone instead of resizing the app |
-| `WINAPK_MAXIMIZE_TURNS=0` | A maximized window is a large display at the window's scale, not the phone turned |
-| `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
+| `WINAPK_PHONE_SIZE=412x915` | The phone size in dp. The launcher sets it from the App window size setting; a direct run of `winapk-runtime` takes it from here |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | The compiler for ARM translation |
-| `WINAPK_AOT=0` | Run ARM-only apps' code on the JIT only: no translation is loaded or made |
-| `WINAPK_ABIS=arm64-v8a` | Install an app's ARM64 build although it has an x86_64 one (for comparing the two) |
-| `WINAPK_ALLOW_SECOND_INSTANCE=1` | Allow a second copy of a running app |
-| `WINAPK_WEBVIEW2=0` | Do not use WebView2; web links open in the system browser |
-| `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Force a graphics backend |
 | `WINAPK_PROXY=socks5://host:port` | A SOCKS proxy for the push (Firebase Cloud Messaging) connection |
-| `WINAPK_CDS=0` | Start the Java runtime without class-data sharing, as Win.apk 0.8 did (slower; for comparing, or if a start fails with `[cds]` lines in its log) |
 | `WINAPK_HEADLESS=1` | Run without a window, for tests |
 | `WINAPK_HEADLESS_FRAME=frame.bmp` | Save the last frame the app drew |
 | `WINAPK_HEADLESS_EXIT_AFTER_FRAMES=30` | Exit that many frames after the first |
 
-[`windows/README.md`](../windows/README.md) lists the variables meant for
-development and testing.
+There are no switches that change how Win.apk behaves: what the runtime reads
+from its environment carries a setting from the launcher, serves a test, or
+turns on a log. [`windows/README.md`](../windows/README.md#environment-variables)
+lists every one.
 
 ## Troubleshooting
 

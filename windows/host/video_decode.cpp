@@ -16,6 +16,9 @@
 #include <propvarutil.h>
 #include <shlwapi.h>
 
+#include "soft_codecs.h"
+#include "webm_demux.h"
+
 // In mfplat since Windows 7; older MinGW headers do not declare it.
 STDAPI MFCreateMFByteStreamOnStream(IStream* stream, IMFByteStream** out);
 
@@ -183,65 +186,12 @@ bool create_decoder(const GUID& category, const GUID& subtype, IMFTransform** ou
 
 }  // namespace
 
-// ---- yuv420_to_argb ----------------------------------------------------------------------
-
-void yuv420_to_argb(const uint8_t* y, int y_stride, const uint8_t* uv, int uv_stride, int width, int height,
-                    bool sixteen_bit, bool bt709, bool full_range, int rotation, uint32_t* out) {
-    // 16.16 fixed point. Limited range scales Y by 255/219 and chroma by
-    // 255/224 (ITU-R BT.601 / BT.709 conversion, as every player does).
-    const int ys = full_range ? 65536 : 76309;
-    int rv, gu, gv, bu;
-    if (bt709) {
-        rv = full_range ? 103206 : 117506;
-        gu = full_range ? 12277 : 13959;
-        gv = full_range ? 30679 : 34925;
-        bu = full_range ? 121609 : 138438;
-    } else {
-        rv = full_range ? 91881 : 104597;
-        gu = full_range ? 22554 : 25675;
-        gv = full_range ? 46802 : 53279;
-        bu = full_range ? 116130 : 132201;
-    }
-    const int ybias = full_range ? 0 : 16;
-    const int out_w = (rotation == 90 || rotation == 270) ? height : width;
-    auto clamp = [](int v) { return static_cast<uint32_t>(v < 0 ? 0 : v > 255 ? 255 : v); };
-    for (int row = 0; row < height; ++row) {
-        const uint8_t* yr = y + static_cast<size_t>(row) * y_stride;
-        const uint8_t* uvr = uv + static_cast<size_t>(row / 2) * uv_stride;
-        // Where this row's pixels land, and how far apart: the four rotations
-        // are one base and one step each.
-        uint32_t* p;
-        ptrdiff_t step;
-        switch (rotation) {
-            case 90: p = out + (height - 1 - row); step = out_w; break;
-            case 180: p = out + static_cast<size_t>(height - 1 - row) * out_w + (width - 1); step = -1; break;
-            case 270: p = out + static_cast<size_t>(width - 1) * out_w + row; step = -out_w; break;
-            default: p = out + static_cast<size_t>(row) * out_w; step = 1; break;
-        }
-        for (int col = 0; col < width; ++col, p += step) {
-            int yv, u, v;
-            if (sixteen_bit) {
-                yv = yr[col * 2 + 1];  // the top 8 of the 10 bits: the byte above the low one
-                u = uvr[(col & ~1) * 2 + 1];
-                v = uvr[(col & ~1) * 2 + 3];
-            } else {
-                yv = yr[col];
-                u = uvr[col & ~1];
-                v = uvr[(col & ~1) + 1];
-            }
-            const int yy = (yv - ybias) * ys;
-            const int du = u - 128, dv = v - 128;
-            const uint32_t r = clamp((yy + rv * dv + 32768) >> 16);
-            const uint32_t g = clamp((yy - gu * du - gv * dv + 32768) >> 16);
-            const uint32_t b = clamp((yy + bu * du + 32768) >> 16);
-            *p = 0xff000000u | (r << 16) | (g << 8) | b;
-        }
-    }
-}
-
 // ---- supported_mimes ---------------------------------------------------------------------
 
-const std::vector<std::string>& supported_mimes() {
+namespace {
+
+// The video mimes Media Foundation has a decoder for, probed once.
+const std::vector<std::string>& mf_mimes() {
     static const std::vector<std::string> mimes = [] {
         std::vector<std::string> found;
         if (!mf_ready()) return found;
@@ -254,9 +204,37 @@ const std::vector<std::string>& supported_mimes() {
     return mimes;
 }
 
+}  // namespace
+
+bool media_foundation_decodes(const std::string& mime) {
+    const std::vector<std::string>& mf = mf_mimes();
+    return std::find(mf.begin(), mf.end(), mime) != mf.end();
+}
+
+const std::vector<std::string>& supported_mimes() {
+    static const std::vector<std::string> mimes = [] {
+        std::vector<std::string> found = mf_mimes();
+        // The built-in software decoders take what Media Foundation lacks.
+        std::string soft_only;
+        for (const std::string& m : soft::video_mimes()) {
+            if (std::find(found.begin(), found.end(), m) != found.end()) continue;
+            found.push_back(m);
+            soft_only += " " + m;
+        }
+        if (!soft_only.empty()) {
+            std::fprintf(stderr, "[media] built-in video decoders, Media Foundation has none:%s\n", soft_only.c_str());
+        }
+        return found;
+    }();
+    return mimes;
+}
+
 // ---- Decoder -----------------------------------------------------------------------------
 
 struct Decoder::Impl {
+    // A software decoder (soft_codecs.h) where Media Foundation has none for
+    // the mime or refused the stream; `mft` is null then.
+    std::unique_ptr<soft::VideoDecoder> soft;
     Com<IMFTransform> mft;
     Layout layout;
     std::vector<uint8_t> csd;  // sent ahead of the next access unit
@@ -265,6 +243,8 @@ struct Decoder::Impl {
     DWORD out_size = 0, out_align = 0;
     std::vector<std::shared_ptr<Frame>> ready;  // oldest first
     bool eos_marker = false;
+    std::string mime;
+    bool any_picture = false;  // Media Foundation's decoder has given one
 
     // The decoder's output type: NV12 first, P010 (10-bit) when that is all
     // it offers.
@@ -319,7 +299,10 @@ struct Decoder::Impl {
                 return;
             }
             if (ob.pSample) {
-                if (auto f = frame_from_sample(ob.pSample, layout)) ready.push_back(std::move(f));
+                if (auto f = frame_from_sample(ob.pSample, layout)) {
+                    ready.push_back(std::move(f));
+                    any_picture = true;
+                }
                 if (!own) ob.pSample->Release();
             }
         }
@@ -331,9 +314,26 @@ Decoder::~Decoder() = default;
 
 std::unique_ptr<Decoder> Decoder::open(const std::string& mime, int width, int height, const std::vector<uint8_t>& csd0,
                                        const std::vector<uint8_t>& csd1) {
+    if (auto impl = open_mf(mime, width, height, csd0, csd1)) return std::unique_ptr<Decoder>(new Decoder(std::move(impl)));
+    // No Media Foundation decoder, or one that refused the stream: a built-in
+    // one, as Android falls back from a hardware codec to c2.android's.
+    auto soft = soft::open_video(mime);
+    if (!soft) return nullptr;
+    std::fprintf(stderr, "[media] %s: decoding with %s\n", mime.c_str(), soft->name());
+    auto impl = std::make_unique<Impl>();
+    impl->soft = std::move(soft);
+    impl->layout.crop_w = width;
+    impl->layout.crop_h = height;
+    return std::unique_ptr<Decoder>(new Decoder(std::move(impl)));
+}
+
+// Media Foundation's decoder for the stream, or null.
+std::unique_ptr<Decoder::Impl> Decoder::open_mf(const std::string& mime, int width, int height,
+                                                const std::vector<uint8_t>& csd0, const std::vector<uint8_t>& csd1) {
     const Mime* m = mime_entry(mime);
     if (!m || !mf_ready()) return nullptr;
     auto impl = std::make_unique<Impl>();
+    impl->mime = mime;
     if (!create_decoder(MFT_CATEGORY_VIDEO_DECODER, m->subtype, &impl->mft)) return nullptr;
     Com<IMFMediaType> in;
     if (FAILED(MFCreateMediaType(&in)) || FAILED(in->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video)) ||
@@ -347,11 +347,24 @@ std::unique_ptr<Decoder> Decoder::open(const std::string& mime, int width, int h
     if (FAILED(impl->mft->SetInputType(0, in.p, 0)) || !impl->choose_output()) return nullptr;
     impl->mft->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     impl->mft->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
-    return std::unique_ptr<Decoder>(new Decoder(std::move(impl)));
+    return impl;
 }
 
 bool Decoder::decode(const uint8_t* au, size_t size, int64_t pts_us, bool eos) {
     Impl& d = *impl_;
+    if (d.soft) {
+        const size_t before = d.ready.size();
+        const bool ok = d.soft->decode(au, au ? size : 0, pts_us, &d.ready);
+        if (eos) {
+            d.soft->drain(&d.ready);
+            d.eos_marker = true;
+        }
+        if (d.ready.size() > before) {  // width() and height(): the newest picture's
+            d.layout.crop_w = d.ready.back()->width;
+            d.layout.crop_h = d.ready.back()->height;
+        }
+        return ok;
+    }
     if (au && size) {
         // The parameter sets go in-band ahead of the first access unit (and
         // again after a flush), which every Annex-B decoder takes; for the
@@ -376,7 +389,19 @@ bool Decoder::decode(const uint8_t* au, size_t size, int64_t pts_us, bool eos) {
             d.drain();  // full: make room, then offer it again
             hr = d.mft->ProcessInput(0, sample.p, 0);
         }
-        if (FAILED(hr)) return false;
+        if (FAILED(hr)) {
+            // A decoder that refuses the stream before its first picture (a
+            // codec pack's decoder that wants hardware this PC lacks): the
+            // built-in one takes over from this access unit, a key frame.
+            if (d.any_picture) return false;
+            auto soft = soft::open_video(d.mime);
+            if (!soft) return false;
+            std::fprintf(stderr, "[media] %s: Media Foundation refused the stream, decoding with %s\n", d.mime.c_str(),
+                         soft->name());
+            d.mft.reset();
+            d.soft = std::move(soft);
+            return decode(au, size, pts_us, eos);
+        }
         d.drain();
     }
     if (eos) {
@@ -405,6 +430,12 @@ std::shared_ptr<Frame> Decoder::poll(bool* eos) {
 
 void Decoder::flush() {
     Impl& d = *impl_;
+    if (d.soft) {
+        d.soft->flush();
+        d.ready.clear();
+        d.eos_marker = false;
+        return;
+    }
     d.mft->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
     d.ready.clear();
     d.eos_marker = false;
@@ -424,6 +455,8 @@ int Decoder::height() const {
 // ---- AudioDecoder ------------------------------------------------------------------------
 
 struct AudioDecoder::Impl {
+    // Opus has no Media Foundation decoder: libopus decodes it (soft_codecs.h).
+    std::unique_ptr<soft::OpusDecoder> opus;
     Com<IMFTransform> mft;
     int rate = 0, channels = 0;
     bool provides_samples = false;
@@ -502,6 +535,15 @@ AudioDecoder::~AudioDecoder() = default;
 
 std::unique_ptr<AudioDecoder> AudioDecoder::open(int format_id, int sample_rate, int channels,
                                                  const std::vector<uint8_t>& csd0) {
+    if (format_id == 3) {  // Opus: always 48 kHz out, the channels its OpusHead (csd-0) names
+        auto opus = soft::OpusDecoder::open(csd0, channels);
+        if (!opus) return nullptr;
+        auto impl = std::make_unique<Impl>();
+        impl->rate = soft::OpusDecoder::kSampleRate;
+        impl->channels = opus->channels();
+        impl->opus = std::move(opus);
+        return std::unique_ptr<AudioDecoder>(new AudioDecoder(std::move(impl)));
+    }
     if ((format_id != 1 && format_id != 2) || sample_rate <= 0 || channels <= 0 || !mf_ready()) return nullptr;
     const GUID& subtype = format_id == 1 ? MFAudioFormat_AAC : MFAudioFormat_MP3;
     auto impl = std::make_unique<Impl>();
@@ -533,6 +575,7 @@ std::unique_ptr<AudioDecoder> AudioDecoder::open(int format_id, int sample_rate,
 
 std::vector<int16_t> AudioDecoder::decode(const uint8_t* au, size_t size, bool eos) {
     Impl& d = *impl_;
+    if (d.opus) return d.opus->decode(au, size);  // one packet in, its PCM out: nothing is held back
     std::vector<int16_t> pcm;
     if (au && size) {
         Com<IMFSample> sample;
@@ -559,6 +602,16 @@ std::vector<int16_t> AudioDecoder::decode(const uint8_t* au, size_t size, bool e
         d.drain(&pcm);
     }
     return pcm;
+}
+
+void AudioDecoder::flush() {
+    Impl& d = *impl_;
+    if (d.opus) {
+        d.opus->flush();
+        return;
+    }
+    d.mft->ProcessMessage(MFT_MESSAGE_COMMAND_FLUSH, 0);
+    d.mft->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
 }
 
 int AudioDecoder::sample_rate() const { return impl_->rate; }
@@ -851,6 +904,10 @@ int aac_rate_index(int rate) {
 }  // namespace
 
 struct Demuxer::Impl {
+    // A WebM or Matroska file is read by mkvparser (webm_demux.h), as Android
+    // reads it by its own MatroskaExtractor, not by Media Foundation; `reader`
+    // is null then. The rest (selection, the sync-sample seeks) is shared.
+    std::unique_ptr<WebmReader> webm;
     Com<IMFSourceReader> reader;
     std::vector<Track> tracks;
     std::vector<DWORD> streams;   // each track's stream in the reader
@@ -960,6 +1017,7 @@ struct Demuxer::Impl {
 
     // The next sample from the reader itself. False at the end and on errors.
     bool fetch(Sample* out) {
+        if (webm) return webm->next(out);
         for (;;) {
             bool any = false;
             for (size_t i = 0; i < tracks.size(); ++i) any = any || (selected[i] && !done[i]);
@@ -1001,6 +1059,10 @@ struct Demuxer::Impl {
     }
 
     bool position(int64_t us) {
+        if (webm) {
+            pending.clear();
+            return webm->seek(us);
+        }
         PROPVARIANT var;
         PropVariantInit(&var);
         var.vt = VT_I8;
@@ -1017,6 +1079,15 @@ Demuxer::Demuxer(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 Demuxer::~Demuxer() = default;
 
 std::unique_ptr<Demuxer> Demuxer::open(const std::wstring& path_or_url) {
+    if (WebmReader::is_ebml(path_or_url)) {
+        auto impl = std::make_unique<Impl>();
+        impl->webm = WebmReader::open(path_or_url);
+        if (!impl->webm) return nullptr;
+        impl->tracks = impl->webm->tracks();
+        impl->selected.assign(impl->tracks.size(), false);
+        impl->duration_us = impl->webm->duration_us();
+        return std::unique_ptr<Demuxer>(new Demuxer(std::move(impl)));
+    }
     if (!mf_ready()) return nullptr;
     auto impl = std::make_unique<Impl>();
     // No attributes: no decoder and no converter is wanted, the streams are
@@ -1037,7 +1108,8 @@ void Demuxer::select(int index, bool on) {
     const size_t i = static_cast<size_t>(index);
     if (d.selected[i] == on) return;
     d.selected[i] = on;
-    d.reader->SetStreamSelection(d.streams[i], on ? TRUE : FALSE);
+    if (d.webm) d.webm->select(index, on);
+    else d.reader->SetStreamSelection(d.streams[i], on ? TRUE : FALSE);
     if (!on) {
         d.pending.erase(std::remove_if(d.pending.begin(), d.pending.end(), [&](const Sample& s) { return s.track == index; }),
                         d.pending.end());

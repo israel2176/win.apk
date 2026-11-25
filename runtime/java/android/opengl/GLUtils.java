@@ -25,13 +25,12 @@
 // BISECT GATE: MACAPK_GLUTILS_PREMUL=0 restores the straight-alpha upload.
 package android.opengl;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.graphics.Bitmap;
 
 public final class GLUtils {
     private GLUtils() {}
 
-    private static final boolean sPremultiply =
-        !"0".equals(System.getenv("MACAPK_GLUTILS_PREMUL"));
 
     public static int getInternalFormat(Bitmap b) { return GLES20.GL_RGBA; }
     public static int getType(Bitmap b)           { return GLES20.GL_UNSIGNED_BYTE; }
@@ -49,7 +48,7 @@ public final class GLUtils {
     public static void texImage2D(int target, int level, int internalformat,
                                   Bitmap bitmap, int type, int border) {
         if (bitmap == null) return;
-        byte[] rgba = argbBufferToRgbaBytes(bitmap.macapkArgbBuffer(),
+        byte[] rgba = argbBufferToRgbaBytes(GfxBackend.get().argbBuffer(bitmap),
                                             bitmap.getWidth(), bitmap.getHeight(),
                                             premultipliedMemory(bitmap));
         int format = internalformat == 0 ? GLES20.GL_RGBA : internalformat;
@@ -64,7 +63,7 @@ public final class GLUtils {
     public static void texSubImage2D(int target, int level, int xoffset, int yoffset,
                                      Bitmap bitmap, int format, int type) {
         if (bitmap == null) return;
-        byte[] rgba = argbBufferToRgbaBytes(bitmap.macapkArgbBuffer(),
+        byte[] rgba = argbBufferToRgbaBytes(GfxBackend.get().argbBuffer(bitmap),
                                             bitmap.getWidth(), bitmap.getHeight(),
                                             premultipliedMemory(bitmap));
         int f = format == 0 ? GLES20.GL_RGBA : format;
@@ -79,7 +78,7 @@ public final class GLUtils {
      *  uploads)? Bitmap.isPremultiplied() is AOSP's own answer: true only for
      *  a bitmap with alpha that was not asked to stay unpremultiplied. */
     private static boolean premultipliedMemory(Bitmap b) {
-        return sPremultiply && b.isPremultiplied();
+        return b.isPremultiplied();
     }
 
     /** Convert ARGB int[] (0xAARRGGBB per pixel, non-premultiplied, as our

@@ -119,7 +119,7 @@ public abstract class AdapterView<T extends Adapter> extends ViewGroup {
      *  CheckForLongPress. Gated with AbsListView.ITEMCLICK_AOSP, whose =0 arm
      *  made every ROW long-clickable instead. */
     public void setOnItemLongClickListener(OnItemLongClickListener l) {
-        if (AbsListView.ITEMCLICK_AOSP && !isLongClickable()) setLongClickable(true);
+        if (!isLongClickable()) setLongClickable(true);
         this.onItemLongClickListener = l;
     }
 

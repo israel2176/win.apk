@@ -156,6 +156,37 @@ target_include_directories(winapk-aot-stamp-test PRIVATE include)
 add_executable(winapk-applink-test test/applink_match_test.cpp)
 target_include_directories(winapk-applink-test PRIVATE host)
 
+# The app's file: URLs on WebView2 (host/webview_file_urls.h): the file origin's mapping
+# and which pages may read it. No window. test/webview_file_urls_test.cpp.
+add_executable(winapk-webview-urls-test test/webview_file_urls_test.cpp)
+target_include_directories(winapk-webview-urls-test PRIVATE host)
+
+# DPAPI sealing of the Google account's tokens at rest (host/data_protection.h). No window.
+# test/data_protection_test.cpp.
+add_executable(winapk-data-protection-test test/data_protection_test.cpp)
+target_include_directories(winapk-data-protection-test PRIVATE host)
+target_link_libraries(winapk-data-protection-test PRIVATE crypt32)
+
+# Which URLs the runtime hands to Windows to open (host/host_url.h). No window.
+# test/host_url_test.cpp.
+add_executable(winapk-host-url-test test/host_url_test.cpp)
+target_include_directories(winapk-host-url-test PRIVATE host)
+
+# The frame-time record (host/frame_times.h): percentiles and the line logged at exit. No
+# window. test/frame_times_test.cpp.
+add_executable(winapk-frame-times-test test/frame_times_test.cpp)
+target_include_directories(winapk-frame-times-test PRIVATE host)
+
+# The machine's load to the first frame (host/machine_load.h): the busy shares, the busiest
+# other processes, the line. No window. test/machine_load_test.cpp.
+add_executable(winapk-machine-load-test test/machine_load_test.cpp)
+target_include_directories(winapk-machine-load-test PRIVATE host)
+
+# When an app's presenting eglSwapBuffers returns (host/swap_pacing.h): producers of several
+# speeds on a simulated clock. No window. test/swap_pacing_test.cpp.
+add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
+target_include_directories(winapk-swap-pacing-test PRIVATE host)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.
@@ -276,10 +307,20 @@ if(WINAPK_JNI_INCLUDE)
   add_library(winapk_stb_vorbis STATIC ${WINAPK_STB_VORBIS})
   target_compile_options(winapk_stb_vorbis PRIVATE -w)
 
+  # The software codecs MediaCodec and MediaExtractor fall back on where Media
+  # Foundation has nothing (host/soft_codecs.h, host/webm_demux.h): libvpx
+  # (VP8, VP9), dav1d (AV1), libopus and libwebm's mkvparser, decoders only,
+  # with libvpx's and dav1d's x86-64 SIMD (nasm); cmake/soft_codecs.cmake.
+  include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/soft_codecs.cmake)
+  set(WINAPK_SOFT_CODEC_SOURCES host/soft_codecs.cpp host/webm_demux.cpp host/yuv_convert.cpp)
+  set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser)
+
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
   add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
+                              host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp
+                              host/input_pane.cpp host/native_text_input.cpp
                               host/gl/egl10_window.cpp
                               host/sqlite_paths.cpp
                               host/native_os.cpp host/native_image.cpp
@@ -290,15 +331,16 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
-                              host/native_location.cpp
+                              host/native_location.cpp host/machine_load.cpp
                               host/native_signin.cpp host/native_notifications.cpp
-                              host/binder_win.cpp
+                              host/native_accessibility.cpp host/uia_provider.cpp host/uia_tree.cpp
+                              host/binder_win.cpp host/native_data_protection.cpp
                               host/user_folders.cpp host/unix_socket_dir.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
-                              host/debug_agent.cpp
+                              host/debug_agent.cpp host/aosp_gfx.cpp host/aosp_gfx_redirect.cpp host/hwui_host.cpp
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
-                        ole32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi bthprops winmm
-                        bcrypt psapi)
+                        ole32 oleaut32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi
+                        bthprops winmm bcrypt psapi winhttp crypt32)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
@@ -332,14 +374,18 @@ if(WINAPK_JNI_INCLUDE)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_gl_bridges.cmake
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
-                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/native_window.cpp host/native_asset.cpp
+                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp
+                 host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
                  host/native_activity.cpp
+                 ${WINAPK_SOFT_CODEC_SOURCES}
                  ${WINAPK_GL_UPSTREAM})
   target_include_directories(winapk-runtime PRIVATE host third_party/khronos ${CMAKE_BINARY_DIR}/gl
                              ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src)
+  target_include_directories(winapk-runtime SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-runtime PRIVATE ${WINAPK_SOFT_CODEC_LIBS})
   target_compile_definitions(winapk-runtime PRIVATE KHRONOS_STATIC GL_GLEXT_PROTOTYPES=0)
   # Upstream's code, upstream's warnings.
   set_source_files_properties(host/gl/gl_bridges.cpp PROPERTIES COMPILE_OPTIONS "-w")
@@ -352,30 +398,53 @@ if(WINAPK_JNI_INCLUDE)
 
   # The runtime's GL on ANGLE (test/gl_test.cpp), on whatever backend the
   # machine has.
-  add_executable(winapk-gl-test test/gl_test.cpp host/gl/gl_surface.cpp host/gl/gl_loader.cpp host/gl/gl_stubs.cpp)
+  add_executable(winapk-gl-test test/gl_test.cpp host/gl/gl_surface.cpp host/gl/gl_loader.cpp host/gl/gl_stubs.cpp
+                 host/gl/guest_gl_extensions.cpp)
   target_include_directories(winapk-gl-test PRIVATE host third_party/khronos)
   target_compile_definitions(winapk-gl-test PRIVATE KHRONOS_STATIC)
   target_link_options(winapk-gl-test PRIVATE -static)
 
   # Cross-process Binder over named pipes (host/binder_win.cpp) between real
   # JVMs: test/binder_test.cpp runs test/java/com/macapk/loader/BinderTransportTest.
-  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp host/java_io_open.cpp)
-  target_include_directories(winapk-binder-test PRIVATE host "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
-  target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt)
+  add_executable(winapk-binder-test test/binder_test.cpp host/binder_win.cpp host/java_io_open.cpp
+                                    host/native_data_protection.cpp)
+  target_include_directories(winapk-binder-test PRIVATE host include "${WINAPK_JNI_INCLUDE}" "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_libraries(winapk-binder-test PRIVATE advapi32 bcrypt crypt32)
   target_link_options(winapk-binder-test PRIVATE -static -municode)
 
   # NativeAudio's backend on its own (test/audio_test.cpp).
-  add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp)
-  target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ole32 mfplat mfreadwrite mfuuid shlwapi)
+  add_executable(winapk-audio-test test/audio_test.cpp host/audio_engine.cpp host/audio_decode.cpp
+                 ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-audio-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-audio-test PRIVATE winapk_stb_vorbis ${WINAPK_SOFT_CODEC_LIBS} ole32 mfplat mfreadwrite
+                        mfuuid shlwapi)
   target_link_options(winapk-audio-test PRIVATE -static)
+
+  # libOpenSLES on that backend and its PCM conversion and resampler, called as
+  # guest code calls it, with a fake microphone (test/opensles_test.cpp).
+  add_executable(winapk-opensles-test test/opensles_test.cpp host/native_opensles.cpp host/audio_engine.cpp
+                 host/audio_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-opensles-test PRIVATE host include)
+  target_include_directories(winapk-opensles-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-opensles-test PRIVATE winapk_stb_vorbis ${WINAPK_SOFT_CODEC_LIBS} ole32 mfplat mfreadwrite
+                        mfuuid shlwapi uuid advapi32 winhttp)
+  target_link_options(winapk-opensles-test PRIVATE -static)
 
   # Video on Media Foundation without a JVM (test/video_test.cpp): the
   # converter, the decoder, the source and the player on test/video/color.mp4,
   # then the encoders, the MP4 writer and the demuxer on what they make.
   add_executable(winapk-video-test test/video_test.cpp host/video_decode.cpp host/video_player.cpp
-                 host/audio_engine.cpp host/media_encode.cpp host/mp4_writer.cpp)
-  target_link_libraries(winapk-video-test PRIVATE ole32 mf mfplat mfreadwrite mfuuid shlwapi)
+                 host/audio_engine.cpp host/media_encode.cpp host/mp4_writer.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-video-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
+
+  # The built-in software decoders and the WebM demuxer without Media
+  # Foundation (test/soft_codecs_test.cpp), on test/video's WebM files.
+  add_executable(winapk-soft-codecs-test test/soft_codecs_test.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-soft-codecs-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-soft-codecs-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS})
+  target_link_options(winapk-soft-codecs-test PRIVATE -static)
 
   # The shared-folder junctions on a scratch volume (test/user_folders_test.cpp).
   add_executable(winapk-user-folders-test test/user_folders_test.cpp host/user_folders.cpp)
@@ -390,9 +459,37 @@ if(WINAPK_JNI_INCLUDE)
 
   # The app window's geometry: the box the app draws in and how a frame is
   # shown in it (test/window_test.cpp), without a window.
-  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp)
-  target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 uuid gdi32 user32)
+  add_executable(winapk-window-test test/window_test.cpp host/win32_window.cpp host/uia_provider.cpp host/uia_tree.cpp
+                 host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp host/input_pane.cpp)
+  target_link_libraries(winapk-window-test PRIVATE windowscodecs ole32 oleaut32 uuid gdi32 user32)
   target_link_options(winapk-window-test PRIVATE -static)
+
+  # Screen readers. What the views are for UI Automation, with no window: names, control types,
+  # patterns, the events between snapshots, the Text pattern's units (test/uia_tree_test.cpp).
+  add_executable(winapk-uia-tree-test test/uia_tree_test.cpp host/uia_tree.cpp)
+  target_include_directories(winapk-uia-tree-test PRIVATE host)
+  target_link_options(winapk-uia-tree-test PRIVATE -static)
+  # The app window's UI Automation provider (host/uia_provider.h): its providers and patterns
+  # called directly, then read by a UI Automation client, IUIAutomation (test/uia_test.cpp).
+  add_executable(winapk-uia-test test/uia_test.cpp host/uia_provider.cpp host/uia_tree.cpp)
+  target_include_directories(winapk-uia-test PRIVATE host)
+  target_link_libraries(winapk-uia-test PRIVATE ole32 oleaut32 uuid user32)
+  target_link_options(winapk-uia-test PRIVATE -static)
+
+  # Text input's rules with no window (test/text_input_model_test.cpp): what each Android field
+  # is to Windows, the document the text services edit and the edits the editor gets, display
+  # attributes, where characters are. Plain C++.
+  add_executable(winapk-text-input-test test/text_input_model_test.cpp host/text_input_model.cpp)
+  target_include_directories(winapk-text-input-test PRIVATE host)
+  target_link_options(winapk-text-input-test PRIVATE -static)
+
+  # The focused editor as a TSF text store (test/tsf_test.cpp): ITextStoreACP and ITextStoreACP2's
+  # contract driven as TSF drives it, with a stand-in sink; then the session on the system's TSF.
+  add_executable(winapk-tsf-test test/tsf_test.cpp host/text_input_model.cpp host/tsf_store.cpp
+                 host/tsf_session.cpp)
+  target_include_directories(winapk-tsf-test PRIVATE host)
+  target_link_libraries(winapk-tsf-test PRIVATE ole32 oleaut32 uuid gdi32 user32)
+  target_link_options(winapk-tsf-test PRIVATE -static)
 
   # An app's native libraries (host/guest_libs.h): the stub DLL
   # that stands for each one and the translator that copies it. Built with the
@@ -438,8 +535,24 @@ target_include_directories(winapk-launcher PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/
 message(STATUS "Win.apk version ${WINAPK_VERSION_TEXT}")
 target_compile_definitions(winapk-launcher PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
 target_link_options(winapk-launcher PRIVATE -municode -static)
-target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32)
+# wintrust: the update's Authenticode check; version: its installer's ProductVersion.
+target_link_libraries(winapk-launcher PRIVATE comctl32 shell32 ole32 uuid gdiplus dwmapi uxtheme gdi32 winhttp bcrypt crypt32
+                      wintrust version)
 
-# The launcher's state machines (launcher/app_runs.h, installs.h, updates.h): no lock and no Windows call in them, so the test drives
+# The launcher's state machines (launcher/app_runs.h, installs.h, updates.h, maintenance.h, store_app.h): no lock and no Windows call in them, so the test drives
 # each step as the library's thread and a worker's would. test/launcher_state_test.cpp.
 add_executable(winapk-launcher-state-test test/launcher_state_test.cpp)
+
+# winapk-shell.dll, the thumbnail handler of the app files (shell/apk_thumbnail.cpp): Explorer shows each
+# .apk/.apkm/.xapk/.apks file's own app icon, parsed from the file (shell/apk_icon.cpp), never run. The launcher
+# and the installer register it for WinApk.Package. test/apk_icon_test.cpp: the parsing, on damaged files too.
+add_library(winapk-shell SHARED shell/apk_thumbnail.cpp shell/apk_icon.cpp shell/winapk_shell.def)
+set_target_properties(winapk-shell PROPERTIES PREFIX "")
+target_compile_definitions(winapk-shell PRIVATE UNICODE _UNICODE _WIN32_WINNT=0x0A00)
+target_link_libraries(winapk-shell PRIVATE ZLIB::ZLIB ole32 gdi32 uuid)
+target_link_options(winapk-shell PRIVATE -static -s)
+add_executable(winapk-apk-icon-test test/apk_icon_test.cpp shell/apk_icon.cpp)
+target_include_directories(winapk-apk-icon-test PRIVATE shell)
+target_link_libraries(winapk-apk-icon-test PRIVATE ZLIB::ZLIB)
+target_link_options(winapk-apk-icon-test PRIVATE -static)
+add_dependencies(winapk-launcher winapk-shell)

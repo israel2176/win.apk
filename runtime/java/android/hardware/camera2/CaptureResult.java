@@ -1,6 +1,5 @@
 // android.hardware.camera2.CaptureResult -- metadata for a completed
-// capture. Mac.apk never produces one (no camera), but the type + Key
-// set must exist for capture-callback code to compile. Key<T> mirrors
+// capture, built by CameraCaptureSessionImpl for every frame it serves. Key<T> mirrors
 // AOSP's typed metadata key.
 package android.hardware.camera2;
 
@@ -93,7 +92,7 @@ public class CaptureResult extends CameraMetadata<CaptureResult.Key<?>> {
     //
     // get(Key) returns null for a tag this capture did not carry, which is
     // AOSP's documented behaviour for any result key outside the camera's
-    // availableResultKeys -- so an app reading one of these off a Mac.apk
+    // availableResultKeys -- so an app reading one of these off a Win.apk
     // CaptureResult takes the same branch it takes on a device whose HAL omits
     // the tag.
     // ---------------------------------------------------------------------

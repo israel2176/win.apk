@@ -131,25 +131,8 @@ final class MacApkJobScheduler extends JobScheduler {
      *  system_server; we are in-process, so we need the delay explicitly. */
     private static final long MIN_ARM_DELAY_MS = 100L;
 
-    /** How often a constraint-deferred job re-checks. AOSP is push-based
-     *  (per-constraint StateControllers), which we have no signal sources
-     *  for -- pmset and the ConnectivityManager stub are both pull-only --
-     *  so this polls. Only reachable with MACAPK_JOB_CONSTRAINTS=1. */
-    private static final long CONSTRAINT_RECHECK_MS = 15_000L;
 
-    private static final boolean HONOUR_CONSTRAINTS =
-            "1".equals(System.getenv("MACAPK_JOB_CONSTRAINTS"));
-    private static final boolean PERIODIC_WINDOW =
-            "1".equals(System.getenv("MACAPK_JOB_PERIODIC_WINDOW"));
 
-    /** Content-URI triggers (see the header). DEFAULT ON. =0 restores the exact
-     *  pre-change path: every one-shot job is armed on the timer, no
-     *  ContentObserver is registered, JobInfo.Builder keeps its old 0/0 trigger
-     *  delay defaults and JobParameters reports no triggered URIs. The env var
-     *  is read once, in JobInfo (whose Builder needs it for those defaults
-     *  without initialising the scheduler). Offline gate:
-     *  debug/w5sensorsjobs_gate.sh. */
-    static final boolean CONTENT_TRIGGER = JobInfo.MACAPK_CONTENT_TRIGGER;
 
     // AOSP constants, verbatim (android14-release):
     //   JobStatus.java:216-225
@@ -333,7 +316,14 @@ final class MacApkJobScheduler extends JobScheduler {
     // ---------------------------------------------------------------------
 
     @Override public int schedule(JobInfo job) {
-        return scheduleInternal(job, null);
+        return scheduleInternal(job, null, false);
+    }
+
+    /** The system broker's hand-over of a job it held while no process of this app
+     *  was alive (com.macapk.loader.BrokerJobs): it is due, so it runs now instead of
+     *  waiting out its minimum latency a second time. */
+    @Override public int macapkRunNow(JobInfo job) {
+        return scheduleInternal(job, null, true);
     }
 
     /** AOSP enqueue(): "allows you to enqueue work for a new OR EXISTING
@@ -343,10 +333,10 @@ final class MacApkJobScheduler extends JobScheduler {
      *  same ID is already running, the new work will be enqueued for it
      *  without stopping the job." */
     @Override public int enqueue(JobInfo job, JobWorkItem work) {
-        return scheduleInternal(job, work);
+        return scheduleInternal(job, work, false);
     }
 
-    private int scheduleInternal(JobInfo job, JobWorkItem work) {
+    private int scheduleInternal(JobInfo job, JobWorkItem work, boolean immediate) {
         if (job == null) return RESULT_FAILURE;
         if (job.getService() == null) {
             // AOSP throws IllegalArgumentException when the JobService
@@ -421,7 +411,7 @@ final class MacApkJobScheduler extends JobScheduler {
                 // detaches the last job's instance). Always null with the gate
                 // off, so this is then the unchanged pre-trigger path.
                 if (previous != null) previous.detachLocked();
-                delay = initialDelayMillis(job, rec);
+                delay = immediate ? immediateDelayMillis(job, rec) : initialDelayMillis(job, rec);
                 if (!rec.running) armLocked(rec, delay, false);
                 armDesc = delay + "ms";
             }
@@ -435,7 +425,9 @@ final class MacApkJobScheduler extends JobScheduler {
                 + " flex=" + job.getFlexMillis()
                 + " deadline=" + job.getMaxExecutionDelayMillis()
                 + " armIn=" + armDesc
+                + (immediate ? " (handed over by the system broker: due now)" : "")
                 + workSpecTag(job));
+        reportPut(rec, delay);
 
         if (stopThis != null && stopOn != null) {
             // Replacing a running job stops it; AOSP ignores the return.
@@ -450,6 +442,8 @@ final class MacApkJobScheduler extends JobScheduler {
     @Override public void cancel(int jobId) {
         // The job may live in one of the app's other processes.
         com.macapk.loader.SystemClient.cancelJobsElsewhere(jobId, false);
+        // Or only in the system broker's store (its process died since it was scheduled).
+        com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_REMOVE, null, jobId, 0L, 0);
         JobParameters stopThis = null;
         JobTarget stopOn = null;
         synchronized (mLock) {
@@ -477,6 +471,7 @@ final class MacApkJobScheduler extends JobScheduler {
 
     @Override public void cancelAll() {
         com.macapk.loader.SystemClient.cancelJobsElsewhere(-1, true);
+        com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_REMOVE_ALL, null, -1, 0L, 0);
         List<Integer> ids;
         synchronized (mLock) { ids = new ArrayList<>(mJobs.keySet()); }
         log("cancelAll (" + ids.size() + " jobs)");
@@ -515,12 +510,10 @@ final class MacApkJobScheduler extends JobScheduler {
      *  base answer. */
     @Override @SuppressWarnings("deprecation")
     public int getPendingJobReason(int jobId) {
-        if (CONTENT_TRIGGER) {
-            synchronized (mLock) {
-                JobRecord r = mJobs.get(jobId);
-                if (r != null && r.trigger != null && !r.running && !r.trigger.satisfied) {
-                    return PENDING_JOB_REASON_CONSTRAINT_CONTENT_TRIGGER;
-                }
+        synchronized (mLock) {
+            JobRecord r = mJobs.get(jobId);
+            if (r != null && r.trigger != null && !r.running && !r.trigger.satisfied) {
+                return PENDING_JOB_REASON_CONSTRAINT_CONTENT_TRIGGER;
             }
         }
         return super.getPendingJobReason(jobId);
@@ -548,13 +541,6 @@ final class MacApkJobScheduler extends JobScheduler {
         long flex = Math.max(JobInfo.getMinFlexMillis(), Math.min(period, job.getFlexMillis()));
         long faithful = Math.max(MIN_ARM_DELAY_MS, period - flex);
 
-        if (PERIODIC_WINDOW) {
-            // AOSP JobStatus.createFromJobInfo: the first window is
-            // [now + period - flex, now + period], and originalLatestRunTime
-            // (our anchor) is the top of it.
-            rec.periodAnchorUptimeMs = now + period;
-            return faithful;
-        }
 
         // Deviation mode: we fire the first run promptly. Anchor the window
         // to THAT fire (+ flex, since nextPeriodDelayMillis subtracts flex
@@ -629,33 +615,8 @@ final class MacApkJobScheduler extends JobScheduler {
         if (unmet != null) {
             boolean deadlinePassed = rec.deadlineUptimeMs > 0
                     && android.os.SystemClock.uptimeMillis() >= rec.deadlineUptimeMs;
-            if (HONOUR_CONSTRAINTS && !deadlinePassed) {
-                // Wake at the recheck cadence OR exactly at the override
-                // deadline, whichever comes first: AOSP fires a
-                // deadline-expired job AT the deadline, and rounding that up
-                // to the next poll would make setOverrideDeadline() mean
-                // "sometime in the next 15s after the deadline".
-                long recheck = CONSTRAINT_RECHECK_MS;
-                if (rec.deadlineUptimeMs > 0) {
-                    long toDeadline = rec.deadlineUptimeMs - android.os.SystemClock.uptimeMillis();
-                    if (toDeadline > 0) recheck = Math.min(recheck, toDeadline);
-                }
-                log("defer id=" + id + " constraint " + unmet
-                        + " unsatisfied; rechecking in " + recheck + "ms");
-                final long delay = recheck;
-                synchronized (mLock) {
-                    if (mJobs.get(id) == rec) armLocked(rec, delay, false);
-                }
-                return;
-            }
-            if (!HONOUR_CONSTRAINTS) {
-                log("id=" + id + " constraint " + unmet + " is unsatisfied; running anyway"
-                        + " (AOSP would defer). Set MACAPK_JOB_CONSTRAINTS=1 to honour it.");
-            } else {
-                log("id=" + id + " override deadline expired; running with " + unmet
-                        + " unsatisfied, per AOSP");
-                rec.ranBecauseDeadlineExpired = true;
-            }
+            log("id=" + id + " constraint " + unmet + " is unsatisfied; running anyway"
+                    + " (AOSP would defer). Set MACAPK_JOB_CONSTRAINTS=1 to honour it.");
         }
 
         ComponentName comp = info.getService();
@@ -671,7 +632,8 @@ final class MacApkJobScheduler extends JobScheduler {
         try {
             // JobServiceContext's BIND_AUTO_CREATE bind for this execution;
             // releaseExecution() is its unbind (ServiceRegistry.jobBind).
-            svc = android.app.ServiceRegistry.jobBind(appContext(), svcName);
+            com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+            svc = host != null ? host.jobBind(comp) : null;
         } catch (Throwable t) {
             warn("ensureLive " + svcName + " threw " + t);
             return;
@@ -695,7 +657,7 @@ final class MacApkJobScheduler extends JobScheduler {
             warn("fireJob " + svcName + " is a Service but neither a JobService nor the host"
                     + " of a JobServiceEngine; dropping job " + id);
             dropLocked(id);
-            android.app.ServiceRegistry.jobUnbind(svcName);
+            jobUnbind(svcName);
             return;
         }
 
@@ -740,6 +702,7 @@ final class MacApkJobScheduler extends JobScheduler {
             }
         }
         if (stale) { releaseExecution(params); return; }
+        com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_RUNNING, info, id, 1L, 0);
 
         boolean ongoing;
         try {
@@ -775,7 +738,7 @@ final class MacApkJobScheduler extends JobScheduler {
         String svc;
         synchronized (mBound) { svc = mBound.remove(params); }
         if (svc == null) return;
-        if (android.app.ServiceRegistry.jobUnbind(svc)) {
+        if (jobUnbind(svc)) {
             log("service " + svc + " unbound after job " + params.getJobId()
                     + " and not otherwise needed: destroyed (next job gets a fresh instance)");
         }
@@ -786,6 +749,35 @@ final class MacApkJobScheduler extends JobScheduler {
             JobRecord r = mJobs.remove(id);
             if (r != null) detachTriggerLocked(r);
         }
+        com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_REMOVE, null, id, 0L, 0);
+    }
+
+    /** Tell the system broker this process holds the job, and when it runs next
+     *  (`delayMs` from now; < 0: when its content changes), so the broker keeps it if
+     *  the process dies (BrokerJobs). Off the lock: the report is a binder call. */
+    private void reportPut(JobRecord rec, long delayMs) {
+        int flags = 0;
+        JobInfo info;
+        synchronized (mLock) {
+            info = rec.info;
+            if (rec.trigger != null) flags |= com.macapk.loader.SystemClient.JOB_FLAG_CONTENT_TRIGGER;
+            if (rec.hasWork()) flags |= com.macapk.loader.SystemClient.JOB_FLAG_WORK;
+        }
+        long due = delayMs < 0 ? Long.MAX_VALUE : System.currentTimeMillis() + delayMs;
+        com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_PUT, info, info.getId(),
+                due, flags);
+    }
+
+    /** macapkRunNow's delay: the broker already waited out the job's latency (or its
+     *  period), so only the arm floor. A periodic job's next window is anchored at this
+     *  run, as initialDelayMillis anchors a prompt first run. */
+    private long immediateDelayMillis(JobInfo job, JobRecord rec) {
+        if (job.isPeriodic()) {
+            long period = Math.max(JobInfo.getMinPeriodMillis(), job.getIntervalMillis());
+            long flex = Math.max(JobInfo.getMinFlexMillis(), Math.min(period, job.getFlexMillis()));
+            rec.periodAnchorUptimeMs = android.os.SystemClock.uptimeMillis() + MIN_ARM_DELAY_MS + flex;
+        }
+        return MIN_ARM_DELAY_MS;
     }
 
     /** The thing a job's callbacks go to: either a JobService or the
@@ -805,6 +797,20 @@ final class MacApkJobScheduler extends JobScheduler {
             };
         }
         JobServiceEngine eng = JobServiceEngine.sEngines.get(svcName);
+        if (eng == null) {
+            // AOSP's JobServiceContext binds the service (bindServiceAsUser with
+            // the job's component), so onBind runs before any job does, and a
+            // service may make its JobServiceEngine only there (IBM Trusteer's
+            // TasService: onBind -> new engine). Ask it once, as that bind does.
+            try {
+                android.content.Intent bind = new android.content.Intent()
+                    .setComponent(new android.content.ComponentName(svc.getPackageName(), svcName));
+                svc.onBind(bind);
+            } catch (Throwable t) {
+                warn("onBind " + svcName + " for its job threw " + t);
+            }
+            eng = JobServiceEngine.sEngines.get(svcName);
+        }
         if (eng != null) {
             final JobServiceEngine e = eng;
             return new JobTarget() {
@@ -918,6 +924,16 @@ final class MacApkJobScheduler extends JobScheduler {
             }
         }
         releaseExecution(params);
+        com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_RUNNING, rec.info, rec.id,
+                0L, 0);
+        boolean stillPending;
+        synchronized (mLock) { stillPending = mJobs.get(rec.id) == rec; }
+        if (stillPending) {
+            reportPut(rec, rearmIn);
+        } else {
+            com.macapk.loader.SystemClient.reportJob(com.macapk.loader.SystemClient.JOB_REPORT_REMOVE, null, rec.id,
+                    0L, 0);
+        }
         if (rearmIn < 0) {
             log("job " + rec.id + " finished (reschedule=false); removed from the pending set");
         } else {
@@ -985,7 +1001,7 @@ final class MacApkJobScheduler extends JobScheduler {
      *  pre-trigger periodic path rather than getting a meaning AOSP never gave
      *  it. */
     static boolean isContentTriggerJob(JobInfo job) {
-        if (!CONTENT_TRIGGER || job.isPeriodic()) return false;
+        if (job.isPeriodic()) return false;
         JobInfo.TriggerContentUri[] uris = job.getTriggerContentUris();
         return uris != null && uris.length > 0;
     }
@@ -1313,8 +1329,16 @@ final class MacApkJobScheduler extends JobScheduler {
         catch (Throwable t) { return null; }
     }
 
+    /** JobServiceContext's unbind at the end of an execution (AppHost.jobUnbind). */
+    private static boolean jobUnbind(String className) {
+        com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+        Context ctx = appContext();
+        if (host == null || ctx == null) return false;
+        return host.jobUnbind(new ComponentName(ctx.getPackageName(), className));
+    }
+
     private static Context appContext() {
-        try { return android.app.Application.getInstance(); }
+        try { return com.macapk.loader.app.Apps.current(); }
         catch (Throwable t) { return null; }
     }
 
@@ -1323,7 +1347,8 @@ final class MacApkJobScheduler extends JobScheduler {
     private static JobTarget liveTargetFor(JobRecord rec) {
         try {
             String cls = rec.info.getService().getClassName();
-            Service s = android.app.ServiceRegistry.peekLive(cls);
+            com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+            Service s = host != null ? host.peekService(cls) : null;
             return s != null ? targetFor(s, cls) : null;
         } catch (Throwable t) {
             return null;

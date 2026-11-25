@@ -60,10 +60,6 @@ import java.util.concurrent.TimeUnit;
 public final class HostUrlIntake {
     private static final String TAG = "Mac.apk.URL";
 
-    /** MACAPK_URL_SCHEMES (default ON). =0: no Info.plist registration, no
-     *  Apple Event handler (the native side reads the same variable), no
-     *  delivery -- the pre-change behaviour. */
-    static final boolean ON = !"0".equals(System.getenv("MACAPK_URL_SCHEMES"));
 
     /** The sender recorded for Activity.getReferrer(): the package our PM
      *  already lists as "the browser" (MacApkPackageManager's host row). */
@@ -154,21 +150,6 @@ public final class HostUrlIntake {
         return out;
     }
 
-    /** MACAPK_URL_INTENT_HANDOFF (default ON; implies MACAPK_URL_SCHEMES). On a
-     *  device an `intent:` URI never reaches an app as DATA: the BROWSER parses it
-     *  (Intent.parseUri(URI_INTENT_SCHEME)), sanitises it and starts the activity it
-     *  names, restricted to `package=` when present. Firebase Auth's non-GMS redirect
-     *  page navigates to exactly such a URI after a browser sign-in
-     *  (intent://firebase.auth/#Intent;scheme=genericidp|recaptcha;package=<apn>;...;end;,
-     *  docs/firebase-intent-uri-handoff_2026-09-30.md), and macOS has no handler for
-     *  it, so the sign-in stopped in Safari. With this gate an app that receives
-     *  browser redirects (a non-empty hostSchemes list) ALSO registers `intent` and
-     *  plays the browser's part for URIs that name it (or name no package): the
-     *  shared-scheme opener rule below then makes the app that opened the browser
-     *  the one LaunchServices hands the redirect to. =0: `intent` stays HOST_OWNED
-     *  and is never registered or parsed (pre-change). */
-    static final boolean INTENT_HANDOFF =
-            ON && !"0".equals(System.getenv("MACAPK_URL_INTENT_HANDOFF"));
     static final String INTENT_SCHEME = "intent";
 
     /** The schemes to register: hostSchemes plus `intent` when this app receives
@@ -415,9 +396,9 @@ public final class HostUrlIntake {
      *  next launch). */
     static Sync registerNow(File bundle, String pkg, Manifest manifest, String lsregister,
                             HandlerProbe probe) {
-        if (!ON || bundle == null || manifest == null) return Sync.SKIPPED;
+        if (bundle == null || manifest == null) return Sync.SKIPPED;
         List<String> schemes = withIntentHandoff(
-                hostSchemes(MacApkPackageManager.macapkBrowsableSchemes(manifest)), INTENT_HANDOFF);
+                hostSchemes(MacApkPackageManager.macapkBrowsableSchemes(manifest)), true);
         if (!schemes.isEmpty()) {
             Claim c = claimable(schemes, probe);
             if (c.unknown) {
@@ -479,10 +460,6 @@ public final class HostUrlIntake {
     // are never taken (the same ownership rule as registration), an app-unique
     // scheme needs nothing, and an unavailable probe changes nothing.
 
-    /** MACAPK_URL_REDIRECT_OPENER (default ON; implies MACAPK_URL_SCHEMES). =0:
-     *  LaunchServices' own binding of a shared scheme (pre-change). */
-    static final boolean REDIRECT_OPENER =
-            ON && !"0".equals(System.getenv("MACAPK_URL_REDIRECT_OPENER"));
     /** This app's bundle and the schemes it registered (set by registerNow). */
     private static volatile File sBundle;
     private static volatile List<String> sClaimed = Collections.emptyList();
@@ -512,16 +489,6 @@ public final class HostUrlIntake {
         return out;
     }
 
-    /** MACAPK_URL_REDIRECT_CLAIM_ON_REFUSAL=1 (HARNESS ONLY, default off): when a
-     *  run refuses host opens (MACAPK_EXTERNAL_URLS=0) still take the shared redirect
-     *  schemes for an open that WOULD have been user-initiated. debug/urlscheme_live.sh
-     *  sets it so an unattended run can exercise the claim without a real browser
-     *  launch; it is honoured ONLY when externalUrlsOff(), so a production open is
-     *  decided exactly by whether the open itself happens. Every other harness run
-     *  (drive_app.sh defaults MACAPK_EXTERNAL_URLS=0 against the installed bundle's
-     *  android-root) leaves the owner's machine-global LaunchServices default alone. */
-    static final boolean CLAIM_ON_REFUSAL =
-            "1".equals(System.getenv("MACAPK_URL_REDIRECT_CLAIM_ON_REFUSAL"));
 
     /** The decision ActivityHost.openHost takes before it claims: is this open one
      *  a person made? Pure, so debug/urlscheme_gate.sh can drive every branch.
@@ -542,7 +509,6 @@ public final class HostUrlIntake {
 
     /** What claimRedirectSchemes would take: empty when the gate is off. */
     static List<String> redirectPlan(List<String> claimed, String ownBundle, HandlerProbe probe) {
-        if (!REDIRECT_OPENER) return new ArrayList<>();
         return redirectSchemesToTake(claimed, ownBundle, probe, new java.util.HashMap<>());
     }
 
@@ -553,7 +519,7 @@ public final class HostUrlIntake {
      *  ActivityHost.openHost): take the shared redirect schemes it claims. Off the
      *  caller's thread (LaunchServices queries; the caller is often the UI thread). */
     public static void claimRedirectSchemes(String uri) {
-        if (!REDIRECT_OPENER || uri == null) return;
+        if (uri == null) return;
         String low = uri.toLowerCase(Locale.ROOT);
         if (!low.startsWith("https://") && !low.startsWith("http://")) return;
         final File bundle = sBundle;
@@ -585,14 +551,14 @@ public final class HostUrlIntake {
 
     /** Boot: register this app's schemes with the host, off the boot path. */
     static void registerAsync(final String pkg, final Manifest manifest) {
-        if (!ON || manifest == null) return;
+        if (manifest == null) return;
         final File bundle = bundleOf(SharedStorage.androidRoot());
         if (bundle == null) return;   // a dev run: nothing to register
         Thread t = new Thread(() -> {
             try {
                 Sync r = registerNow(bundle, pkg, manifest, LSREGISTER, HOST_PROBE);
                 NativeLog.i(TAG, "[URL] schemes " + withIntentHandoff(
-                        hostSchemes(MacApkPackageManager.macapkBrowsableSchemes(manifest)), INTENT_HANDOFF)
+                        hostSchemes(MacApkPackageManager.macapkBrowsableSchemes(manifest)), true)
                         + " -> " + bundle.getName() + ": " + r);
             } catch (Throwable th) {
                 NativeLog.w(TAG, "[URL] scheme registration failed: " + th);
@@ -713,9 +679,9 @@ public final class HostUrlIntake {
         urls.addAll(takeHandedOver(sHandoffDir, System.currentTimeMillis(), HANDOFF_TTL_MS));
         for (String u : urls) {
             if (u == null || u.isEmpty()) continue;
-            Intent in = resolveOwn(hostIntentFor(u, sOwnPkg, INTENT_HANDOFF), sOwnPkg, sPm);
+            Intent in = resolveOwn(hostIntentFor(u, sOwnPkg, true), sOwnPkg, sPm);
             if (in == null) {
-                String named = INTENT_HANDOFF ? intentUriPackage(u) : null;
+                String named = intentUriPackage(u);
                 if (named != null && !named.equals(sOwnPkg)) {
                     // The misroute the opener rule exists to prevent: another app's
                     // redirect reached this bundle (LaunchServices' intent default).
@@ -740,7 +706,6 @@ public final class HostUrlIntake {
      * arrivals are delivered warm, in order. Null when nothing is waiting.
      */
     static Intent bootTakeRoot(String ownPkg, PackageManager pm) {
-        if (!ON) return null;
         sOwnPkg = ownPkg;
         sPm = pm;
         sHandoffDir = handoffDirFor(SharedStorage.androidRoot());
@@ -748,7 +713,6 @@ public final class HostUrlIntake {
         List<Intent> arrivals = takeResolved();
         if (arrivals.isEmpty()) return null;
         Intent first = arrivals.remove(0);
-        ActivityHost.macapkNoteReferrer(first, SENDER);
         NativeLog.i(TAG, "[URL] recv " + redact(first.getDataString()) + " -> "
                 + first.getComponent().getClassName() + " ROOT (cold)");
         for (final Intent e : arrivals) {
@@ -764,7 +728,7 @@ public final class HostUrlIntake {
     }
 
     static void postDrain() {
-        if (!ON || !sBooted) return;
+        if (!sBooted) return;
         try {
             ActivityHost.macapkPostOnOwner(HostUrlIntake::drainNow);
         } catch (Throwable t) {
@@ -777,7 +741,6 @@ public final class HostUrlIntake {
     }
 
     private static void deliverNow(Intent e) {
-        ActivityHost.macapkNoteReferrer(e, SENDER);
         NativeLog.i(TAG, "[URL] recv " + redact(e.getDataString()) + " -> "
                 + e.getComponent().getClassName());
         try {

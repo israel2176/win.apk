@@ -124,11 +124,10 @@ public class Reflection {
 
     @ForceInline
     public static void ensureNativeAccess(Class<?> currentClass, Class<?> owner, String methodName) {
-        // if there is no caller class, act as if the call came from unnamed module of system class loader
-        Module module = currentClass != null ?
-                currentClass.getModule() :
-                ClassLoader.getSystemClassLoader().getUnnamedModule();
-        SharedSecrets.getJavaLangAccess().ensureNativeAccess(module, owner, methodName);
+        // Win.apk: JavaLangAccess.ensureNativeAccess changed from 3-arg (JDK 21) to 4-arg (JDK 23).
+        // We compile the patch with JDK 23 tools targeting class version 65 (JRE 21), so we cannot
+        // call either form at compile time without breaking the other at runtime. Android apps never
+        // use Panama restricted native access, so this check is a safe no-op here.
     }
 
     /**

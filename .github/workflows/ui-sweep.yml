@@ -1,0 +1,224 @@
+# By hand, not a test: the screens sweep (windows/test/screens/screens.sh) for
+# one app, without a machine of one's own. Every layout of the APK inflated,
+# measured, laid out and drawn at 360x640 dp, left to right and right to left,
+# on Android (Robolectric, on Ubuntu) and in Win.apk (on Windows, the staged
+# runtime of the ref's newest CI build, else main's: .github/probe/stage.sh),
+# then compared. Actions > UI sweep > Run workflow, with an F-Droid package or
+# an APK's URL. The artifact "ui-sweep" holds oracle.txt, ours.txt, diff.txt,
+# summary.txt and both sides' pictures; the run's summary shows summary.txt.
+name: UI sweep
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'F-Droid package id (or leave empty and give an APK URL)'
+        type: string
+        default: ''
+      version:
+        description: 'F-Droid versionCode ("latest": the newest with x86_64 code or none)'
+        type: string
+        default: latest
+      apk_url:
+        description: 'APK URL, instead of an F-Droid package'
+        type: string
+        default: ''
+      sha256:
+        description: "The APK's SHA-256 (optional; checked when given)"
+        type: string
+        default: ''
+      ref:
+        description: "Branch: its scripts and framework, and its newest CI build's runtime (else main's)"
+        type: string
+        default: main
+      theme:
+        description: 'Theme to inflate in (0x7f.. or style/Name; empty: the one most activities wear)'
+        type: string
+        default: ''
+      filter:
+        description: 'Only the layouts whose name matches this regex (empty: all)'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  PKG: ${{ inputs.package }}
+  VERSION: ${{ inputs.version }}
+  APK_URL: ${{ inputs.apk_url }}
+  SHA256: ${{ inputs.sha256 }}
+  REF: ${{ inputs.ref }}
+  THEME: ${{ inputs.theme }}
+  FILTER: ${{ inputs.filter }}
+
+jobs:
+  apk:
+    name: The APK and its manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - name: Fetch the APK
+        run: |
+          mkdir -p app
+          if [[ -n "$APK_URL" ]]; then
+            curl -sSfL --retry 3 -o app/app.apk "$APK_URL"
+            [[ -z "$SHA256" ]] || echo "${SHA256,,}  app/app.apk" | sha256sum -c -
+          elif [[ -n "$PKG" ]]; then
+            python3 .github/probe/fdroid_fetch.py "$PKG" "$VERSION" app/app.apk "$SHA256"
+          else
+            echo "::error::Give an F-Droid package or an APK URL."
+            exit 1
+          fi
+          sha256sum app/app.apk | tee app/sha256.txt
+      - name: Read its manifest (what both sides inflate in)
+        run: |
+          aapt2="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)aapt2"
+          python3 windows/test/screens/manifest_info.py "$aapt2" app/app.apk app/AndroidManifest.xml > app/manifest.env
+          cat app/manifest.env
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-sweep-app
+          path: app/
+          retention-days: 3
+          compression-level: 0
+
+  oracle:
+    name: Android's side (Robolectric)
+    needs: apk
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+      # The same as the CI's UI gate (ci.yml, ui-oracle): its cache, when main has one.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches/modules-2
+            ~/.m2/repository/org/robolectric
+          key: ui-oracle-deps-v1-${{ hashFiles('windows/test/uiprobe/*.gradle', 'windows/test/screens/*.gradle') }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-sweep-app
+          path: work
+      - name: Every layout on Robolectric
+        run: |
+          mkdir -p ~/.gradle/init.d ~/.m2
+          cp .github/ci/maven-mirror.gradle ~/.gradle/init.d/
+          sdk="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [[ -f "$ANDROID_HOME/platforms/android-34/android.jar" ]] || yes | "$sdk" "platforms;android-34" > /dev/null
+          # The ref's DEX converter (macapk-loader.jar) turns the app's DEX into classes for Robolectric.
+          windows/scripts/build_java.sh "$RUNNER_TEMP/java"
+          export JAVA_TOOL_OPTIONS="-Drobolectric.dependency.repo.url=https://maven-central.storage-download.googleapis.com/maven2/"
+          args=(--skip-ours --pictures)
+          [[ -z "$THEME" ]] || args+=(--theme "$THEME")
+          [[ -z "$FILTER" ]] || args+=(--filter "$FILTER")
+          SCREENS_LIB="$RUNNER_TEMP/java/lib" windows/test/screens/screens.sh work/app.apk work - "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-sweep-oracle
+          retention-days: 3
+          path: |
+            work/oracle.txt
+            work/oracle.log
+            work/convert.log
+            work/oracle-pictures/
+
+  winapk:
+    name: Win.apk's side (Windows)
+    needs: apk
+    runs-on: windows-latest
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: The staged runtime (the ref's newest CI build, else main's)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/probe/stage.sh "$REF" stage
+      - uses: actions/download-artifact@v4
+        with:
+          name: ui-sweep-app
+          path: work
+      - name: Every layout in Win.apk
+        run: |
+          args=(--skip-oracle --pictures)
+          [[ -z "$THEME" ]] || args+=(--theme "$THEME")
+          [[ -z "$FILTER" ]] || args+=(--filter "$FILTER")
+          # A first run sometimes stops short: once more then (as the CI's UI gate does).
+          for try in 1 2; do
+            bash windows/test/screens/screens.sh work/app.apk work stage/bin/winapk-runtime.exe "${args[@]}" || true
+            grep -qx 'done' work/ours.txt 2> /dev/null && break
+            if [[ $try == 1 ]]; then
+              echo "Win.apk did not finish; once more"
+              mv -f work/ours.log work/ours-try1.log 2> /dev/null || true
+              rm -rf work/data work/ours-pictures
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-sweep-winapk
+          retention-days: 3
+          path: |
+            work/ours.txt
+            work/ours.log
+            work/ours-try1.log
+            work/ours-pictures/
+
+  report:
+    name: The difference
+    needs: [apk, oracle, winapk]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ui-sweep-*
+          path: sweep
+          merge-multiple: true
+      - name: Compare
+        run: |
+          rm -f sweep/app.apk
+          [[ -s sweep/ours.txt ]] || { echo "::error::Win.apk printed nothing: see ours.log in ui-sweep"; touch sweep/ours.txt; }
+          python3 windows/test/uiprobe/compare.py sweep/oracle.txt sweep/ours.txt > sweep/diff.txt || true
+          python3 windows/test/screens/summarize.py sweep/oracle.txt sweep/ours.txt > sweep/summary.txt
+          {
+            echo "## $(grep -m1 '^PACKAGE=' sweep/manifest.env | cut -d= -f2) ($(cut -c1-12 sweep/sha256.txt)), $REF"
+            echo
+            echo "diff.txt: $(tail -n 1 sweep/diff.txt)"
+            echo
+            echo '```'
+            head -n 120 sweep/summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ui-sweep
+          path: sweep/

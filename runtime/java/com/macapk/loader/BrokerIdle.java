@@ -23,16 +23,10 @@ final class BrokerIdle {
      *  told its packages by MACAPK_BROKER_APKS and has no app to keep it alive.
      *  MACAPK_BROKER_IDLE_EXIT=1/0 overrides either way (0 = the old 24/7). */
     static boolean enabled(boolean product) {
-        String e = System.getenv("MACAPK_BROKER_IDLE_EXIT");
-        if (e != null && !e.isEmpty()) return "1".equals(e);
         return product;
     }
 
     static long graceMs() {
-        String g = System.getenv("MACAPK_BROKER_IDLE_GRACE_S");
-        if (g != null && !g.isEmpty()) {
-            try { return Math.max(1, Long.parseLong(g.trim())) * 1000L; } catch (NumberFormatException ignored) {}
-        }
         return DEFAULT_GRACE_S * 1000L;
     }
 
@@ -43,11 +37,25 @@ final class BrokerIdle {
      *  minutes, never less than the normal grace. */
     static long firstAppGraceMs(long graceMs) {
         long v = 15 * 60_000L;
-        String g = System.getenv("MACAPK_BROKER_IDLE_FIRST_S");
+        String g = null;
         if (g != null && !g.isEmpty()) {
             try { v = Long.parseLong(g.trim()) * 1000L; } catch (NumberFormatException ignored) {}
         }
         return Math.max(graceMs, v);
+    }
+
+    /** A maintenance window (SystemServer.MAINTENANCE: started by the launcher while
+     *  it runs, launcher/maintenance.h) stops this long after the boot or the last job it
+     *  handed out, ran or saw finish: long enough for a job's follow-up work (the Play
+     *  Store schedules the install of an update it found from the check's own job),
+     *  short enough that Google services do not stay on for nothing.
+     *  MACAPK_BROKER_MAINTENANCE_GRACE_S overrides. */
+    static long maintenanceGraceMs() {
+        String g = null;
+        if (g != null && !g.isEmpty()) {
+            try { return Math.max(1, Long.parseLong(g.trim())) * 1000L; } catch (NumberFormatException ignored) {}
+        }
+        return 3 * 60_000L;
     }
 
     /** `clients` open apps now; the last time there was one (or the broker's

@@ -1,9 +1,9 @@
 // android.media.ImageReader -- a consumer of Images produced into a Surface.
 // AOSP frameworks/base media/java/android/media/ImageReader.java.
 //
-// This is the CONSUMER END of Mac.apk's camera pipeline, and the only output
+// This is the CONSUMER END of the camera pipeline, and the only output
 // type that actually receives camera frames. The producer end is the
-// AVFoundation capture session behind com.macapk.loader.CameraBridge;
+// capture session behind com.macapk.loader.CameraBridge;
 // android.hardware.camera2.CameraCaptureSessionImpl joins the two by calling
 // macapkAttachCameraSource() on every ImageReader whose Surface is one of the
 // session's outputs.
@@ -11,7 +11,7 @@
 // ---------------------------------------------------------------------------
 // HOW A FRAME GETS FROM THE CAMERA TO THE APP
 // ---------------------------------------------------------------------------
-//   1. AVFoundation delivers a CVPixelBuffer on its own dispatch queue and the
+//   1. The capture thread delivers a frame of its own and the
 //      native layer parks it in a one-deep "latest wins" slot.
 //   2. The capture session's pump notices the delivered-frame counter advance
 //      and calls macapkOnCameraFrame() here.
@@ -562,8 +562,8 @@ public class ImageReader implements AutoCloseable {
         @Override public int getWidth() { checkOpen(); return mImgWidth; }
         @Override public int getHeight() { checkOpen(); return mImgHeight; }
 
-        /** The CMSampleBuffer presentation timestamp in nanoseconds, straight
-         *  from AVFoundation. Monotonic host clock, not comparable with other
+        /** The frame's timestamp in nanoseconds, straight
+         *  from the capture layer. Monotonic host clock, not comparable with other
          *  subsystems -- which is precisely camera2's TIMESTAMP_SOURCE_UNKNOWN
          *  contract, and why that is what this device reports. */
         @Override public long getTimestamp() { checkOpen(); return mTimestamp; }

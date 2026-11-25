@@ -73,6 +73,17 @@ public class ActivityManager {
     /** True only under the Monkey UI-exerciser test tool. We never run under
      *  Monkey, so this is always false -- the same value a normal device
      *  returns. (AOSP Calculator checks it before enabling some actions.) */
+    /** AOSP's hidden getService(): the in-process activity manager (aosp-app.jar's, registered as
+     *  "activity"). AOSP's own classes outside the app layer call it: HardwareRenderer's process
+     *  initializer tells it the render thread (setRenderThread). */
+    public static IActivityManager getService() {
+        return IActivityManager.Stub.asInterface(android.os.ServiceManager.getService("activity"));
+    }
+    /** AOSP's hidden isHighEndGfx(): not a low-RAM device and graphics acceleration not avoided, as on
+     *  a PC (HardwareRenderer's process initializer reads it). */
+    public static boolean isHighEndGfx() { return true; }
+    /** AOSP's hidden isLowRamDeviceStatic(): ro.config.low_ram, unset on a PC. */
+    public static boolean isLowRamDeviceStatic() { return false; }
     public static boolean isUserAMonkey() { return false; }
     public static boolean isRunningInTestHarness() { return false; }
     public static boolean isRunningInUserTestHarness() { return false; }

@@ -105,6 +105,7 @@ int putenv(char*);
 void* mmap(void*, size_t, int, int, int, long);
 int munmap(void*, size_t);
 int mprotect(void*, size_t, int);
+int madvise(void*, size_t, int);
 extern char** environ;
 long sysconf(int);
 
@@ -1826,6 +1827,12 @@ int inotify_init1(int);
 void* iconv_open(const char*, const char*);
 int regcomp(void*, const char*, int);
 void* mremap(void*, size_t, size_t, int, ...);
+int mlock(const void*, size_t);
+int munlock(const void*, size_t);
+int mlockall(int);
+int mincore(void*, size_t, unsigned char*);
+int setpriority(int, int, int);
+int getpriority(int, int);
 int symlink(const char*, const char*);
 int sigtimedwait(const unsigned long*, void*, const struct timespec*);
 int sigwait(const unsigned long*, int*);
@@ -2005,7 +2012,57 @@ static void test_missing_forms(const char* dir) {
           iconv_open("UTF-8", "UTF-16LE") == (void*)-1 && *__errno() == 22, 0);
     char re[64];
     check("regcomp does not claim to have compiled", regcomp(re, "a+", 1) != 0, 0);
-    check("mremap fails with MAP_FAILED and ENOMEM", mremap(b, 4096, 8192, 1) == (void*)-1 && *__errno() == 12, 0);
+    // mremap: a private anonymous mapping grows (in place or moved, with its bytes), shrinks in place, and
+    // moves to a fixed address; an address off a page is EINVAL.
+    {
+        char* m = (char*)mmap(0, 65536, 3, 0x22, -1, 0);
+        int ok = m != (char*)-1;
+        if (ok) {
+            m[0] = 'a';
+            m[65535] = 'z';
+            char* g = (char*)mremap(m, 65536, 3 * 65536, 1);
+            ok = g != (char*)-1 && g[0] == 'a' && g[65535] == 'z';
+            if (ok) {
+                g[3 * 65536 - 1] = 'q';
+                ok = mremap(g, 3 * 65536, 4096, 0) == g && g[0] == 'a';
+                char* dest = (char*)mmap(0, 65536, 0, 0x22, -1, 0);  // a reservation to move into
+                char* f = dest == (char*)-1 ? (char*)-1 : (char*)mremap(g, 4096, 8192, 3, dest);
+                ok = ok && f == dest && f[0] == 'a';
+                if (f != (char*)-1) munmap(f, 65536);
+                else munmap(g, 4096);
+            } else {
+                munmap(m, 65536);
+            }
+        }
+        check("mremap grows, shrinks and moves a private mapping with its bytes", ok, 0);
+        check("mremap of an address off a page: EINVAL", mremap(b + 1, 4096, 8192, 1) == (void*)-1 && *__errno() == 22, 0);
+    }
+    // The mlock family, mincore, priorities and the raw signal calls, by the shim's own conventions.
+    {
+        char* m = (char*)mmap(0, 65536, 3, 0x22, -1, 0);
+        unsigned char vec[16] = {0};
+        m[0] = 1;
+        check("mlock and munlock pin and release a mapped range", mlock(m, 8192) == 0 && munlock(m, 8192) == 0, 0);
+        check("mlockall: ENOMEM, as over the lock limit", mlockall(1) == -1 && *__errno() == 12, 0);
+        check("mlockall with no flags: EINVAL", mlockall(0) == -1 && *__errno() == 22, 0);
+        check("mincore: the touched page is resident", mincore(m, 4096, vec) == 0 && vec[0] == 1, 0);
+        check("mincore of an unmapped range: ENOMEM", munmap(m, 65536) == 0 && mincore(m, 4096, vec) == -1 &&
+                  *__errno() == 12, 0);
+        check("setpriority/getpriority keep the calling thread's nice value",
+              setpriority(0, 0, 10) == 0 && getpriority(0, 0) == 10 && setpriority(0, 0, -4) == 0 &&
+                  getpriority(0, 0) == -4 && setpriority(0, 0, 0) == 0 && getpriority(0, 0) == 0, 0);
+        check("getpriority with a bad 'which': EINVAL", getpriority(7, 0) == -1 && *__errno() == 22, 0);
+        struct { void* handler; unsigned long flags; void* restorer; unsigned long mask; } ka = {(void*)1, 0, 0, 0},
+                                                                                            ko = {0, 0, 0, 0};
+        check("syscall(rt_sigaction) takes the kernel's struct",
+              syscall(13, 12L, &ka, 0L, 8L) == 0 && syscall(13, 12L, 0L, &ko, 8L) == 0 && ko.handler == (void*)1 &&
+                  syscall(13, 12L, 0L, &ko, 16L) == -1 && *__errno() == 22, 0);
+        ka.handler = 0;
+        syscall(13, 12L, &ka, 0L, 8L);
+        unsigned long cur = 0;
+        check("syscall(rt_sigprocmask) reads the thread's mask", syscall(14, 0L, 0L, &cur, 8L) == 0, 0);
+        check("syscall(set_tid_address) returns the caller's tid", syscall(218, 0L) == gettid(), 0);
+    }
     void* host = b;
     int herr = 0;
     struct hostent_g { char* name; char** aliases; int addrtype, length; char** addrs; } he, *found = 0;
@@ -2224,12 +2281,73 @@ static void test_popular_imports(const char* dir) {
           k2 == k1 && reused && pthread_setspecific(k2, path) == 0 && pthread_getspecific(k2) == path, 0);
     for (int i = 0; i < 8; ++i) pthread_key_delete(slots[i]);
 
-    check("ptrace(PTRACE_TRACEME) finds no debugger", ptrace(0, 0, 0, 0) == 0, 0);
+    // As on a device: SELinux keeps the zygote from tracing its apps, so TRACEME is refused (EACCES), every
+    // time; a request for a tracee the process does not have is ESRCH; attaching to itself is EPERM.
+    check("ptrace(PTRACE_TRACEME) is refused with EACCES, as on a device",
+          ptrace(0, 0, 0, 0) == -1 && *__errno() == 13 && ptrace(0, 0, 0, 0) == -1 && *__errno() == 13, 0);
+    check("ptrace(PTRACE_PEEKDATA) of no tracee: ESRCH", ptrace(2, 12345, 0, 0) == -1 && *__errno() == 3, 0);
+    check("ptrace(PTRACE_ATTACH) to itself: EPERM", ptrace(16, getpid(), 0, 0) == -1 && *__errno() == 1, 0);
     check("fchmodat is accepted", fchmodat(-100, b, 0600, 0) == 0, 0);
     syslog(3, "%s", "to nowhere");
     check("__android_log_buf_write / _print log a line",
           __android_log_buf_write(0, 4, "bionic_guest", "buf_write") == 1 &&
               __android_log_buf_print(0, 4, "bionic_guest", "buf_print %d", 7) == 1, 0);
+}
+
+// V8's page allocator (J2V8, React Native): it reserves with mmap(PROT_NONE),
+// opens and closes pieces with mprotect, sets PROT_NONE guard pages beside a
+// code chunk over pages it never opened, and drops pages with MADV_DONTNEED or
+// a PROT_NONE MAP_FIXED over them. On Windows a range is a run of regions in
+// one or more allocations, reserved or committed; Linux sees only pages.
+static void test_page_permissions(void) {
+    const size_t kMb = 1UL << 20;
+    // Each step needs the ones before it (a failed mprotect leaves pages that
+    // fault), so after the first failure the rest fail without being run.
+#define STEP(what, cond) check(what, ok = ok && (cond), 0)
+    char* r = mmap(0, 64 * kMb, 0, 0x4022, -1, 0);  // PROT_NONE, MAP_PRIVATE | ANONYMOUS | NORESERVE
+    char* chunk = r + kMb;
+    int ok = r != (char*)-1;
+    STEP("mprotect opens a piece of a PROT_NONE reservation",
+         mprotect(chunk, 256 * 1024, 3) == 0 && (chunk[100] = 42) == 42);
+    STEP("mprotect PROT_NONE on reserved pages never opened (a guard page)",
+         mprotect(chunk + 256 * 1024, 4096, 0) == 0);
+    STEP("mprotect PROT_NONE over opened and reserved pages, then back: the contents stay",
+         mprotect(chunk, 256 * 1024 + 8192, 0) == 0 && mprotect(chunk, 256 * 1024, 3) == 0 && chunk[100] == 42);
+    STEP("mprotect read-only, then read-execute, over opened and reserved pages",
+         mprotect(chunk, 512 * 1024, 1) == 0 && chunk[100] == 42 && chunk[300 * 1024] == 0 &&
+             mprotect(chunk, 512 * 1024, 5) == 0 && mprotect(chunk, 512 * 1024, 3) == 0);
+    STEP("madvise(MADV_DONTNEED) over opened and reserved pages: zeros, still writable",
+         madvise(chunk, 2 * kMb, 4) == 0 && chunk[100] == 0 && (chunk[100] = 1) == 1);
+    STEP("madvise(MADV_DONTNEED) of PROT_NONE pages: zeros once opened again",
+         mprotect(chunk, 4096, 0) == 0 && madvise(chunk, 4096, 4) == 0 && mprotect(chunk, 4096, 3) == 0 &&
+             chunk[100] == 0);
+    // A PROT_NONE MAP_FIXED over a piece (V8's DecommitPages), then opened with mprotect: fresh zeros.
+    STEP("mmap(PROT_NONE, MAP_FIXED) drops pages; mprotect opens them as zeros",
+         (chunk[8192] = 7) == 7 && mmap(chunk, 65536, 0, 0x32, -1, 0) == chunk && mprotect(chunk, 65536, 3) == 0 &&
+             chunk[8192] == 0);
+    STEP("mprotect of an unaligned address fails with EINVAL", mprotect(chunk + 1, 4096, 3) == -1 && *__errno() == 22);
+    STEP("mprotect of no bytes succeeds", mprotect(chunk, 0, 3) == 0);
+    if (r != (char*)-1) munmap(r, 64 * kMb);
+
+    // Two mappings side by side, made separately: on Windows two allocations,
+    // which one VirtualProtect, VirtualAlloc or VirtualFree cannot span.
+    char* two = mmap(0, 4 * kMb, 0, 0x22, -1, 0);
+    char* edge = two + 2 * kMb;
+    ok = two != (char*)-1;
+    STEP("two PROT_NONE mappings made side by side with MAP_FIXED",
+         munmap(two, 4 * kMb) == 0 && mmap(two, 2 * kMb, 0, 0x32, -1, 0) == two &&
+             mmap(edge, 2 * kMb, 0, 0x32, -1, 0) == edge);
+    STEP("mprotect read-write across two mappings",
+         mprotect(edge - 65536, 131072, 3) == 0 && (edge[-1] = 1) == 1 && (edge[0] = 2) == 2);
+    STEP("mprotect across two mappings to PROT_NONE and back keeps both sides",
+         mprotect(two, 4 * kMb, 0) == 0 && mprotect(edge - 65536, 131072, 3) == 0 && edge[-1] == 1 && edge[0] == 2);
+    STEP("madvise(MADV_DONTNEED) across two mappings", madvise(two, 4 * kMb, 4) == 0 && edge[-1] == 0 && edge[0] == 0);
+    STEP("mmap(MAP_FIXED) read-write across two mappings: zeros",
+         (edge[4096] = 3) == 3 && mmap(edge - kMb, 2 * kMb, 3, 0x32, -1, 0) == edge - kMb && edge[4096] == 0 &&
+             (edge[-4096] = 4) == 4);
+    STEP("munmap of a range made of two mappings", munmap(two, 4 * kMb) == 0);
+    STEP("mprotect of unmapped memory fails with ENOMEM", mprotect(two, 4096, 3) == -1 && *__errno() == 12);
+#undef STEP
 }
 
 EXPORT int bionic_test(const char* dir) {
@@ -2249,6 +2367,7 @@ EXPORT int bionic_test(const char* dir) {
     test_zlib(dir);
     test_rand48_statfs_getopt(dir);
     test_misc();
+    test_page_permissions();
     test_signals_and_paths(dir);
     test_signal_delivery();
     test_sweep_gaps(dir);

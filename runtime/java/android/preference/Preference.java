@@ -945,16 +945,12 @@ public class Preference implements Comparable<Preference> {
         // tobsolitaire, unitconv, bouncy, anuto and frozenbubble, the title drew
         // in the summary grey. MACAPK_PREF_ROW_APPEARANCE=0 restores the bare
         // constructors.
-        TextView title = new TextView(mContext, MACAPK_PREF_ROW_APPEARANCE
-            ? macapkElementAttrs("android:textAppearance=\"?android:attr/textAppearanceListItem\"")
-            : null);
+        TextView title = new TextView(mContext, macapkElementAttrs("android:textAppearance=\"?android:attr/textAppearanceListItem\""));
         title.setId(ID_TITLE);
         if (mTitle != null) title.setText(mTitle);
         text.addView(title);
-        TextView summary = new TextView(mContext, MACAPK_PREF_ROW_APPEARANCE
-            ? macapkElementAttrs("android:textAppearance=\"?android:attr/textAppearanceListItemSecondary\""
-                + " android:textColor=\"?android:attr/textColorSecondary\"")
-            : null);
+        TextView summary = new TextView(mContext, macapkElementAttrs("android:textAppearance=\"?android:attr/textAppearanceListItemSecondary\""
+                + " android:textColor=\"?android:attr/textColorSecondary\""));
         summary.setId(ID_SUMMARY);
         if (mSummary != null) summary.setText(mSummary);
         text.addView(summary);
@@ -968,8 +964,6 @@ public class Preference implements Comparable<Preference> {
         return row;
     }
 
-    static final boolean MACAPK_PREF_ROW_APPEARANCE =
-        !"0".equals(System.getenv("MACAPK_PREF_ROW_APPEARANCE"));
 
     /** An AttributeSet holding one layout element's android: attributes, so a
      *  stand-in for a platform layout we cannot inflate hands its widget the

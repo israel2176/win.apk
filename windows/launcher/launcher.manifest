@@ -14,6 +14,10 @@
       <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
       <!-- The ANSI code page is UTF-8 (Windows 10 1903 and later), as in winapk-runtime.exe. -->
       <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+      <!-- Paths past MAX_PATH (260) without the long-path prefix, where Windows' long-path
+           policy (LongPathsEnabled) is on: an app's deep files under its data folder. Where it is
+           off, the runtime's own file calls use the long-path form (bionic file_path, the JDK's). -->
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
     </windowsSettings>
   </application>
   <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">

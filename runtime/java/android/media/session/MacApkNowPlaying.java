@@ -24,7 +24,6 @@ package android.media.session;
 public final class MacApkNowPlaying {
     private MacApkNowPlaying() {}
 
-    static final boolean ENABLED = !"0".equals(System.getenv("MACAPK_NOW_PLAYING"));
 
     // Remote commands, matching nowplaying_bridge.mm.
     static final int CMD_PLAY = 1, CMD_PAUSE = 2, CMD_TOGGLE = 3, CMD_NEXT = 4,
@@ -44,7 +43,7 @@ public final class MacApkNowPlaying {
     /** A session changed its metadata, state or activity. Publishes only the
      *  media-button session, the one a device's system UI would show. */
     static void sessionChanged(MediaSession s) {
-        if (!ENABLED || !sLinked || s == null) return;
+        if (!sLinked || s == null) return;
         MediaSession pick = pick();
         if (pick == null) {
             if (sPublished != null) clear();
@@ -57,7 +56,7 @@ public final class MacApkNowPlaying {
 
     /** A session was released or deactivated. */
     static void sessionGone(MediaSession s) {
-        if (!ENABLED || !sLinked) return;
+        if (!sLinked) return;
         if (sPublished != s) return;
         MediaSession pick = pick();
         if (pick != null && pick != s) publish(pick); else clear();

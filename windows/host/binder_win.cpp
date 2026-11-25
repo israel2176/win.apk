@@ -38,13 +38,18 @@
 // FILE_FLAG_FIRST_PIPE_INSTANCE, so a second process cannot take over a name
 // that is in use. A client connects with SECURITY_IDENTIFICATION (the server
 // cannot act as it) and, both ways, the peer must be a process of the same
-// user running this same executable, or the connection is dropped. What this
+// user running this same executable, or the connection is dropped. One
+// exception: the system broker also takes connections from this install's
+// launcher (Win.apk.exe, the install helper too), which tells it of a package
+// installed, updated or removed (winapk/package_events.h); the broker checks
+// that call's pid again and refuses every other caller. What this
 // does not do, and cannot on Windows: every app runs with the user's rights,
 // and a process of the same user can read or write another's memory. The
 // identity checks stop an app's Java code from claiming to be another app;
 // they do not sandbox native code (docs/ARCHITECTURE.md, "Google services").
 
 #include "host_natives.h"
+#include "winapk/binder_wire.h"
 
 #include <atomic>
 #include <cstdint>
@@ -75,12 +80,20 @@ constexpr int32_t kDeadObject = -32;
 constexpr int32_t kFailedTransaction = static_cast<int32_t>(0x80000002);
 constexpr int32_t kBadValue = -22;
 
-constexpr uint32_t kMagic = 0x4e424157;  // 'WABN'
-constexpr uint32_t kMaxFrame = 64u << 20;
-enum : uint32_t { kTransact = 1, kReply = 2, kGetRoot = 3, kRoot = 4 };
-// MacApkBinderTransport's object kinds.
-enum : int32_t { kKindNull = 0, kKindBinder = 1, kKindPfd = 2, kKindFd = 3 };
-constexpr int32_t kFlagOneway = 1;  // IBinder.FLAG_ONEWAY
+// The frame (winapk/binder_wire.h).
+using binder::Head;
+using binder::kFlagOneway;
+using binder::kGetRoot;
+using binder::kKindBinder;
+using binder::kKindFd;
+using binder::kKindNull;
+using binder::kKindPfd;
+using binder::kMagic;
+using binder::kMaxFrame;
+using binder::kReply;
+using binder::kRoot;
+using binder::kTransact;
+using binder::same_path;
 constexpr jint kUnknownCallerUid = 9999;  // MacApkBinderTransport.UNKNOWN_CALLER_UID
 
 JavaVM* g_vm = nullptr;
@@ -91,72 +104,43 @@ jmethodID g_uid_for = nullptr;  // callingUidFor(int pid), absent in upstream's 
 
 // ---- identity ----------------------------------------------------------------------
 
-std::wstring string_sid_of(HANDLE token) {
-    DWORD n = 0;
-    GetTokenInformation(token, TokenUser, nullptr, 0, &n);
-    std::vector<uint8_t> buf(n ? n : 1);
-    if (!GetTokenInformation(token, TokenUser, buf.data(), n, &n)) return {};
-    wchar_t* s = nullptr;
-    if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(buf.data())->User.Sid, &s)) return {};
-    std::wstring out(s);
-    LocalFree(s);
-    return out;
-}
-
 const std::wstring& self_sid() {
-    static const std::wstring sid = [] {
-        HANDLE t = nullptr;
-        std::wstring s;
-        if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t)) {
-            s = string_sid_of(t);
-            CloseHandle(t);
-        }
-        return s;
-    }();
+    static const std::wstring sid = binder::process_sid(GetCurrentProcess());
     return sid;
 }
 
 const std::wstring& self_image() {
-    static const std::wstring image = [] {
-        std::wstring buf(32768, L'\0');
-        DWORD n = static_cast<DWORD>(buf.size());
-        if (!QueryFullProcessImageNameW(GetCurrentProcess(), 0, buf.data(), &n)) return std::wstring();
-        buf.resize(n);
-        return buf;
-    }();
+    static const std::wstring image = binder::process_image(GetCurrentProcess());
     return image;
 }
 
-bool same_path(const std::wstring& a, const std::wstring& b) {
-    return !a.empty() && CompareStringOrdinal(a.c_str(), -1, b.c_str(), -1, TRUE) == CSTR_EQUAL;
-}
-
-// The pipe-name prefix of this user's session. Pipe names are global, so the
-// user and session in the name keep two users' runtimes apart; the DACL and
-// the peer check below are what stop one from posing as the other.
+// The pipe-name prefix of this user's session (binder_wire.h).
 const std::wstring& prefix() {
-    static const std::wstring p = [] {
-        DWORD session = 0;
-        ProcessIdToSessionId(GetCurrentProcessId(), &session);
-        return L"\\\\.\\pipe\\winapk-" + self_sid() + L"-s" + std::to_wstring(session) + L"-";
-    }();
+    static const std::wstring p = binder::pipe_prefix();
     return p;
 }
 
-// Whether `process` belongs to this user and runs this executable.
-bool trusted_peer(HANDLE process) {
+// Whether `process` belongs to this user and runs `image`.
+bool runs_as_user(HANDLE process, const std::wstring& image) {
     if (!process) return false;
-    HANDLE t = nullptr;
-    if (!OpenProcessToken(process, TOKEN_QUERY, &t)) return false;
-    const std::wstring sid = string_sid_of(t);
-    CloseHandle(t);
+    const std::wstring sid = binder::process_sid(process);
     if (sid.empty() || sid != self_sid()) return false;
-    std::wstring buf(32768, L'\0');
-    DWORD n = static_cast<DWORD>(buf.size());
-    if (!QueryFullProcessImageNameW(process, 0, buf.data(), &n)) return false;
-    buf.resize(n);
-    return same_path(buf, self_image());
+    return same_path(binder::process_image(process), image);
 }
+
+// Whether `process` belongs to this user and runs this executable.
+bool trusted_peer(HANDLE process) { return runs_as_user(process, self_image()); }
+
+// Whether `process` is this user's launcher of this install (Win.apk.exe above our bin\ folder), which is
+// also its install helper: the one program besides the runtime that may call the system broker, to tell
+// it of a package installed, updated or removed (SystemServer.TX_PACKAGE_CHANGED, which checks the caller
+// again by its pid). Only a process that publishes a name (the broker: Binder_checkIn) takes its
+// connections at all.
+bool trusted_launcher(HANDLE process) {
+    static const std::wstring launcher = binder::launcher_image_for(self_image());
+    return !launcher.empty() && runs_as_user(process, launcher);
+}
+std::atomic<bool> g_accept_launcher{false};
 
 HANDLE open_peer(DWORD pid) {
     return OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE | PROCESS_DUP_HANDLE, FALSE, pid);
@@ -177,13 +161,7 @@ SECURITY_ATTRIBUTES* pipe_security() {
     return sa.lpSecurityDescriptor ? &sa : nullptr;
 }
 
-// ---- framing -----------------------------------------------------------------------
-
-struct Head {
-    uint32_t magic, type, code, flags, target;
-    int32_t status;
-    uint32_t data_len, n_off, n_obj;
-};
+// ---- framing (binder_wire.h has the layout) ----------------------------------------
 
 // One object of a message as it travels: a binder by (endpoint, number), or a
 // handle value already valid in the receiving process.
@@ -500,7 +478,7 @@ DWORD WINAPI serve_connection(void* param) {
     ULONG client_pid = 0;
     HANDLE client = nullptr;
     if (GetNamedPipeClientProcessId(pipe, &client_pid)) client = open_peer(client_pid);
-    if (!trusted_peer(client)) {
+    if (!trusted_peer(client) && !(g_accept_launcher && trusted_launcher(client))) {
         std::fprintf(stderr, "[binder] connection from pid %lu refused: not this user's Win.apk runtime\n",
                      static_cast<unsigned long>(client_pid));
         if (client) CloseHandle(client);
@@ -698,6 +676,12 @@ bool ensure_server() {
 
 // ---- client ------------------------------------------------------------------------
 
+// The pipes found served by a process that is not this user's Win.apk runtime (another install's
+// or build's broker holding a well-known name), with that process's pid: a lookup of one cannot
+// succeed while it lives, so callers stop waiting for it (WinProcesses.foreignServer).
+std::mutex g_foreign_lock;
+std::map<std::wstring, unsigned long> g_foreign;
+
 // A new connection to `ep`, its server verified; INVALID_HANDLE_VALUE when the
 // endpoint is gone (or is not this user's runtime).
 HANDLE connect_to(Endpoint& ep, bool* gone) {
@@ -720,8 +704,16 @@ HANDLE connect_to(Endpoint& ep, bool* gone) {
         if (!ep.process) {
             HANDLE p = open_peer(pid);
             if (!trusted_peer(p)) {
-                std::fprintf(stderr, "[binder] %ls is served by pid %lu, not this user's Win.apk runtime\n",
-                             ep.name.c_str(), static_cast<unsigned long>(pid));
+                bool first;
+                {
+                    std::lock_guard<std::mutex> f(g_foreign_lock);
+                    first = g_foreign[ep.name] != pid;
+                    g_foreign[ep.name] = pid;
+                }
+                if (first) {
+                    std::fprintf(stderr, "[binder] %ls is served by pid %lu, not this user's Win.apk runtime\n",
+                                 ep.name.c_str(), static_cast<unsigned long>(pid));
+                }
                 if (p) CloseHandle(p);
                 CloseHandle(h);
                 *gone = true;
@@ -932,6 +924,7 @@ jint JNICALL Binder_checkIn(JNIEnv* env, jclass, jstring jname) {
     std::wstring pipe;
     if (!published_pipe(env, jname, &pipe)) return -static_cast<jint>(ERROR_INVALID_NAME);
     if (!ensure_server()) return -1;
+    g_accept_launcher = true;
     HANDLE first = create_instance(pipe, true);
     if (first == INVALID_HANDLE_VALUE) return -static_cast<jint>(GetLastError());
     const int32_t h = g_next.fetch_add(1);
@@ -1116,6 +1109,15 @@ jboolean JNICALL Proc_isRuntime(JNIEnv*, jclass, jint pid) {
     return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+// Whether `pid` is alive and is this user's launcher of this install (or its install helper, the same
+// program): trusted_launcher.
+jboolean JNICALL Proc_isLauncher(JNIEnv*, jclass, jint pid) {
+    HANDLE p = open_peer(static_cast<DWORD>(pid));
+    bool ok = trusted_launcher(p) && WaitForSingleObject(p, 0) == WAIT_TIMEOUT;
+    if (p) CloseHandle(p);
+    return ok ? JNI_TRUE : JNI_FALSE;
+}
+
 // The process's creation time (FILETIME ticks), which with the pid names one
 // process for good; 0 when it cannot be read.
 jlong JNICALL Proc_startTime(JNIEnv*, jclass, jint pid) {
@@ -1130,6 +1132,24 @@ jlong JNICALL Proc_startTime(JNIEnv*, jclass, jint pid) {
 }
 
 // The pipe-name prefix this user's runtimes share (tests and logs).
+// The pid of the process that is not this user's Win.apk runtime and served the published name
+// `jname` at the last lookup, while it still runs; 0 when there is none.
+jint JNICALL Proc_foreignServer(JNIEnv* env, jclass, jstring jname) {
+    std::wstring pipe;
+    if (!published_pipe(env, jname, &pipe)) return 0;
+    unsigned long pid = 0;
+    {
+        std::lock_guard<std::mutex> f(g_foreign_lock);
+        auto it = g_foreign.find(pipe);
+        if (it != g_foreign.end()) pid = it->second;
+    }
+    if (!pid) return 0;
+    HANDLE p = OpenProcess(SYNCHRONIZE, FALSE, pid);
+    const bool alive = p && WaitForSingleObject(p, 0) == WAIT_TIMEOUT;
+    if (p) CloseHandle(p);
+    return alive ? static_cast<jint>(pid) : 0;
+}
+
 jstring JNICALL Proc_pipePrefix(JNIEnv* env, jclass) {
     const std::wstring& p = prefix();
     return env->NewString(reinterpret_cast<const jchar*>(p.data()), static_cast<jsize>(p.size()));
@@ -1150,8 +1170,10 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kTransport, "nativeReleaseSend", "(I)V", Binder_releaseSend),
     WINAPK_HOST_NATIVE(kProc, "commandLine", "(I)Ljava/lang/String;", Proc_commandLine),
     WINAPK_HOST_NATIVE(kProc, "isRuntime", "(I)Z", Proc_isRuntime),
+    WINAPK_HOST_NATIVE(kProc, "isLauncher", "(I)Z", Proc_isLauncher),
     WINAPK_HOST_NATIVE(kProc, "startTime", "(I)J", Proc_startTime),
     WINAPK_HOST_NATIVE(kProc, "pipePrefix", "()Ljava/lang/String;", Proc_pipePrefix),
+    WINAPK_HOST_NATIVE(kProc, "foreignServer", "(Ljava/lang/String;)I", Proc_foreignServer),
 };
 
 }  // namespace

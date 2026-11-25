@@ -34,7 +34,7 @@ public final class DomainVerificationManager {
      *  for. */
     public DomainVerificationUserState getDomainVerificationUserState(String packageName)
             throws android.content.pm.PackageManager.NameNotFoundException {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         android.content.pm.PackageManager pm = (app != null) ? app.getPackageManager() : null;
         if (pm == null) {
             throw new android.content.pm.PackageManager.NameNotFoundException(packageName);

@@ -112,7 +112,7 @@ public abstract class RecognitionService extends android.app.Service {
      */
     @Override
     public final IBinder onBind(Intent intent) {
-        return super.onBind(intent);
+        return null;
     }
 
     /**

@@ -54,12 +54,9 @@ public class AudioTrack implements AudioRouting, VolumeAutomation {
     //       getMinBufferSize / getNativeOutputSampleRate.
     // =0 keeps the old answers byte for byte (a Builder that returns the dead
     // track, play/stop/pause as silent no-ops, writes returning
-    // ERROR_DEAD_OBJECT / sizeInBytes). Gate: debug/audio_honest_open_gate.sh.
-    private static final boolean HONEST_OPEN =
-            !"0".equals(System.getenv("MACAPK_AUDIO_HONEST_OPEN"));
     /** True when this track has no native side and must answer like AOSP's
      *  STATE_UNINITIALIZED track (see HONEST_OPEN). */
-    private boolean honestUninitialized() { return HONEST_OPEN && handle == 0; }
+    private boolean honestUninitialized() { return handle == 0; }
 
     private final long handle;
     private final int sampleRate;
@@ -837,7 +834,7 @@ public class AudioTrack implements AudioRouting, VolumeAutomation {
             int buf = bufferSizeInBytes > 0 ? bufferSizeInBytes
                 : getMinBufferSize(f.getSampleRate(), f.getChannelMask(), f.getEncoding());
             AudioTrack track = new AudioTrack(attrs, f, buf, mode, sessionId);
-            if (HONEST_OPEN && track.getState() == STATE_UNINITIALIZED) {
+            if (track.getState() == STATE_UNINITIALIZED) {
                 // AOSP: "release is not necessary" (see HONEST_OPEN).
                 throw new UnsupportedOperationException("Cannot create AudioTrack");
             }

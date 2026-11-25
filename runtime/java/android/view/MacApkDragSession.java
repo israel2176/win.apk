@@ -60,7 +60,6 @@ import android.content.ClipDescription;
  * (startDragAndDrop returns false; nothing else here runs).
  */
 public final class MacApkDragSession {
-    static final boolean ENABLED = !"0".equals(System.getenv("MACAPK_DRAG_AND_DROP"));
 
     private static volatile MacApkDragSession sActive;
 
@@ -140,7 +139,7 @@ public final class MacApkDragSession {
         // None of that is wired, so refuse rather than deliver events at the
         // wrong point (AOSP would start the drag; this is a listed divergence).
         android.app.Activity act = com.macapk.loader.ActivityHost.peek();
-        View content = act != null ? act.macapkContentView() : null;
+        View content = act != null ? com.macapk.loader.ActivityHost.contentRoot(act) : null;
         if (content != null && root != content) {
             com.macapk.loader.NativeLog.w("Mac.apk.Drag",
                 "startDragAndDrop: drag from a floating window is not supported");

@@ -4,9 +4,11 @@
 // available.
 package android.widget;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.util.AttributeSet;
 import android.view.Gravity;
+import com.macapk.loader.res.ResBackend;
 
 public class Switch extends CompoundButton {
     // AOSP stores these labels; they back getTextOn/Off so a host querying
@@ -139,18 +141,18 @@ public class Switch extends CompoundButton {
     private static boolean macapkUsable(android.graphics.drawable.Drawable dr) {
         if (dr == null) return false;
         if (dr instanceof android.graphics.drawable.VectorDrawable vd
-                && (vd.macapkUnresolvedStub || vd.macapkPaintsNothing())) return false;
+                && (GfxBackend.get().isUnresolvedStub(vd) || GfxBackend.get().vectorPaintsNothing(vd))) return false;
         return dr.getIntrinsicWidth() > 0 && dr.getIntrinsicHeight() > 0;
     }
 
     /** The drawable, or any state of a selector, already has a tint. */
     private static boolean macapkCarriesTint(android.graphics.drawable.Drawable dr) {
         if (dr == null) return false;
-        if (dr.getTintList() != null) return true;
+        if (GfxBackend.get().tintList(dr) != null) return true;
         if (dr instanceof android.graphics.drawable.StateListDrawable sl) {
             for (int i = 0, n = sl.getStateCount(); i < n; i++) {
                 android.graphics.drawable.Drawable c = sl.getStateDrawable(i);
-                if (c != null && c.getTintList() != null) return true;
+                if (c != null && GfxBackend.get().tintList(c) != null) return true;
             }
         }
         return false;
@@ -163,10 +165,10 @@ public class Switch extends CompoundButton {
         try {
             android.content.res.Resources.Theme t = context.getTheme();
             if (t == null) return null;
-            int accent = t.resolveAttrColor("android:colorControlActivated",
-                    t.resolveAttrColor("colorControlActivated", 0));
-            int normal = t.resolveAttrColor("android:colorSwitchThumbNormal",
-                    t.resolveAttrColor("colorSwitchThumbNormal", 0xFFF1F1F1));
+            int accent = ResBackend.get().resolveAttrColor(t, "android:colorControlActivated",
+                    ResBackend.get().resolveAttrColor(t, "colorControlActivated", 0));
+            int normal = ResBackend.get().resolveAttrColor(t, "android:colorSwitchThumbNormal",
+                    ResBackend.get().resolveAttrColor(t, "colorSwitchThumbNormal", 0xFFF1F1F1));
             if (accent == 0) return null;
             int disabled = (Math.round(((normal >>> 24) & 0xFF) * 0.3f) << 24) | (normal & 0x00FFFFFF);
             return new android.content.res.ColorStateList(
@@ -373,9 +375,9 @@ public class Switch extends CompoundButton {
         private int themeColor(String attr, int fallback) {
             try {
                 android.content.res.Resources.Theme t = ctx != null ? ctx.getTheme() : null;
-                if (t != null) return t.resolveAttrColor(attr, fallback);
+                if (t != null) return ResBackend.get().resolveAttrColor(t, attr, fallback);
             } catch (Throwable ignored) {}
-            return android.content.res.Resources.macapkThemeColor(attr, fallback);
+            return ResBackend.get().themeColor(attr, fallback);
         }
 
         private boolean dark() {

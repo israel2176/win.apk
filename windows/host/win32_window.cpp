@@ -2,7 +2,12 @@
 
 #include "win32_window.h"
 
+#include "input_pane.h"
+#include "tsf_session.h"
+#include "uia_provider.h"
 #include "window_fit.h"
+#include "hwui_host.h"
+#include "../hwui_build/glue/hwui_host_api.h"
 
 #include <algorithm>
 #include <atomic>
@@ -10,12 +15,15 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include <windows.h>
 #include <imm.h>
+#include <objbase.h>
 #include <wincodec.h>
 
 namespace winapk::host {
@@ -87,42 +95,23 @@ WindowInput* g_input = nullptr;
 int g_phone_w = 360, g_phone_h = 640;  // the phone, in dp: the app's display size
 SIZE g_surface{};                      // the size, in pixels, the app is asked to draw at (its surface)
 bool g_pointer_down = false;  // the mouse's left button is down on the app: a finger
+bool g_last_press_touch = false;  // the last press on the app was a finger or a pen (the touch keyboard)
 
 std::mutex g_frame_lock;
-std::vector<uint32_t> g_frame;
-int g_frame_w = 0, g_frame_h = 0;
-std::vector<uint32_t> g_overlay;  // empty: none
-int g_overlay_w = 0, g_overlay_h = 0;
-std::vector<uint32_t> g_composed;
-
-// The frame with the overlay blended over it ("source over", straight alpha).
-// Both are drawn at the surface size, so they match; one from before a resize
-// is laid over the other pixel for pixel at the top left, never stretched to
-// fit (the next frame brings both to the new size).
-const uint32_t* composed_frame() {
-    if (g_overlay.empty()) return g_frame.data();
-    g_composed = g_frame;
-    const int h = std::min(g_frame_h, g_overlay_h), w = std::min(g_frame_w, g_overlay_w);
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const uint32_t o = g_overlay[static_cast<size_t>(y) * g_overlay_w + x];
-            const uint32_t a = o >> 24;
-            if (a == 0) continue;
-            uint32_t& d = g_composed[static_cast<size_t>(y) * g_frame_w + x];
-            if (a == 255) {
-                d = o;
-                continue;
-            }
-            uint32_t out = 0xff000000u;
-            for (int shift = 0; shift < 24; shift += 8) {
-                const uint32_t sc = (o >> shift) & 0xff, dc = (d >> shift) & 0xff;
-                out |= ((sc * a + dc * (255 - a)) / 255) << shift;
-            }
-            d = out;
-        }
-    }
-    return g_composed.data();
-}
+int g_frame_w = 0, g_frame_h = 0;  // the display the compositor last placed (window_gpu_layout)
+// Where the compositor last put the frame: a frame pixel (x, y) is at client (ox + x * sx, oy + y * sy),
+// left to right. For screen readers (uia_provider.h), which ask from their own threads.
+struct Shown {
+    int ox = 0, oy = 0;
+    double sx = 0, sy = 0;
+    bool ok = false;
+};
+Shown g_shown;  // under g_frame_lock
+// A snapshot's frame, read back by the compositor (window_frame_wanted), under g_frame_lock.
+bool g_frame_wanted = false;
+std::vector<uint32_t> g_frame_read;
+int g_frame_read_w = 0, g_frame_read_h = 0;
+std::condition_variable g_frame_read_cv;
 COLORREF g_background = RGB(255, 255, 255);  // until the first frame
 
 constexpr DWORD kStyle = WS_OVERLAPPEDWINDOW;
@@ -150,13 +139,13 @@ UINT window_dpi(HWND hwnd) {
 // density, not a shrunk bitmap, and the app keeps its dp layout (360x800 dp
 // stays 360x800 dp).
 //
-// The density is fixed for the life of the process. When the window later
-// moves to another monitor, the work area changes (the taskbar moved or grew)
-// or the app turns the phone, the window is fitted again: it keeps its size
-// in physical terms, made smaller when that no longer fits, and the frames
-// are resampled to it (the one case a frame is scaled; see "the app follows
-// the window" for why a density change is not done). The next start picks
-// the density that fits.
+// When the window later moves to another monitor, the work area changes (the
+// taskbar moved or grew) or the app turns the phone, the window is fitted
+// again: it keeps the phone's dp at the scale it showed them at, in physical
+// terms, made smaller when that no longer fits. On a monitor with another
+// scale that is another density for the app, changed live as Android changes
+// a display's density (see "the app follows the window"), so the frames stay
+// pixel for pixel.
 
 struct Plan {
     bool set = false;
@@ -175,6 +164,18 @@ Plan g_plan;
 // else (WINAPK_DENSITY) the plan's scale.
 float g_base_scale = 1.0f;
 float g_surface_scale = 1.0f;  // px per dp of the frames (the app's density / 160)
+// The density follows the scale the window shows the phone at (it came from
+// the plan); false when WINAPK_DENSITY pinned it, and the frames are then
+// resampled to the window as before.
+bool g_live_density = false;
+int g_density_dpi = 160;  // the app's density now, as last given to it (WindowInput::resized)
+// The surface's size and density before the last density change, until the
+// app has drawn at the new one: its last frame is shown scaled by the ratio of
+// the two densities meanwhile, the same picture larger or smaller from the
+// box's top left (as the app will draw it, in the shape it had), instead of a
+// small corner of the window.
+SIZE g_before_density{};
+int g_before_dpi = 0;
 HMONITOR g_fit_monitor = nullptr;  // the monitor the window was last fitted for
 bool g_in_size_move = false;
 bool g_refit_pending = false;  // a fit came while minimized or maximized
@@ -190,25 +191,18 @@ int g_orientation_lock = 0;    // 0 any, 1 portrait, 2 landscape (window_set_ori
 // (360x800 dp becomes about 680x360 dp on a 16:9 monitor), instead of the
 // tablet-sized display the window's pixels at the same scale would be, with a
 // phone app's content small in the middle of it. The window shows that display
-// larger: the density is fixed for the process (see above), so the frames are
-// resampled to the window until the next start, which plans the density for the
-// maximized window (window_set_start_maximized) and draws it pixel for pixel.
+// larger: at the density at which the turned phone's dp fill the window's
+// pixels, changed live as a configuration change (see "the app follows the
+// window"), so the maximized window is drawn pixel for pixel; restoring it
+// brings the phone's own size and density back. The next start opens it
+// maximized at that density at once (window_set_start_maximized).
 // An app whose activity is fixed to portrait gets its portrait column, as large
-// as the screen is high. WINAPK_MAXIMIZE_TURNS=0: a maximized window is just a
-// large one, as before.
+// as the screen is high.
 int g_normal_w = 0, g_normal_h = 0;  // the phone, in dp, in the window when it is not maximized
 bool g_start_maximized = false;
 // The window opens maximized and has not been yet: the sizes it passes through
 // on the way are not the app's.
 bool g_awaiting_maximize = false;
-
-bool maximize_turns() {
-    static const bool on = [] {
-        const char* e = std::getenv("WINAPK_MAXIMIZE_TURNS");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
 
 // px per dp a maximized window shows the phone at in a box of bw by bh pixels.
 float zoomed_scale(int bw, int bh, float normal) {
@@ -238,56 +232,12 @@ void adjust_for_dpi(RECT* r, UINT dpi) {
 
 int margin_px(UINT dpi) { return MulDiv(4, static_cast<int>(dpi), 96); }
 
-// "<w>x<h>", optionally followed by "+<x>+<y>" (from the left and top edge of
-// the real work area) or "-<x>-<y>" (from the right and bottom edge).
-bool parse_geometry(const wchar_t* s, const RECT& real, RECT* out) {
-    int w = 0, h = 0, n = 0;
-    if (swscanf(s, L"%dx%d%n", &w, &h, &n) < 2 || w < 100 || h < 100) return false;
-    s += n;
-    int offs[2] = {0, 0};
-    bool from_end[2] = {false, false};
-    for (int i = 0; i < 2 && (*s == L'+' || *s == L'-'); ++i) {
-        from_end[i] = *s == L'-';
-        int v = 0, m = 0;
-        if (swscanf(s + 1, L"%d%n", &v, &m) < 1) return false;
-        offs[i] = v;
-        s += 1 + m;
-    }
-    const LONG x = from_end[0] ? real.right - offs[0] - w : real.left + offs[0];
-    const LONG y = from_end[1] ? real.bottom - offs[1] - h : real.top + offs[1];
-    *out = RECT{x, y, x + w, y + h};
-    return true;
-}
-
-// WINAPK_TEST_WORKAREA=<w>x<h>[+<x>+<y> | -<x>-<y>], in pixels, stands in for
-// every monitor's work area, so that fitting can be tried on a big screen.
-// "@<file>" reads that text from the file at every fit, so a test can change
-// the work area while the app runs (then send WM_SETTINGCHANGE).
-bool test_work_area(const RECT& real, RECT* out) {
-    wchar_t buf[1024];
-    const DWORD n = GetEnvironmentVariableW(L"WINAPK_TEST_WORKAREA", buf, 1024);
-    if (n == 0 || n >= 1024) return false;
-    if (buf[0] != L'@') return parse_geometry(buf, real, out);
-    char text[128] = {};
-    HANDLE f = CreateFileW(buf + 1, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
-                           OPEN_EXISTING, 0, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return false;
-    DWORD got = 0;
-    ReadFile(f, text, sizeof(text) - 1, &got, nullptr);
-    CloseHandle(f);
-    wchar_t wtext[128] = {};
-    for (DWORD i = 0; i < got; ++i) wtext[i] = static_cast<unsigned char>(text[i]);
-    return parse_geometry(wtext, real, out);
-}
-
 RECT work_area(HMONITOR mon) {
     RECT wa{};
     MONITORINFO mi{};
     mi.cbSize = sizeof(mi);
     if (mon && GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
     else SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
-    RECT test;
-    if (test_work_area(wa, &test)) wa = test;
     return wa;
 }
 
@@ -323,29 +273,26 @@ SIZE outer_size(UINT dpi, float scale) {
     return {r.right - r.left, r.bottom - r.top};
 }
 
-bool resizable_enabled();
 bool follow_client(HWND hwnd);
 
 // Sizes the window for monitor `mon` at `dpi`, at `at` (its current place when
 // null); with `keep_inside`, moved as needed to lie wholly in the work area.
-// An app that follows the window keeps its surface: the client area is the
+// The app follows the window and keeps its surface: the client area is the
 // surface at the kept scale (pixel for pixel on the launch monitor), made
 // smaller when that does not fit the work area, and the app then follows the
-// smaller window. One that does not follow is shown smaller instead.
+// smaller window.
 void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_inside) {
     if (g_embed_parent) {  // the launcher sizes the window: the app follows the box it has
         g_fit_monitor = mon;
         g_shown_scale = keep_scale(dpi);
-        follow_client(hwnd);
+        follow_client(hwnd);  // at the density for that scale (another monitor's)
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
     }
-    const bool follows = resizable_enabled();
     if (IsIconic(hwnd) || IsZoomed(hwnd)) {
-        // A maximized window the app follows has nothing to fit: the box is
-        // the screen, at this monitor's scale. Only one it does not follow
-        // takes the phone's shape on restore.
-        g_refit_pending = IsIconic(hwnd) || !follows;
+        // A maximized window has nothing to fit: the box is the screen, at
+        // this monitor's scale.
+        g_refit_pending = IsIconic(hwnd);
         if (IsZoomed(hwnd)) {
             g_fit_monitor = mon;
             g_shown_scale = keep_scale(dpi);
@@ -356,13 +303,10 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
     g_fit_monitor = mon;
     const RECT wa = work_area(mon);
     const float keep = keep_scale(dpi), fit = fit_scale(wa, dpi, g_phone_w, g_phone_h);
-    const float scale = follows ? keep : std::min(keep, fit);
-    SIZE client{client_px(g_phone_w, scale), client_px(g_phone_h, scale)};
-    if (follows) {
-        const double r = static_cast<double>(keep) / static_cast<double>(g_surface_scale) *
-                         (fit < keep ? static_cast<double>(fit) / static_cast<double>(keep) : 1.0);
-        client = SIZE{static_cast<LONG>(std::lround(g_surface.cx * r)), static_cast<LONG>(std::lround(g_surface.cy * r))};
-    }
+    const float scale = keep;
+    const double r = static_cast<double>(keep) / static_cast<double>(g_surface_scale) *
+                     (fit < keep ? static_cast<double>(fit) / static_cast<double>(keep) : 1.0);
+    const SIZE client{static_cast<LONG>(std::lround(g_surface.cx * r)), static_cast<LONG>(std::lround(g_surface.cy * r))};
     RECT outer{0, 0, client.cx, client.cy};
     adjust_for_dpi(&outer, dpi);
     const SIZE s{outer.right - outer.left, outer.bottom - outer.top};
@@ -390,8 +334,10 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
                      g_phone_w, g_phone_h, scale, client.cx, client.cy, g_surface.cx, g_surface.cy, dpi,
                      wa.right - wa.left, wa.bottom - wa.top, wa.left, wa.top);
     }
-    // Too big for this work area: the app follows the smaller window.
-    if (follows && fit < keep) follow_client(hwnd);
+    // Too big for this work area: the app follows the smaller window. At a
+    // scale of another density (another monitor's): the app gets it.
+    const bool new_density = g_live_density && window_density_dpi(scale) != g_density_dpi;
+    if (fit < keep || new_density) follow_client(hwnd);
 }
 
 void refit(HWND hwnd) {
@@ -404,11 +350,10 @@ void refit(HWND hwnd) {
 // The mirroring stops at the frame: the app draws its own right-to-left
 // layout, so painting turns the DC's mirroring off, and mouse positions,
 // which Windows then measures from the right edge, are measured from the
-// left again. WINAPK_WINDOW_RTL=1 or =0 overrides the locale.
+// left again.
 bool g_rtl_window = false;
 
 bool rtl_user() {
-    if (const char* e = std::getenv("WINAPK_WINDOW_RTL")) return e[0] == '1';
     DWORD layout = 0;
     return GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_IREADINGLAYOUT | LOCALE_RETURN_NUMBER,
                            reinterpret_cast<LPWSTR>(&layout), sizeof(layout) / sizeof(wchar_t)) > 0 &&
@@ -425,36 +370,15 @@ int client_x(HWND hwnd, int x) {
 
 // ---- the box the app draws in ---------------------------------------------
 //
-// The app draws in a box inside the client area: the whole client area when
-// the app follows the window (below), else the largest box of the phone's
-// aspect, centred, with black around it (black is AOSP's letterbox
-// background): for an app that fixed the other orientation, as Android
-// letterboxes a fixed-orientation app on a large screen, and for the whole
-// phone with WINAPK_RESIZABLE=0, as upstream's letterbox container does
-// (cocoa_bridge.mm, MacApkAspectFitRect). Stretching the frame over the client
-// area instead squashed a portrait app across a wide screen. Mouse input and
-// child windows (WebView) use the same box. MACAPK_LETTERBOX=0 makes the box
-// the whole client area always.
-
-bool letterbox_enabled() {
-    static const bool on = [] {
-        const char* e = std::getenv("MACAPK_LETTERBOX");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
-
-bool resizable_enabled() {
-    static const bool on = [] {
-        const char* e = std::getenv("WINAPK_RESIZABLE");
-        return !(e && e[0] == '0');
-    }();
-    return on;
-}
+// The app draws in a box inside the client area: the whole client area, as
+// the app follows the window (below), except for an app that fixed the other
+// orientation, which gets the largest box of the phone's aspect, centred, with
+// black around it (black is AOSP's letterbox background), as Android
+// letterboxes a fixed-orientation app on a large screen. Mouse input and child
+// windows (WebView) use the same box.
 
 RECT app_rect(const RECT& client) {
-    const AppBox b = window_app_box(client.right, client.bottom, g_phone_w, g_phone_h, g_orientation_lock,
-                                    resizable_enabled(), letterbox_enabled());
+    const AppBox b = window_app_box(client.right, client.bottom, g_phone_w, g_phone_h, g_orientation_lock);
     return RECT{b.x, b.y, b.x + b.w, b.y + b.h};
 }
 
@@ -479,18 +403,27 @@ RECT client_app_rect(HWND hwnd) {
 // follows every step of a drag, as it does on Android; until it has drawn at
 // a new size its last frame is shown unscaled (paint). Only the user's own
 // size counts: the window's fits (another monitor, the work area, the app
-// turning the phone) keep the app's size. WINAPK_RESIZABLE=0 keeps the
-// phone's size for good, letterboxed.
+// turning the phone) keep the app's size.
 //
-// The density stays what it was at launch. On a monitor with another scale
-// (WM_DPICHANGED) the window keeps its size in physical terms and the frames
-// are resampled to it -- the one place a frame is scaled by design. Android
-// handles that as a density configuration change, relaunching activities
-// that do not declare it; the Java side's density is a process constant
-// (DisplayMetrics.DENSITY_DEVICE_STABLE, read by hundreds of call sites), so
-// a live density change is not done (PORTING.md, "Display").
+// The density follows the scale the window shows the phone at. A drag keeps
+// that scale (more or fewer dp, same density); maximizing (the phone turned,
+// below), restoring and a monitor with another scale (WM_DPICHANGED) change
+// it, and the app then gets a new density with its new size, as an Android
+// display whose density changes does (the user's Display size, a window moved
+// to a display of another density): DisplayConfig makes it a configuration
+// change with a new densityDpi, the resources are reloaded at it, and an
+// activity that does not declare configChanges="density" is relaunched with
+// its saved state (AOSP's app layer, Tasks.configurationChanged); others hear
+// onConfigurationChanged. DENSITY_DEVICE_STABLE stays the launch density, as
+// on Android. Until the app has drawn at the new density its last frame is
+// shown larger or smaller by the densities' ratio (paint). WINAPK_DENSITY
+// pins the density for good: the frames are then resampled to the window
+// instead.
 
-constexpr int kMinDp = 240;  // the smallest display the window gives an app
+// The smallest display the window gives an app, a side: Android's smallest resizable task
+// (default_minimal_size_resizable_task, 220dp: what a freeform window is held to when the
+// activity's <layout> names no minWidth / minHeight; Win.apk does not read those yet).
+constexpr int kMinDp = 220;
 
 // When the user last resized the window, for the log line that times the
 // app's re-layout (paint); 0 when the app has drawn at the current size.
@@ -499,7 +432,7 @@ ULONGLONG g_followed_at = 0;
 // The app follows the box the client area gives it. True when the size
 // changed.
 bool follow_client(HWND hwnd) {
-    if (!resizable_enabled() || g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return false;
+    if (g_fitting || IsIconic(hwnd) || g_shown_scale <= 0) return false;
     if (g_awaiting_maximize) {
         if (!IsZoomed(hwnd)) return false;
         g_awaiting_maximize = false;
@@ -507,14 +440,18 @@ bool follow_client(HWND hwnd) {
     const RECT box = client_app_rect(hwnd);
     const int bw = box.right - box.left, bh = box.bottom - box.top;
     if (bw <= 0 || bh <= 0) return false;
-    // The surface is the box in pixels; on a monitor the window shows the app
-    // at another scale than its density (see above), the box times that ratio.
-    // A maximized window shows the phone turned, at the scale that takes.
-    const bool turned = IsZoomed(hwnd) && !g_embed_parent && maximize_turns();
+    // The surface is the box in pixels, at the density for the scale the
+    // window shows the phone at (see above): the dp are the box over it. A
+    // maximized window shows the phone turned, at the scale that takes. With
+    // a pinned density (WINAPK_DENSITY) the surface is the box times the
+    // ratio of the density to that scale, resampled to the box.
+    const bool turned = IsZoomed(hwnd) && !g_embed_parent;
     const float shown = turned ? zoomed_scale(bw, bh, g_shown_scale) : g_shown_scale;
-    const double ratio = static_cast<double>(g_surface_scale) / static_cast<double>(shown);
+    if (g_live_density) g_surface_scale = static_cast<float>(window_density_dpi(shown)) / 160.0f;
+    const float per_dp = g_live_density ? g_surface_scale : shown;
+    const double ratio = static_cast<double>(g_surface_scale) / static_cast<double>(per_dp);
     int pw = static_cast<int>(std::lround(bw * ratio)), ph = static_cast<int>(std::lround(bh * ratio));
-    int w = static_cast<int>(std::lround(bw / shown)), h = static_cast<int>(std::lround(bh / shown));
+    int w = static_cast<int>(std::lround(bw / per_dp)), h = static_cast<int>(std::lround(bh / per_dp));
     if (w < kMinDp) {
         w = kMinDp;
         pw = client_px(kMinDp, g_surface_scale);
@@ -523,7 +460,23 @@ bool follow_client(HWND hwnd) {
         h = kMinDp;
         ph = client_px(kMinDp, g_surface_scale);
     }
-    if (pw == g_surface.cx && ph == g_surface.cy && w == g_phone_w && h == g_phone_h) return false;
+    const int dpi = static_cast<int>(std::lround(g_surface_scale * 160.0f));
+    if (pw == g_surface.cx && ph == g_surface.cy && w == g_phone_w && h == g_phone_h && dpi == g_density_dpi) {
+        return false;
+    }
+    if (dpi != g_density_dpi) {
+        std::fprintf(stderr,
+                     "[win.apk] density: %d -> %d dpi (%s, shown at %.3f px/dp): the app's display is %dx%d dp, "
+                     "%dx%d px\n",
+                     g_density_dpi, dpi, turned ? "maximized: the phone turned" : "the window's scale changed", shown,
+                     w, h, pw, ph);
+        // The frame on screen is the old surface's until the app draws again.
+        if (g_before_density.cx == 0) {
+            g_before_density = g_surface;
+            g_before_dpi = g_density_dpi;
+        }
+        g_density_dpi = dpi;
+    }
     g_phone_w = w;
     g_phone_h = h;
     if (!IsZoomed(hwnd) && !g_embed_parent) {
@@ -536,7 +489,7 @@ bool follow_client(HWND hwnd) {
         std::fprintf(stderr, "[win.apk] window resized: the app's display is %dx%d dp, %dx%d px%s\n", w, h, pw, ph,
                      bw != pw || bh != ph ? " (resampled to the window)" : "");
     }
-    if (g_input) g_input->resized(w, h, pw, ph);
+    if (g_input) g_input->resized(w, h, pw, ph, dpi);
     InvalidateRect(hwnd, nullptr, FALSE);
     return true;
 }
@@ -546,91 +499,11 @@ void remember_size() {
     if (g_input) g_input->remember_size(g_phone_w, g_phone_h);
 }
 
-void fill(HDC dc, const RECT& r, COLORREF color) {
-    if (r.right <= r.left || r.bottom <= r.top) return;
-    HBRUSH brush = CreateSolidBrush(color);
-    FillRect(dc, &r, brush);
-    DeleteObject(brush);
-}
-
-// Draws the frame's top-left w x h pixels at (x, y), unscaled.
-void blit_frame(HDC dc, int x, int y, int w, int h, const uint32_t* px) {
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = g_frame_w;  // the stride
-    bi.bmiHeader.biHeight = -h;        // top-down: the first h rows
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(dc, COLORONCOLOR);
-    StretchDIBits(dc, x, y, w, h, 0, 0, w, h, px, &bi, DIB_RGB_COLORS, SRCCOPY);
-}
-
-// The client area: black bars around the box; in the box the frame, pixel for
-// pixel when it is the box's size (window_frame_present), scaled when the app
-// is meant to draw at another size, else unscaled at the top left with the
-// background color (the theme's window background, as Android shows under a
-// window) where it does not reach. Every pixel is drawn once, so nothing
-// flickers: the frame first, then the rest with the frame clipped out.
+// The graphics DLL's compositor draws the whole client area on the GPU (window_gpu_layout): an
+// exposed or resized window is composed again, nothing drawn here.
 void paint(HWND hwnd) {
-    PAINTSTRUCT ps;
-    HDC dc = BeginPaint(hwnd, &ps);
-    if (g_rtl_window) SetLayout(dc, 0);  // the app's frame as it is, not mirrored
-    RECT client;
-    GetClientRect(hwnd, &client);
-    const RECT box = app_rect(client);
-    const int bw = box.right - box.left, bh = box.bottom - box.top;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_frame_w > 0 && g_frame_h > 0 && bw > 0 && bh > 0) {
-            const FramePresent how = window_frame_present(g_frame_w, g_frame_h, bw, bh, g_surface.cx, g_surface.cy);
-            const uint32_t* px = composed_frame();
-            RECT drawn{};
-            if (how == FramePresent::kScaled) {
-                BITMAPINFO bi{};
-                bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-                bi.bmiHeader.biWidth = g_frame_w;
-                bi.bmiHeader.biHeight = -g_frame_h;  // top-down, like the ARGB rows
-                bi.bmiHeader.biPlanes = 1;
-                bi.bmiHeader.biBitCount = 32;
-                bi.bmiHeader.biCompression = BI_RGB;
-                SetStretchBltMode(dc, HALFTONE);
-                SetBrushOrgEx(dc, 0, 0, nullptr);
-                StretchDIBits(dc, box.left, box.top, bw, bh, 0, 0, g_frame_w, g_frame_h, px, &bi, DIB_RGB_COLORS,
-                              SRCCOPY);
-                drawn = box;
-            } else {
-                // Exact: centred (the box may be a pixel or two larger or
-                // smaller from rounding; a row of it is then cut or left to
-                // the background). Stale: at the top left.
-                const int w = std::min(g_frame_w, bw), h = std::min(g_frame_h, bh);
-                const int bx = box.left, by = box.top;
-                const int x = how == FramePresent::kExact ? bx + (bw - g_frame_w) / 2 : bx;
-                const int y = how == FramePresent::kExact ? by + (bh - g_frame_h) / 2 : by;
-                const int x0 = std::max(x, bx), y0 = std::max(y, by);
-                const int dw = std::min(w, bx + bw - x0), dh = std::min(h, by + bh - y0);
-                // A frame wider than the box (by a pixel) starts a pixel in.
-                const uint32_t* start = px + static_cast<size_t>(y0 - y) * g_frame_w + (x0 - x);
-                blit_frame(dc, x0, y0, dw, dh, start);
-                drawn = RECT{x0, y0, x0 + dw, y0 + dh};
-            }
-            if (how != FramePresent::kStale && g_followed_at != 0) {
-                const ULONGLONG took = GetTickCount64() - g_followed_at;
-                g_followed_at = 0;
-                if (!g_in_size_move) {
-                    std::fprintf(stderr, "[win.apk] resize: the app drew at %dx%d px %llu ms after the window%s\n",
-                                 g_frame_w, g_frame_h, took, how == FramePresent::kScaled ? " (resampled)" : "");
-                }
-            }
-            ExcludeClipRect(dc, drawn.left, drawn.top, drawn.right, drawn.bottom);
-        }
-        fill(dc, box, g_background);
-    }
-    ExcludeClipRect(dc, box.left, box.top, box.right, box.bottom);
-    fill(dc, client, RGB(0, 0, 0));
-    EndPaint(hwnd, &ps);
-    // The app's first frame is on screen: the launcher's splash can go.
-    if (g_frame_w > 0 && IsWindowVisible(hwnd)) signal_launcher_ready();
+    ValidateRect(hwnd, nullptr);
+    hwui_recompose();
 }
 
 // ---- input ----------------------------------------------------------------------
@@ -703,7 +576,7 @@ bool from_touch() {
 // event walks the app's view tree, so the position goes out once per kHoverMs
 // at most, always the newest.
 
-constexpr UINT kHoverMs = 16;
+constexpr UINT kHoverMs = 16;  // a frame at the display's 60 Hz (swap_pacing.h kDisplayHz)
 int g_mouse_buttons = 0;       // BUTTON_SECONDARY | BUTTON_TERTIARY held on the app
 bool g_hovering = false;       // the app has been told the pointer is over it
 bool g_hover_dirty = false;    // a hover position waits for the timer
@@ -867,6 +740,7 @@ bool on_pointer(HWND hwnd, UINT msg, WPARAM wp) {
         case WM_POINTERDOWN:
             // Not on a bar, and not into a press of the mouse.
             if (!c.at.inside || g_pointer_down || g_mouse_buttons != 0) break;
+            g_last_press_touch = true;
             take_keyboard(hwnd);
             end_pinch(hwnd);
             leave_hover();
@@ -912,28 +786,21 @@ void touch_setup(HWND hwnd) {
 // A wheel step is a scroll event at the pointer, as a mouse's wheel is on a
 // device (ACTION_SCROLL with AXIS_VSCROLL / AXIS_HSCROLL; a notch is 1, scaled
 // by the user's "lines per notch" over the usual 3): scrolling views scroll by
-// it and a map zooms by it. An app whose views take no scroll event -- many
-// custom views do not -- gets what every wheel step was before: a short drag,
-// as upstream turns a wheel into DOWN, MOVE, UP (cocoa_bridge.mm scrollWheel:).
-// For the drag a line is 16 points, scaled by MACAPK_SCROLL_SCALE (default
-// 0.5); wheel up scrolls toward the top, so the finger moves down. A two-finger
-// scroll on a touchpad arrives as the same messages, in small steps.
+// it and a map zooms by it. A view that takes no scroll event gets nothing, as
+// on a device with a mouse: AOSP's input (`AospInput`) makes only the scroll
+// event, so no finger drag is made up for it (upstream's wheel-as-drag and its
+// MACAPK_SCROLL_SCALE are gone). A two-finger scroll on a touchpad arrives as
+// the same messages, in small steps.
 //
 // With Ctrl held the step is a zoom: a pinch around the pointer (PinchSynth),
 // which is also what a pinch on a precision touchpad is, because Windows
 // reports that as Ctrl+wheel to a program that does not read the pad itself.
 void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
     if (g_pointer_down || g_mouse_buttons != 0 || g_touches.count() > 0) return;  // do not interleave
-    static const float scale = [] {
-        const char* e = std::getenv("MACAPK_SCROLL_SCALE");
-        const float v = e ? static_cast<float>(std::atof(e)) : 0.5f;
-        return (v >= 0.05f && v <= 4.0f) ? v : 0.5f;
-    }();
     UINT lines = 3;
     SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &lines, 0);
     if (lines == WHEEL_PAGESCROLL || lines == 0) lines = 3;
     const float notches = static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp)) / WHEEL_DELTA;
-    const float points = notches * static_cast<float>(lines) * 16.0f * scale;
     const RECT phone = client_app_rect(hwnd);
     if (phone.right <= phone.left || phone.bottom <= phone.top) return;
     POINT p{static_cast<short>(LOWORD(lp)), static_cast<short>(HIWORD(lp))};  // screen coordinates
@@ -952,27 +819,8 @@ void send_wheel(HWND hwnd, WPARAM wp, LPARAM lp, bool horizontal) {
         return;
     }
     end_pinch(hwnd);
-    // Client pixels per point, along the scroll axis.
-    const float per_point = horizontal ? w / static_cast<float>(g_phone_w) : h / static_cast<float>(g_phone_h);
-    // A scrolling view takes the gesture over on the first move past the touch
-    // slop (8 dp) and scrolls only on later moves, so the drag first steps just
-    // past the slop and then by the whole amount. Upstream's single move gets
-    // swallowed by that first step. The events share a timestamp, so there is
-    // no fling.
-    const float sign = horizontal ? (points > 0 ? -1.0f : 1.0f) : (points > 0 ? 1.0f : -1.0f);
-    const float slop = 10.0f * per_point * sign;
-    const float travel = std::fabs(points) * per_point * sign;
     const float steps = notches * static_cast<float>(lines) / 3.0f;
-    if (g_input->wheel(x0, y0, w, h, horizontal ? 0.0f : steps, horizontal ? steps : 0.0f, horizontal ? slop : 0.0f,
-                       horizontal ? 0.0f : slop, horizontal ? travel : 0.0f, horizontal ? 0.0f : travel)) {
-        return;
-    }
-    const float x1 = horizontal ? x0 + slop : x0, y1 = horizontal ? y0 : y0 + slop;
-    const float x2 = horizontal ? x1 + travel : x0, y2 = horizontal ? y0 : y1 + travel;
-    g_input->pointer(0, x0, y0, w, h);
-    g_input->pointer(2, x1, y1, w, h);
-    g_input->pointer(2, x2, y2, w, h);
-    g_input->pointer(1, x2, y2, w, h);
+    g_input->wheel(x0, y0, w, h, horizontal ? 0.0f : steps, horizontal ? steps : 0.0f, 0.0f, 0.0f, 0.0f, 0.0f);
 }
 
 // ---- the keyboard -------------------------------------------------------------------
@@ -1157,6 +1005,180 @@ void place_ime(HWND hwnd) {
     api.release_context(hwnd, imc);
 }
 
+// ---- text services: the focused editor as a TSF document --------------------------------
+//
+// Windows' input methods today are TSF text services: the Japanese, Chinese and Korean IMEs,
+// handwriting, dictation, the touch keyboard's suggestions. While an editor has the focus they
+// work on a TSF document over it (tsf_session.h, tsf_store.h): they read the text around the
+// caret, compose in it, reconvert what was typed, put their candidate window under the
+// characters the editor drew. The editor side sends what it is through window_text_* (any
+// thread); the window's thread takes those from g_text_queue on kMsgText, in order. TSF is set
+// up when the first editor takes the focus; where it cannot be (Wine's TSF is partial, a
+// Windows without it), input methods compose through IMM32 above, as Windows makes them for a
+// window with no TSF document.
+
+constexpr UINT kMsgText = WM_APP + 5;  // the editor side queued something (g_text_queue)
+
+struct TextCommand {
+    enum Kind { kFocus, kBlur, kSnapshot, kLayout, kSoftInput } kind = kFocus;
+    WindowTextField field;
+    textinput::Snapshot snapshot;
+    textinput::Layout layout;
+    bool show = false;
+};
+
+std::mutex g_text_lock;
+std::vector<TextCommand> g_text_queue;  // under g_text_lock
+std::atomic<TextInputClient*> g_text_client{nullptr};
+
+// The window's thread only.
+std::unique_ptr<tsf::Session> g_tsf;
+bool g_tsf_failed = false;  // TSF could not be set up: IMM32 only, for this run
+bool g_com_started = false;
+bool g_field_active = false;  // an editor has the focus
+WindowTextField g_field;
+bool g_keyboard_shown = false;  // the touch keyboard, shown for the focused editor
+
+bool frame_to_screen(const RECT& f, RECT* out);  // below, with the screen readers'
+bool screen_to_frame(POINT p, POINT* out);
+
+void post_text(TextCommand c) {
+    if (!g_hwnd) return;
+    bool first = false;
+    {
+        std::lock_guard<std::mutex> hold(g_text_lock);
+        first = g_text_queue.empty();
+        g_text_queue.push_back(std::move(c));
+    }
+    if (first) PostMessageW(g_hwnd, kMsgText, 0, 0);
+}
+
+// TSF and WinRT's input pane want the window's thread in a single-threaded apartment.
+bool com_ready() {
+    if (!g_com_started) {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (FAILED(co)) return false;
+        g_com_started = true;
+    }
+    return true;
+}
+
+bool start_tsf(HWND hwnd) {
+    if (g_tsf) return true;
+    if (g_tsf_failed) return false;
+    HRESULT why = RPC_E_CHANGED_MODE;
+    if (com_ready()) {
+        tsf::SessionHost host;
+        host.edit = [](const textinput::Edit& e) {
+            if (TextInputClient* c = g_text_client.load()) c->edit(e);
+        };
+        host.to_screen = [](const textinput::Box& b, RECT* out) {
+            const RECT f{std::lround(b.left), std::lround(b.top), std::lround(b.right), std::lround(b.bottom)};
+            return frame_to_screen(f, out);
+        };
+        host.from_screen = [](POINT p, float* x, float* y) {
+            POINT f{};
+            if (!screen_to_frame(p, &f)) return false;
+            *x = static_cast<float>(f.x) + 0.5f;
+            *y = static_cast<float>(f.y) + 0.5f;
+            return true;
+        };
+        g_tsf = tsf::Session::Create(hwnd, std::move(host), &why);
+    }
+    if (!g_tsf) {
+        g_tsf_failed = true;
+        std::fprintf(stderr, "[win.apk] text input: no TSF (0x%08lx): input methods compose through IMM32\n",
+                     static_cast<unsigned long>(why));
+        return false;
+    }
+    std::fprintf(stderr, "[win.apk] text input: Windows' text services work on the focused editor (TSF)\n");
+    return true;
+}
+
+void hide_keyboard(HWND hwnd) {
+    if (!g_keyboard_shown) return;
+    g_keyboard_shown = false;
+    input_pane::show(hwnd, false, nullptr);
+}
+
+void focus_editor(HWND hwnd, const TextCommand& c) {
+    g_field = c.field;
+    g_field_active = true;
+    const textinput::FieldPolicy policy = textinput::field_policy(c.field.input_type, c.field.ime_options);
+    if (!policy.document) {
+        if (g_tsf) g_tsf->Blur();  // keys only (TYPE_NULL): no document, as Android binds no input method
+        return;
+    }
+    if (start_tsf(hwnd)) g_tsf->Focus(policy, c.snapshot);
+}
+
+void blur_editor(HWND hwnd) {
+    g_field_active = false;
+    if (g_tsf) g_tsf->Blur();
+    hide_keyboard(hwnd);
+}
+
+void soft_keyboard(HWND hwnd, bool show) {
+    if (!show) {
+        hide_keyboard(hwnd);
+        return;
+    }
+    // As Windows does for its own fields: for a touch or a pen, on a PC with a touchscreen.
+    if (!g_field_active || !g_last_press_touch || !input_pane::touch_screen() || !com_ready()) return;
+    HRESULT why = S_OK;
+    const input_pane::Answer a = input_pane::show(hwnd, true, &why);
+    g_keyboard_shown = a == input_pane::Answer::kShown;
+    static int last = -1;  // each answer logged once
+    if (static_cast<int>(a) != last) {
+        last = static_cast<int>(a);
+        if (a == input_pane::Answer::kShown) {
+            std::fprintf(stderr, "[win.apk] touch keyboard: shown\n");
+        } else if (a == input_pane::Answer::kDeclined) {
+            std::fprintf(stderr, "[win.apk] touch keyboard: Windows declined (a keyboard is attached, or the "
+                                 "user's setting)\n");
+        } else {
+            std::fprintf(stderr, "[win.apk] touch keyboard: not available (0x%08lx)\n",
+                         static_cast<unsigned long>(why));
+        }
+    }
+}
+
+void run_text(HWND hwnd) {
+    std::vector<TextCommand> batch;
+    {
+        std::lock_guard<std::mutex> hold(g_text_lock);
+        batch.swap(g_text_queue);
+    }
+    for (TextCommand& c : batch) {
+        switch (c.kind) {
+            case TextCommand::kFocus: focus_editor(hwnd, c); break;
+            case TextCommand::kBlur:
+                if (g_field_active && c.field.epoch == g_field.epoch) blur_editor(hwnd);
+                break;
+            case TextCommand::kSnapshot:
+                if (g_tsf) g_tsf->Update(c.snapshot);
+                break;
+            case TextCommand::kLayout:
+                if (g_tsf) g_tsf->Relayout(std::move(c.layout));
+                break;
+            case TextCommand::kSoftInput: soft_keyboard(hwnd, c.show); break;
+        }
+    }
+}
+
+// Whether a message that went to the app may have changed the focused editor's text or
+// selection (a key, a character, a press let go): asked of an editor whose changes the editor
+// side cannot watch (WindowTextField::watched).
+bool may_change_editor(UINT msg) {
+    switch (msg) {
+        case WM_KEYDOWN: case WM_SYSKEYDOWN: case WM_KEYUP: case WM_CHAR: case WM_UNICHAR:
+        case WM_LBUTTONUP: case WM_POINTERUP: case WM_IME_COMPOSITION: case WM_IME_ENDCOMPOSITION:
+            return true;
+        default:
+            return false;
+    }
+}
+
 // Whether the foreground window is one of this process's (the app window, a
 // browser tab, a dialog), i.e. whether the user is in the app right now.
 bool foreground_is_ours() {
@@ -1187,8 +1209,73 @@ bool started_without_activation() {
     }
 }
 
+// ---- screen readers ---------------------------------------------------------
+//
+// UI Automation asks where a view is on the screen, and which view is at a screen point, from its
+// own threads (uia_provider.h). Views are in the app's frame pixels; the frame is where paint() last
+// put it (g_shown), and the client area where Windows has it now, so a moved window or a changed
+// DPI is right at once. A mirrored (Hebrew) window paints the frame unmirrored: it runs left to
+// right from the client area's leftmost screen pixel.
+
+// The client area's top-left pixel on the screen, mirrored or not.
+bool client_origin_on_screen(HWND hwnd, POINT* out) {
+    RECT c{};
+    if (!GetClientRect(hwnd, &c)) return false;
+    POINT corners[2] = {{c.left, c.top}, {c.right, c.bottom}};
+    if (!ClientToScreen(hwnd, &corners[0]) || !ClientToScreen(hwnd, &corners[1])) return false;
+    out->x = std::min(corners[0].x, corners[1].x);
+    out->y = std::min(corners[0].y, corners[1].y);
+    return true;
+}
+
+bool shown_now(Shown* out) {
+    std::lock_guard<std::mutex> hold(g_frame_lock);
+    *out = g_shown;
+    return out->ok && out->sx > 0 && out->sy > 0;
+}
+
+bool uia_frame_to_screen(const uia::Box& f, RECT* out) {
+    Shown s;
+    POINT o{};
+    const HWND hwnd = g_hwnd;
+    if (!hwnd || !shown_now(&s) || !client_origin_on_screen(hwnd, &o)) return false;
+    auto x = [&](int32_t v) { return static_cast<LONG>(o.x + s.ox + std::lround(v * s.sx)); };
+    auto y = [&](int32_t v) { return static_cast<LONG>(o.y + s.oy + std::lround(v * s.sy)); };
+    *out = RECT{x(f.l), y(f.t), x(f.r), y(f.b)};
+    return true;
+}
+
+bool uia_screen_to_frame(POINT p, POINT* out) {
+    Shown s;
+    POINT o{};
+    const HWND hwnd = g_hwnd;
+    if (!hwnd || !shown_now(&s) || !client_origin_on_screen(hwnd, &o)) return false;
+    out->x = static_cast<LONG>(std::floor((p.x - o.x - s.ox) / s.sx));
+    out->y = static_cast<LONG>(std::floor((p.y - o.y - s.oy) / s.sy));
+    return true;
+}
+
+// The same mapping for the text services' rectangles (tsf_session.h), in frame pixels.
+bool frame_to_screen(const RECT& f, RECT* out) {
+    return uia_frame_to_screen(uia::Box{static_cast<int32_t>(f.left), static_cast<int32_t>(f.top),
+                                        static_cast<int32_t>(f.right), static_cast<int32_t>(f.bottom)},
+                               out);
+}
+
+bool screen_to_frame(POINT p, POINT* out) { return uia_screen_to_frame(p, out); }
+
 LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+        // A screen reader (any UI Automation client) asks for the app's views: uia_provider.h.
+        // Nothing of it runs before this.
+        case WM_GETOBJECT: {
+            LRESULT r = 0;
+            if (uia::on_get_object(hwnd, wp, lp, &r)) return r;
+            break;
+        }
+        case WM_DESTROY:
+            uia::detach(hwnd);
+            break;
         case WM_PAINT:
             paint(hwnd);
             return 0;
@@ -1196,6 +1283,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 1;  // paint covers the whole client area
         case WM_LBUTTONDOWN:
             if (from_touch()) return 0;
+            g_last_press_touch = false;
             take_keyboard(hwnd);
             if (!on_phone(hwnd, lp)) return 0;  // a letterbox bar: nothing of the app is there
             if (g_mouse_buttons != 0 || g_touches.count() > 0) return 0;  // into another press: left out
@@ -1342,6 +1430,9 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             end_pinch(hwnd);
             release_keys();
             break;
+        case kMsgText:
+            run_text(hwnd);
+            return 0;
         // An input method composes (see "input methods" above).
         case WM_IME_STARTCOMPOSITION:
             place_ime(hwnd);
@@ -1385,7 +1476,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // move): the app followed every step; the size it ends at is kept.
             RECT c{};
             GetClientRect(hwnd, &c);
-            if ((c.right != g_move_start.cx || c.bottom != g_move_start.cy) && resizable_enabled()) {
+            if (c.right != g_move_start.cx || c.bottom != g_move_start.cy) {
                 follow_client(hwnd);
                 std::fprintf(stderr, "[win.apk] window resized: the app's display is %dx%d dp, %dx%d px\n",
                              g_phone_w, g_phone_h, static_cast<int>(g_surface.cx), static_cast<int>(g_surface.cy));
@@ -1397,7 +1488,6 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         // The smallest window: kMinDp a side at the scale it shows the app at.
         case WM_GETMINMAXINFO: {
-            if (!resizable_enabled()) break;
             const int px = client_px(kMinDp, g_shown_scale);
             RECT r{0, 0, px, px};
             adjust_for_dpi(&r, window_dpi(hwnd));
@@ -1408,6 +1498,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         // Moved to another monitor without a drag (Win+Shift+Arrow, a
         // program): fitted for that monitor's work area.
         case WM_WINDOWPOSCHANGED:
+            if (g_tsf) g_tsf->Moved();  // every character is somewhere else on the screen
             if (!g_in_size_move && g_fit_monitor && IsWindowVisible(hwnd) &&
                 MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) != g_fit_monitor) {
                 refit(hwnd);
@@ -1440,7 +1531,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 // SW_SHOWNORMAL would take a maximized window out of it. The
                 // first show of an app that was maximized when it last ran
                 // is maximized.
-                ShowWindow(hwnd, first && g_start_maximized && resizable_enabled() ? SW_SHOWMAXIMIZED
+                ShowWindow(hwnd, first && g_start_maximized ? SW_SHOWMAXIMIZED
                                  : IsZoomed(hwnd) ? SW_SHOW : SW_SHOWNORMAL);
                 SetForegroundWindow(hwnd);
             } else if (!IsWindowVisible(hwnd)) {
@@ -1468,11 +1559,10 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case kMsgResize:
             // The app turned the phone or set its size. A maximized window
-            // that the app follows stays maximized: the box takes the new
-            // shape (a portrait column becomes the full width for landscape)
-            // and the app follows it. Otherwise the window takes the phone's
-            // shape.
-            if (resizable_enabled() && IsZoomed(hwnd)) {
+            // stays maximized: the box takes the new shape (a portrait column
+            // becomes the full width for landscape) and the app follows it.
+            // Otherwise the window takes the phone's shape.
+            if (IsZoomed(hwnd)) {
                 follow_client(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
             } else {
@@ -1553,7 +1643,7 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 static bool was_maximized = false;
                 if (follow_client(hwnd) && !g_in_size_move && wp == SIZE_RESTORED) remember_size();
                 const bool maximized = wp == SIZE_MAXIMIZED;
-                if (maximized != was_maximized && !g_embed_parent && resizable_enabled() && g_normal_w > 0) {
+                if (maximized != was_maximized && !g_embed_parent && g_normal_w > 0) {
                     was_maximized = maximized;
                     g_input->remember_maximized(maximized, g_normal_w, g_normal_h);
                 }
@@ -1631,15 +1721,24 @@ DWORD WINAPI ui_thread(void* param) {
         fit_window(g_hwnd, g_plan.monitor ? g_plan.monitor : MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTONEAREST),
                    window_dpi(g_hwnd), &wr, true);
     }
-    if (g_hwnd) touch_setup(g_hwnd);
+    if (g_hwnd) {
+        touch_setup(g_hwnd);
+        uia::attach(g_hwnd, uia::Geometry{uia_frame_to_screen, uia_screen_to_frame});
+    }
     args->ok = g_hwnd != nullptr;
     SetEvent(args->ready);
     if (!g_hwnd) return 1;
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (g_tsf && g_tsf->Key(msg)) continue;  // an input method's key (see "text services")
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
+        if (g_field_active && !g_field.watched && msg.hwnd == g_hwnd && may_change_editor(msg.message)) {
+            if (TextInputClient* c = g_text_client.load()) c->sync(g_field.epoch);
+        }
     }
+    g_tsf.reset();
+    if (g_com_started) CoUninitialize();
     return 0;
 }
 
@@ -1669,7 +1768,7 @@ float window_plan(int phone_w, int phone_h) {
     const float natural = static_cast<float>(g_plan.dpi) / 96.0f;
     g_plan.scale = parent ? natural
                           : std::min(natural, fit_scale(work_area(g_plan.monitor), g_plan.dpi, phone_w, phone_h));
-    if (!parent && g_start_maximized && maximize_turns() && resizable_enabled()) {
+    if (!parent && g_start_maximized) {
         // The window opens maximized, showing the phone turned: the scale at
         // which the phone's short side is the height of a maximized window's
         // client area (the work area less the title bar), so the app's density
@@ -1693,12 +1792,12 @@ void window_set_start_maximized(bool maximized) { g_start_maximized = maximized;
 
 int window_density_dpi(float scale) { return window_density_for(scale); }
 
-AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool resizable, bool letterbox) {
+AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock) {
     AppBox whole{0, 0, std::max(cw, 0), std::max(ch, 0)};
-    if (!letterbox || cw <= 0 || ch <= 0 || phone_w <= 0 || phone_h <= 0) return whole;
-    // An app that follows the window gets all of it, unless it fixed the
+    if (cw <= 0 || ch <= 0 || phone_w <= 0 || phone_h <= 0) return whole;
+    // The app follows the window and gets all of it, unless it fixed the
     // other orientation.
-    if (resizable && !((lock == 1 && cw > ch) || (lock == 2 && ch > cw))) return whole;
+    if (!((lock == 1 && cw > ch) || (lock == 2 && ch > cw))) return whole;
     // The largest box of the phone's aspect: the client's full width, or its
     // full height when that is the tighter side.
     int w = cw, h = MulDiv(cw, phone_h, phone_w);
@@ -1706,13 +1805,10 @@ AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool r
         h = ch;
         w = MulDiv(ch, phone_w, phone_h);
     }
-    // A fitted window has the phone's aspect up to rounding; bars a pixel or
-    // two wide would only show as a dark edge.
-    if (!resizable && cw - w <= 2 && ch - h <= 2) return whole;
     return AppBox{(cw - w) / 2, (ch - h) / 2, w, h};
 }
 
-FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh) {
+FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh, int ow, int oh) {
     // The box's size, up to a pixel or two of rounding on either side: pixel
     // for pixel. (A window fitted at a scale the density does not divide can
     // be a pixel off; a maximized one at a non-integer scale too.)
@@ -1720,6 +1816,10 @@ FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh
     // The size the app was asked to draw at (the box is another size on
     // purpose): scaled to the box.
     if (fw == sw && fh == sh) return FramePresent::kScaled;
+    // The last frame from before a density change: the same picture at the
+    // old density, scaled by the densities' ratio until the app draws at the
+    // new one.
+    if (ow > 0 && oh > 0 && fw == ow && fh == oh) return FramePresent::kRescaled;
     return FramePresent::kStale;
 }
 
@@ -1737,8 +1837,12 @@ bool window_start(int phone_w, int phone_h, float surface_scale, WindowInput* in
     // the frames pixel for pixel.
     const bool planned = std::fabs(g_surface_scale * 160.0f - static_cast<float>(window_density_dpi(g_plan.scale))) < 0.5f;
     // Planned maximized: out of it the window shows the phone at the normal
-    // scale, its larger frames resampled down.
+    // scale, and the app gets that scale's density.
     g_base_scale = g_plan.maximized ? g_plan.normal : planned ? g_surface_scale : g_plan.scale;
+    // WINAPK_DENSITY pins it even when it equals the plan's.
+    const char* pinned = std::getenv("WINAPK_DENSITY");
+    g_live_density = planned && !(pinned && *pinned);
+    g_density_dpi = static_cast<int>(std::lround(g_surface_scale * 160.0f));
     g_awaiting_maximize = g_plan.maximized;
     StartArgs args{CreateEventW(nullptr, TRUE, FALSE, nullptr), false};
     HANDLE t = CreateThread(nullptr, 0, ui_thread, &args, 0, nullptr);
@@ -1871,7 +1975,7 @@ void window_snapshot(HWND hwnd) {
     swprintf(stamp, 32, L"%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
     const std::wstring base = dir + L"\\snapshot-" + app + L"-" + stamp;
 
-    // The frame as the app drew it (with the overlay the window draws over it).
+    // The frame as the compositor showed it in the box, read back on its render thread.
     std::vector<uint32_t> frame;
     int fw = 0, fh = 0;
     RECT client{};
@@ -1880,14 +1984,18 @@ void window_snapshot(HWND hwnd) {
     const int bw = box.right - box.left, bh = box.bottom - box.top;
     FramePresent how = FramePresent::kStale;
     {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_frame_w > 0 && g_frame_h > 0) {
-            const uint32_t* px = composed_frame();
-            frame.assign(px, px + static_cast<size_t>(g_frame_w) * g_frame_h);
-            fw = g_frame_w;
-            fh = g_frame_h;
-            how = window_frame_present(fw, fh, bw, bh, g_surface.cx, g_surface.cy);
-        }
+        std::unique_lock<std::mutex> hold(g_frame_lock);
+        g_frame_wanted = true;
+        g_frame_read.clear();
+        hold.unlock();
+        hwui_recompose();
+        hold.lock();
+        g_frame_read_cv.wait_for(hold, std::chrono::seconds(1), [] { return !g_frame_read.empty(); });
+        g_frame_wanted = false;
+        frame.swap(g_frame_read);
+        fw = g_frame_read_w;
+        fh = g_frame_read_h;
+        if (g_frame_w > 0 && g_frame_h > 0) how = window_frame_present(g_frame_w, g_frame_h, bw, bh, g_surface.cx, g_surface.cy);
     }
     for (uint32_t& p : frame) p |= 0xFF000000u;  // the app's frames are opaque; keep the PNG so
     // The client area as it is on screen (DWM's redirection surface of it).
@@ -1918,7 +2026,8 @@ void window_snapshot(HWND hwnd) {
     const bool window_ok = !shown.empty() && save_png(base + L"-window.png", shown.data(), cw, ch);
     if (SUCCEEDED(co)) CoUninitialize();
     const UINT dpi = window_dpi(hwnd);
-    const char* kind = how == FramePresent::kExact ? "pixel for pixel" : how == FramePresent::kScaled
+    const char* kind = how == FramePresent::kExact ? "pixel for pixel" : how == FramePresent::kScaled ||
+                                                                             how == FramePresent::kRescaled
                                                                              ? "resampled to the box"
                                                                              : "stale (not the box's size)";
     std::fprintf(stderr,
@@ -2009,6 +2118,44 @@ void window_set_phone_size(int phone_w, int phone_h) {
 
 void window_set_orientation_lock(int lock) { g_orientation_lock = lock; }
 
+void window_text_client(TextInputClient* client) { g_text_client.store(client); }
+
+void window_text_focus(const WindowTextField& field, const textinput::Snapshot& snapshot) {
+    TextCommand c;
+    c.kind = TextCommand::kFocus;
+    c.field = field;
+    c.snapshot = snapshot;
+    post_text(std::move(c));
+}
+
+void window_text_blur(int epoch) {
+    TextCommand c;
+    c.kind = TextCommand::kBlur;
+    c.field.epoch = epoch;
+    post_text(std::move(c));
+}
+
+void window_text_snapshot(const textinput::Snapshot& snapshot) {
+    TextCommand c;
+    c.kind = TextCommand::kSnapshot;
+    c.snapshot = snapshot;
+    post_text(std::move(c));
+}
+
+void window_text_layout(const textinput::Layout& layout) {
+    TextCommand c;
+    c.kind = TextCommand::kLayout;
+    c.layout = layout;
+    post_text(std::move(c));
+}
+
+void window_soft_input(bool show) {
+    TextCommand c;
+    c.kind = TextCommand::kSoftInput;
+    c.show = show;
+    post_text(std::move(c));
+}
+
 void* window_handle() { return g_hwnd; }
 
 bool window_phone_rect(int* x, int* y, int* w, int* h) {
@@ -2019,6 +2166,63 @@ bool window_phone_rect(int* x, int* y, int* w, int* h) {
     *w = r.right - r.left;
     *h = r.bottom - r.top;
     return *w > 0 && *h > 0;
+}
+
+// The inject driver's mouse: the window's own messages, posted to it, so a script crosses the
+// path a user's mouse takes (window_proc, pointer_input.h, the registered dispatcher). The
+// point is a fraction of the phone's area; a message carries it as Windows would: client
+// pixels, mirrored in a mirrored window, screen pixels for the wheel.
+namespace {
+WPARAM g_posted_buttons = 0;  // the MK_* buttons the posted presses hold
+
+bool posted_point(float fx, float fy, POINT* client) {
+    if (!g_hwnd || !(fx >= 0.0f && fx <= 1.0f && fy >= 0.0f && fy <= 1.0f)) return false;
+    const RECT phone = client_app_rect(g_hwnd);
+    if (phone.right <= phone.left || phone.bottom <= phone.top) return false;
+    const int w = static_cast<int>(phone.right - phone.left), h = static_cast<int>(phone.bottom - phone.top);
+    const int x = static_cast<int>(phone.left) + std::min(static_cast<int>(fx * w), w - 1);
+    const int y = static_cast<int>(phone.top) + std::min(static_cast<int>(fy * h), h - 1);
+    *client = POINT{client_x(g_hwnd, x), y};  // client_x is its own inverse
+    return true;
+}
+}  // namespace
+
+bool window_post_mouse(int action, float fx, float fy) {
+    POINT p;
+    if (!posted_point(fx, fy, &p)) return false;
+    UINT msg = WM_MOUSEMOVE;
+    WPARAM held = g_posted_buttons;
+    switch (action) {
+        case kPostLeftDown: msg = WM_LBUTTONDOWN; held |= MK_LBUTTON; break;
+        case kPostLeftUp: msg = WM_LBUTTONUP; held &= ~static_cast<WPARAM>(MK_LBUTTON); break;
+        case kPostMove: break;
+        case kPostRightDown: msg = WM_RBUTTONDOWN; held |= MK_RBUTTON; break;
+        case kPostRightUp: msg = WM_RBUTTONUP; held &= ~static_cast<WPARAM>(MK_RBUTTON); break;
+        case kPostMiddleDown: msg = WM_MBUTTONDOWN; held |= MK_MBUTTON; break;
+        case kPostMiddleUp: msg = WM_MBUTTONUP; held &= ~static_cast<WPARAM>(MK_MBUTTON); break;
+        case kPostLeave: msg = WM_MOUSELEAVE; break;
+        default: return false;
+    }
+    g_posted_buttons = held;
+    return PostMessageW(g_hwnd, msg, held, msg == WM_MOUSELEAVE ? 0 : MAKELPARAM(p.x, p.y)) != 0;
+}
+
+bool window_post_wheel(float fx, float fy, float notches, bool horizontal, bool ctrl) {
+    POINT p;
+    if (!posted_point(fx, fy, &p)) return false;
+    ClientToScreen(g_hwnd, &p);
+    const WPARAM keys = g_posted_buttons | (ctrl ? MK_CONTROL : 0);
+    const short delta = static_cast<short>(std::lround(notches * WHEEL_DELTA));
+    return PostMessageW(g_hwnd, horizontal ? WM_MOUSEHWHEEL : WM_MOUSEWHEEL, MAKEWPARAM(keys, delta),
+                        MAKELPARAM(p.x, p.y)) != 0;
+}
+
+bool window_post_magnify(float fx, float fy, float magnification) {
+    // A pinch on Windows is Ctrl+wheel (send_wheel): as many notches as make the same zoom.
+    if (!(magnification > -1.0f)) return false;
+    if (magnification == 0.0f) return g_hwnd != nullptr;  // a gesture's begin or end: nothing to send
+    const float notches = std::log(1.0f + magnification) / std::log(PinchSynth::kZoomPerNotch);
+    return window_post_wheel(fx, fy, notches, false, true);
 }
 
 void window_hide() {
@@ -2038,72 +2242,80 @@ void window_set_background(uint32_t argb) {
     if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
-void window_present(const uint32_t* argb, int w, int h) {
-    if (!g_hwnd || w <= 0 || h <= 0) return;
-    bool first;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        first = g_frame_w == 0;
-        g_frame.assign(argb, argb + static_cast<size_t>(w) * static_cast<size_t>(h));
-        // A pixel of slack: paint reads a cropped frame's last row from an
-        // offset into it (blit_frame).
-        g_frame.resize(g_frame.size() + 4);
-        g_frame_w = w;
-        g_frame_h = h;
-    }
-    InvalidateRect(g_hwnd, nullptr, FALSE);
-    if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
-        PostMessageW(g_hwnd, kMsgTestResize, 0, 0);
-    }
-}
-
-bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r, int b) {
-    if (!g_hwnd || l < 0 || t < 0 || r > w || b > h || r <= l || b <= t) return false;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_frame_w != w || g_frame_h != h) return false;  // nothing to patch: the caller sends it whole
-        const size_t rw = static_cast<size_t>(r - l);
-        for (int y = t; y < b; ++y) {
-            std::copy(rows + static_cast<size_t>(y - t) * rw, rows + static_cast<size_t>(y - t + 1) * rw,
-                      g_frame.data() + static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(l));
-        }
-    }
-    // Where paint() puts those pixels. Only for a frame shown pixel for pixel in
-    // a window that is not mirrored; a scaled or stale one is painted whole.
+// The graphics DLL's compositor asks where a display of frame_w x frame_h px goes, on its render
+// thread before each composed frame: paint()'s placement (window_frame_present) of the box,
+// exact, scaled while the app catches up with a resize, or at the old density's ratio. 0 while
+// the window is minimized.
+int window_gpu_layout(int frame_w, int frame_h, WinApkHwuiLayout* out) {
+    HWND hwnd = g_hwnd;
+    if (!hwnd || IsIconic(hwnd) || frame_w <= 0 || frame_h <= 0) return 0;
     RECT client{};
-    GetClientRect(g_hwnd, &client);
+    GetClientRect(hwnd, &client);
+    if (client.right <= 0 || client.bottom <= 0) return 0;
     const RECT box = app_rect(client);
     const int bw = box.right - box.left, bh = box.bottom - box.top;
-    if (!g_rtl_window && bw > 0 && bh > 0 &&
-        window_frame_present(w, h, bw, bh, g_surface.cx, g_surface.cy) == FramePresent::kExact) {
-        const int x = box.left + (bw - w) / 2, y = box.top + (bh - h) / 2;
-        const RECT changed{x + l, y + t, x + r, y + b};
-        InvalidateRect(g_hwnd, &changed, FALSE);
+    std::lock_guard<std::mutex> hold(g_frame_lock);
+    g_frame_w = frame_w;
+    g_frame_h = frame_h;
+    const FramePresent how = window_frame_present(frame_w, frame_h, bw, bh, g_surface.cx, g_surface.cy,
+                                                  g_before_density.cx, g_before_density.cy);
+    if (frame_w == g_surface.cx && frame_h == g_surface.cy) g_before_density = SIZE{};
+    out->client_w = client.right;
+    out->client_h = client.bottom;
+    out->background = static_cast<uint32_t>(GetRValue(g_background)) << 16 |
+                      static_cast<uint32_t>(GetGValue(g_background)) << 8 | GetBValue(g_background);
+    if (how == FramePresent::kRescaled && g_before_dpi > 0) {
+        const double r = static_cast<double>(g_density_dpi) / static_cast<double>(g_before_dpi);
+        *out = WinApkHwuiLayout{out->client_w, out->client_h, box.left, box.top,
+                                static_cast<int>(std::lround(frame_w * r)), static_cast<int>(std::lround(frame_h * r)),
+                                out->background};
+        g_shown = Shown{box.left, box.top, r, r, true};
+    } else if (how == FramePresent::kScaled) {
+        *out = WinApkHwuiLayout{out->client_w, out->client_h, box.left, box.top, bw, bh, out->background};
+        g_shown = Shown{box.left, box.top, static_cast<double>(bw) / frame_w, static_cast<double>(bh) / frame_h, true};
     } else {
-        InvalidateRect(g_hwnd, nullptr, FALSE);
+        const int x = how == FramePresent::kExact ? box.left + (bw - frame_w) / 2 : box.left;
+        const int y = how == FramePresent::kExact ? box.top + (bh - frame_h) / 2 : box.top;
+        *out = WinApkHwuiLayout{out->client_w, out->client_h, x, y, frame_w, frame_h, out->background};
+        g_shown = Shown{x, y, 1.0, 1.0, true};
     }
-    return true;
+    const bool at_surface = std::abs(frame_w - g_surface.cx) <= 2 && std::abs(frame_h - g_surface.cy) <= 2;
+    if (how != FramePresent::kStale && at_surface && g_followed_at != 0) {
+        const ULONGLONG took = GetTickCount64() - g_followed_at;
+        g_followed_at = 0;
+        if (!g_in_size_move) {
+            std::fprintf(stderr, "[win.apk] resize: the app drew at %dx%d px %llu ms after the window%s\n", frame_w,
+                         frame_h, took, how == FramePresent::kScaled ? " (resampled)" : "");
+        }
+    }
+    return 1;
 }
 
-void window_set_overlay(const uint32_t* argb, int w, int h) {
-    if (!g_hwnd || w <= 0 || h <= 0) return;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        g_overlay.assign(argb, argb + static_cast<size_t>(w) * static_cast<size_t>(h));
-        g_overlay_w = w;
-        g_overlay_h = h;
-    }
-    InvalidateRect(g_hwnd, nullptr, FALSE);
+bool window_frame_wanted() {
+    std::lock_guard<std::mutex> hold(g_frame_lock);
+    return g_frame_wanted;
 }
 
-void window_clear_overlay() {
+void window_frame_pixels(const uint32_t* argb, int w, int h) {
     {
         std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_overlay.empty()) return;
-        g_overlay.clear();
-        g_composed.clear();
+        if (!g_frame_wanted || w <= 0 || h <= 0) return;
+        g_frame_read.assign(argb, argb + static_cast<size_t>(w) * h);
+        g_frame_read_w = w;
+        g_frame_read_h = h;
     }
-    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+    g_frame_read_cv.notify_all();
+}
+
+// A frame the graphics DLL composed reached the window.
+void window_gpu_presented(bool first) {
+    HWND hwnd = g_hwnd;
+    if (!hwnd) return;
+    uia::note_frame();
+    if (IsWindowVisible(hwnd)) signal_launcher_ready();
+    if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
+        PostMessageW(hwnd, kMsgTestResize, 0, 0);
+    }
 }
 
 void window_set_secure(bool secure) {

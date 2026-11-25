@@ -63,7 +63,7 @@ public final class McsClient {
     private static final int TAG_CLOSE = 4, TAG_IQ = 7, TAG_DATA = 8;
 
     /** The proxy the USER configured for this app, from WINAPK_PROXY
-     *  ("socks5://host:port", set by the launcher), else NO_PROXY. It comes from
+     *  ("socks5://host:port", set by the user in the environment), else NO_PROXY. It comes from
      *  the process environment, which guest code cannot change, so it is not the
      *  guest-mutable socksProxyHost the TLS-trap note above warns about. */
     private static final Proxy RUNTIME_PROXY = runtimeProxy();
@@ -471,7 +471,7 @@ public final class McsClient {
             // for an app that is not running can be consumed by one that is.
             String self = null;
             try {
-                android.app.Application app = android.app.Application.getInstance();
+                android.app.Application app = com.macapk.loader.app.Apps.current();
                 if (app != null) self = app.getPackageName();
             } catch (Throwable ignored) {}
             if (self != null && !self.equals(category)) {

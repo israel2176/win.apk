@@ -10,6 +10,7 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.view.KeyEvent;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 
 // 2026-08-13 (type-identity audit, docs/type-identity-audit_2026-08-12.md):
 // AOSP's real declaration is `public class Dialog implements
@@ -81,54 +82,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
     // either (a separate gap, not this file's to fix).
     private int mVolumeControlStream = Integer.MIN_VALUE;
 
-    /** MACAPK_DIALOG_THEME_WRAPPER (default ON; =0 restores every pre-change
-     *  constructor body verbatim, for bisecting). The dialog's Context carries
-     *  its DIALOG theme, the AOSP way. android14 core/java/android/app/Dialog.java
-     *  :193-204, verbatim:
-     *
-     *      Dialog(@UiContext @NonNull Context context, @StyleRes int themeResId,
-     *              boolean createContextThemeWrapper) {
-     *          if (createContextThemeWrapper) {
-     *              if (themeResId == Resources.ID_NULL) {
-     *                  final TypedValue outValue = new TypedValue();
-     *                  context.getTheme().resolveAttribute(R.attr.dialogTheme, outValue, true);
-     *                  themeResId = outValue.resourceId;
-     *              }
-     *              mContext = new ContextThemeWrapper(context, themeResId);
-     *          } else {
-     *              mContext = context;
-     *          }
-     *
-     *  and :170/:189 route Dialog(Context) and Dialog(Context, int) through it
-     *  with createContextThemeWrapper=true. We IGNORED themeResId and stored the
-     *  caller's Context, so the window read the ACTIVITY theme. Every consumer
-     *  of that theme was wrong for a dialog: the PhoneWindow.generateLayout
-     *  window attributes (windowIsFloating, backgroundDimEnabled,
-     *  backgroundDimAmount -- see macapkGenerateLayout below), and everything
-     *  AppCompat / Material build from getContext(): androidx's
-     *  AppCompatDialog(Context, int) and ComponentDialog hand their resolved
-     *  theme UP to this constructor and rely on the wrapper (their
-     *  AlertController and delegate are built from getContext(), not from the
-     *  context they were given). BottomSheetDialog passes its
-     *  bottomSheetDialogTheme the same way.
-     *
-     *  The protected constructors are this(context) plus field writes on AOSP
-     *  (:228-239), so they wrap too. (The deprecated Message form also stores
-     *  its cancel Message; that has its own gate, MACAPK_DIALOG_CANCEL_MESSAGE,
-     *  so this one bisects the theme alone.) */
-    static final boolean MACAPK_DIALOG_THEME_WRAPPER =
-        !"0".equals(System.getenv("MACAPK_DIALOG_THEME_WRAPPER"));
 
-    /** MACAPK_DIALOG_DIM_FROM_THEME (default ON; =0 restores the hardcoded
-     *  FLAG_DIM_BEHIND + dimAmount 0.6 seeded in initWindow, for bisecting).
-     *  The window's dim comes from the dialog WINDOW theme the way
-     *  PhoneWindow.generateLayout reads it (see macapkGenerateLayout). MEASURED
-     *  (tablet A/B, 2026-09-26): Fossify Gallery's all-files dialog dims the
-     *  page by ~0.34 on the emulator (its Material3 dialog overlay sets
-     *  android:backgroundDimAmount 0.32) and by ~0.62 on us, because 0.6 was a
-     *  constant here. */
-    static final boolean MACAPK_DIALOG_DIM_FROM_THEME =
-        !"0".equals(System.getenv("MACAPK_DIALOG_DIM_FROM_THEME"));
 
     /** The dim is read from the dialog context's theme, which is only the
      *  DIALOG theme when the wrapper above is on: with it off a platform
@@ -138,51 +92,16 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
      *  whole pre-change behaviour (unwrapped context, FLAG_DIM_BEHIND at 0.6),
      *  while MACAPK_DIALOG_DIM_FROM_THEME=0 isolates the dim. */
     static final boolean MACAPK_DIM_FROM_THEME_ACTIVE =
-        MACAPK_DIALOG_DIM_FROM_THEME && MACAPK_DIALOG_THEME_WRAPPER;
+        true;
 
-    /** MACAPK_DIALOG_FLOATING_FROM_THEME (default ON; =0 keeps every dialog
-     *  window at the WRAP_CONTENT seeded in initWindow, the pre-change
-     *  behaviour). PhoneWindow.generateLayout only wraps a FLOATING window
-     *  (`if (mIsFloating) setLayout(WRAP_CONTENT, WRAP_CONTENT)`); any other
-     *  window keeps WindowManager.LayoutParams' MATCH_PARENT default. So a
-     *  Dialog built on a theme with windowIsFloating=false is full screen on a
-     *  device. MEASURED (2026-10-26): ejoysdk's login BrowserDialogFragment
-     *  (theme WebView.Dialog.FullScreen, windowIsFloating=false) got a 20x20px
-     *  window here and its WebView never showed. Needs the wrapper for the same
-     *  reason as the dim: only then is the context's theme the dialog's. */
-    static final boolean MACAPK_DIALOG_FLOATING_FROM_THEME =
-        !"0".equals(System.getenv("MACAPK_DIALOG_FLOATING_FROM_THEME"));
     static final boolean MACAPK_FLOATING_FROM_THEME_ACTIVE =
-        MACAPK_DIALOG_FLOATING_FROM_THEME && MACAPK_DIALOG_THEME_WRAPPER;
+        true;
 
-    /** MACAPK_DIALOG_WINDOW_ELEVATION (default ON; =0 leaves the dialog decor
-     *  at elevation 0 and Window.setElevation a no-op, the pre-change
-     *  behaviour). The dialog window takes its theme's windowElevation onto its
-     *  decor, as PhoneWindow.generateLayout does (DialogWindow.macapkLoadElevation),
-     *  and WindowOverlayStack casts that root's shadow the way the window's
-     *  renderer does on a device. MEASURED (tablet A/B, 2026-09-26): Fossify's
-     *  Material3 dialog shows a shadow on the emulator, (138,138,140) straight
-     *  below the panel rising to the (171,171,171) scrim over about 16px; ours
-     *  was flat scrim to the edge, because nothing in runtime/java read
-     *  windowElevation (docs/fleet-widget-apps-mastodon-fossify-pianoli
-     *  _2026-09-26.md, F4). Needs MACAPK_DIALOG_THEME_WRAPPER: the value is read
-     *  from the DIALOG theme, and with the wrapper off the context is the
-     *  activity's. */
-    static final boolean MACAPK_DIALOG_WINDOW_ELEVATION =
-        !"0".equals(System.getenv("MACAPK_DIALOG_WINDOW_ELEVATION"));
     static final boolean MACAPK_WINDOW_ELEVATION_ACTIVE =
-        MACAPK_DIALOG_WINDOW_ELEVATION && MACAPK_DIALOG_THEME_WRAPPER;
+        true;
 
-    /** MACAPK_DIALOG_MINWIDTH_FROM_THEME (default ON; =0 applies the size-class
-     *  min width to every dialog, the pre-change rule). The min width applies
-     *  only when the dialog theme binds windowMinWidthMajor/Minor for the
-     *  orientation (DialogWindow.macapkThemeBindsMinWidth). Needs
-     *  MACAPK_DIALOG_THEME_WRAPPER for the same reason as the elevation, and
-     *  MACAPK_DIALOG_WIDTH_AOSP, which owns the min-width measure. */
-    static final boolean MACAPK_DIALOG_MINWIDTH_FROM_THEME =
-        !"0".equals(System.getenv("MACAPK_DIALOG_MINWIDTH_FROM_THEME"));
     static final boolean MACAPK_MINWIDTH_FROM_THEME_ACTIVE =
-        MACAPK_DIALOG_MINWIDTH_FROM_THEME && MACAPK_DIALOG_THEME_WRAPPER;
+        true;
 
     /** android.R.attr ids (public-final.xml; frozen, so safe as literals -- this
      *  tree ships no android.R class, see com.macapk.loader.FrameworkAttrIds). */
@@ -206,7 +125,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         // (MACAPK_GL_THREAD_NO_LOOPER; only the renderer thread is held to it,
         // see Handler.macapkImplicitLooper). docs/gl-thread-has-no-looper_2026-10-01.md
         android.os.Handler.macapkRequireLooperOnGlThread();
-        this.mContext = (MACAPK_DIALOG_THEME_WRAPPER && createContextThemeWrapper)
+        this.mContext = createContextThemeWrapper
                 ? macapkThemedContext(context, themeResId, ATTR_DIALOG_THEME)
                 : context;
         initWindow();
@@ -222,24 +141,9 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         // Its own gate, not MACAPK_DIALOG_THEME_WRAPPER: storing the cancel
         // Message is not theme behaviour, and an A/B of the wrapper must not
         // also switch cancel-Message delivery on and off.
-        if (MACAPK_DIALOG_CANCEL_MESSAGE) this.mCancelMessage = cancelCallback;
+        this.mCancelMessage = cancelCallback;
     }
 
-    /** MACAPK_DIALOG_CANCEL_MESSAGE (default ON; =0 restores the pre-change
-     *  drop, for bisecting). AOSP android14 Dialog.java:228-231, the deprecated
-     *  protected constructor, verbatim:
-     *
-     *      protected Dialog(@NonNull Context context, boolean cancelable,
-     *              @Nullable Message cancelCallback) {
-     *          this(context);
-     *          mCancelable = cancelable;
-     *          mCancelMessage = cancelCallback;
-     *      }
-     *
-     *  Ours stored cancelable and dropped the Message, so cancel() never told
-     *  the caller. */
-    static final boolean MACAPK_DIALOG_CANCEL_MESSAGE =
-        !"0".equals(System.getenv("MACAPK_DIALOG_CANCEL_MESSAGE"));
 
     /** The dialog Context: `new ContextThemeWrapper(context, themeResId)` after
      *  resolving themeResId 0 through `themeAttr` (AOSP: ?android:dialogTheme
@@ -568,15 +472,6 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                 }
                 if (!mMacapkHaveDimAmount) params.dimAmount = dimAmount;
             }
-            if (System.getenv("MACAPK_TRACE_DIALOG_THEME") != null) {
-                try {
-                    com.macapk.loader.NativeLog.i("Mac.apk.Dialog", "generateLayout ctx="
-                        + (mContext == null ? "null" : mContext.getClass().getName())
-                        + " source=" + mMacapkDimSource + " floating=" + floating
-                        + " dimEnabled=" + dimEnabled + " dimAmount=" + params.dimAmount
-                        + " flags=0x" + Integer.toHexString(params.flags));
-                } catch (Throwable ignored) {}
-            }
         }
         /** See Dialog.macapkSetThemeWindowBackground. Records nothing as the
          *  app's: an app background set before or after still replaces it. */
@@ -645,17 +540,6 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                             return;
                         }
                         final int avail = MeasureSpec.getSize(widthMeasureSpec);
-                        if (!MACAPK_DIALOG_WIDTH_AOSP) {
-                            // v1.0.1647 behaviour, verbatim, for bisecting.
-                            final int w = macapkFloatingWidthPx(avail,
-                                    MeasureSpec.getSize(heightMeasureSpec));
-                            if (w > 0) {
-                                widthMeasureSpec = MeasureSpec.makeMeasureSpec(
-                                        Math.min(w, avail), MeasureSpec.EXACTLY);
-                            }
-                            super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                            return;
-                        }
                         final float density = macapkDensity(getContext());
                         // The AT_MOST width is always the box (only WRAP_CONTENT
                         // produces it), but the height spec is the box only when
@@ -688,7 +572,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                         // both). Same inputs and no layout request since the last
                         // layout(): replay only the pass the ladder settled on,
                         // which is what the full ladder's last measure was.
-                        if (MACAPK_DIALOG_MEASURE_MEMO && mMemoValid && !isLayoutRequested()
+                        if (mMemoValid && !isLayoutRequested()
                                 && widthMeasureSpec == mMemoWSpec
                                 && heightMeasureSpec == mMemoHSpec
                                 && availH == mMemoAvailH && density == mMemoDensity) {
@@ -702,10 +586,8 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                         final int minW = macapkThemeBindsMinWidth(avail < availH)
                                 ? Math.min(avail, macapkMinWidthPx(avail, availH, sizeClass))
                                 : 0;
-                        final int pref = MACAPK_DIALOG_PREF_WIDTH_SW600
-                                ? macapkPrefDialogWidthPx(getResources(), sizeClass,
-                                        macapkSmallestWidthDp(avail, availH, density), density)
-                                : macapkPrefDialogWidthPx(sizeClass, density);
+                        final int pref = macapkPrefDialogWidthPx(getResources(), sizeClass,
+                                        macapkSmallestWidthDp(avail, availH, density), density);
                         final int finalWSpec = macapkPrePass(widthMeasureSpec,
                                 heightMeasureSpec, avail, minW, pref);
                         mMemoValid = true;
@@ -935,12 +817,12 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                     android.content.res.Resources.Theme th =
                             (c != null) ? c.getTheme() : null;
                     if (th != null) {
-                        fill = th.resolveAttrColor("colorBackgroundFloating", 0xFFFFFFFF);
+                        fill = ResBackend.get().resolveAttrColor(th, "colorBackgroundFloating", 0xFFFFFFFF);
                         gotFill = true;
                     }
                 } catch (Throwable ignored) {}
                 if (!gotFill) {
-                    fill = android.content.res.Resources.macapkThemeColor(
+                    fill = ResBackend.get().themeColor(
                             "colorBackgroundFloating", 0xFFFFFFFF);
                 }
                 float density = android.util.DisplayMetrics.macapkDeviceDensity();
@@ -976,42 +858,28 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         // (Activity.macapkGenerateBarColors), same gate: MACAPK_WINDOW_BAR_COLORS=0
         // restores the inherited getters exactly; MACAPK_EDGE_TO_EDGE=0 is the
         // diagnostic sentinel-only state. super keeps writing the statics that
-        // StatusBarDriver paints from, so nothing painted moves.
-        // docs/fwprobe-answer-parity-remaining_2026-09-26.md F1c.
-        private static final boolean MACAPK_WINDOW_BAR_COLORS =
-                !"0".equals(System.getenv("MACAPK_WINDOW_BAR_COLORS"));
-        private static final boolean MACAPK_EDGE_TO_EDGE =
-                !"0".equals(System.getenv("MACAPK_EDGE_TO_EDGE"));
         private int mMacapkStatusBarColor;
         private int mMacapkNavigationBarColor;
         private boolean mMacapkForcedStatusBarColor;
         private boolean mMacapkForcedNavigationBarColor;
         boolean mMacapkEdgeToEdgeEnforced;
         private void macapkGenerateBarColors() {
-            if (!MACAPK_WINDOW_BAR_COLORS || mContext == null) return;
-            final int[] r = Activity.macapkGenerateBarColors(mContext, mMacapkStatusBarColor,
-                    mMacapkNavigationBarColor, mMacapkForcedStatusBarColor,
-                    mMacapkForcedNavigationBarColor, MACAPK_EDGE_TO_EDGE);
-            mMacapkStatusBarColor = r[0];
-            mMacapkNavigationBarColor = r[1];
-            mMacapkEdgeToEdgeEnforced = r[2] != 0;
+            // Shadowed by AOSP's Dialog (aosp-views.jar): its PhoneWindow generates the colours.
         }
         @Override public int getStatusBarColor() {
-            return MACAPK_WINDOW_BAR_COLORS ? mMacapkStatusBarColor : super.getStatusBarColor();
+            return mMacapkStatusBarColor;
         }
         @Override public int getNavigationBarColor() {
-            if (!MACAPK_WINDOW_BAR_COLORS) return super.getNavigationBarColor();
             return mMacapkEdgeToEdgeEnforced ? 0 : mMacapkNavigationBarColor;
         }
         @Override public void setStatusBarColor(int color) {
             super.setStatusBarColor(color);
-            if (!MACAPK_WINDOW_BAR_COLORS || mMacapkEdgeToEdgeEnforced) return;
+            if (mMacapkEdgeToEdgeEnforced) return;
             mMacapkStatusBarColor = color;
             mMacapkForcedStatusBarColor = true;
         }
         @Override public void setNavigationBarColor(int color) {
             super.setNavigationBarColor(color);
-            if (!MACAPK_WINDOW_BAR_COLORS) return;
             mMacapkNavigationBarColor = color;
             mMacapkForcedNavigationBarColor = true;
         }
@@ -1028,9 +896,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
                 // AOSP PhoneWindow.setContentView inflates with mLayoutInflater,
                 // LayoutInflater.from(the window's context) -- the dialog wrapper's
                 // own inflater (see MacapkDialogContext) under the theme wrapper.
-                android.view.LayoutInflater inf = MACAPK_DIALOG_THEME_WRAPPER
-                        ? macapkInflaterFor(mContext)
-                        : android.view.LayoutInflater.from(mContext);
+                android.view.LayoutInflater inf = macapkInflaterFor(mContext);
                 if (inf != null) { content.removeAllViews(); inf.inflate(layoutResID, content, true); }
             } catch (Throwable t) {
                 // NEVER swallow this silently (v1.0.867). A failed inflate here
@@ -1201,99 +1067,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
     void macapkSetThemeWindowBackground(android.graphics.drawable.Drawable d) {
         if (mWindow instanceof DialogWindow) ((DialogWindow) mWindow).macapkSetThemeBackground(d);
     }
-    /** AOSP's DecorView.onMeasure grows a FLOATING window to its theme's
-     *  `windowMinWidthMinor` (portrait) / `Major` (landscape) whenever the width
-     *  spec is AT_MOST, i.e. whenever the window is WRAP_CONTENT. Every alert
-     *  dialog theme binds the same dimens: core/res `dialog_min_width_minor` /
-     *  `_major` (Theme.Material.Dialog.BaseAlert, themes_material.xml:1198-1200,
-     *  and the .MinWidth variants) and AppCompat's identical
-     *  `abc_dialog_min_width_minor` / `_major` (Base.Theme.AppCompat.Dialog.Alert,
-     *  themes_base.xml:606-608). Those dimens are SIZE-QUALIFIED, and both
-     *  libraries carry the same three rows (android14-release core/res
-     *  values/dimens.xml:210,240, values-large/dimens.xml:27-28,
-     *  values-xlarge/dimens.xml:28-29; androidx appcompat values*, dimens.xml):
-     *
-     *      screen size class   major (landscape)   minor (portrait)
-     *      normal / small            65%                 95%
-     *      large                     55%                 80%
-     *      xlarge                    45%                 72%
-     *
-     *  The fraction is of `availableWidth = screenWidthDp * density`, truncated
-     *  with (int) (DecorView.java:757-770). Before that, ViewRootImpl
-     *  .measureHierarchy offers a WRAP_CONTENT window only config_prefDialogWidth
-     *  (values/config.xml:183 320dp; values-large/config.xml:24 440dp), and
-     *  DecorView's min then grows it back -- ported in DialogWindow.ensureDecor.
-     *
-     *  ⚠ THE SIZE CLASS (2026-09-25). This used to be `portrait ? 0.95 : 0.65`,
-     *  i.e. the `values` row only. That was right for every phone-shaped window
-     *  (docs/refuted-approaches.md row 31 measured 213 declarations of exactly
-     *  those numbers) and wrong from the moment v1.0.1647 made the automatic
-     *  window Android 16's large-screen window: an unlocked app now opens at the
-     *  whole screen, an xlarge configuration. MEASURED on the tablet A/B
-     *  (docs/tablet-ab-triage_2026-09-25.md, cluster A): NewPipe's and
-     *  OpenSudoku's dialogs were 1059.5dp wide, the emulator's 723.5dp -- 65% and
-     *  45% of the 1680dp window, less the 2 x 16dp background inset.
-     *
-     *  ⚠ WHY A TABLE AND NOT THE THEME ATTRIBUTE. AOSP reads the attribute from
-     *  the dialog's window theme. We cannot yet get the right value that way:
-     *  ResourceIndex.qualifierScore drops every screen-size-class qualifier
-     *  (small/normal/large/xlarge), so `@dimen/abc_dialog_min_width_major`
-     *  resolves to the `values` 65% on any window. REMOVAL CONDITION: once
-     *  resource selection honours those qualifiers, read windowMinWidthMajor/
-     *  Minor (and windowFixedWidth*) from getContext().getTheme() instead --
-     *  androidx already hands this Dialog its alert-theme ContextThemeWrapper
-     *  (refuted-approaches row 30). Until then the table is the values those
-     *  themes resolve to, selected the way the qualifiers would select them.
-     *
-     *  The size class, the orientation and the base width all come from the box
-     *  the overlay stack offers, standing in for Configuration.screenWidthDp/
-     *  HeightDp and orientation, for the reason below: our metrics have gone
-     *  stale on a resized window before. The one exception is a window with a
-     *  FIXED lp.height, whose height spec is that height and not the box; its
-     *  box height is taken from the Configuration (macapkConfigHeightPx), which
-     *  is where AOSP reads all of it.
-     *
-     *  Applied only to an AT_MOST (WRAP_CONTENT) width spec, exactly AOSP's gate,
-     *  so an app that called getWindow().setLayout(...) -- BottomSheetDialog sets
-     *  MATCH_PARENT, full screen dialogs likewise -- keeps its own value.
-     *
-     *  HISTORY. This used to live only in our own android.app.AlertDialog, which
-     *  an AppCompat app never constructs -- androidx.appcompat.app.AlertDialog
-     *  extends THIS class, so its window kept the bare WRAP_CONTENT seeded in
-     *  initWindow and filled the screen. Measured on unitconverter's Help dialog:
-     *  our panel spanned x=32..775 (744px) against the emulator's x=52..754
-     *  (703px). The emulator's number decomposes exactly: (int)(0.95*808) = 767
-     *  window, minus the 2 x 16dp inset the dialog background's InsetDrawable adds
-     *  = 703, at left margin (808-767)/2 + 32 = 52. The pre-2026-09-25 code
-     *  ROUNDED and landed on 768.
-     *
-     *  ⚠ MEASURE TIME, IN THE DECOR, NOT show() TIME (2026-09-22). This used to
-     *  write `lp.width = round(fraction * DisplayMetrics.widthPixels)` once, in
-     *  show(). AOSP does it inside DecorView.onMeasure, on every measure, against
-     *  the CURRENT configuration; a baked pixel width goes stale the moment the
-     *  window is resized, and our DisplayMetrics did not follow a live resize.
-     *  MEASURED on Among Us: metrics said 3360x1860 while the surface was
-     *  808x1796, so the dialog got w=2184 on an 808px surface.
-     *  WindowOverlayStack.measureAndLayout then measured it at EXACTLY(2184) but
-     *  clamped only the LAYOUT box to 808: the panel background shrank to 744px
-     *  while the button bar was laid out for 2120px, ABORT/CONTINUE landed at
-     *  x=1864..2128, off screen, and the dialog could not be dismissed.
-     *
-     *  MACAPK_DIALOG_WIDTH_AOSP=0 restores the v1.0.1647 rule
-     *  (macapkFloatingWidthPx, a fixed WIDTH of round(0.95|0.65 * box), no
-     *  pre-pass) for bisecting. Default ON. */
-    static final boolean MACAPK_DIALOG_WIDTH_AOSP =
-        !"0".equals(System.getenv("MACAPK_DIALOG_WIDTH_AOSP"));
 
-    /** The decor's measureHierarchy memo (see DialogWindow.ensureDecor): with
-     *  the same specs and inputs and no layout request since the last layout(),
-     *  re-measure once at the width the pre-pass settled on instead of re-running
-     *  the whole pre-pass. It must not change any result -- only how many times
-     *  the content is measured per frame, which was 2 to 6 alternating-width
-     *  passes on EVERY present before it. MACAPK_DIALOG_MEASURE_MEMO=0 runs the
-     *  full pre-pass on every measure, for bisecting. Default ON. */
-    static final boolean MACAPK_DIALOG_MEASURE_MEMO =
-        !"0".equals(System.getenv("MACAPK_DIALOG_MEASURE_MEMO"));
 
     /** The v1.0.1647 rule, kept verbatim behind MACAPK_DIALOG_WIDTH_AOSP=0. */
     static int macapkFloatingWidthPx(int availW, int availH) {
@@ -1314,7 +1088,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         android.content.res.Configuration c = new android.content.res.Configuration();
         c.screenWidthDp = (int) (availW / density + 0.5f);
         c.screenHeightDp = (int) (availH / density + 0.5f);
-        c.macapkDeriveScreenLayout();
+        ResBackend.get().deriveScreenLayout(c);
         return c.screenLayout & android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK;
     }
 
@@ -1344,44 +1118,6 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         return (int) (dp * density);
     }
 
-    /** MACAPK_DIALOG_PREF_WIDTH_SW600 (default ON; =0 restores the two-row
-     *  table above). config_prefDialogWidth has THREE rows in android14 core/res:
-     *  values/config.xml:183 320dp, values-large/config.xml:24 440dp, and
-     *  values-sw600dp/config.xml:30 580dp (no other values-* directory binds
-     *  it). The smallest-width qualifier outranks the screen-size one in
-     *  resource selection, so any window with smallestScreenWidthDp >= 600
-     *  gets 580dp whether or not it is also `large`. We had only the first two,
-     *  so every tablet-sized dialog was pre-measured at 440dp. It decides the
-     *  final width of a dialog whose theme binds no min width (the traditional
-     *  Theme.Dialog.Alert): 580dp = 1160px on the 3360x1636 @2 tablet box, which
-     *  is what the emulator shows GD Meltdown's consent dialog at
-     *  (docs/fleet-games-smashhit-gd-meltdown-jumplite_2026-09-26.md, G5).
-     *
-     *  With the gate on, the value is READ from the framework table through
-     *  the window's Resources, as ViewRootImpl.measureHierarchy does (android14
-     *  :2716-2721, verbatim):
-     *
-     *      final DisplayMetrics packageMetrics = res.getDisplayMetrics();
-     *      res.getValue(com.android.internal.R.dimen.config_prefDialogWidth,
-     *              mTmpValue, true);
-     *      int baseSize = 0;
-     *      if (mTmpValue.type == TypedValue.TYPE_DIMENSION) {
-     *          baseSize = (int)mTmpValue.getDimension(packageMetrics);
-     *      }
-     *
-     *  so the row is picked by the same resource selection -- against the same
-     *  Configuration.smallestScreenWidthDp and size class -- that picks the
-     *  app's own sw600dp / large resources, and a row this code does not know
-     *  about is answered too. Measured on our ResourceIndex over framework-res
-     *  (2026-09-26): sw404 normal -> 640px, sw480 / sw500 / sw590 large ->
-     *  880px, sw600 / sw818 -> 1160px, i.e. all three rows. The three-row table
-     *  below is only the fallback for a Resources that cannot answer (no
-     *  framework table, a non-dimension value); it keys on the box. Note the
-     *  two can differ where the Configuration and the box the overlay stack
-     *  offers disagree (a box narrower than the display, a Configuration that
-     *  has not followed a resize yet): AOSP reads the Configuration there too. */
-    static final boolean MACAPK_DIALOG_PREF_WIDTH_SW600 =
-        !"0".equals(System.getenv("MACAPK_DIALOG_PREF_WIDTH_SW600"));
 
     /** The framework id of config_prefDialogWidth: resolved once, since the
      *  framework table is fixed for the process; -1 = not yet found (a 0
@@ -1683,8 +1419,7 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
      *  that is the wrapper's own inflater (MacapkDialogContext), which keeps the
      *  activity's factories while inflating in the dialog theme. */
     public android.view.LayoutInflater getLayoutInflater() {
-        if (MACAPK_DIALOG_THEME_WRAPPER) return macapkInflaterFor(mContext);
-        return android.view.LayoutInflater.from(mContext);
+        return macapkInflaterFor(mContext);
     }
     public android.view.View getCurrentFocus() { return null; }
     public void invalidateOptionsMenu() {}
@@ -1738,10 +1473,6 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
         } catch (Throwable ignored) {}
     }
 
-    /** Gate MACAPK_DIALOG_CREATE (default ON; =0 restores the old empty
-     *  create(), where onCreate first ran at show()). */
-    static final boolean MACAPK_DIALOG_CREATE =
-        !"0".equals(System.getenv("MACAPK_DIALOG_CREATE"));
 
     /** AOSP Dialog.create() (android14-release Dialog.java:299-303):
      *      public void create() { if (!mCreated) { dispatchOnCreate(null); } }
@@ -1753,7 +1484,6 @@ public class Dialog implements DialogInterface, android.content.DialogInterface.
      *  dialog; with the empty create() that view did not exist yet, the click
      *  handler died with an NPE and the dialog never opened. */
     public void create() {
-        if (!MACAPK_DIALOG_CREATE) return;
         macapkDispatchOnCreate();
     }
 

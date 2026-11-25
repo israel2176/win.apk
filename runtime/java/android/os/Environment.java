@@ -118,7 +118,6 @@ public class Environment {
     // With MACAPK_SDCARD_UNIFY=0 the pre-S0 eager mkdirs comes back.
     public static File getExternalStoragePublicDirectory(String type) {
         File f = new File(getExternalStorageDirectory(), type != null ? type : "");
-        if (!SharedStorage.unifyEnabled()) f.mkdirs();
         return f;
     }
     public static File getDownloadCacheDirectory() {

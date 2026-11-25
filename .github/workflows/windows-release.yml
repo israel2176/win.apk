@@ -1,4 +1,4 @@
-# Publishes a Win.apk pre-release: builds the runtime on Windows, packages it
+# Publishes a Win.apk release (a full release unless marked a pre-release): builds the runtime on Windows, packages it
 # with its Java runtime (bake_jre.sh) and ANGLE (the same folder as CI's winapk-preview
 # artifact), makes the installer (windows/package/winapk.iss), and attaches
 # both to a GitHub release for the given tag.
@@ -8,9 +8,13 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag, for example v0.1.0-preview'
+        description: 'Release tag, for example v1.0.0'
         required: true
-        default: 'v0.1.0-preview'
+        default: 'v1.0.0'
+      prerelease:
+        description: 'Mark it a pre-release (the update check and the web page offer a full release first)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -32,12 +36,24 @@ jobs:
         with:
           msystem: CLANG64
           update: true
-          install: unzip zip git
+          install: unzip zip git curl
           pacboy: >-
             clang:p
             cmake:p
             ninja:p
+            nasm:p
             boost:p
+            python:p
+      # The graphics DLL from AOSP 14's sources (as in ci.yml).
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-hwui/src
+          key: aosp-hwui-src-${{ hashFiles('windows/hwui_build/fetch.sh') }}
+      - name: Build the graphics DLL
+        run: |
+          windows/hwui_build/fetch.sh "$PWD/thirdparty/aosp-hwui"
+          windows/hwui_build/build.sh "$PWD/thirdparty/aosp-hwui" release \
+            || { tail -n 100 thirdparty/aosp-hwui/b/release.log; exit 1; }
       - name: Build
         run: |
           cmake -S windows -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ \
@@ -46,16 +62,22 @@ jobs:
           cmake --build build
       - uses: actions/cache@v4
         with:
-          path: thirdparty/framework-res
-          key: framework-res-v2-${{ hashFiles('scripts/build_framework_res.sh', 'windows/scripts/build_framework_res.sh') }}
-      - uses: actions/cache@v4
-        with:
           path: thirdparty/angle-win
           key: angle-${{ hashFiles('windows/scripts/fetch_angle.sh') }}
+      # android-all 14 and Robolectric's distribution (its fonts and hyphenation data), for AOSP's graphics' files.
+      - uses: actions/cache@v4
+        with:
+          path: thirdparty/aosp-gfx
+          key: aosp-gfx-${{ hashFiles('windows/test/aospgfx/fetch.sh') }}
       - name: Stage and package
         run: |
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          # With AOSP's graphics', resources' and views' files (build_aosp_{gfx,res,views}.sh): the
+          # only ones the framework has.
           windows/scripts/stage_runtime.sh build Win.apk
+          test -f Win.apk/lib/aosp-graphics.jar && test -f Win.apk/bin/aosp-hwui.dll
+          test -f Win.apk/lib/aosp-resources.jar && test -f Win.apk/lib/aosp-views.jar
+          test -f Win.apk/bin/aosp/framework-res-34.apk
           # The Java runtime: Temurin 21's modules with Win.apk's patch classes
           # baked in and its class-data sharing archive (bake_jre.sh, host/cds.h).
           windows/scripts/bake_jre.sh "$JAVA_HOME" Win.apk/lib Win.apk/jre
@@ -73,6 +95,8 @@ jobs:
             > boot.log 2>&1 || { tail -n 200 boot.log; exit 1; }
           grep -E "frames presented" boot.log
           grep -F "class-data sharing ON" boot.log
+          grep -F "AOSP graphics: on" boot.log
+          grep -F "AOSP views: on" boot.log
       - name: Build the installer
         shell: pwsh
         run: |
@@ -87,7 +111,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          $pre = @()
+          if ("${{ inputs.prerelease }}" -eq "true") { $pre = @("--prerelease") }
           gh release create "${{ inputs.tag }}" Win.apk-Setup.exe Win.apk-windows-x64.zip `
-            --prerelease --target "${{ github.sha }}" `
+            @pre --target "${{ github.sha }}" `
             --title "Win.apk ${{ inputs.tag }}" `
             --notes-file windows/package/RELEASE_NOTES.md

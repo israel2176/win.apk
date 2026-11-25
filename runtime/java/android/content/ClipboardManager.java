@@ -100,20 +100,6 @@ import java.util.Objects;
 @SuppressWarnings("deprecation")
 public class ClipboardManager extends android.text.ClipboardManager {
 
-    /** Bisect gate: MACAPK_CLIPBOARD_HOST=0 restores the pre-bridge
-     *  ClipboardManager path (AWT text sync, per-instance clip, synchronous
-     *  listeners). The ClipData/ClipDescription API fixes are NOT gated; see
-     *  the header for the two that show through it. */
-    static final boolean MACAPK_CLIPBOARD_HOST =
-        !"0".equals(System.getenv("MACAPK_CLIPBOARD_HOST"));
-    /** Bisect gate: MACAPK_CLIPBOARD_FOCUS=0 lets an unfocused app read the
-     *  clipboard (Android 9 and earlier behaviour); default ON is Android 10+. */
-    static final boolean MACAPK_CLIPBOARD_FOCUS =
-        !"0".equals(System.getenv("MACAPK_CLIPBOARD_FOCUS"));
-    /** Bisect gate: MACAPK_CLIPBOARD_ACCESS_NOTICE=0 drops the Android 12+
-     *  "<App> pasted from your clipboard" notice (log line + Toast). */
-    static final boolean MACAPK_CLIPBOARD_ACCESS_NOTICE =
-        !"0".equals(System.getenv("MACAPK_CLIPBOARD_ACCESS_NOTICE"));
 
     /** TEST HOOK ONLY (debug/clipboard_gate.sh sets it by reflection): when
      *  non-null it replaces the host focus probe, because a bare JVM is never
@@ -197,10 +183,6 @@ public class ClipboardManager extends android.text.ClipboardManager {
         mContext = context;
         mHandler = handler;
         // Deliberately does NO AWT and NO native work -- see the field comment
-        // above. The old eager body is kept only behind the bisect gate.
-        if (System.getenv("MACAPK_CLIPBOARD_EAGER") != null) {
-            macapkHostClipboard();
-        }
         // MACAPK_CLIPBOARD_DELAY_MS=<n>: sleep here WITHOUT doing any AWT work.
         //
         // This exists to settle one specific open question, and it is a
@@ -231,18 +213,12 @@ public class ClipboardManager extends android.text.ClipboardManager {
         // result cannot distinguish "the delay won the race" from "the monitor
         // hold changed the interleaving". Via Context.getSystemService (NOT
         // synchronized) it degrades to a pure sleep.
-        String d = System.getenv("MACAPK_CLIPBOARD_DELAY_MS");
-        if (d != null) {
-            try { Thread.sleep(Long.parseLong(d.trim())); }
-            catch (InterruptedException ie) { Thread.currentThread().interrupt(); }
-            catch (RuntimeException ignored) { }
-        }
     }
 
     /** True when this process runs the host bridge; decided once, at the
      *  first clipboard CALL (never in the constructor). */
     private static boolean hostPath() {
-        return MACAPK_CLIPBOARD_HOST && Service.available();
+        return Service.available();
     }
 
     // =====================================================================
@@ -427,11 +403,6 @@ public class ClipboardManager extends android.text.ClipboardManager {
         static Thread sPoller;
 
         static long pollMs() {
-            String v = System.getenv("MACAPK_CLIPBOARD_POLL_MS");
-            if (v != null) {
-                try { return Math.max(50L, Math.min(5000L, Long.parseLong(v.trim()))); }
-                catch (NumberFormatException ignored) { }
-            }
             return 500L;
         }
 
@@ -467,7 +438,6 @@ public class ClipboardManager extends android.text.ClipboardManager {
 
         /** AOSP clipboardAccessAllowed(OP_READ_CLIPBOARD): focused, or no read. */
         static boolean uidFocused() {
-            if (!MACAPK_CLIPBOARD_FOCUS) return true;
             Boolean o = sMacApkFocusOverrideForTest;
             if (o != null) return o.booleanValue();
             try {
@@ -708,7 +678,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
                     // showAccessNotificationLocked: not for the clip's own app,
                     // and once per clip per app.
                     String me = ourPackage();
-                    if (MACAPK_CLIPBOARD_ACCESS_NOTICE && !sNotified
+                    if (!sNotified
                             && !(sSource != null && sSource.equals(me))) {
                         sNotified = true;
                         notice = true;
@@ -831,7 +801,7 @@ public class ClipboardManager extends android.text.ClipboardManager {
             android.app.Application app = null;
             String label = null;
             try {
-                app = android.app.Application.macapk_get();
+                app = com.macapk.loader.app.Apps.current();
                 if (app != null) {
                     CharSequence l = app.getPackageManager().getApplicationLabel(app.getApplicationInfo());
                     if (l != null && l.length() > 0) label = l.toString();
@@ -840,8 +810,6 @@ public class ClipboardManager extends android.text.ClipboardManager {
                 label = null;
             }
             if (label == null) {
-                String env = System.getenv("MACAPK_APP_LABEL");
-                if (env != null && !env.isEmpty()) label = env;
             }
             if (label == null || label.isEmpty()) return;
             final String message = String.format(PASTED_FROM_CLIPBOARD, label);

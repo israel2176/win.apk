@@ -50,19 +50,7 @@ public class Xml {
      *  reader: the host Xerces parser forced namespace-aware, with Xerces' own
      *  feature defaults (external DTD loading on). */
     private static XMLReader newXMLReader() {
-        if (org.apache.harmony.xml.parsers.MacApkExpatReader.ANDROID_DEFAULTS) {
-            return new org.apache.harmony.xml.parsers.MacApkExpatReader();
-        }
-        try {
-            SAXParserFactory factory = SAXParserFactory.newInstance();
-            factory.setNamespaceAware(true);
-            return factory.newSAXParser().getXMLReader();
-        } catch (ParserConfigurationException | SAXException e) {
-            // A JDK with no working SAX implementation is an environment
-            // assertion, not a document error; AOSP's factory cannot fail here
-            // either, so callers are not made to handle it.
-            throw new AssertionError(e);
-        }
+        return new org.apache.harmony.xml.parsers.MacApkExpatReader();
     }
 
     /** Parses xml from the given string and fires events on the given SAX

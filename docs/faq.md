@@ -7,7 +7,7 @@ No. No Android system runs: each app runs as its own Windows program, on a
 re-creation of what Android apps need. [How it works](how-it-works.md)
 
 **Is it free? Is it safe?**
-It is free and open source (AGPL-3.0). The preview builds are not code-signed
+It is free and open source (AGPL-3.0). Win.apk's builds are not code-signed
 yet, so Windows warns when you run the installer. Apps run with your Windows
 account's rights and there is no sandbox between them, so install only apps
 you trust. Win.apk has no telemetry.
@@ -18,7 +18,8 @@ started and drew their first screen. That says they start, not that every
 screen works, and big commercial apps have been tried far less. [Compatibility](APPS.md) lists what works and what does not.
 
 **Where do I get apps?**
-The built-in Store (F-Droid) is the easiest. Files from APKMirror, APKPure or
+The built-in Store is the easiest: Win.apk's own store, which searches Google
+Play's catalogue and downloads free apps. Files from APKMirror, APKPure or
 an app's own site work too: `.apk`, `.apkm`, `.xapk` and `.apks`. Google Play
 works experimentally ([Google services](google-services.md)).
 
@@ -41,7 +42,7 @@ will refuse to run or will limit what they do.
 
 **Do games work?**
 Many do: games on OpenGL ES (libGDX, SDL, most engines) draw through ANGLE,
-and Xbox controllers work. Games that need Vulkan, OpenSL ES sound or tilt
+and Xbox controllers work. Games that need Vulkan or tilt
 sensors do not yet. A touchscreen gives
 an app every finger, and Ctrl+wheel (or a pinch on the touchpad) is a
 two-finger pinch; other multi-finger gestures cannot be made with a mouse.
@@ -59,6 +60,11 @@ Each app's private data is in `%LOCALAPPDATA%\Win.apk\android`. The shared
 folders an app sees (Download, Pictures, Documents, Music, Movies) are your
 own Windows folders, behind the storage permission; Settings > Apps > Use my
 Windows folders turns that off.
+
+**Do apps go through my proxy?**
+Yes: apps use the proxy set in Windows Settings > Network & internet > Proxy,
+as a phone's apps use the one in its network settings. Win.apk has no proxy
+setting of its own. [User guide](USER_GUIDE.md#wi-fi-and-bluetooth).
 
 **How do I report a problem?**
 Use **Report a problem** in Win.apk, or open an issue with the app's log.

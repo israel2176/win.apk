@@ -1,5 +1,7 @@
 package android.hardware.input;
 
+import com.macapk.loader.view.ViewHost;
+
 // android.hardware.input.InputManager -- the SINGLE source of truth for which
 // input devices exist. Mirrors AOSP's role split
 // (frameworks/base/core/java/android/hardware/input/InputManager.java): the
@@ -198,7 +200,7 @@ public final class InputManager {
      *  keystroke could move the crewmate under EITHER surface, so that a reconnect
      *  eats a tap is not proven. With the keystrokes on a real keyboard device:
      *  0 reconnects (measured). Falsifier: on a promoted build a ~100 ms arrow/WASD
-     *  tap in Freeplay moves the crewmate; if not, A/B with MACAPK_HOST_KEYBOARD=0.
+     *  tap in Freeplay moves the crewmate.
      *
      *  The device is what EventHub/InputReader build for an ordinary USB or
      *  Bluetooth keyboard: KEYBOARD + ALPHAKEY classes, so SOURCE_KEYBOARD and
@@ -211,11 +213,11 @@ public final class InputManager {
      *  KEY_SELECT, as many consumer-control keyboards do) would put SOURCE_DPAD
      *  back on host arrows, which is the bit libunity's joystick attach keys on. External (a keyboard attached to
      *  the phone Mac.apk presents), id 2: ids 0 and 1 are taken (0 = "not from a
-     *  physical device", 1 = the touchscreen). =0 restores the pre-change
-     *  surface byte for byte: no such device, keystrokes from -1 with
-     *  KEYBOARD|DPAD, Configuration KEYBOARD_NOKEYS / HARDKEYBOARDHIDDEN_YES. */
-    public static final boolean MACAPK_HOST_KEYBOARD =
-            !"0".equals(System.getenv("MACAPK_HOST_KEYBOARD"));
+     *  physical device", 1 = the touchscreen). Always on: the environment
+     *  switch that put back the old surface (no such device, keystrokes from -1
+     *  with KEYBOARD|DPAD, Configuration KEYBOARD_NOKEYS / HARDKEYBOARDHIDDEN_YES)
+     *  is gone, as Win.apk has no switches; a PC has a real keyboard. */
+    public static final boolean MACAPK_HOST_KEYBOARD = true;
     /** The host keyboard's device id (see above). */
     public static final int HOST_KEYBOARD_ID = 2;
 
@@ -254,7 +256,7 @@ public final class InputManager {
     }
 
     private static void buildDevices(int width, int height) {
-        final android.view.InputDevice keyboard = new android.view.InputDevice(
+        final android.view.InputDevice keyboard = ViewHost.get().newInputDevice(
                 android.view.KeyCharacterMap.VIRTUAL_KEYBOARD,
                 0,                       // generation
                 0,                       // controllerNumber: not a game controller
@@ -271,7 +273,7 @@ public final class InputManager {
                 false,                   // hasMicrophone
                 false);                  // hasButtonUnderPad
 
-        final android.view.InputDevice touchscreen = new android.view.InputDevice(
+        final android.view.InputDevice touchscreen = ViewHost.get().newInputDevice(
                 TOUCHSCREEN_ID,
                 0,
                 0,
@@ -333,7 +335,7 @@ public final class InputManager {
         // The host keyboard (see MACAPK_HOST_KEYBOARD): the Virtual device stays
         // registered alongside it, as on every Android device -- EventHub creates
         // it unconditionally (createVirtualKeyboardLocked) and IMEs keep using it.
-        final android.view.InputDevice hostKeyboard = new android.view.InputDevice(
+        final android.view.InputDevice hostKeyboard = ViewHost.get().newInputDevice(
                 HOST_KEYBOARD_ID,
                 0,                       // generation
                 0,                       // controllerNumber: not a game controller
@@ -359,7 +361,7 @@ public final class InputManager {
      *  window-less case (early boot, headless translation runs). */
     private static int[] displayExtent() {
         try {
-            android.view.Display d = new android.view.Display();
+            android.view.Display d = ViewHost.get().newDisplay();
             int w = d.getWidth();
             int h = d.getHeight();
             if (w > 0 && h > 0) return new int[] { w, h };
@@ -370,8 +372,8 @@ public final class InputManager {
         // whole panel, including under the navigation bar -- and since this
         // version DisplayMetrics reports the smaller app area, reading it here
         // would silently shrink the reported touch range by a nav strip.
-        int rw = android.view.Display.macapkRealWidthPx();
-        int rh = android.view.Display.macapkRealHeightPx();
+        int rw = ViewHost.get().realWidthPx();
+        int rh = ViewHost.get().realHeightPx();
         return new int[] { rw > 0 ? rw : dm.widthPixels, rh > 0 ? rh : dm.heightPixels };
     }
 

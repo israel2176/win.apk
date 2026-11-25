@@ -25,6 +25,7 @@
 // that bypass our GLSurfaceView entirely.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import com.macapk.loader.MetalSurfaceCallbacks;
 import com.macapk.loader.NativeCocoa;
@@ -68,6 +69,21 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
 
     public SurfaceView(Context c) {
         super(c);
+        macapkInitSurface();
+    }
+
+    /** With AOSP's views (-Dwinapk.aosp.views=1) View's constructor reads the element's attributes
+     *  itself (android:id, padding, visibility...), as Win.apk's inflater does after construction
+     *  for its own View; this SurfaceView, which stays Win.apk's there, hands them on. Win.apk's
+     *  View(Context, null) is View(Context). */
+    private static final boolean MACAPK_ATTRS_TO_VIEW = com.macapk.loader.view.ViewHost.get().aospWindows();
+
+    public SurfaceView(Context c, android.util.AttributeSet a) {
+        super(c, MACAPK_ATTRS_TO_VIEW ? a : null);
+        macapkInitSurface();
+    }
+
+    private void macapkInitSurface() {
         // Share the singleton MTKView. ANGLE binds to whatever native
         // MTKView's CAMetalLayer it sees first; if every SurfaceView
         // had its own, the visible one and the ANGLE-bound one could
@@ -83,7 +99,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         if (handle != 0) NativeCocoa.setRenderer(handle, this);
         macapkRegisterLiveForEgl(this);
     }
-    public SurfaceView(Context c, android.util.AttributeSet a) { this(c); }
     /** AOSP API 21 four-argument constructor. AOSP's three-argument form is
      *  exactly this(context, attrs, defStyleAttr, 0), so delegating the other
      *  way is identical for defStyleRes == 0; a non-zero defStyleRes is
@@ -95,7 +110,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             int defStyleRes) {
         this(context, attrs, defStyleAttr);
     }
-    public SurfaceView(Context c, android.util.AttributeSet a, int s) { this(c); }
+    public SurfaceView(Context c, android.util.AttributeSet a, int s) { this(c, a); }
 
     public SurfaceHolder getHolder() { return holder; }
     /** AOSP setZOrderOnTop (android14 SurfaceView.java:660) moves the surface's
@@ -149,16 +164,13 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         macapkBehindTopNoActivity = true;
         return null;
     }
-    /** Is this view's Activity STOPPED under another one (ActivityHost)? */
-    protected final boolean macapkOwnerStoppedUnderTop() {
-        try {
-            android.app.Activity a = macapkOwnerActivity();
-            return a != null && com.macapk.loader.ActivityHost.macapkIsStoppedUnderTop(a);
-        } catch (Throwable t) {
-            return false;
-        }
+    /** Is this view's Activity stopped under another one? Win.apk's own activity stack answered;
+     *  on AOSP's app layer a covered activity's window is hidden by the window manager instead, so
+     *  this view never draws over the top one from here. */
+    public final boolean macapkOwnerStoppedUnderTop() {
+        return false;
     }
-    protected final void macapkDetectDrawBehindTop(Object renderer) {
+    public final void macapkDetectDrawBehindTop(Object renderer) {
         if (macapkBehindTopSaid) return;
         if (macapkOwnerStoppedUnderTop()) {
             macapkBehindTopSaid = true;
@@ -222,42 +234,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     private int pendingSurfaceH;
     private long surfaceDeferLogCount;
 
-    /** AOSP delivers surfaceCreated as a main-looper message, which cannot
-     *  run before onResume returns -- so an app's onCreate-time setup
-     *  (holder callbacks, native lib + handler registration) is always in
-     *  place first. Our dispatch arrives from the Cocoa render thread and
-     *  can land mid-onCreate. Readiness: someone is listening (the app's
-     *  addCallback ran), OR the launch burst finished (nothing more will
-     *  register; also the cue for zero-callback engines so focus delivery
-     *  still happens). Deliberately NOT resumed-only: apps whose onCreate
-     *  blocks on their own engine reaching the window (Minecraft's
-     *  MainActivity) would deadlock -- engine waits for INIT_WINDOW,
-     *  INIT_WINDOW waits for surfaceCreated, surfaceCreated would wait for
-     *  onResume, onResume waits for onCreate, onCreate waits for engine.
-     *
-     *  REFUTED 2026-09-27, kept for the gate-OFF path: MC's onCreate reaches
-     *  requestPushPermission (bytecode 351, well past
-     *  nativeWaitCrashManagementSetupComplete at 121) with NO surface (MC log
-     *  2026-09-26 19:16, line 3024 before holder.fireCreated at 3172); the
-     *  v1.0.572 spin was the SIGSYS Breakpad self-recursion fixed that same
-     *  session. AOSP cannot deliver surfaceCreated before RESUMED:
-     *  handleResumeActivity runs performResumeActivity (ActivityThread.java:4995)
-     *  before wm.addView (:5048), and SurfaceView calls surfaceCreated from
-     *  updateSurface on the ViewRootImpl pre-draw (SurfaceView.java:213,
-     *  1102-1108). And this early arm is what CREATES the AGDK handshake
-     *  deadlock the v1.0.575 main-queue drain works around: android_main gets
-     *  INIT_WINDOW before START, starts its window-gated boot, and parks in a
-     *  runOnUiThread FutureTask just as the main thread parks in
-     *  onStartNative. MACAPK_AOSP_SURFACE_ORDER=1 makes readiness "this
-     *  view's activity window has been added" (first visible RESUMED,
-     *  latched: ActivityHost.macapkWindowAdded), callbacks or not, so the
-     *  cycle cannot form and a paused-but-visible activity (a translucent
-     *  permission prompt on top) still gets its surface; default OFF until
-     *  the protected sweep, boottime, Smash Hit and MC BLANK(d=1) are
-     *  measured with it ON.
-     *  docs/agdk-gameactivity-native-handshake-retired_2026-09-27.md. */
-    private static final boolean sAospSurfaceOrder =
-        "1".equals(System.getenv("MACAPK_AOSP_SURFACE_ORDER"));
     // MACAPK_TRACE_SURFACE_DISPATCH=1: name WHICH arm decided each dispatch.
     // Added for the v1.0.1135 BLANK(d=1) failure (~1 launch in 6), where MCPE
     // gains the graphics context only ONCE, never receives the second
@@ -279,16 +255,16 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         boolean cb = holder.hasCallbacks();
         boolean resumed;
         boolean res;
-        if (cb && !sAospSurfaceOrder) {
+        if (cb) {
             resumed = false; res = true;
         } else {
             try {
                 // ON: THIS view's activity window has been added (AOSP
                 // mWindowAdded, latched at its first visible resume and kept
                 // across a later pause), not "the top activity is resumed now".
-                resumed = sAospSurfaceOrder
-                    ? com.macapk.loader.ActivityHost.macapkWindowAdded(getContext())
-                    : com.macapk.loader.ActivityHost.macapkIsCurrentActivityResumed();
+                // Win.apk's own activity stack's "window added" / "top resumed" latches, which
+                // AOSP's app layer does not set: the holder's callbacks decide.
+                resumed = false;
                 res = resumed;
             } catch (Throwable t) {
                 resumed = false; res = true;   // harness/embedded runs without ActivityHost
@@ -350,31 +326,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             }
             return;
         }
-        try {
-            if (!com.macapk.loader.ActivityHost.macapkIsCurrentActivityResumed()) {
-                // Stays armed on purpose: a later traversal retries. Logged
-                // because "armed but never resumed" and "delivered" used to be
-                // indistinguishable in the log, which is how a dropped
-                // surface-ready focus went unnoticed.
-                if (macapkLogNth(++focusDeferredLogCount)) {
-                    NativeLog.i(TAG, "focus-gate: DEFERRED, activity not resumed"
-                        + " yet x" + focusDeferredLogCount);
-                }
-                return;
-            }
-        } catch (Throwable t) { /* harness: treat as resumed */ }
+        // Window focus is the window manager's to give (AOSP's ViewRootImpl gets it with the
+        // window); Win.apk's own delivery through its activity stack is gone.
         pendingFocusDelivery = false;
-        try {
-            // ForSurface, not the plain call: ViewCanvasDriver may already have
-            // delivered focus for a GL-less-LOOKING tree (our SurfaceView had
-            // not been added yet), which would make the plain call a no-op via
-            // its once-per-activity guard. This is the delivery that actually
-            // has a surface behind it, so it must not be the one that gets
-            // dropped. See ActivityHost.macapkDeliverWindowFocusForSurface.
-            com.macapk.loader.ActivityHost.macapkDeliverWindowFocusForSurface();
-        } catch (Throwable t) {
-            NativeLog.e(TAG, "deliverWindowFocus threw: " + t);
-        }
     }
 
     /** Converge the DEFERRED surfaceCreated dispatch and the window-focus
@@ -412,7 +366,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  holder's surfaceCreated (0 = none yet). v1.0.1637. */
     private int macapkConvergedW, macapkConvergedH;
 
-    protected final void macapkConvergeSurfaceLifecycle(int widthPx, int heightPx) {
+    public final void macapkConvergeSurfaceLifecycle(int widthPx, int heightPx) {
         // The renderer path (GLSurfaceView) never reaches macapkSurfaceChanged
         // below once it owns a Renderer, so until its native entry records the
         // display itself (macapkNoteNativeDisplaySize) this per-frame size is
@@ -464,7 +418,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 int[] s = macapkHolderSurfaceSize(widthPx, heightPx);
                 holder.fireChanged(0, s[0], s[1]);
             }
-        } else if (sViewSizeGate) {
+        } else {
             macapkConvergeHolderToLayout();
         }
         // Focus deferred at surface-dispatch time (activity not yet resumed)
@@ -493,9 +447,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // follow the same queue, so the AOSP order is kept. The retry contract of
     // fireCreatedTolerant is unchanged: a rejected delivery does not latch and
     // the next frame posts it again (one in flight at a time).
-    // =0: every callback inline on the calling thread, exactly as before.
-    static final boolean SV_UI_THREAD_CALLBACKS =
-        !"0".equals(System.getenv("MACAPK_SV_UI_THREAD_CALLBACKS"));
     private volatile boolean macapkCreatePosted;
     /** Native arrivals (macapkSurfaceChanged) that landed while the posted
      *  surfaceCreated was in flight, and the LATEST size among them. Guarded by
@@ -522,8 +473,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     }
 
     static boolean macapkCallbackOffUiThread() {
-        return SV_UI_THREAD_CALLBACKS && android.os.Looper.MACAPK_REAL_LOOPER
-            && android.os.Looper.macapkRealMainLoopRunning()
+        return android.os.Looper.macapkRealMainLoopRunning()
             && !android.os.Looper.macapkIsActivityThread();
     }
     static void macapkPostToUiThread(Runnable r) {
@@ -693,8 +643,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             // current dispatch unwinds; if the post is beaten by a newer
             // registration, macapkDriveOverlay's created-fired backstop still
             // fires it with the then-current size.
-            if (android.os.Looper.MACAPK_REAL_LOOPER
-                    && android.os.Looper.macapkIsActivityThread()) {
+            if (android.os.Looper.macapkIsActivityThread()) {
                 // OWNER-ONLY (v1.0.1636): fire calls d.macapkSurfaceChanged,
                 // which nulls the driver's frame bitmap. It must run on the
                 // owner thread, never on the OS-main drain concurrently with a
@@ -720,6 +669,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      * corrupting an engine's viewport into the bottom-left corner. It must
      * therefore exist exactly ONCE.
      *
+     * (Public since GLSurfaceView reaches it, and the other GL hooks it calls,
+     * through com.macapk.loader.view.ViewHost; still final.)
+     *
      * It needs to be reachable from GLSurfaceView because of the two-tier
      * renderer dispatch: when a subclass DID call setRenderer(),
      * GLSurfaceView.macapkDrawFrame handles the frame itself and returns
@@ -739,7 +691,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      * hierarchy will take care of correctly compositing ... any siblings ...
      * that would normally appear on top of it."
      */
-    protected final int[] macapkDriveOverlayForCurrentSurface() {
+    public final int[] macapkDriveOverlayForCurrentSurface() {
         int overlayW, overlayH;
         if (macapkDisplayDecoupled()) {
             // MACAPK_SV_DISPLAY_SIZE (2026-09-26): the overlay is the WINDOW's
@@ -873,45 +825,13 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     //                            runtime has one (NativeCocoa.presentSurface-
     //                            Bitmap; absent until the native half lands)
     //   MACAPK_SV_RESUME_ONCE    (2026-09-27) do NOT re-invoke a reflected
-    //                            renderer's handleOnResume() after its first
-    //                            onSurfaceCreated; the app's own queued call is
-    //                            delivered once, by macapkDrainForkedGlQueue.
-    //                            See the comment at the (now =0-only) re-fire in
-    //                            macapkReflectedSurfaceChanged and
-    //                            docs/cocos2dx-handleonresume-refire-retired_2026-09-27.md
-    static final boolean sViewSizeGate =
-        !"0".equals(System.getenv("MACAPK_SV_VIEW_SIZE"));
-    static final boolean sViewSizeGlGate =
-        !"0".equals(System.getenv("MACAPK_SV_VIEW_SIZE_GL"));
-    static final boolean sDisplaySizeGate =
-        !"0".equals(System.getenv("MACAPK_SV_DISPLAY_SIZE"));
-    static final boolean sLateRendererGate =
-        !"0".equals(System.getenv("MACAPK_SV_LATE_RENDERER"));
-    static final boolean sSurfaceLayerGate =
-        !"0".equals(System.getenv("MACAPK_SV_SURFACE_LAYER"));
-    static final boolean sResumeOnceGate =
-        !"0".equals(System.getenv("MACAPK_SV_RESUME_ONCE"));
-    /** MACAPK_SV_GUEST_BELOW (default ON): the native-EGL window layer (what a
-     *  native producer gets from ANativeWindow_fromSurface) composites BELOW
-     *  its window and the owning SurfaceView punches the hole, as AOSP does;
-     *  =0 keeps the legacy slot ABOVE the whole window and no hole. See the
-     *  "native window owner" section below. */
-    static final boolean sGuestBelowGate =
-        !"0".equals(System.getenv("MACAPK_SV_GUEST_BELOW"));
 
-    /** MACAPK_GL_WAIT_FRAME (2026-09-27, default ON): a renderer's FIRST
-     *  onSurfaceCreated waits for the view's first layout, as AOSP's
-     *  mHaveFrame makes it; =0 restores the old order and the by-name
-     *  setScreenWidthAndHeight call. See the section above
-     *  macapkRendererMayStart. */
-    static final boolean sGlWaitFrameGate =
-        !"0".equals(System.getenv("MACAPK_GL_WAIT_FRAME"));
 
     /** For GLSurfaceView (another package): is MACAPK_GL_WAIT_FRAME on? */
-    protected static boolean macapkGlWaitFrame() { return sGlWaitFrameGate; }
+    public static boolean macapkGlWaitFrame() { return true; }
 
     private static boolean macapkDisplayDecoupled() {
-        return sDisplaySizeGate || sViewSizeGate || sViewSizeGlGate;
+        return true;
     }
 
     /** The DISPLAY surface (native drawable) this view was last handed:
@@ -935,7 +855,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  (GLSurfaceView with a Renderer) calls this first, before anything it
      *  does can re-enter with a HOLDER's size, which under MACAPK_SV_VIEW_SIZE
      *  is the view's own size and not the window's. */
-    protected final void macapkNoteNativeDisplaySize(int w, int h) {
+    public final void macapkNoteNativeDisplaySize(int w, int h) {
         if (w > 0 && h > 0) {
             macapkNoteDisplaySize(w, h);
             macapkDisplayFromNative = true;
@@ -948,7 +868,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  SurfaceHolder.Callback2) must then not take that size as the display.
      *  False with the gates off, where the holder reports the display (or a
      *  setFixedSize the app chose), as before. */
-    protected static boolean macapkHolderSizeIsBufferSize() {
+    public static boolean macapkHolderSizeIsBufferSize() {
         return macapkDisplayDecoupled();
     }
 
@@ -1044,11 +964,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     static final long FRAME_VALVE_HARD_MS = FRAME_VALVE_MS * 3 / 2;
 
     private static long macapkValveMs() {
-        String v = System.getenv("MACAPK_GL_WAIT_FRAME_VALVE_MS");
-        if (v != null) {
-            try { long ms = Long.parseLong(v.trim()); if (ms > 0) return ms; }
-            catch (NumberFormatException e) { /* default */ }
-        }
         return 2000L;
     }
 
@@ -1056,7 +971,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     public void layout(int l, int t, int r, int b) {
         super.layout(l, t, r, b);
         // After super: setFrame, onLayout and the app's onSizeChanged have run.
-        if (sGlWaitFrameGate && !macapkSelfLayout && r > l && b > t) macapkHaveFrame = true;
+        if (!macapkSelfLayout && r > l && b > t) macapkHaveFrame = true;
     }
 
     /** MACAPK_GL_WAIT_FRAME: may this view's renderer get its FIRST
@@ -1064,8 +979,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  comment). displayW/H is the display surface, used only to size a view
      *  that has to lay itself out. Called from the render tick while waiting;
      *  always true with the gate off. */
-    protected final boolean macapkRendererMayStart(int displayW, int displayH) {
-        if (!sGlWaitFrameGate || macapkHaveFrame || macapkFrameValveOpen) return true;
+    public final boolean macapkRendererMayStart(int displayW, int displayH) {
+        if (macapkHaveFrame || macapkFrameValveOpen) return true;
         int n = ++macapkFrameWaitTicks;
         if (n == 1) {
             NativeLog.i(TAG, "[frame-gate] renderer of " + getClass().getName()
@@ -1081,42 +996,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 "window content root: nothing above it lays it out (ViewRootImpl's job)");
             if (macapkHaveFrame) return true;   // it ran inline
         }
-        boolean resumed = true;
-        try { resumed = com.macapk.loader.ActivityHost.macapkIsCurrentActivityResumed(); }
-        catch (Throwable t) { /* harness: treat as resumed */ }
-        if (!resumed) return false;
-        int v = ++macapkFrameValveTicks;
-        long now = System.nanoTime();
-        if (!macapkFrameValveStarted) {
-            macapkFrameValveStarted = true;
-            macapkFrameValveStartNs = now;
-        }
-        long ms = (now - macapkFrameValveStartNs) / 1_000_000L;
-        if (!macapkFrameValveFired && ms >= FRAME_VALVE_MS) {
-            macapkFrameValveFired = true;
-            NativeLog.w(TAG, "[frame-gate] VALVE: " + getClass().getName() + " still has no"
-                + " frame after " + ms + " ms / " + v + " resumed ticks (view " + getWidth() + "x"
-                + getHeight() + ", attached=" + macapkAttached + ") -- nothing laid it out");
-            if (getWidth() > 0 && getHeight() > 0) {
-                // Sized by a pass that is not a tree frame (the content-rect
-                // kick in macapkTryFireHolderCreated): the app's own
-                // onSizeChanged has run with that size. Start now.
-                macapkFrameValveOpen = true;
-                return true;
-            }
-            if (!macapkOwnLayoutRequested) macapkRequestOwnLayout(displayW, displayH, false, "valve");
-            if (macapkHaveFrame) return true;   // it ran inline
-        }
-        if (ms >= FRAME_VALVE_HARD_MS) {
-            macapkFrameValveOpen = true;
-            NativeLog.w(TAG, "[frame-gate] VALVE OPEN: " + getClass().getName() + " still has no"
-                + " frame after " + ms + " ms / " + v + " resumed ticks (the owner never ran its own"
-                + " layout) -- renderer starts WITHOUT a frame: "
-                + (getWidth() > 0 && getHeight() > 0
-                    ? "the view has only a non-tree size " + getWidth() + "x" + getHeight()
-                    : "engines that size from onSizeChanged (cocos2d-x/axmol) get nativeInit 0x0"));
-            return true;
-        }
+        // The valve (a renderer started without a frame after a while) counted ticks of a resumed
+        // top in Win.apk's own activity stack, which AOSP's app layer does not keep: it never opens.
         return false;
     }
 
@@ -1163,7 +1044,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         // Posted only while the real main loop runs (so the post WILL run) and
         // from any thread but the owner; inline otherwise -- on the owner, in
         // the legacy loop model, and in a bare JVM (the offline gates).
-        if (android.os.Looper.MACAPK_REAL_LOOPER && android.os.Looper.macapkRealMainLoopRunning()
+        if (android.os.Looper.macapkRealMainLoopRunning()
                 && !android.os.Looper.macapkIsActivityThread()) {
             android.os.Handler.macapkCreateOwnerOnly(android.os.Looper.getMainLooper()).post(run);
         } else {
@@ -1179,7 +1060,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     @Override
     protected boolean setFrame(int left, int top, int right, int bottom) {
         boolean changed = super.setFrame(left, top, right, bottom);
-        if (sViewSizeGate || sViewSizeGlGate) macapkSnapLayout(right - left, bottom - top);
+        macapkSnapLayout(right - left, bottom - top);
         return changed;
     }
 
@@ -1255,7 +1136,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  GL corner is the pre-change display size, and it is corrected after its
      *  first frame (BobBall: 3360x1636, then 3360x1560). */
     private int[] macapkHolderSurfaceSize(int displayW, int displayH) {
-        if (sViewSizeGate && !holder.macapkFixedSize) {
+        if (!holder.macapkFixedSize) {
             boolean gl = !holder.macapkLockedCanvas;                   /*HOLDER-RULE*/
             int[] v = macapkNonFillingViewSize(displayW, displayH, gl);
             if (v == null && gl) v = macapkOversizeUnclaimedViewSize();
@@ -1280,10 +1161,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // one, and keeps it. A holder with none of those has no GL consumer the
     // window-box layer could misplace, so it gets the view's size, as on AOSP.
     //
-    // BISECT GATE, default ON: MACAPK_SV_OVERSIZE_HOLDER=0 restores the window
-    // size for these holders.
-    static final boolean sOversizeHolderGate =
-        !"0".equals(System.getenv("MACAPK_SV_OVERSIZE_HOLDER"));
+    // Always on: its bisect switch (MACAPK_SV_OVERSIZE_HOLDER=0, the window size
+    // for these holders) is gone, as Win.apk has no switches.
+    static final boolean sOversizeHolderGate = true;
 
     private int[] macapkOversizeUnclaimedViewSize() {
         if (!sOversizeHolderGate) return null;
@@ -1303,20 +1183,20 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  reflected path here and GLSurfaceView.ensureLifecycleDelivered, which
      *  used to read StatusBarDriver.contentBox* itself; with
      *  MACAPK_SV_VIEW_SIZE_GL=0 it is exactly that window box. */
-    protected final int[] macapkRendererSurfaceSize(int displayW, int displayH) {
+    public final int[] macapkRendererSurfaceSize(int displayW, int displayH) {
         int w = com.macapk.loader.StatusBarDriver.contentBoxWidthPx(this, displayW);
         int h = com.macapk.loader.StatusBarDriver.contentBoxHeightPx(this, displayH);
-        if (sViewSizeGlGate && !holder.macapkFixedSize) {
+        if (!holder.macapkFixedSize) {
             int[] v = macapkNonFillingViewSize(displayW, displayH, true);
             // MACAPK_SV_GL_LAYER_RECT: a renderer view the anchored rule
             // refused (it overflows its window, or sits off the GL layer's
             // bottom-left corner) gets its own size too, and the ANGLE layer
             // is moved to its rect (macapkGlLayerRectPacked).
-            int[] p = (v == null && sGlLayerRectGate)
+            int[] p = (v == null)
                 ? macapkGlLayerPlacement(displayW, displayH) : null;
             if (v != null) { w = v[0]; h = v[1]; }
             else if (p != null) { w = p[2]; h = p[3]; }
-            if (sGlLayerRectGate) macapkNoteGlLayer(p != null, displayW, displayH);
+            macapkNoteGlLayer(p != null, displayW, displayH);
         }
         return new int[] { w, h };
     }
@@ -1347,9 +1227,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // The ANCHORED case keeps the window-box layer (it already lands right).
     //
     // BISECT GATE, default ON: MACAPK_SV_GL_LAYER_RECT=0 restores the old
-    // answer (the window box) and never publishes a rect.
-    static final boolean sGlLayerRectGate =
-        !"0".equals(System.getenv("MACAPK_SV_GL_LAYER_RECT"));
     /** The renderer view the ANGLE layer was last placed at; null = none. */
     private static volatile java.lang.ref.WeakReference<SurfaceView> sGlLayerView;
     /** The display this view's renderer was last sized for: (w << 32) | h. */
@@ -1414,7 +1291,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  (the renderer is told again once the layout lands), so it is not
      *  reported -- otherwise any window drag on any non-filling GL app, Flappy
      *  after the fix included, was flagged "touches land at the wrong point". */
-    protected final void macapkWarnGlSizeSplit(int toldW, int toldH, int displayW, int displayH) {
+    public final void macapkWarnGlSizeSplit(int toldW, int toldH, int displayW, int displayH) {
         LayoutSnap s = macapkLayoutSnap;
         if (s == null || !macapkAttached || s.w <= 0 || s.h <= 0) return;
         if (s.w == toldW && s.h == toldH) return;
@@ -1437,7 +1314,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  the view's CURRENT layout snapshot, so a relayout moves the layer the
      *  same frame the renderer hears the new size. */
     public static long macapkGlLayerRectPacked() {
-        if (!sGlLayerRectGate || !sViewSizeGlGate) return 0L;
         java.lang.ref.WeakReference<SurfaceView> ref = sGlLayerView;
         SurfaceView v = ref != null ? ref.get() : null;
         if (v == null) return 0L;
@@ -1544,7 +1420,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     private static volatile java.lang.invoke.MethodHandle sSurfaceLayerMH;
 
     private static java.lang.invoke.MethodHandle macapkSurfaceLayerPresenter() {
-        if (!sSurfaceLayerGate) return null;
         int st = sSurfaceLayerState;
         if (st == 1) return sSurfaceLayerMH;
         if (st < 0) return null;
@@ -1599,7 +1474,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     /** Route (2): the display-sized frame to present instead of {@code px}, or
      *  null to present {@code px} the legacy way. Drawing thread. */
     int[] macapkPlaceInDisplay(int[] px, int bw, int bh) {
-        if (!sViewSizeGate || px == null) return null;
+        if (px == null) return null;
         int[] d = macapkNotedDisplaySize();
         if (d == null) return null;
         int dW = d[0], dH = d[1];
@@ -1764,7 +1639,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  appears (performDrawFinished's invalidate(); posted, as this can run on the
      *  producer's thread). */
     static void macapkNoteNativeWindowOwner(SurfaceView owner) {
-        if (!sGuestBelowGate || owner == null) return;
+        if (owner == null) return;
         java.lang.ref.WeakReference<SurfaceView> prevRef = sNativeWindowOwner;
         SurfaceView prev = prevRef != null ? prevRef.get() : null;
         sNativeWindowOwner = new java.lang.ref.WeakReference<>(owner);
@@ -1798,7 +1673,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  APPLICATION_PANEL_SUBLAYER) but still below other windows.
      *  cocoa_bridge.mm macapk_guest_layer_z_for maps the answer to a zPosition. */
     public static int macapkNativeWindowLayerZ() {
-        if (!sGuestBelowGate) return 0;
         java.lang.ref.WeakReference<SurfaceView> ref = sNativeWindowOwner;
         SurfaceView v = ref != null ? ref.get() : null;
         if (v == null) return sHadNativeWindowOwner ? 1 : 0;
@@ -1923,11 +1797,9 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             // square (docs/fleet-unity-constant-gaps_2026-09-26.md §4).
             // macapkDrawFrame replays it, once, before the first onDrawFrame --
             // the same place and sequence the single-owner deferral uses.
-            if (sLateRendererGate) {
-                reflectedDeferredW = widthPx;
-                reflectedDeferredH = heightPx;
-                reflectedDeferredLate = true;
-            }
+            reflectedDeferredW = widthPx;
+            reflectedDeferredH = heightPx;
+            reflectedDeferredLate = true;
             return;
         }
         // MACAPK_GL_SINGLE_OWNER (2026-09-26): while the app's own GL thread
@@ -1948,7 +1820,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         // same mHaveFrame -- an open parity gap, see the doc. Parked like the
         // single-owner deferral above; macapkDrawFrame replays it once the frame
         // exists. Only the FIRST delivery waits.
-        if (sGlWaitFrameGate && !reflectedSurfaceCreatedFired
+        if (!reflectedSurfaceCreatedFired
                 && !macapkRendererMayStart(widthPx, heightPx)) {
             reflectedDeferredW = widthPx;
             reflectedDeferredH = heightPx;
@@ -2019,8 +1891,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             // it -- some engines populate the cached size that way
             // instead of in onSurfaceChanged. MACAPK_GL_WAIT_FRAME: not any
             // more; the app's own onSizeChanged has called it by now, since
-            // this first delivery waited for the view's frame.
-            if (!sGlWaitFrameGate) tryInvokeSetScreenSize(glW, glH);
             if (!reflectedSurfaceCreatedFired && reflectedOnSurfaceCreated != null) {
                 android.os.Looper.macapkEnterGlRenderer();
                 try {
@@ -2067,28 +1937,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 // Interplay: under MACAPK_GLTHREAD_DRAIN=0 with this gate ON no
                 // handleOnResume runs after the surface at all, which is also
                 // what a device does at first launch. Gate:
-                // debug/geh_cocos2dx-handleOnResume-refire_gate.sh.
-                if (!sResumeOnceGate) {
-                    // Cocos2d-x v2 lifecycle (historical, MACAPK_SV_RESUME_ONCE=0
-                    // only; the premise below is refuted in the comment above):
-                    // Cocos2dxGLSurfaceView.onResume queues handleOnResume via
-                    // queueEvent, and nativeOnResume needs a non-NULL CCEGLView
-                    // in CCDirector to call applicationWillEnterForeground. When
-                    // this was written, our model ran the queue before the surface
-                    // existed (or dropped it, for a fork), so this re-fire gave the
-                    // hook post-surface timing. Generic for any engine that
-                    // exposes a `handleOnResume()` no-arg method.
-                    Method onR = findMethod(reflectedRenderer.getClass(),
-                                              "handleOnResume");
-                    if (onR != null) {
-                        try {
-                            onR.invoke(reflectedRenderer);
-                            NativeLog.i(TAG, "re-fired handleOnResume after surface ready");
-                        } catch (Throwable t) {
-                            NativeLog.e(TAG, "handleOnResume re-fire threw: " + t);
-                        }
-                    }
-                }
             }
         } catch (Throwable t) {
             NativeLog.e(TAG, "reflected renderer.onSurfaceChanged threw: " + t);
@@ -2155,25 +2003,11 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 } finally { android.os.Looper.macapkExitGlRenderer(); }
             }
             // MACAPK_GL_WAIT_FRAME: AOSP re-publishes a window-box change only
-            // through the relayout (onSizeChanged, the app's own call).
-            if (!sGlWaitFrameGate) tryInvokeSetScreenSize(boxW, boxH);
         } catch (Throwable t) {
             NativeLog.e(TAG, "window-box re-publish threw: " + t);
         }
     }
 
-    /** If the resolved renderer exposes a setScreenWidthAndHeight(int, int)
-     *  helper (cocos2d-x does), call it. Returning silently on miss is
-     *  fine -- engines that don't have it use onSurfaceChanged instead.
-     *  Reached only with MACAPK_GL_WAIT_FRAME=0; delete with that gate. */
-    private void tryInvokeSetScreenSize(int w, int h) {
-        if (reflectedRenderer == null) return;
-        try {
-            Method m = findMethod(reflectedRenderer.getClass(),
-                                   "setScreenWidthAndHeight");
-            if (m != null) m.invoke(reflectedRenderer, w, h);
-        } catch (Throwable ignore) { /* best-effort */ }
-    }
 
     /** v1.0.64: dev-diagnostic counter for macapkDrawFrame. */
     private long macapkDrawFrameCount = 0;
@@ -2283,14 +2117,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         // FutureTask) completes -> android_main unblocks -> consumes APP_CMD_START
         // -> the handshake returns. Gated on the handshake flag so there is never
         // a double-drain with macapk-activity's own Looper.loop. No-op unless
-        // MACAPK_REAL_LOOPER. See ActivityHost.macapkLifecycleHandshakeActive.
-        if (com.macapk.loader.ActivityHost.macapkLifecycleHandshakeActive) {
-            try {
-                android.os.Looper.macapkDrainMainDue();
-            } catch (Throwable t) {
-                NativeLog.e(TAG, "macapkDrainMainDue threw: " + t);
-            }
-        }
 
         macapkConvergeSurfaceLifecycle(0, 0);
 
@@ -2304,7 +2130,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         // MACAPK_GL_WAIT_FRAME: the first surface callbacks (and so any draw)
         // wait for the view's frame. Everything above still ran this tick, the
         // overlay drive included -- that is what gets the tree laid out.
-        if (sGlWaitFrameGate && reflectedRenderer != null && !reflectedSurfaceCreatedFired
+        if (reflectedRenderer != null && !reflectedSurfaceCreatedFired
                 && (reflectedDeferredW > 0 || reflectedDeliveredW <= 0)) {
             int[] d = reflectedDeferredW > 0
                 ? new int[] { reflectedDeferredW, reflectedDeferredH } : macapkKnownDisplaySize();
@@ -2332,7 +2158,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                     + reflectedRenderer.getClass().getName());
             }
             macapkReflectedSurfaceChanged(w, h);
-        } else if (sLateRendererGate && reflectedRenderer != null && reflectedOnDrawFrame != null
+        } else if (reflectedRenderer != null && reflectedOnDrawFrame != null
                 && reflectedDeliveredW <= 0) {
             // Belt to the record above: a renderer about to be drawn that was
             // NEVER sized (no surface callback reached this view with it
@@ -2512,9 +2338,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // does survive, docs/openttd-nativeinit-strchr-null_2026-09-26.md --
     // would have had its queue run on OS-main once its thread ended.)
     //
-    // Rollback / A-B: MACAPK_GLTHREAD_DRAIN=0.
-    private static final boolean sGlThreadDrain =
-        !"0".equals(System.getenv("MACAPK_GLTHREAD_DRAIN"));
 
     // MACAPK_GLTHREAD_DRAIN_EMPTY (default ON, 2026-09-27;
     // docs/cocos2dx-touch-renderer-direct-retired_2026-09-27.md). Two AOSP
@@ -2539,9 +2362,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     //      is left alone, as before.
     // Nothing else changes: the same `!isAlive()` and single-owner survivor
     // tests decide whether OS-main may run the queue at all.
-    // =0 runs macapkDrainForkedGlQueueOnePerFrame, the pre-change body verbatim.
-    static final boolean sGlThreadDrainEmpty =
-        !"0".equals(System.getenv("MACAPK_GLTHREAD_DRAIN_EMPTY"));
     // MACAPK_GLTHREAD_DRAIN_TRACE=1: log EVERY runnable the drain runs (class
     // name + queue left), not just #1/#10/#100, so a touch A/B can count
     // deliveries one to one. Diagnostic, default path only; changes nothing.
@@ -2577,8 +2397,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  SurfaceView subclass" and "a List field on that Thread", never on a
      *  package or class name, so it applies to any AOSP-GLSurfaceView fork. */
     private void macapkDrainForkedGlQueue() {
-        if (!sGlThreadDrainEmpty) { macapkDrainForkedGlQueueOnePerFrame(); return; }
-        if (!sGlThreadDrain) return;
         if (!glDrainResolved) {
             glDrainResolved = true;
             try { resolveForkedGlQueue(); } catch (Throwable ignored) {}
@@ -2603,7 +2421,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  one-per-frame body keeps its own test unchanged (gate row S1). */
     private boolean forkedGlQueueOrphaned(Thread t) {
         if (t == null || t.getState() != Thread.State.TERMINATED) return false;
-        if (sGlSingleOwner && (glOwnerSurvivorName != null || sGlSurvivors.containsKey(t))) return false;
+        if ((glOwnerSurvivorName != null || sGlSurvivors.containsKey(t))) return false;
         return true;
     }
 
@@ -2750,7 +2568,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  keeps its own delivery rather than leave the event in a queue nobody
      *  runs. */
     public boolean macapkForkGlQueueServiced() {
-        if (!sGlThreadDrain || !sGlThreadDrainEmpty) return false;
         Field f = glForkField;
         Thread t = glForkThread;
         if (f == null || t == null || glForkQueue == null) return false;
@@ -2770,50 +2587,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
         return forkedGlQueueOrphaned(t);
     }
 
-    /** MACAPK_GLTHREAD_DRAIN_EMPTY=0: the v1.0.834 drain, verbatim -- resolve
-     *  once, then at most ONE queued runnable per frame. */
-    private void macapkDrainForkedGlQueueOnePerFrame() {
-        if (!sGlThreadDrain) return;
-        if (!glDrainResolved) {
-            glDrainResolved = true;
-            try { resolveForkedGlQueue(); } catch (Throwable ignored) {}
-        }
-        Thread t = glForkThread;
-        java.util.List<?> q = glForkQueue;
-        if (t == null || q == null) return;
-        // The whole point: only take over for a thread that is NOT running. A
-        // live GL thread drains its own queue and must not be raced.
-        if (t.isAlive()) return;
-        // ...nor for one that SURVIVED the EGL refusal and has since exited
-        // (MACAPK_GL_SINGLE_OWNER, 2026-09-26). OS-main never stands in for
-        // that renderer, so it must not stand in for its queue either: on
-        // Android nothing runs a GL thread's queue after the thread is gone.
-        if (sGlSingleOwner && (glOwnerSurvivorName != null || sGlSurvivors.containsKey(t))) return;
-        Runnable r = null;
-        Object mon = (glForkMonitor != null) ? glForkMonitor : q;
-        try {
-            synchronized (mon) {
-                if (!q.isEmpty()) {
-                    Object o = q.get(0);
-                    if (o instanceof Runnable) { r = (Runnable) o; q.remove(0); }
-                    else { q.remove(0); }   // not a Runnable: drop, don't wedge
-                }
-            }
-        } catch (Throwable ignored) { return; }
-        if (r == null) return;
-        long n = ++glDrainRan;
-        if (n == 1 || n == 10 || (n % 100) == 0) {
-            NativeLog.i(TAG, "forked GL-thread queue: ran #" + n + " "
-                + r.getClass().getName() + " (thread " + t.getName()
-                + " dead, queue left=" + q.size() + ")");
-        }
-        try {
-            r.run();
-        } catch (Throwable e) {
-            NativeLog.w(TAG, "forked GL-thread runnable " + r.getClass().getName()
-                + " threw: " + e);
-        }
-    }
 
     private void resolveForkedGlQueue() {
         // 1. A Thread-valued field on this SurfaceView's subclass chain is the
@@ -3184,9 +2957,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // KNOWN RESIDUAL. A survivor reachable ONLY through its own back-pointer
     // (no view field holds it) is caught by the survivor mark, which runs
     // after its eglCreateWindowSurface; between the refusal and that call it
-    // is not yet known. No corpus fork has that shape.
-    static final boolean sGlSingleOwner =
-        !"0".equals(System.getenv("MACAPK_GL_SINGLE_OWNER"));
 
     /** Threads MacApkEGL10 saw survive its refusal, with the call that showed
      *  it. Weak keys: a dead, unreferenced thread must not be kept alive. */
@@ -3249,7 +3019,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  does after its start() threw. Marks the thread, and stickily every live
      *  view it belongs to (either key), as never to be driven from OS-main. */
     public static void macapkMarkGlThreadSurvivedRefusal(Thread t, String call) {
-        if (!sGlSingleOwner || t == null) return;
+        if (t == null) return;
         if (sGlSurvivors.putIfAbsent(t, call) != null) return;
         java.util.ArrayList<SurfaceView> views = new java.util.ArrayList<>();
         synchronized (sLiveForEgl) {
@@ -3304,7 +3074,6 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  view's reflected renderer right now? Evaluated on OS-main, never blocks
      *  (reflective reads only). See the section comment for the rule. */
     boolean macapkRendererOwnedByAppGlThread() {
-        if (!sGlSingleOwner) return false;
         Object renderer = reflectedRenderer;
         if (renderer == null) return false;
         String survivor = glOwnerSurvivorName;
@@ -3834,7 +3603,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                         : Integer.toHexString(System.identityHashCode(root)))
                     + " isRoot=" + (root != null && root == canvas));
             }
-        } else if (sSurfaceLayerGate && macapkSurfaceLayerDrawn && !mZOrderOnTop) {
+        } else if (macapkSurfaceLayerDrawn && !mZOrderOnTop) {
             // A lockCanvas surface shown through its own layer BELOW the view
             // tree: the same hole, on AOSP's own condition (android14 draw()
             // :512-521, `if (mDrawFinished && !isAboveParent())` ->
@@ -3854,6 +3623,11 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
                 NativeLog.i(TAG, "native window hole: first punch " + getWidth() + "x"
                     + getHeight() + " by " + getClass().getName() + " (MACAPK_SV_GUEST_BELOW)");
             }
+        } else if (MACAPK_ATTRS_TO_VIEW && !mZOrderOnTop && getNativeHandle() != 0) {
+            // AOSP's views: ViewRootImpl's window is composited over this view's GL frames
+            // (AospWindows.showSurfaceBelow), so the window gets AOSP's hole here, on its
+            // condition (draw() :512-521, `!isAboveParent()` -> clearSurfaceViewPort).
+            canvas.punchHole(0f, 0f, getWidth(), getHeight(), 0f, 0f, getAlpha());
         }
         super.draw(canvas);
     }
@@ -3946,7 +3720,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             if (w <= 0 || h <= 0) { w = 800; h = 600; }   // sensible default
             if (drawBitmap == null || drawBitmap.getWidth() != w
                                        || drawBitmap.getHeight() != h) {
-                drawBitmap = android.graphics.Bitmap.createBitmapWithCanvasBacking(w, h);
+                drawBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
                 drawCanvas = new android.graphics.Canvas(drawBitmap);
             }
             return drawCanvas;
@@ -3965,8 +3739,8 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
             // v1.0.1648: the canvas's own live pixels when available (no 24 MB copy
             // at a full-screen window); presentBitmap copies synchronously on this,
             // the drawing thread, which is the contract macapkLiveArgbOrNull states.
-            int[] pixels = drawBitmap.macapkLiveArgbOrNull();
-            if (pixels == null) pixels = drawBitmap.macapkArgbBuffer();
+            int[] pixels = GfxBackend.get().liveArgbOrNull(drawBitmap);
+            if (pixels == null) pixels = GfxBackend.get().argbBuffer(drawBitmap);
             if (pixels == null) return;
             int pw = drawBitmap.getWidth(), ph = drawBitmap.getHeight();
             if (owner != null) {

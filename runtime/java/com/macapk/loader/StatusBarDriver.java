@@ -31,6 +31,8 @@ package com.macapk.loader;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
+import com.macapk.loader.view.ViewHost;
 
 public final class StatusBarDriver {
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
@@ -39,8 +41,6 @@ public final class StatusBarDriver {
     // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
     // "subsequent calls to putenv/setenv from C will not be visible from Java
     // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_STATUSBAR_BLEND = System.getenv("MACAPK_STATUSBAR_BLEND");
     private static final String ENV_MACAPK_TRACE_BARCOLOR = System.getenv("MACAPK_TRACE_BARCOLOR");
 
     private static final String TAG = "Mac.apk.StatusBar";
@@ -81,23 +81,8 @@ public final class StatusBarDriver {
     // window's flags -- so it keeps feeding Configuration.screenHeightDp and
     // WindowInsets.getInsetsIgnoringVisibility(statusBars()), exactly as it
     // does today for a fullscreen window. Same split, same two answers.
-    //
-    // MACAPK_SYSTEM_BARS=1 paints them again, for an A/B. Note that an
-    // emulator-vs-us pixel comparison is NOT valid across this flag: the
-    // reference AVD draws both bars, and debug/imgdiff.py's --safe-area crops
-    // OUR side by a CONSTANT 48/48 inset that this change invalidates. Pass
-    // MACAPK_IMGDIFF_OUR_INSET=0,0 (or MACAPK_SYSTEM_BARS=1 for the capture)
-    // before quoting a fleet number across it.
-    private static volatile Boolean sBarsOn;
-    private static final boolean sPhoneAppWindow =
-        !"0".equals(System.getenv("MACAPK_PHONE_APP_WINDOW"));
     public static boolean systemBarsEnabled() {
-        Boolean b = sBarsOn;
-        if (b == null) {
-            b = Boolean.valueOf("1".equals(System.getenv("MACAPK_SYSTEM_BARS")));
-            sBarsOn = b;
-        }
-        return b.booleanValue();
+        return false;
     }
 
     /** Bar height in host pixels = 24dp scaled by the View's
@@ -115,11 +100,11 @@ public final class StatusBarDriver {
         // exactly this. Returning 0 here covers every consumer at once --
         // ViewCanvasDriver's measure, its layout, and the bar painter itself --
         // rather than four separate call-site edits that could drift apart.
-        if (android.view.Window.macapkFullscreen()) return 0;
+        if (ViewHost.get().fullscreen()) return 0;
         // v1.0.939: WindowInsetsController.hide(statusBars()) means the same
         // thing FLAG_FULLSCREEN does -- the bar is gone, so it costs no inset.
         // Two APIs, one state, one answer.
-        if (android.view.Window.macapkBarHidden(
+        if (ViewHost.get().barHidden(
                 android.view.WindowInsets.Type.statusBars())) return 0;
         return heightPxRaw(root);
     }
@@ -146,7 +131,7 @@ public final class StatusBarDriver {
         // only from windows that exist, :1312-1327 / :1862-1880). Reporting 24dp for a
         // bar that is not there made Configuration.screenHeightDp and the stable
         // insets disagree with the window. MACAPK_PHONE_APP_WINDOW=0 restores it.
-        if (!systemBarsEnabled() && sPhoneAppWindow) return 0;
+        if (!systemBarsEnabled()) return 0;
         float density = android.util.DisplayMetrics.macapkDeviceDensity();
         try {
             if (root != null && root.getResources() != null
@@ -207,7 +192,7 @@ public final class StatusBarDriver {
         // dispatch no WindowInsets, so dropping the strip slid content under a
         // bar that was still painted. Here the bar is removed, so there is
         // nothing to slide under.
-        if (android.view.Window.macapkBarHidden(
+        if (ViewHost.get().barHidden(
                 android.view.WindowInsets.Type.navigationBars())) return 0;
         // 48dp = AOSP navigation_bar_height (3-button). The 24dp value is
         // the GESTURE bar, which we no longer draw.
@@ -303,14 +288,6 @@ public final class StatusBarDriver {
         if (v == null) {
             boolean on = true;
             try {
-                String s = System.getenv("MACAPK_NAV_BAR_SIDE");
-                if (s != null && (s.equals("0") || s.equalsIgnoreCase("false"))) {
-                    on = false;
-                    NativeLog.i(TAG, "MACAPK_NAV_BAR_SIDE=0 -- navigation bar "
-                        + "pinned to the BOTTOM in every orientation "
-                        + "(pre-v1.0.997 geometry; AOSP moves it to the right "
-                        + "edge in landscape on a phone-class display)");
-                }
             } catch (Throwable ignored) {}
             v = Boolean.valueOf(on);
             sNavSideEnabled = v;
@@ -353,8 +330,8 @@ public final class StatusBarDriver {
      *  bar's own inset. */
     public static boolean navBarCanMove() {
         try {
-            final int wpx = android.view.Display.macapkRealWidthPx();
-            final int hpx = android.view.Display.macapkRealHeightPx();
+            final int wpx = ViewHost.get().realWidthPx();
+            final int hpx = ViewHost.get().realHeightPx();
             if (wpx <= 0 || hpx <= 0 || wpx == hpx) return false;
             final int swDp = Math.round(Math.min(wpx, hpx) / MACAPK_DISPLAY_DENSITY);
             return swDp < 600;
@@ -390,8 +367,8 @@ public final class StatusBarDriver {
             if (!navBarCanMove()) return NAV_BAR_BOTTOM;
             // The same width>height test Display.getRotation() uses to answer
             // ROTATION_90, and the same one AOSP applies here.
-            if (android.view.Display.macapkRealWidthPx()
-                    > android.view.Display.macapkRealHeightPx()) {
+            if (ViewHost.get().realWidthPx()
+                    > ViewHost.get().realHeightPx()) {
                 return NAV_BAR_RIGHT;
             }
         } catch (Throwable ignored) {}
@@ -471,7 +448,7 @@ public final class StatusBarDriver {
      *  immersive game -- gdlite, mindustry, unciv, subway, crossy -- gets a
      *  zero inset here and is byte-identical to the pre-v1.0.996 geometry. */
     public static int contentInsetBottomPx(View root) {
-        return android.view.Window.macapkDecorFitsSystemWindows()
+        return ViewHost.get().decorFitsSystemWindows()
                 ? navBarInsetBottomPx(root) : 0;
     }
 
@@ -489,7 +466,7 @@ public final class StatusBarDriver {
      *  still returns 0 for a hidden bar, so every immersive app gets 0 on all
      *  four edges and is byte-identical to the pre-change geometry. */
     public static int contentInsetRightPx(View root) {
-        return android.view.Window.macapkDecorFitsSystemWindows()
+        return ViewHost.get().decorFitsSystemWindows()
                 ? navBarInsetRightPx(root) : 0;
     }
 
@@ -497,7 +474,7 @@ public final class StatusBarDriver {
      *  navBarPosition never returns NAV_BAR_LEFT because we cannot tell
      *  ROTATION_270 from ROTATION_90. */
     public static int contentInsetLeftPx(View root) {
-        return android.view.Window.macapkDecorFitsSystemWindows()
+        return ViewHost.get().decorFitsSystemWindows()
                 ? navBarInsetLeftPx(root) : 0;
     }
 
@@ -522,7 +499,7 @@ public final class StatusBarDriver {
         if (v == null) {
             boolean on = true;
             try {
-                String s = System.getenv("MACAPK_WINDOW_BOX");
+                String s = null;
                 if (s != null && (s.equals("0") || s.equalsIgnoreCase("false"))) {
                     on = false;
                     NativeLog.i(TAG, "MACAPK_WINDOW_BOX=0 -- app-window box "
@@ -699,9 +676,6 @@ public final class StatusBarDriver {
      *  on failure and are otherwise indistinguishable. Not a colour any theme
      *  declares. */
     private static final int MACAPK_UNSET_COLOR = 0x00000001;
-    /** Same flag as android.app.Activity's ActivityWindow bar-colour gate. */
-    private static final boolean MACAPK_WINDOW_BAR_COLORS =
-            !"0".equals(System.getenv("MACAPK_WINDOW_BAR_COLORS"));
 
     /** AOSP DecorView.calculateBarColor, ported verbatim (Color.BLACK spelled
      *  0xFF000000, Color.alpha(c) spelled c >>> 24). Kept as its own method with
@@ -732,12 +706,12 @@ public final class StatusBarDriver {
             android.content.Context c = (v != null) ? v.getContext() : null;
             android.content.res.Resources.Theme th = (c != null) ? c.getTheme() : null;
             if (th != null) {
-                int r = th.resolveAttrColor(attr, fallback);
+                int r = ResBackend.get().resolveAttrColor(th, attr, fallback);
                 if (r != fallback) return r;
             }
         } catch (Throwable ignored) {}
         try {
-            return android.content.res.Resources.macapkThemeColor(attr, fallback);
+            return ResBackend.get().themeColor(attr, fallback);
         } catch (Throwable ignored) {}
         return fallback;
     }
@@ -752,7 +726,7 @@ public final class StatusBarDriver {
             android.content.Context c = (v != null) ? v.getContext() : null;
             android.content.res.Resources.Theme th = (c != null) ? c.getTheme() : null;
             if (th != null) {
-                String raw = th.resolveAttrRaw(attr);
+                String raw = ResBackend.get().resolveAttrRaw(th, attr);
                 if (raw != null && !raw.isEmpty()) return "true".equalsIgnoreCase(raw.trim());
             }
         } catch (Throwable ignored) {}
@@ -810,7 +784,7 @@ public final class StatusBarDriver {
         // own precedence (generateLayout reads windowStatusBarColor only
         // `if (!mForcedStatusBarColor)`; the appearance bits work the same way).
         // -1 means "the app never set this bit", so the theme answers.
-        int forcedLight = android.view.Window.macapkBarAppearance(lightFlag);
+        int forcedLight = ViewHost.get().barAppearance(lightFlag);
         boolean light = (forcedLight >= 0)
                 ? (forcedLight == 1)
                 : macapkThemeAttrBool(root, statusBar ? "windowLightStatusBar"
@@ -829,9 +803,9 @@ public final class StatusBarDriver {
         // in code outranks its own theme. This is not an edge case on a modern
         // fleet -- Material's own EdgeToEdgeUtils calls setStatusBarColor, and
         // AntennaPod, Mastodon and AnkiDroid all reach it.
-        int declared = statusBar ? android.view.Window.macapkForcedStatusBarColor()
-                                 : android.view.Window.macapkForcedNavigationBarColor();
-        if (declared == android.view.Window.MACAPK_BAR_COLOR_UNSET) {
+        int declared = statusBar ? ViewHost.get().forcedStatusBarColor()
+                                 : ViewHost.get().forcedNavigationBarColor();
+        if (declared == ViewHost.get().barColorUnset()) {
             declared = macapkThemeAttrColor(root, statusBar ? "statusBarColor"
                                                             : "navigationBarColor",
                                             MACAPK_UNSET_COLOR);
@@ -847,10 +821,10 @@ public final class StatusBarDriver {
             // system windows would show window background where AOSP shows app
             // content. Only visible with MACAPK_SYSTEM_BARS=1. Gate:
             // MACAPK_WINDOW_BAR_COLORS=0 restores the verbatim theme colour.
-            if (!statusBar && declared != MACAPK_UNSET_COLOR && MACAPK_WINDOW_BAR_COLORS
+            if (!statusBar && declared != MACAPK_UNSET_COLOR
                     && root != null) {
-                int[] t = android.app.Activity.macapkNavigationBarTable(root.getContext());
-                declared = android.app.Activity.macapkResolveNavigationBarColor(declared,
+                int[] t = navigationBarTable(root.getContext());
+                declared = resolveNavigationBarColor(declared,
                         t[0] != 0, t[1], t[2], t[3] != 0, false);
             }
         }
@@ -923,7 +897,7 @@ public final class StatusBarDriver {
         // leaving the reserved right column showing window background. Paint
         // and layout must read the same predicate.
         if (canvas == null || surfaceWidth <= 0) return;
-        if (!android.view.Window.macapkDecorFitsSystemWindows()) return;
+        if (!ViewHost.get().decorFitsSystemWindows()) return;
         // navigation_bar_height and navigation_bar_width are both 48dp
         // (core/res/res/values/dimens.xml:49/53, android11-release), so one
         // dimension serves either edge.
@@ -994,76 +968,84 @@ public final class StatusBarDriver {
             double luma = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0;
             int glyphColor = luma < 0.5 ? 0xFFFFFFFF : 0xFF1F1F1F;
 
-            Paint gp = new Paint();
-            gp.setAntiAlias(true);
-            gp.setStyle(Paint.Style.FILL);
-            gp.setColor(glyphColor);
-
-            // Geometry measured off the reference AVD (see navBarInsetPx): the
-            // three glyphs sit at 1/4, 1/2 and 3/4 of the bar's LONG axis,
-            // ~30px wide and ~32px tall at density 2 -- i.e. ~15dp x 16dp --
-            // centred across its thickness. Written in dp so it holds at any
-            // density.
-            float triW = 14f * density, triH = 16f * density;
-            float dia   = 15f * density;
-            float sq    = 15f * density, sqR = 2f * density;
-
-            if (navPos == NAV_BAR_BOTTOM) {
-                float cy = top + stripH / 2f;
-                // BACK: filled triangle pointing LEFT.
-                float bx = surfaceWidth * 0.25f;
-                android.graphics.Path tri = new android.graphics.Path();
-                tri.moveTo(bx - triW / 2f, cy);
-                tri.lineTo(bx + triW / 2f, cy - triH / 2f);
-                tri.lineTo(bx + triW / 2f, cy + triH / 2f);
-                tri.close();
-                canvas.drawPath(tri, gp);
-
-                // HOME: filled circle.
-                canvas.drawCircle(surfaceWidth * 0.5f, cy, dia / 2f, gp);
-
-                // RECENTS: filled, slightly-rounded square.
-                float rx = surfaceWidth * 0.75f;
-                canvas.drawRoundRect(rx - sq / 2f, cy - sq / 2f,
-                                     rx + sq / 2f, cy + sq / 2f, sqR, sqR, gp);
-            } else {
-                // NAV_BAR_RIGHT. The order is NOT a naive rotation of the row
-                // above, and the BACK glyph is NOT rotated with it. Both facts
-                // are MEASURED off the reference AVD capture
-                // (scratchpad/avd_playtube_landscape_1796x808.png, right 96
-                // columns of an 1796x808 landscape screen, re-measured
-                // independently 2026-08-19):
-                //
-                //   y189..218  ink width a constant 30px for 26 of 30 rows,
-                //              corners clipped by 2px  -> ROUNDED SQUARE (recents)
-                //   y390..417  ink width 8 -> 28 -> 8, symmetric  -> CIRCLE (home)
-                //   y587..618  ink RIGHT edge pinned at x=1759 for every row
-                //              while the LEFT edge sweeps 1757 -> 1732 -> 1757
-                //              -> TRIANGLE, flat edge vertical on the RIGHT,
-                //              apex pointing LEFT (the same shape the bottom bar
-                //              draws, unrotated)
-                //
-                // So top-to-bottom is RECENTS, HOME, BACK: the horizontal row
-                // [back, home, recents] rotates with the display, which puts
-                // what was leftmost at the BOTTOM.
-                float cx = surfaceWidth - stripH / 2f;
-                // RECENTS at 1/4 height. Measured centre 203.5 vs 808*0.25=202.
-                float ry = surfaceHeight * 0.25f;
-                canvas.drawRoundRect(cx - sq / 2f, ry - sq / 2f,
-                                     cx + sq / 2f, ry + sq / 2f, sqR, sqR, gp);
-                // HOME at 1/2. Measured centre 403.5 vs 808*0.50=404.
-                canvas.drawCircle(cx, surfaceHeight * 0.5f, dia / 2f, gp);
-                // BACK at 3/4, apex still LEFT. Measured centre 602.5 vs
-                // 808*0.75=606.
-                float by = surfaceHeight * 0.75f;
-                android.graphics.Path tri = new android.graphics.Path();
-                tri.moveTo(cx - triW / 2f, by);
-                tri.lineTo(cx + triW / 2f, by - triH / 2f);
-                tri.lineTo(cx + triW / 2f, by + triH / 2f);
-                tri.close();
-                canvas.drawPath(tri, gp);
-            }
+            paintNavGlyphs(canvas, surfaceWidth, surfaceHeight, top, stripH, navPos, glyphColor, density);
         } catch (Throwable ignored) {}
+    }
+
+    /** The three-button navigation bar's glyphs alone (back, home, recents) in `glyphColor`:
+     *  paintSystemNavStrip's second half, and with AOSP's views all there is to paint (AOSP's
+     *  DecorView draws the bar's background colour). `top` is the strip's top for a bottom bar. */
+    public static void paintNavGlyphs(Canvas canvas, int surfaceWidth, int surfaceHeight, int top, int stripH,
+                                      int navPos, int glyphColor, float density) {
+        Paint gp = new Paint();
+        gp.setAntiAlias(true);
+        gp.setStyle(Paint.Style.FILL);
+        gp.setColor(glyphColor);
+
+        // Geometry measured off the reference AVD (see navBarInsetPx): the
+        // three glyphs sit at 1/4, 1/2 and 3/4 of the bar's LONG axis,
+        // ~30px wide and ~32px tall at density 2 -- i.e. ~15dp x 16dp --
+        // centred across its thickness. Written in dp so it holds at any
+        // density.
+        float triW = 14f * density, triH = 16f * density;
+        float dia   = 15f * density;
+        float sq    = 15f * density, sqR = 2f * density;
+
+        if (navPos == NAV_BAR_BOTTOM) {
+            float cy = top + stripH / 2f;
+            // BACK: filled triangle pointing LEFT.
+            float bx = surfaceWidth * 0.25f;
+            android.graphics.Path tri = new android.graphics.Path();
+            tri.moveTo(bx - triW / 2f, cy);
+            tri.lineTo(bx + triW / 2f, cy - triH / 2f);
+            tri.lineTo(bx + triW / 2f, cy + triH / 2f);
+            tri.close();
+            canvas.drawPath(tri, gp);
+
+            // HOME: filled circle.
+            canvas.drawCircle(surfaceWidth * 0.5f, cy, dia / 2f, gp);
+
+            // RECENTS: filled, slightly-rounded square.
+            float rx = surfaceWidth * 0.75f;
+            canvas.drawRoundRect(rx - sq / 2f, cy - sq / 2f,
+                                 rx + sq / 2f, cy + sq / 2f, sqR, sqR, gp);
+        } else {
+            // NAV_BAR_RIGHT. The order is NOT a naive rotation of the row
+            // above, and the BACK glyph is NOT rotated with it. Both facts
+            // are MEASURED off the reference AVD capture
+            // (scratchpad/avd_playtube_landscape_1796x808.png, right 96
+            // columns of an 1796x808 landscape screen, re-measured
+            // independently 2026-08-19):
+            //
+            //   y189..218  ink width a constant 30px for 26 of 30 rows,
+            //              corners clipped by 2px  -> ROUNDED SQUARE (recents)
+            //   y390..417  ink width 8 -> 28 -> 8, symmetric  -> CIRCLE (home)
+            //   y587..618  ink RIGHT edge pinned at x=1759 for every row
+            //              while the LEFT edge sweeps 1757 -> 1732 -> 1757
+            //              -> TRIANGLE, flat edge vertical on the RIGHT,
+            //              apex pointing LEFT (the same shape the bottom bar
+            //              draws, unrotated)
+            //
+            // So top-to-bottom is RECENTS, HOME, BACK: the horizontal row
+            // [back, home, recents] rotates with the display, which puts
+            // what was leftmost at the BOTTOM.
+            float cx = surfaceWidth - stripH / 2f;
+            // RECENTS at 1/4 height. Measured centre 203.5 vs 808*0.25=202.
+            float ry = surfaceHeight * 0.25f;
+            canvas.drawRoundRect(cx - sq / 2f, ry - sq / 2f,
+                                 cx + sq / 2f, ry + sq / 2f, sqR, sqR, gp);
+            // HOME at 1/2. Measured centre 403.5 vs 808*0.50=404.
+            canvas.drawCircle(cx, surfaceHeight * 0.5f, dia / 2f, gp);
+            // BACK at 3/4, apex still LEFT. Measured centre 602.5 vs
+            // 808*0.75=606.
+            float by = surfaceHeight * 0.75f;
+            android.graphics.Path tri = new android.graphics.Path();
+            tri.moveTo(cx - triW / 2f, by);
+            tri.lineTo(cx + triW / 2f, by - triH / 2f);
+            tri.lineTo(cx + triW / 2f, by + triH / 2f);
+            tri.close();
+            canvas.drawPath(tri, gp);
+        }
     }
 
     /** Hit rect (surface px, top-origin) of one nav-bar glyph, or null when
@@ -1074,7 +1056,7 @@ public final class StatusBarDriver {
      *  15dp visual target would be far below the 48dp minimum. */
     public static int[] navButtonHitRect(View root, int surfaceW, int surfaceH, int slot) {
         if (surfaceW <= 0 || slot < 0 || slot > 2) return null;
-        if (!android.view.Window.macapkDecorFitsSystemWindows()) return null;
+        if (!ViewHost.get().decorFitsSystemWindows()) return null;
         int stripH = navBarInsetPx(root);
         if (stripH <= 0) return null;
         // v1.0.997: MIRRORS the painter's branch, and must keep doing so. If
@@ -1158,8 +1140,7 @@ public final class StatusBarDriver {
                              int barHeight, int bgUnder) {
         if (canvas == null || surfaceWidth <= 0 || barHeight <= 0) return;
 
-        boolean blend = ((bgUnder >>> 24) != 0)
-            && !"0".equals(ENV_MACAPK_STATUSBAR_BLEND);
+        boolean blend = ((bgUnder >>> 24) != 0);
 
         // -- Background --
         // ?attr/colorBackground blends with the activity's window bg.
@@ -1173,9 +1154,7 @@ public final class StatusBarDriver {
         // branch never once executed. MACAPK_STATUSBAR_BLEND=1 restores it (note
         // the sense is now opt-IN where it used to be opt-OUT with =0) so the two
         // can be A/B'd on one build if an app regresses.
-        int bgColor = (blend && "1".equals(ENV_MACAPK_STATUSBAR_BLEND))
-            ? (0xFF000000 | (bgUnder & 0x00FFFFFF))
-            : macapkSystemBarColor(root, true);
+        int bgColor = macapkSystemBarColor(root, true);
         Paint bgPaint = new Paint();
         bgPaint.setStyle(Paint.Style.FILL);
         bgPaint.setColor(bgColor);
@@ -1218,6 +1197,15 @@ public final class StatusBarDriver {
 
         // 14sp text size matches AOSP `Text.StatusBar.Clock` style.
         // Using a slightly bolder weight to mirror SystemUI's clock.
+        paintStatusGlyphs(canvas, surfaceWidth, barHeight, fgColor, density);
+    }
+
+    /** The status bar's glyphs alone (clock, battery), in `fgColor`, over whatever is beneath:
+     *  paint's own second half, and with AOSP's views (-Dwinapk.aosp.views=1) all there is to
+     *  paint, as AOSP's DecorView draws the bar's background colour itself (the window
+     *  compositor of com.winapk.aospviews passes the light-bar appearance as the colour). */
+    public static void paintStatusGlyphs(Canvas canvas, int surfaceWidth, int barHeight, int fgColor,
+                                         float density) {
         float textSizePx = 14f * density;
         Paint textPaint = new Paint();
         textPaint.setAntiAlias(true);
@@ -1371,5 +1359,43 @@ public final class StatusBarDriver {
         }
         sCachedBatteryPct = pct;
         return pct;
+    }
+
+    // From Win.apk's Activity (PhoneWindow's navigation bar colour rule), its one user now.
+    /** The navigation-bar colour PhoneWindow.generateLayout stores, from the
+     *  theme's value (android14 :2516-2527; android15 :2616-2627 adds the
+     *  `!mEdgeToEdgeEnforced` term). `sentinelKnown` is false on a table that
+     *  has no navigation_bar_default (API <= 33), where the theme value is
+     *  taken as-is -- as android11's `a.getColor(..., 0xFF000000)` did. */
+    static int resolveNavigationBarColor(int themeNav, boolean sentinelKnown,
+            int navDefault, int navCompatible, boolean navDefaultTransparent,
+            boolean edgeToEdgeEnforced) {
+        if (!sentinelKnown) return themeNav;
+        final boolean specified = themeNav != navDefault;
+        return (!specified && !edgeToEdgeEnforced && !navDefaultTransparent)
+                ? navCompatible : themeNav;
+    }
+
+    /** {known, navigation_bar_default, navigation_bar_compatible,
+     *  config_navBarDefaultTransparent} resolved BY NAME from the loaded
+     *  platform table through `ctx` (context.getColor / getResources()
+     *  .getBoolean, as generateLayout reads them). known=0 when either colour
+     *  is absent, i.e. the table predates the sentinel; no constant stands in
+     *  for a value the table does not carry. */
+    static int[] navigationBarTable(android.content.Context ctx) {
+        try {
+            android.content.res.Resources r = ctx == null ? null : ctx.getResources();
+            if (r == null) return new int[] { 0, 0, 0xFF000000, 0 };
+            final int idDefault = r.getIdentifier("navigation_bar_default", "color", "android");
+            final int idCompat = r.getIdentifier("navigation_bar_compatible", "color", "android");
+            if ((idDefault >>> 24) != 0x01 || (idCompat >>> 24) != 0x01) {
+                return new int[] { 0, 0, 0xFF000000, 0 };
+            }
+            final int idTransparent = r.getIdentifier("config_navBarDefaultTransparent", "bool", "android");
+            final boolean transparent = (idTransparent >>> 24) == 0x01 && r.getBoolean(idTransparent);
+            return new int[] { 1, ctx.getColor(idDefault), ctx.getColor(idCompat), transparent ? 1 : 0 };
+        } catch (Throwable t) {
+            return new int[] { 0, 0, 0xFF000000, 0 };
+        }
     }
 }

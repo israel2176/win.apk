@@ -1,11 +1,11 @@
-Win.apk preview
-===============
+Win.apk
+=======
 
 Win.apk runs Android apps on Windows 10 (1903 or later) and 11, 64-bit, as
 ordinary Windows programs: each app in its own window, with its own Start
 menu entry and Windows notifications. There is no emulator and no virtual
 machine. Win.apk is an unofficial port of Mac.apk and is not affiliated with
-or endorsed by the Mac.apk project. This is an early preview.
+or endorsed by the Mac.apk project, nor with Google.
 
 Documentation, in English and Hebrew: https://github.com/israel2176/win.apk
 
@@ -13,19 +13,19 @@ Installing Win.apk
 ------------------
 Win.apk-Setup.exe installs it for your user only (no administrator rights),
 puts it in the Start menu and opens .apk files with it. Windows SmartScreen
-warns because the preview is not code-signed: click "More info", then "Run
-anyway". Or unzip Win.apk-windows-x64.zip anywhere and start Win.apk.exe.
+may warn because Win.apk is not code-signed yet: click "More info", then
+"Run anyway". Or unzip Win.apk-windows-x64.zip anywhere and start Win.apk.exe.
 
 Included: Java (built from Eclipse Temurin 21, the jre folder), ANGLE for graphics
-(bin\libEGL.dll, bin\libGLESv2.dll), and the clang compiler that translates
+(bin\libEGL.dll, bin\libGLESv2.dll), Android 14's own renderer (bin\aosp-hwui.dll), and the clang compiler that translates
 apps' ARM code for your processor (the clang folder). Web pages inside apps
 and Google sign-in use the Microsoft Edge WebView2 Runtime, which Windows 11
 and most Windows 10 PCs already have.
 
 Adding and running apps
 -----------------------
-- From the Store tab: F-Droid's free and open-source apps, the easiest place
-  to start. Search, then Install.
+- From the Store: Win.apk's own store, in the Win.apk window, that searches
+  Google Play's catalogue. Search, Download, then Install.
 - From a file: double-click an .apk, .apkm, .xapk or .apks in Explorer, drag
   it onto the library, or click "Install app". Prefer an x86_64 build of an app
   (or one with no native code), then arm64-v8a. An app with only 32-bit ARM
@@ -43,7 +43,7 @@ Adding and running apps
 What works, and what does not yet: docs/APPS.md in the repository, one table
 checked against the code. In short, Java and Kotlin apps, OpenGL ES games,
 sound and video, WebView, webcams, location, Bluetooth, notifications and
-Google sign-in work; 32-bit ARM code, Vulkan, OpenSL ES sound, the NDK media
+Google sign-in work; 32-bit ARM code, Vulkan, the NDK media
 API, real sensors, in-app purchases and Play Integrity do not.
 
 Where things are

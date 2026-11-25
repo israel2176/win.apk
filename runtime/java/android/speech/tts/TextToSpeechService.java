@@ -186,6 +186,6 @@ public abstract class TextToSpeechService extends android.app.Service {
      */
     @Override
     public IBinder onBind(Intent intent) {
-        return super.onBind(intent);
+        return null;
     }
 }

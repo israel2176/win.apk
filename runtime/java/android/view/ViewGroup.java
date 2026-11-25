@@ -5,6 +5,7 @@
 // they manage layout themselves.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Rect;
 import android.view.animation.Animation;
@@ -23,16 +24,6 @@ import java.util.List;
 public class ViewGroup extends View implements ViewParent, ViewManager {
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
     // per-event sites below (debug/w9textdraw_verify/hoist_getenv.py). A
-    // System.getenv call encodes the name and hashes it on every call; the
-    // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
-    // "subsequent calls to putenv/setenv from C will not be visible from Java
-    // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_CLIP_CHILDREN = System.getenv("MACAPK_CLIP_CHILDREN");
-    private static final String ENV_MACAPK_SKIP_DRAW = System.getenv("MACAPK_SKIP_DRAW");
-    private static final String ENV_MACAPK_TRACE_GAP_RELAYOUT = System.getenv("MACAPK_TRACE_GAP_RELAYOUT");
-    private static final String ENV_MACAPK_TRACE_RV_LAYOUT = System.getenv("MACAPK_TRACE_RV_LAYOUT");
-    private static final String ENV_MACAPK_TRACE_SHADOW = System.getenv("MACAPK_TRACE_SHADOW");
 
 
     public static class LayoutParams {
@@ -241,22 +232,12 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  own onAttachedToWindow + attach listeners; addView then defers the child's
      *  attach to the children loop of macapkDispatchAttachedToWindow. */
     boolean macapkPreventDispatchAttach;   // package-private: View.measure's attach self-heal reads it
-    /** MACAPK_PREVENT_DISPATCH_ATTACH (default ON; =0 = the old order: a child added
-     *  during the group's own attach dispatch attaches at once, before the group's
-     *  OnAttachStateChangeListeners run). */
-    static final boolean PREVENT_DISPATCH_ATTACH =
-        !"0".equals(System.getenv("MACAPK_PREVENT_DISPATCH_ATTACH"));
 
     public ViewGroup(Context c) { super(c); }
     public ViewGroup(Context c, android.util.AttributeSet a) { super(c, a); macapkInitClipFromAttributes(c, a, 0, 0); }
     public ViewGroup(Context c, android.util.AttributeSet a, int s) { super(c, a, s); macapkInitClipFromAttributes(c, a, s, 0); }
     public ViewGroup(Context c, android.util.AttributeSet a, int s, int r) { super(c, a, s, r); macapkInitClipFromAttributes(c, a, s, r); }
 
-    /** MACAPK_CLIP_TO_PADDING (default ON). "0" restores the pre-change path:
-     *  android:clipChildren / android:clipToPadding were never read from XML or a
-     *  style, and dispatchDraw never clipped children to the padding. Read once. */
-    static final boolean MACAPK_CLIP_TO_PADDING =
-            !"0".equals(System.getenv("MACAPK_CLIP_TO_PADDING"));
 
     /** AOSP ViewGroup.initFromAttributes (android14-release ViewGroup.java:733-749),
      *  run from the ViewGroup constructor:
@@ -279,7 +260,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  every clipToPadding="false" list. */
     private void macapkInitClipFromAttributes(Context c, android.util.AttributeSet a,
                                               int defStyleAttr, int defStyleRes) {
-        if (!MACAPK_CLIP_TO_PADDING || c == null) return;
+        if (c == null) return;
         if (a == null && defStyleAttr == 0 && defStyleRes == 0) return;
         // Only OUR attribute machinery is guarded; the setters run outside the
         // try so an app override that throws does so as it would on a device.
@@ -324,7 +305,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // nothing on a tap. MACAPK_PREVENT_DISPATCH_ATTACH=0 restores the old order.
         // Only the outermost dispatch of THIS group arms and clears it: a re-entrant
         // (already-attached, so no-op) call must not clear the outer one's flag.
-        boolean armed = PREVENT_DISPATCH_ATTACH && !wasAttached;
+        boolean armed = !wasAttached;
         if (armed) macapkPreventDispatchAttach = true;
         try {
             super.macapkDispatchAttachedToWindow();
@@ -586,8 +567,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Real Android composites continuously, so the surface would still
         // go live; mirror that by letting Activity re-evaluate the window
         // wiring. No-ops immediately unless a canvas-only wiring is active.
-        try { android.app.Activity.macapkMaybeRewireNativeSurface(child); }
-        catch (Throwable ignored) {}
         macapkDragChildAdded(child);
     }
     /** AOSP ViewGroup.resolveRtlPropertiesIfNeeded (android13-release
@@ -686,10 +665,8 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // span.min == Integer.MIN_VALUE -> AIOOBE, which unwound RecyclerView's
         // dispatchLayoutStep2 and killed the Install receiver.
         // docs/viewgroup-mutation-requestlayout_2026-09-28.md.
-        if (MACAPK_VIEWGROUP_MUTATION_RELAYOUT) {
-            requestLayout();
-            invalidate();
-        }
+        requestLayout();
+        invalidate();
         // AOSP addViewInner():
         //     if (!checkLayoutParams(params)) { params = generateLayoutParams(params); }
         // i.e. a container converts a foreign LayoutParams into its own kind, and
@@ -730,10 +707,8 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         if (!children.remove(child)) return;
         macapkFinishRemoval(child);
         macapkDragChildRemoved(child);
-        if (MACAPK_VIEWGROUP_MUTATION_RELAYOUT) {
-            requestLayout();
-            invalidate();
-        }
+        requestLayout();
+        invalidate();
     }
     /** AOSP ViewGroup.removeViewAt (ViewGroup.java:5519-5523):
      *      removeViewInternal(index, getChildAt(index)); requestLayout(); invalidate(true);
@@ -745,10 +720,8 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         if (v == null) return;
         macapkFinishRemoval(v);
         macapkDragChildRemoved(v);
-        if (MACAPK_VIEWGROUP_MUTATION_RELAYOUT) {
-            requestLayout();
-            invalidate();
-        }
+        requestLayout();
+        invalidate();
     }
     /** AOSP ViewGroup.removeAllViews (ViewGroup.java:5730-5734) is exactly
      *  `removeAllViewsInLayout(); requestLayout(); invalidate(true);` -- all
@@ -764,22 +737,10 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  MACAPK_VIEWGROUP_MUTATION_RELAYOUT restores the old, request-less family. */
     public void removeAllViews() {
         removeAllViewsInLayout();
-        if (MACAPK_VIEWGROUP_MUTATION_RELAYOUT) {
-            requestLayout();
-            invalidate();
-        }
+        requestLayout();
+        invalidate();
     }
 
-    /** MACAPK_VIEWGROUP_MUTATION_RELAYOUT (default ON): addView / removeView /
-     *  removeViewAt / removeAllViews call this group's OVERRIDABLE
-     *  requestLayout() and invalidate(), as AOSP's do (ViewGroup.java:5063-5076,
-     *  5474-5479, 5519-5523, 5730-5734). A subclass that caches child structure
-     *  and drops the cache in its requestLayout() override (androidx GridLayout's
-     *  invalidateStructure) never heard about a new or departed child without
-     *  it. =0 is the byte-identical old path: no request from any of the four.
-     *  Gate: debug/vgmutation_gate.sh. */
-    static final boolean MACAPK_VIEWGROUP_MUTATION_RELAYOUT =
-        !"0".equals(System.getenv("MACAPK_VIEWGROUP_MUTATION_RELAYOUT"));
 
     public boolean shouldDelayChildPressedState() { return true; }
 
@@ -878,9 +839,9 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Answer the modern default -- the same call
         // Context.macapkSelectDefaultTheme makes -- but do NOT memo, so a
         // later query re-resolves against the real value. A REAL 0 (no
-        // <uses-sdk>, android.app.Application.macapkTargetSdkKnown under
+        // <uses-sdk>, com.macapk.loader.app.Apps.targetSdkKnown under
         // MACAPK_TARGETSDK_ZERO) is below HONEYCOMB and memoises OFF, as AOSP.
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdk)) return true;
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdk)) return true;
         boolean on = targetSdk >= android.os.Build.VERSION_CODES.HONEYCOMB;
         sSplitDefault = on ? SPLIT_ON : SPLIT_OFF;
         return on;
@@ -1237,7 +1198,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     private TouchTarget mFirstTouchTarget;
     private boolean disallowIntercept;  // AOSP FLAG_DISALLOW_INTERCEPT; cleared by resetTouchState
     private java.util.ArrayList<View> mPreSortedChildren;
-    private static final boolean HIT_TRACE = System.getenv("MACAPK_HIT_TRACE") != null;
 
     /** AOSP ViewGroup.dispatchTouchEvent (:2633-2835).
      *
@@ -1333,15 +1293,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
                         // GONE, so an INVISIBLE child ate the touch.
                         final boolean in = child.canReceivePointerEvents()
                                 && isTransformedTouchPointInView(x, y, child, null);
-                        if (HIT_TRACE) {
-                            com.macapk.loader.NativeLog.i("Mac.apk.Hit",
-                                getClass().getSimpleName() + " pt=(" + (int) x + "," + (int) y
-                                + ") child=" + child.getClass().getSimpleName()
-                                + " [" + child.getLeft() + "," + child.getTop()
-                                + "-" + child.getRight() + "," + child.getBottom()
-                                + "] vis=" + child.getVisibility()
-                                + " clickable=" + child.isClickable() + " IN=" + in);
-                        }
                         if (!in) continue;
 
                         newTouchTarget = getTouchTarget(child);
@@ -1576,25 +1527,8 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         return list;
     }
 
-    /** MACAPK_CHILD_DRAW_ORDER (default ON): dispatchDraw paints children in AOSP's
-     *  order -- Z-sorted, over the app's getChildDrawingOrder when it enabled one --
-     *  instead of add order. =0 restores add order for every group (the pre-change
-     *  paint), independently of MACAPK_DRAWCHILD_DISPATCH. See dispatchDraw. */
-    static final boolean MACAPK_CHILD_DRAW_ORDER =
-        !"0".equals(System.getenv("MACAPK_CHILD_DRAW_ORDER"));
 
-    /** MACAPK_DRAWCHILD_DISPATCH (default ON): dispatchDraw paints every child
-     *  through the overridable drawChild(), as AOSP does, so app overrides
-     *  (DrawerLayout's scrim, CoordinatorLayout's behaviour scrim, custom dims) run.
-     *  =0 restores the pre-change inline paint loop and the old drawChild body. */
-    static final boolean MACAPK_DRAWCHILD_DISPATCH =
-        !"0".equals(System.getenv("MACAPK_DRAWCHILD_DISPATCH"));
 
-    /** The MACAPK_CLIP_CHILDREN=0 escape hatch, read once. The inline loop read
-     *  System.getenv per dispatchDraw; the environment cannot change in-process,
-     *  so this is the same answer without the per-frame lookup. */
-    private static final boolean MACAPK_CLIP_CHILDREN_ENV =
-        !"0".equals(System.getenv("MACAPK_CLIP_CHILDREN"));
 
     /** The draw pass's own preordered list. It is NOT mPreSortedChildren: the hit
      *  test fills and clears that one, and on this runtime a paint and a touch
@@ -1663,13 +1597,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     // scrolled list goes missing, look here first (MACAPK_FRAMESPEED_CULL=0).
     // MACAPK_FRAMESPEED_CULL=0 restores the pre-change drawChild exactly.
     // Gate: debug/framespeed_gate.sh cull (positive control: a cull that ignores the
-    // clip test must change pixels). docs/frame-speed-caret-clip-cull_2026-09-26.md.
-    static final boolean MACAPK_FRAMESPEED_CULL =
-        !"0".equals(System.getenv("MACAPK_FRAMESPEED_CULL"));
-    /** Test-only (debug/framespeed_gate.sh cull, control C8): cull without the
-     *  clip test, so the gate can prove its pixel comparison sees a wrong cull. */
-    static final boolean MACAPK_FRAMESPEED_CULL_ALL_FOR_TEST =
-        "1".equals(System.getenv("MACAPK_FRAMESPEED_CULL_ALL_FOR_TEST"));
     /** Children quick-rejected so far (the gate's proof that the cull ran). */
     static long sMacapkCulled;
     /** AOSP PFLAG_DRAW_ANIMATION on THIS group (see the block above). */
@@ -1679,20 +1606,19 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  draw nothing. `fromDispatch` as in drawChild. */
     private boolean macapkQuickRejectChild(android.graphics.Canvas canvas, View child,
                                            boolean fromDispatch) {
-        if (View.MACAPK_LEGACY_ANIM && child.getAnimation() != null) return false;
+        if (child.getAnimation() != null) return false;
         if (child.macapkHasAnyTransform() || mStaticTransformationsEnabled) return false;
         if (child instanceof ViewGroup && ((ViewGroup) child).mMacapkDrawAnimation) return false;
         final int cw = child.getRight() - child.getLeft();
         final int ch = child.getBottom() - child.getTop();
         // Exactly drawChild's per-child clip condition: no clip, no cull.
-        if (!((!fromDispatch || MACAPK_CLIP_CHILDREN_ENV) && clipChildren && cw > 0 && ch > 0))
+        if (!((!fromDispatch || true) && clipChildren && cw > 0 && ch > 0))
             return false;
-        if (MACAPK_FRAMESPEED_CULL_ALL_FOR_TEST) return true;
         final float dx = child.getLeft() - getScrollX(), dy = child.getTop() - getScrollY();
         try {
             // Canvas.quickReject with Skia's device-clip meaning (a clip-less
             // surface canvas still rejects what lies off the surface).
-            return canvas.macapkQuickRejectChild(dx, dy, dx + cw, dy + ch);
+            return GfxBackend.get().quickRejectChild(canvas, dx, dy, dx + cw, dy + ch);
         } catch (Throwable t) {
             return false;   // an app Canvas subclass that cannot answer: draw it
         }
@@ -1774,13 +1700,9 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     //  this carve-out routed every tap into that ad subtree, GestureOverlayView
     //  (AOSP-faithful) consumed it, and the game never saw a touch -- broken
     //  since the day it first rendered. AOSP: pointInView on a 0x0 view is never
-    //  true. MACAPK_HIT_ZERO_FILLS=1 restores the old carve-out (A/B only).
-    static final boolean MACAPK_HIT_ZERO_FILLS =
-        "1".equals(System.getenv("MACAPK_HIT_ZERO_FILLS"));
 
     private static boolean macapkChildFillsParent(View c) {
-        return MACAPK_HIT_ZERO_FILLS
-            && c.getRight() <= c.getLeft() && c.getBottom() <= c.getTop();
+        return false;
     }
 
     /** The DELIVERY-side companion to macapkChildFillsParent: a child with
@@ -1794,8 +1716,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     private static boolean macapkSkipOffset(View c) {
         // Off with the carve-out (v1.0.1638): a degenerate child can no longer
         // pass the hit test, and AOSP always offsets into the child.
-        return MACAPK_HIT_ZERO_FILLS
-            && (c.getRight() <= c.getLeft() || c.getBottom() <= c.getTop());
+        return false;
     }
 
     /** AOSP View.java:17987-17990 pointInView(localX, localY, 0):
@@ -2366,9 +2287,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  ViewGroup.LayoutParams inside a LinearLayout and the app's own cast to
      *  LinearLayout.LayoutParams threw). MACAPK_CHECK_LAYOUT_PARAMS=0 restores
      *  the old answer for an A/B. */
-    protected boolean checkLayoutParams(LayoutParams p) { return MACAPK_CHECK_LP ? p != null : true; }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
+    protected boolean checkLayoutParams(LayoutParams p) { return (p != null); }
 
     // v1.0.121: AOSP ViewGroup flags FLAG_CLIP_CHILDREN /
     // FLAG_CLIP_TO_PADDING. Both default-on per
@@ -2448,16 +2367,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
             // a GONE sibling probably took a slot that no longer exists.
             // Reset and re-equal-divide.
             if (maxYOfVisible > sumHOfVisible + (visibleCount * 4)) {
-                // Diagnostic when env-gated
-                if ("1".equals(ENV_MACAPK_TRACE_GAP_RELAYOUT)) {
-                    try {
-                        com.macapk.loader.NativeLog.i("ViewGroup",
-                            "GAP-RELAYOUT " + getClass().getSimpleName()
-                            + "@" + Integer.toHexString(System.identityHashCode(this))
-                            + " visibleCount=" + visibleCount
-                            + " sumH=" + sumHOfVisible + " maxY=" + maxYOfVisible);
-                    } catch (Throwable ignored) {}
-                }
                 for (int i = 0; i < children.size(); ++i) {
                     View c = children.get(i);
                     if (c == null || c.getVisibility() == View.GONE) continue;
@@ -2510,18 +2419,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
                 if (c.getVisibility() == View.GONE) continue;
                 // v1.0.124 diagnostic: trace when we re-fire layout on
                 // RecyclerView so we can confirm RV.onLayout->dispatchLayout
-                // is being driven by our natural cascade.
-                if ("1".equals(ENV_MACAPK_TRACE_RV_LAYOUT)) {
-                    String cn;
-                    try { cn = c.getClass().getName(); } catch (Throwable th) { cn = ""; }
-                    if (cn.endsWith(".RecyclerView")) {
-                        com.macapk.loader.NativeLog.i("VG",
-                            "RV-onLayout-fire " + cn + "@"
-                            + Integer.toHexString(System.identityHashCode(c))
-                            + " bounds=[" + c.getLeft() + "," + c.getTop()
-                            + "-" + c.getRight() + "," + c.getBottom() + "]");
-                    }
-                }
                 c.layout(c.getLeft(), c.getTop(), c.getRight(), c.getBottom());
             }
             return;
@@ -2544,7 +2441,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // LinearLayout-vertical-style: stack with equal heights, skipping GONE.
         // Use visibleCount (not needsLayout) when re-layout has been
         // forced so siblings re-equal-divide consistently.
-        int divisor = (anyLayoutRequested) ? visibleCount : needsLayout;
+        int divisor = anyLayoutRequested ? visibleCount : needsLayout;
         int sliceH = h / Math.max(1, divisor);
         int idx = 0;
         for (int i = 0; i < children.size(); ++i) {
@@ -2721,7 +2618,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // View.macapkCannotBeDrawn): a layer repaint inside a ComposeView that is
         // hidden, or whose tree has left the window, cannot change a pixel. The
         // walk goes on either way, so an override above still hears of it.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) (target != null ? target : this).macapkScheduleRedraw();
+        (target != null ? target : this).macapkScheduleRedraw();
         ViewParent p = getParent();
         if (p != null) p.onDescendantInvalidated(child, target);
     }
@@ -2803,7 +2700,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // edge-scale listener leaves at 0.618/1.0/0.618 because they are past the
         // edge it measures from, were drawn -- docs/clip-to-padding_2026-09-30.md).
         int clipSaveCount = -1;
-        if (MACAPK_CLIP_TO_PADDING && clipToPadding) {
+        if (clipToPadding) {
             final int pl = getPaddingLeft(), pt = getPaddingTop(),
                       pr = getPaddingRight(), pb = getPaddingBottom();
             if ((pl | pt | pr | pb) != 0) {
@@ -2828,7 +2725,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // AndroidComposeView -- set MACAPK_SKIP_DRAW=AndroidComposeView
         // and rerun; if the icon disappears, Compose is the source.
         // Comma-separated for skipping multiple classes.
-        String skipList = ENV_MACAPK_SKIP_DRAW;
+        String skipList = null;
         // DRAW ORDER (MACAPK_CHILD_DRAW_ORDER, default ON). AOSP android14
         // ViewGroup.dispatchDraw:4297-4318 --
         //     final ArrayList<View> preorderedList = drawsWithRenderNode(canvas)
@@ -2856,297 +2753,74 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // docs/viewgroup-drawchild-order-and-layout-listeners_2026-09-26.md,
         // debug/w5viewcore_gate.sh.
         final java.util.ArrayList<View> preordered =
-                MACAPK_CHILD_DRAW_ORDER ? macapkBuildDrawOrderList() : null;
-        final boolean customOrder = MACAPK_CHILD_DRAW_ORDER && preordered == null
+                macapkBuildDrawOrderList();
+        final boolean customOrder = preordered == null
                 && isChildrenDrawingOrderEnabled();
         final boolean reorder = preordered != null || customOrder;
         final int orderCount = children.size();
-        if (MACAPK_DRAWCHILD_DISPATCH) {
-            // ROUTE EVERY CHILD THROUGH drawChild (MACAPK_DRAWCHILD_DISPATCH, default
-            // ON). AOSP dispatchDraw paints each child ONLY as
-            //     more |= drawChild(canvas, child, drawingTime);
-            // and drawChild is protected and overridable -- DrawerLayout paints its
-            // 0x99000000 scrim there (androidx DrawerLayout.drawChild), CoordinatorLayout
-            // its behaviour scrims, SlidingPaneLayout its fade, FragmentContainerView
-            // skips disappearing children there, and app views (Mastodon's AppKit
-            // content view) paint dims there. We used to inline the per-child paint
-            // here and call c.draw() directly, so every such override was dead code
-            // (tobsolitaire's drawer opened with no scrim). The per-child body now
-            // lives in drawChild(); what stays here is what AOSP keeps in
-            // dispatchDraw (the visibility test) plus our skip list and the M12
-            // shadow, which paints in THIS group's space before the child.
-            // AOSP: `final long drawingTime = getDrawingTime();` once per dispatchDraw.
-            final long drawingTime = getDrawingTime();
-            // FRAMESPEED S3: AOSP dispatchDraw:4285-4286, "We will draw our child's
-            // animation, let's reset the flag" -- PFLAG_DRAW_ANIMATION is re-armed
-            // by this pass's children (drawChild) for the NEXT frame's cull test.
-            if (MACAPK_FRAMESPEED_CULL) mMacapkDrawAnimation = false;
-            final boolean outerDispatch = mMacapkInDispatchDraw;
-            mMacapkInDispatchDraw = true;
-            try {
-                for (int i = 0; i < (reorder ? orderCount : children.size()); ++i) {
-                    final View c = reorder
-                            ? getAndVerifyPreorderedView(preordered,
-                                    getAndVerifyPreorderedIndex(orderCount, i, customOrder))
-                            : children.get(i);
-                    if (c == null) continue;
-                    if (c.getVisibility() != View.VISIBLE
-                            && !(View.MACAPK_LEGACY_ANIM && c.getAnimation() != null)) continue;
-                    if (skipList != null && !skipList.isEmpty()) {
-                        String simpleName = c.getClass().getSimpleName();
-                        boolean skipped = false;
-                        for (String s : skipList.split(",")) {
-                            if (simpleName.equals(s.trim())) { skipped = true; break; }
-                        }
-                        if (skipped) continue;
+        // ROUTE EVERY CHILD THROUGH drawChild (MACAPK_DRAWCHILD_DISPATCH, default
+        // ON). AOSP dispatchDraw paints each child ONLY as
+        //     more |= drawChild(canvas, child, drawingTime);
+        // and drawChild is protected and overridable -- DrawerLayout paints its
+        // 0x99000000 scrim there (androidx DrawerLayout.drawChild), CoordinatorLayout
+        // its behaviour scrims, SlidingPaneLayout its fade, FragmentContainerView
+        // skips disappearing children there, and app views (Mastodon's AppKit
+        // content view) paint dims there. We used to inline the per-child paint
+        // here and call c.draw() directly, so every such override was dead code
+        // (tobsolitaire's drawer opened with no scrim). The per-child body now
+        // lives in drawChild(); what stays here is what AOSP keeps in
+        // dispatchDraw (the visibility test) plus our skip list and the M12
+        // shadow, which paints in THIS group's space before the child.
+        // AOSP: `final long drawingTime = getDrawingTime();` once per dispatchDraw.
+        final long drawingTime = getDrawingTime();
+        // FRAMESPEED S3: AOSP dispatchDraw:4285-4286, "We will draw our child's
+        // animation, let's reset the flag" -- PFLAG_DRAW_ANIMATION is re-armed
+        // by this pass's children (drawChild) for the NEXT frame's cull test.
+        mMacapkDrawAnimation = false;
+        final boolean outerDispatch = mMacapkInDispatchDraw;
+        mMacapkInDispatchDraw = true;
+        try {
+            for (int i = 0; i < (reorder ? orderCount : children.size()); ++i) {
+                final View c = reorder
+                        ? getAndVerifyPreorderedView(preordered,
+                                getAndVerifyPreorderedIndex(orderCount, i, customOrder))
+                        : children.get(i);
+                if (c == null) continue;
+                if (c.getVisibility() != View.VISIBLE
+                        && !(c.getAnimation() != null)) continue;
+                if (skipList != null && !skipList.isEmpty()) {
+                    String simpleName = c.getClass().getSimpleName();
+                    boolean skipped = false;
+                    for (String s : skipList.split(",")) {
+                        if (simpleName.equals(s.trim())) { skipped = true; break; }
                     }
-                    if (android.os.Looper.MACAPK_REAL_LOOPER) {
-                        float ea = c.getAlpha() * c.getTransitionAlpha();
-                        if (ea > 0f && c.getZ() > 0f) macapkDrawElevationShadow(canvas, c, ea);
-                    }
-                    // Resilience, same contract as the per-child guard inside drawChild:
-                    // an APP override of drawChild that throws must blank only this
-                    // child, not the whole group. AOSP would crash the app instead; the
-                    // throw is still reported loudly (GfxTrace.caught, once per
-                    // site+class+message with a stack). An override that threw between
-                    // its own save() and restore() would leave the canvas transformed
-                    // for every later sibling, so unwind to the count we entered with.
-                    final int sc = canvas.getSaveCount();
-                    try {
-                        drawChild(canvas, c, drawingTime);
-                    } catch (Throwable drawErr) {
-                        com.macapk.loader.GfxTrace.caught(
-                            "drawChild-override:" + getClass().getName(), drawErr);
-                        if (canvas.getSaveCount() > sc) canvas.restoreToCount(sc);
-                    }
+                    if (skipped) continue;
                 }
-            } finally {
-                mMacapkInDispatchDraw = outerDispatch;
-            }
-            if (preordered != null) preordered.clear();
-            return;
-        }
-        // ---- MACAPK_DRAWCHILD_DISPATCH=0: the pre-change inline per-child paint,
-        // byte for byte (only the child pick above is shared, and it is the old
-        // children.get(i) whenever the order gate has nothing to reorder). ----
-        // v1.0.121: per-child clip implementation. v1.0.121 defaulted
-        // OFF (opt-in via MACAPK_CLIP_CHILDREN=1) because of a
-        // layoutGridManually-era regression where the clip hid RV cards.
-        // v1.0.124 deleted layoutGridManually and moved to the natural
-        // AOSP RV dispatch flow; the regression went with it.
-        //
-        // v1.0.129: default ON (AOSP-correct), opt OUT via
-        // MACAPK_CLIP_CHILDREN=0 if a regression resurfaces. With
-        // the clip ON, RV children that overflow the RV's bounds get
-        // clipped at the boundary -- so cards positioned past the RV's
-        // bottom edge no longer leak into a sibling BottomNavigationView's
-        // area. Generic effect: every ViewGroup now bounds its own
-        // children, which is the documented Android contract.
-        // (Under MACAPK_DRAWCHILD_DISPATCH the same clip is applied in drawChild.)
-        boolean clipChildrenFlag =
-            !"0".equals(ENV_MACAPK_CLIP_CHILDREN)
-            && this.clipChildren;
-        // AOSP passes ONE drawingTime down the whole traversal
-        // (mAttachInfo.mDrawingTime). Resolved lazily below, so a frame with no
-        // running animation never reads the clock at all.
-        long animDrawingTime = -1L;
-        for (int i = 0; i < (reorder ? orderCount : children.size()); ++i) {
-            View c = reorder
-                    ? getAndVerifyPreorderedView(preordered,
-                            getAndVerifyPreorderedIndex(orderCount, i, customOrder))
-                    : children.get(i);
-            if (c == null) continue;
-            // AOSP ViewGroup.dispatchDraw:
-            //     if ((child.mViewFlags & VISIBILITY_MASK) == VISIBLE
-            //             || child.getAnimation() != null) {
-            //         more |= drawChild(canvas, child, drawingTime);
-            //     }
-            // The `|| getAnimation() != null` half is why a view that is made
-            // INVISIBLE/GONE while its exit animation is still running keeps
-            // painting until the animation finishes -- and, more importantly
-            // here, keeps being PUMPED, so onAnimationEnd still fires. Without
-            // it such an animation is frozen at its first frame forever and any
-            // app waiting on the callback hangs. Under MACAPK_LEGACY_ANIM=0 the
-            // condition collapses to the historical visibility-only test.
-            if (c.getVisibility() != View.VISIBLE
-                    && !(View.MACAPK_LEGACY_ANIM && c.getAnimation() != null)) continue;
-            if (skipList != null && !skipList.isEmpty()) {
-                String simpleName = c.getClass().getSimpleName();
-                boolean skipped = false;
-                for (String s : skipList.split(",")) {
-                    if (simpleName.equals(s.trim())) { skipped = true; break; }
-                }
-                if (skipped) continue;
-            }
-            // Tier 3 M12: cast the child's elevation shadow in THIS (parent)
-            // coordinate space, BEFORE the per-child save/translate/clip below,
-            // so it extends past the child's bounds and sits under the child
-            // (over earlier siblings) -- exactly where AOSP projects a RenderNode
-            // shadow. Only for a child with getZ()>0 (the common z==0 case pays
-            // nothing) and a visible effective alpha (so a fading view's shadow
-            // fades with it). Gated on the real-loop flag -> flag-off paints no
-            // shadow and is byte-for-byte unchanged.
-            if (android.os.Looper.MACAPK_REAL_LOOPER) {
                 float ea = c.getAlpha() * c.getTransitionAlpha();
                 if (ea > 0f && c.getZ() > 0f) macapkDrawElevationShadow(canvas, c, ea);
-            }
-            int save = canvas.save();
-            // AOSP: position the child at its layout coords MINUS this group's
-            // scroll offset, so a scrolled container (ScrollView/RecyclerView)
-            // draws its children shifted. getScrollX/Y are 0 for unscrolled
-            // groups, so this is a no-op except where scrollTo was called.
-            int dx = c.getLeft() - getScrollX(), dy = c.getTop() - getScrollY();
-            if (dx != 0 || dy != 0) canvas.translate(dx, dy);
-            // LEGACY TWEEN ANIMATION (View.startAnimation / R.anim). AOSP does
-            // this inside View.draw(Canvas, ViewGroup, long):24761-24768 -- the
-            // per-child paint entry -- which our dispatchDraw inlines, so this
-            // is the same call site. `c.getAnimation()` is a single field read,
-            // so a tree with no running animation pays exactly that and nothing
-            // below is reached: no Transformation, no clock, no matrix.
-            android.view.animation.Animation childAnim =
-                    View.MACAPK_LEGACY_ANIM ? c.getAnimation() : null;
-            float animAlpha = 1f;
-            boolean animMore = false;
-            if (childAnim != null) {
-                // One clock read per frame, not per child: AOSP passes a single
-                // mAttachInfo.mDrawingTime down the whole traversal, so two
-                // siblings animating together must see the same instant.
-                if (animDrawingTime < 0L) animDrawingTime = getDrawingTime();
+                // Resilience, same contract as the per-child guard inside drawChild:
+                // an APP override of drawChild that throws must blank only this
+                // child, not the whole group. AOSP would crash the app instead; the
+                // throw is still reported loudly (GfxTrace.caught, once per
+                // site+class+message with a stack). An override that threw between
+                // its own save() and restore() would leave the canvas transformed
+                // for every later sibling, so unwind to the count we entered with.
+                final int sc = canvas.getSaveCount();
                 try {
-                    animMore = c.applyLegacyAnimation(this, animDrawingTime, childAnim, false);
-                    android.view.animation.Transformation ct = getChildTransformation();
-                    // AOSP:
-                    //   if (concatMatrix) { canvas.translate(-transX, -transY);
-                    //                       canvas.concat(t.getMatrix());
-                    //                       canvas.translate(transX, transY); }
-                    // where transX/transY are -scrollX/-scrollY. The sandwich
-                    // undoes this group's scroll so the animation matrix is
-                    // applied about the child's own layout origin, then redoes
-                    // it. concatMatrix is a.willChangeTransformationMatrix(),
-                    // which AlphaAnimation answers false to (alpha only).
-                    if (childAnim.willChangeTransformationMatrix()) {
-                        int sxo = getScrollX(), syo = getScrollY();
-                        if (sxo != 0 || syo != 0) canvas.translate(-sxo, -syo);
-                        canvas.concat(ct.getMatrix());
-                        if (sxo != 0 || syo != 0) canvas.translate(sxo, syo);
-                    }
-                    // AOSP: `float transformAlpha = t.getAlpha();
-                    //        if (transformAlpha < 1) alpha *= transformAlpha;`
-                    animAlpha = ct.getAlpha();
-                } catch (Throwable animErr) {
+                    drawChild(canvas, c, drawingTime);
+                } catch (Throwable drawErr) {
                     com.macapk.loader.GfxTrace.caught(
-                        "legacyAnim:" + c.getClass().getName(), animErr);
-                    childAnim = null;
+                        "drawChild-override:" + getClass().getName(), drawErr);
+                    if (canvas.getSaveCount() > sc) canvas.restoreToCount(sc);
                 }
             }
-            // Tier 3 M7: apply the child's 2D transform (translationX/Y, scale,
-            // rotation) so ViewPropertyAnimator / ObjectAnimator motion is
-            // visible. Identity-default fast path (macapkHasTransform) keeps the
-            // common case free; gated so flag-off draw is byte-for-byte unchanged.
-            // AOSP order: the ANIMATION matrix is concat'd first (above), then
-            // the view's own matrix (View.java:24893-24900).
-            if (android.os.Looper.MACAPK_REAL_LOOPER && c.macapkHasTransform()) {
-                c.macapkApplyTransform(canvas);
-            }
-            int cw = c.getRight()  - c.getLeft();
-            int ch = c.getBottom() - c.getTop();
-            // A 0-area child paints nothing visible, so skip its draw
-            // entirely. Besides being free, this guards against a child
-            // whose onDraw assumes non-empty bounds and throws on our
-            // incomplete framework -- F-Droid's collapsed (0-height)
-            // Material LinearProgressIndicator NPEs in BaseProgressIndicator
-            // .onDraw (null current drawable), and that throw used to
-            // propagate up and abort the ENTIRE window draw (blanking every
-            // sibling below it -- the AppDetails screenshots/links section).
-            // Gated on the real-loop flag so the shipped path is covered and
-            // the flag-off build is byte-for-byte unchanged.
-            if (android.os.Looper.MACAPK_REAL_LOOPER && (cw <= 0 || ch <= 0)) {
-                canvas.restoreToCount(save);
-                // A 0-area child still has to END its animation, or an app
-                // waiting on onAnimationEnd for a collapsed view hangs forever.
-                if (childAnim != null && !animMore) finishAnimatingView(c, childAnim);
-                continue;
-            }
-            // Only clip when bounds are positive; a 0x0 child gets no
-            // chance to leak (drawing primitives short-circuit anyway).
-            if (clipChildrenFlag && cw > 0 && ch > 0) {
-                // v1.0.121: structural clip (always honored). The public
-                // clipRect respects MACAPK_REAL_CLIP for emergency
-                // rollback; this internal entry does not, because the
-                // per-child bounds clip IS the dispatchDraw contract.
-                canvas.macapkClipChildRect(0, 0, cw, ch);
-            }
-            // Tier 3 M9 (alpha-in-draw): modulate the child by its effective
-            // alpha = getAlpha() * getTransitionAlpha() -- the AOSP View.draw
-            // software path (View.java: alpha = getAlpha()*getTransitionAlpha();
-            // alpha<1 && onSetAlpha()==false && LAYER_TYPE_NONE -> canvas.save-
-            // LayerAlpha(...)). A zero effective alpha means the view is not
-            // visible to the user (AOSP View.java:11724), so skip its draw; a
-            // partial alpha pushes a group-opacity layer so the whole subtree
-            // fades as one unit. M7 made alpha live + animatable; this is the
-            // missing draw-path half so a ViewPropertyAnimator.alpha() fade is
-            // actually visible. Gated on the real-loop flag + an alpha==1 fast
-            // path so opaque views and the shipped (flag-off) build are
-            // byte-for-byte unchanged. The layer is unwound by restoreToCount
-            // (same as the M7 transform + the per-child clip).
-            if (android.os.Looper.MACAPK_REAL_LOOPER) {
-                // AOSP: alpha = getAlpha() * getTransitionAlpha(), then
-                // `alpha *= transformAlpha` when the animation supplied one
-                // (View.java:24885-24890). animAlpha is 1f when nothing is
-                // animating, so this multiply is free and exact.
-                float a = c.getAlpha() * c.getTransitionAlpha() * animAlpha;
-                if (a <= 0f) {
-                    canvas.restoreToCount(save);
-                    if (childAnim != null && !animMore) finishAnimatingView(c, childAnim);
-                    continue;
-                }
-                if (a < 1f && cw > 0 && ch > 0) {
-                    canvas.saveLayerAlpha(0, 0, cw, ch, (int) (a * 255f + 0.5f));
-                }
-            }
-            // Resilient draw pass (lead A): wrap each child's draw so a single
-            // throwing or silently-incomplete child blanks only ITSELF and the
-            // rest of the tree still paints, instead of one missing/no-op Canvas
-            // op aborting the whole dispatchDraw and blanking every sibling after
-            // it (the measured blank-canvas symptom -- see docs/canvas-draw-
-            // pipeline-gaps). The caught sink also records the gap once with a
-            // full stack, so a SINGLE run enumerates every per-node draw gap
-            // rather than discovering one per cold-run. The restoreToCount below
-            // (also run on the catch path) returns the canvas to this child's
-            // save point so the next sibling draws into a clean transform/clip.
-            try {
-                c.draw(canvas);
-            } catch (Throwable drawErr) {
-                com.macapk.loader.GfxTrace.caught("dispatchDraw:" + c.getClass().getName(), drawErr);
-            }
-            canvas.restoreToCount(save);
-            // AOSP View.draw(Canvas, ViewGroup, long):24999-25004 --
-            //     if (a != null && !more) {
-            //         if (!hardwareAcceleratedCanvas && !a.getFillAfter()) onSetAlpha(255);
-            //         parent.finishAnimatingView(this, a);
-            //     }
-            // after restoreTo, so the transform is already unwound.
-            if (childAnim != null && !animMore) {
-                if (!childAnim.getFillAfter()) {
-                    try { c.onSetAlpha(255); } catch (Throwable ignored) {}
-                }
-                finishAnimatingView(c, childAnim);
-            }
+        } finally {
+            mMacapkInDispatchDraw = outerDispatch;
         }
-        // AOSP: `if (preorderedList != null) preorderedList.clear();` -- do not pin
-        // child references in the cached list between frames.
         if (preordered != null) preordered.clear();
+        return;
     }
 
-    /** Tier 3 M12: paint an elevated child's soft drop shadow in this parent's
-     *  coordinate space. Multi-pass expanding rounded-rect fills (a cheap blur)
-     *  shaped by the child's outline radius, offset down + sized by the child's
-     *  Z (px), per-pass alpha scaled by the child's effective alpha. This is the
-     *  observable equivalent of AOSP's hardware ambient+spot shadow (the software
-     *  canvas has no real shadow primitive); drawn UNDER the child so the child's
-     *  own content paints on top. */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean>
-        macapkShadowTraced = new java.util.concurrent.ConcurrentHashMap<>();
     private static void macapkDrawElevationShadow(android.graphics.Canvas canvas,
                                                   View c, float alpha) {
         int l = c.getLeft(), t = c.getTop(), r = c.getRight(), b = c.getBottom();
@@ -3162,14 +2836,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         } catch (Throwable ignored) {}
         float radius = c.macapkShadowRadiusPx();
         if (radius < 0f) return;  // no outline + no background surface -> no shadow (AOSP)
-        if ("1".equals(ENV_MACAPK_TRACE_SHADOW)) {
-            String cn = c.getClass().getSimpleName();
-            if (macapkShadowTraced.putIfAbsent(cn, Boolean.TRUE) == null) {
-                com.macapk.loader.NativeLog.i("Mac.apk.ViewGroup",
-                    "M12 elevation shadow: " + cn + " z=" + z + "px radius=" + radius
-                    + "px bounds=(" + l + "," + t + "-" + r + "," + b + ")");
-            }
-        }
         // Z is in px (elevation set in px / android:elevation resolved to px).
         // The fill (spread ~ Z capped at 24dp, offset Z/2, four accumulating
         // round-rect passes) is shared with the window compositor's shadow
@@ -3383,7 +3049,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  ViewGroup overrides it to recurse so the whole departing subtree
      *  detaches. */
     private void macapkFinishRemoval(View child) {
-        if (View.HOVER_VIEWS && mFirstHoverTarget != null) cancelHoverTarget(child);
+        if (mFirstHoverTarget != null) cancelHoverTarget(child);
         child.setParent(null);
         child.macapkDispatchDetachedFromWindow();
         try { onViewRemoved(child); } catch (Throwable ignored) {}
@@ -3806,10 +3472,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         if (animation != null && !animation.getFillAfter()) {
             view.clearAnimation();
         }
-        if (View.TRACE_LEGACY_ANIM) {
-            com.macapk.loader.NativeLog.i("Mac.apk.LegacyAnim", "finish on " + view.getClass().getName() + "@"
-                + Integer.toHexString(System.identityHashCode(view)) + " started=" + view.mAnimationStarted);
-        }
         if (view.mAnimationStarted) {
             view.mAnimationStarted = false;
             try { view.onAnimationEnd(); } catch (Throwable endErr) {
@@ -3843,14 +3505,13 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  constant true. =0 restores the pre-change body (macapkDrawChildLegacy)
      *  together with the inline dispatchDraw loop. */
     protected boolean drawChild(android.graphics.Canvas canvas, View child, long drawingTime) {
-        if (!MACAPK_DRAWCHILD_DISPATCH) return macapkDrawChildLegacy(canvas, child, drawingTime);
         if (canvas == null || child == null) return false;
         // Reached from our own dispatchDraw loop (possibly through an app override's
         // super.drawChild), or called directly by app/library code?
         final boolean fromDispatch = mMacapkInDispatchDraw;
         // FRAMESPEED S3: AOSP's quickReject (see macapkQuickRejectChild). Before the
         // save, like AOSP's test in the parent's space before its translate.
-        if (MACAPK_FRAMESPEED_CULL && macapkQuickRejectChild(canvas, child, fromDispatch)) {
+        if (macapkQuickRejectChild(canvas, child, fromDispatch)) {
             sMacapkCulled++;
             return false;
         }
@@ -3861,7 +3522,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // ViewGroup, long):24761-24768. `child.getAnimation()` is one field read, so a
         // tree with no running animation pays that and nothing below it.
         android.view.animation.Animation childAnim =
-                View.MACAPK_LEGACY_ANIM ? child.getAnimation() : null;
+                child.getAnimation();
         float animAlpha = 1f;
         boolean animMore = false;
         if (childAnim != null) {
@@ -3875,7 +3536,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
                 // PFLAG_DRAW_ANIMATION while the child wants more frames
                 // (View.java:23452, :23465), which keeps THIS group out of its own
                 // parent's quick-reject until the animation settles.
-                if (animMore && MACAPK_FRAMESPEED_CULL) mMacapkDrawAnimation = true;
+                if (animMore) mMacapkDrawAnimation = true;
                 android.view.animation.Transformation ct = getChildTransformation();
                 // AOSP: translate(-transX,-transY); concat(t.getMatrix());
                 // translate(transX,transY), transX/Y = -scrollX/-scrollY, so the
@@ -3895,7 +3556,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         }
         // Tier 3 M7: the child's own 2D transform, after the animation matrix
         // (AOSP View.java:24893-24900 order). Identity fast path.
-        if (android.os.Looper.MACAPK_REAL_LOOPER && child.macapkHasTransform()) {
+        if (child.macapkHasTransform()) {
             child.macapkApplyTransform(canvas);
         }
         int cw = child.getRight()  - child.getLeft();
@@ -3907,7 +3568,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // Compose's DrawChildContainer, whose ViewLayers are drawn through
         // super.drawChild in a clipChildren=false container -- keeps exactly what
         // the old drawChild gave it (AOSP only quick-rejects under FLAG_CLIP_CHILDREN).
-        if (fromDispatch && android.os.Looper.MACAPK_REAL_LOOPER && (cw <= 0 || ch <= 0)) {
+        if (fromDispatch && (cw <= 0 || ch <= 0)) {
             canvas.restoreToCount(save);
             if (childAnim != null && !animMore) finishAnimatingView(child, childAnim);
             return animMore;
@@ -3916,22 +3577,21 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         // FLAG_CLIP_CHILDREN, default on, ViewGroup.java:715-716).
         // MACAPK_CLIP_CHILDREN=0 is the historical escape hatch the inline loop read
         // (and the old drawChild did not).
-        if ((!fromDispatch || MACAPK_CLIP_CHILDREN_ENV) && clipChildren && cw > 0 && ch > 0) {
-            canvas.macapkClipChildRect(0, 0, cw, ch);
+        if ((!fromDispatch || true) && clipChildren && cw > 0 && ch > 0) {
+            GfxBackend.get().clipChildRect(canvas, 0, 0, cw, ch);
         }
+        child.macapkClipToClipBounds(canvas);
         // Tier 3 M9: effective alpha = getAlpha() * getTransitionAlpha() * the
         // animation's alpha (AOSP View.java:24885-24890); zero = not drawn, partial =
         // one group-opacity layer so the subtree fades as a unit.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            float a = child.getAlpha() * child.getTransitionAlpha() * animAlpha;
-            if (a <= 0f) {
-                canvas.restoreToCount(save);
-                if (childAnim != null && !animMore) finishAnimatingView(child, childAnim);
-                return animMore;
-            }
-            if (a < 1f && cw > 0 && ch > 0) {
-                canvas.saveLayerAlpha(0, 0, cw, ch, (int) (a * 255f + 0.5f));
-            }
+        float a = child.getAlpha() * child.getTransitionAlpha() * animAlpha;
+        if (a <= 0f) {
+            canvas.restoreToCount(save);
+            if (childAnim != null && !animMore) finishAnimatingView(child, childAnim);
+            return animMore;
+        }
+        if (a < 1f && cw > 0 && ch > 0) {
+            canvas.saveLayerAlpha(0, 0, cw, ch, (int) (a * 255f + 0.5f));
         }
         // Resilient draw pass (lead A): one throwing child blanks only itself; the
         // restoreToCount returns the canvas to this child's save point either way.
@@ -3960,77 +3620,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         return animMore;
     }
 
-    /** MACAPK_DRAWCHILD_DISPATCH=0: the pre-change drawChild body, verbatim. It was
-     *  reached only when app code called drawChild itself, and returned a constant
-     *  true. */
-    private boolean macapkDrawChildLegacy(android.graphics.Canvas canvas, View child, long drawingTime) {
-        if (canvas == null || child == null) return false;
-        int save = canvas.save();
-        int dx = child.getLeft() - getScrollX(), dy = child.getTop() - getScrollY();
-        if (dx != 0 || dy != 0) canvas.translate(dx, dy);
-        // Mirror dispatchDraw's legacy-animation pump (see there for the
-        // contract and the zero-cost argument), so an app ViewGroup that
-        // overrides dispatchDraw and calls drawChild() itself -- the AOSP
-        // structure -- still runs its children's animations.
-        android.view.animation.Animation childAnim =
-                View.MACAPK_LEGACY_ANIM ? child.getAnimation() : null;
-        float animAlpha = 1f;
-        boolean animMore = false;
-        if (childAnim != null) {
-            // Here drawingTime is the caller's, exactly as in AOSP.
-            long t0 = drawingTime > 0L ? drawingTime : getDrawingTime();
-            try {
-                animMore = child.applyLegacyAnimation(this, t0, childAnim, false);
-                android.view.animation.Transformation ct = getChildTransformation();
-                if (childAnim.willChangeTransformationMatrix()) {
-                    int sxo = getScrollX(), syo = getScrollY();
-                    if (sxo != 0 || syo != 0) canvas.translate(-sxo, -syo);
-                    canvas.concat(ct.getMatrix());
-                    if (sxo != 0 || syo != 0) canvas.translate(sxo, syo);
-                }
-                animAlpha = ct.getAlpha();
-            } catch (Throwable animErr) {
-                com.macapk.loader.GfxTrace.caught(
-                    "legacyAnim:" + child.getClass().getName(), animErr);
-                childAnim = null;
-            }
-        }
-        // Mirror dispatchDraw's per-child M7 transform + M9 alpha so a code
-        // path that calls drawChild() directly fades/transforms identically
-        // (flag-gated; opaque/identity views and flag-off are unchanged).
-        if (android.os.Looper.MACAPK_REAL_LOOPER && child.macapkHasTransform()) {
-            child.macapkApplyTransform(canvas);
-        }
-        int cw = child.getRight()  - child.getLeft();
-        int ch = child.getBottom() - child.getTop();
-        if (clipChildren && cw > 0 && ch > 0) canvas.macapkClipChildRect(0, 0, cw, ch);
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            float a = child.getAlpha() * child.getTransitionAlpha() * animAlpha;
-            if (a <= 0f) {
-                canvas.restoreToCount(save);
-                if (childAnim != null && !animMore) finishAnimatingView(child, childAnim);
-                return true;
-            }
-            if (a < 1f && cw > 0 && ch > 0) {
-                canvas.saveLayerAlpha(0, 0, cw, ch, (int) (a * 255f + 0.5f));
-            }
-        }
-        // Resilient draw pass (lead A): same per-node guard as dispatchDraw so a
-        // direct drawChild() call (RecyclerView item draw, custom ViewGroups)
-        // isolates a throwing child instead of aborting the parent's draw.
-        final boolean damageSource = child.macapkBeforeDraw(canvas);   // FRAMESPEED S1, as in drawChild
-        try { child.draw(canvas); }
-        catch (Throwable drawErr) {
-            com.macapk.loader.GfxTrace.caught("drawChild:" + child.getClass().getName(), drawErr);
-        } finally { child.macapkAfterDraw(damageSource); canvas.restoreToCount(save); }
-        if (childAnim != null && !animMore) {
-            if (!childAnim.getFillAfter()) {
-                try { child.onSetAlpha(255); } catch (Throwable ignored) {}
-            }
-            finishAnimatingView(child, childAnim);
-        }
-        return true;
-    }
 
     /** AOSP ViewGroup.drawableHotspotChanged: forwards hotspot change
      *  to all child drawable states. */
@@ -4062,7 +3651,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     private boolean macapkNotifyChildrenOnDrawableStateChange = false;
     @Override public void drawableStateChanged() {
         super.drawableStateChanged();
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         if (!macapkNotifyChildrenOnDrawableStateChange) return;
         for (int i = 0; i < children.size(); i++) {
             View child = children.get(i);
@@ -4109,13 +3697,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
      *  WheelScroll.VIEWS=0 keeps the old walk: every child in turn, untransformed,
      *  whatever the pointer position. */
     @Override protected boolean dispatchGenericPointerEvent(MotionEvent event) {
-        if (!com.macapk.loader.WheelScroll.VIEWS) {
-            for (int i = children.size() - 1; i >= 0; i--) {
-                View c = children.get(i);
-                if (c != null && c.dispatchGenericMotionEvent(event)) return true;
-            }
-            return super.dispatchGenericPointerEvent(event);
-        }
         final int childrenCount = children.size();
         if (childrenCount != 0) {
             final float x = event.getX();
@@ -4160,7 +3741,6 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     private boolean mHoveredSelf;
 
     @Override public boolean dispatchHoverEvent(MotionEvent event) {
-        if (!View.HOVER_VIEWS) return super.dispatchHoverEvent(event);
         final int action = event.getAction();
         final boolean interceptHover = onInterceptHoverEvent(event);
         event.setAction(action);   // restore in case it was changed
@@ -4297,7 +3877,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         return e.macapkIsHoverCopy ? e : MotionEvent.macapkHoverCopy(e);
     }
     @Override protected boolean hasHoveredChild() {
-        return View.HOVER_VIEWS && mFirstHoverTarget != null;
+        return mFirstHoverTarget != null;
     }
     @Override protected boolean pointInHoveredChild(MotionEvent event) {
         return mFirstHoverTarget != null
@@ -4407,7 +3987,7 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
     }
     public boolean addStatesFromChildren() { return mAddStatesFromChildren; }
     @Override protected int[] onCreateDrawableState(int extraSpace) {
-        if (!mAddStatesFromChildren || !android.os.Looper.MACAPK_REAL_LOOPER) {
+        if (!mAddStatesFromChildren) {
             return super.onCreateDrawableState(extraSpace);
         }
         final int n = children.size();
@@ -4517,9 +4097,70 @@ public class ViewGroup extends View implements ViewParent, ViewManager {
         requestLayout();
     }
 
-    // No cross-process a11y connection; AOSP populates the array from children
-    // that are important for accessibility, which for us collapses to nothing.
-    public void addChildrenForAccessibility(java.util.ArrayList<View> outChildren) { }
+    /** AOSP ViewGroup.addChildrenForAccessibility (android-14): the children a screen reader
+     *  reads (com.macapk.loader.HostAccessibility), in reading order -- each visible child that is
+     *  important for accessibility, else its own such children in its place. */
+    public void addChildrenForAccessibility(java.util.ArrayList<View> outChildren) {
+        if (getAccessibilityNodeProvider() != null) return;
+        java.util.List<View> children = childrenInAccessibilityOrder();
+        for (int i = 0; i < children.size(); i++) {
+            View child = children.get(i);
+            if (child.getVisibility() == VISIBLE) {
+                if (child.includeForAccessibility()) {
+                    outChildren.add(child);
+                } else {
+                    child.addChildrenForAccessibility(outChildren);
+                }
+            }
+        }
+    }
+
+    /** AOSP ChildListForAccessibility.obtain(parent, true): the children sorted by
+     *  ViewLocationHolder, top to bottom in stripes, then from the start edge (the left, or the
+     *  right in a right-to-left layout), then the larger first; a sort the comparison cannot
+     *  order (IllegalArgumentException) falls back to plain location order, as AOSP's does. */
+    private java.util.List<View> childrenInAccessibilityOrder() {
+        final int count = getChildCount();
+        java.util.ArrayList<View> children = new java.util.ArrayList<>(count);
+        java.util.ArrayList<Object[]> holders = new java.util.ArrayList<>(count);
+        final boolean rtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
+        for (int i = 0; i < count; i++) {
+            View child = getChildAt(i);
+            android.graphics.Rect location = new android.graphics.Rect();
+            child.getDrawingRect(location);
+            offsetDescendantRectToMyCoords(child, location);
+            holders.add(new Object[] {child, location});
+        }
+        try {
+            holders.sort((a, b) -> compareForAccessibility(a, b, rtl, true));
+        } catch (IllegalArgumentException e) {
+            holders.sort((a, b) -> compareForAccessibility(a, b, rtl, false));
+        }
+        for (Object[] h : holders) children.add((View) h[0]);
+        return children;
+    }
+
+    /** AOSP ViewLocationHolder.compareBoundsOfTree, without its descent into the children (a
+     *  stable sort keeps the drawing order for the ties it would break). */
+    private static int compareForAccessibility(Object[] a, Object[] b, boolean rtl, boolean stripes) {
+        android.graphics.Rect l1 = (android.graphics.Rect) a[1], l2 = (android.graphics.Rect) b[1];
+        if (stripes) {
+            if (l1.bottom - l2.top <= 0) return -1;  // the first is above the second
+            if (l1.top - l2.bottom >= 0) return 1;   // the first is below the second
+        }
+        if (!rtl) {
+            final int left = l1.left - l2.left;
+            if (left != 0) return left;
+        } else {
+            final int right = l1.right - l2.right;
+            if (right != 0) return -right;
+        }
+        final int top = l1.top - l2.top;
+        if (top != 0) return top;
+        final int height = l1.height() - l2.height();
+        if (height != 0) return -height;
+        return -(l1.width() - l2.width());
+    }
 
     // No ActionMode host in the Mac.apk window; AOSP returns null when no
     // ancestor starts one, which is our state.

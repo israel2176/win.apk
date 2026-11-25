@@ -41,8 +41,11 @@ import android.view.ViewGroup;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicInteger;
+import com.macapk.loader.view.ViewHost;
 
-public final class TouchDispatcher {
+// Not final: with AOSP's views (-Dwinapk.aosp.views=1) the host's entries are
+// com.winapk.aospviews.AospInput's, a subclass (ViewHost.newTouchDispatcher).
+public class TouchDispatcher {
 
     /** The registered dispatcher.
      *
@@ -103,7 +106,7 @@ public final class TouchDispatcher {
     static KeyEvent keyEvent(long downTime, long eventTime, int action,
                              int keyCode, int repeat, int metaState) {
         KeyEvent ev = new KeyEvent(downTime, eventTime, action, keyCode, repeat, metaState);
-        ev.macapkSetSource(android.view.InputDevice.SOURCE_KEYBOARD
+        ViewHost.get().setKeySource(ev, android.view.InputDevice.SOURCE_KEYBOARD
                          | android.view.InputDevice.SOURCE_DPAD);
         return ev;
     }
@@ -157,24 +160,22 @@ public final class TouchDispatcher {
         long downTime = now;
         int repeat = 0;
         int flags = 0;
-        if (KEY_REPEAT_AOSP) {
-            synchronized (sHostKeyLock) {
-                if (action == KeyEvent.ACTION_DOWN) {
-                    // AppKit's "this is the OS repeating a held key" marks a driver repeat;
-                    // anything else starts a fresh press (see above).
-                    Long held = autoRepeat ? sHostKeyDownTime.get(keyCode) : null;
-                    if (held != null) downTime = held;
-                    else sHostKeyDownTime.put(keyCode, now);
-                    repeat = (held != null && sHostLastDownKey == keyCode) ? sHostLastRepeat + 1 : 0;
-                    sHostLastDownKey = keyCode;
-                    sHostLastRepeat = repeat;
-                    if (repeat == 1) flags |= KeyEvent.FLAG_LONG_PRESS;
-                } else {
-                    Long held = sHostKeyDownTime.remove(keyCode);
-                    if (held != null) downTime = held;
-                    sHostLastDownKey = Integer.MIN_VALUE;
-                    sHostLastRepeat = 0;
-                }
+        synchronized (sHostKeyLock) {
+            if (action == KeyEvent.ACTION_DOWN) {
+                // AppKit's "this is the OS repeating a held key" marks a driver repeat;
+                // anything else starts a fresh press (see above).
+                Long held = autoRepeat ? sHostKeyDownTime.get(keyCode) : null;
+                if (held != null) downTime = held;
+                else sHostKeyDownTime.put(keyCode, now);
+                repeat = (held != null && sHostLastDownKey == keyCode) ? sHostLastRepeat + 1 : 0;
+                sHostLastDownKey = keyCode;
+                sHostLastRepeat = repeat;
+                if (repeat == 1) flags |= KeyEvent.FLAG_LONG_PRESS;
+            } else {
+                Long held = sHostKeyDownTime.remove(keyCode);
+                if (held != null) downTime = held;
+                sHostLastDownKey = Integer.MIN_VALUE;
+                sHostLastRepeat = 0;
             }
         }
         // KeyboardInputMapper::processKey ORs AKEY_EVENT_FLAG_FROM_SYSTEM into every hardware
@@ -185,8 +186,6 @@ public final class TouchDispatcher {
                 android.hardware.input.InputManager.macapkHostKeyDeviceId(), 0, flags, src);
         return ev;
     }
-    /** MACAPK_KEY_REPEAT (default ON): see hostKeyEvent. */
-    static final boolean KEY_REPEAT_AOSP = !"0".equals(System.getenv("MACAPK_KEY_REPEAT"));
     private static final Object sHostKeyLock = new Object();
     /** keyCode -> the downTime of a host key that is held right now. */
     private static final java.util.HashMap<Integer, Long> sHostKeyDownTime = new java.util.HashMap<>();
@@ -264,16 +263,8 @@ public final class TouchDispatcher {
      *  `dispatch` path takes (Cocoa origin, bottom-left); the scaling/Y-flip below mirrors
      *  `doDispatch` exactly so both paths land in the same pixel space. */
     public void dispatchPinch(int phase, float cx, float cy, float span, float viewW, float viewH) {
-        if (TRACKPAD_MULTITOUCH) {
-            trackpadPinch(phase, cx, cy, span, 0f, viewW, viewH);
-            return;
-        }
-        if (InputRecorder.ON) InputRecorder.unrecorded("legacy pinch (MACAPK_TRACKPAD_MULTITOUCH=0)");
-        try {
-            loopHandler().post(() -> doDispatchPinch(phase, cx, cy, span, viewW, viewH));
-        } catch (Throwable t) {
-            doDispatchPinch(phase, cx, cy, span, viewW, viewH);
-        }
+        trackpadPinch(phase, cx, cy, span, 0f, viewW, viewH);
+        return;
     }
 
     /** The synthesized two-finger stream cocoa_bridge.mm sends for a trackpad
@@ -284,42 +275,9 @@ public final class TouchDispatcher {
      *  moves nothing (that body has no angle). */
     public void dispatchTwoFinger(int phase, float cx, float cy, float span, float angle,
                                   float viewW, float viewH) {
-        if (!TRACKPAD_MULTITOUCH) { dispatchPinch(phase, cx, cy, span, viewW, viewH); return; }
         trackpadPinch(phase, cx, cy, span, angle, viewW, viewH);
     }
 
-    private void doDispatchPinch(int phase, float cx, float cy, float span,
-                                 float viewW, float viewH) {
-        Activity active = ActivityHost.peek();
-        if (active == null) return;
-        View croot = active.macapkContentView();
-        if (croot == null) return;
-        final float scale = macapkBackingScale();
-        float px = cx * scale;
-        float py = (viewH - cy) * scale;          // same Y-flip as doDispatch
-        float half = Math.max(8f, span * scale) / 2f;
-        float x0 = px - half, x1 = px + half;
-        long now = android.os.SystemClock.uptimeMillis();
-        try {
-            if (phase == 0) {
-                s_gestureDownTime = now;
-                croot.dispatchTouchEvent(pinchEvent(s_gestureDownTime, now,
-                        MotionEvent.ACTION_DOWN, 0, x0, py, x1, py, 1));
-                croot.dispatchTouchEvent(pinchEvent(s_gestureDownTime, now,
-                        MotionEvent.ACTION_POINTER_DOWN, 1, x0, py, x1, py, 2));
-            } else if (phase == 1) {
-                croot.dispatchTouchEvent(pinchEvent(s_gestureDownTime, now,
-                        MotionEvent.ACTION_MOVE, 0, x0, py, x1, py, 2));
-            } else {
-                croot.dispatchTouchEvent(pinchEvent(s_gestureDownTime, now,
-                        MotionEvent.ACTION_POINTER_UP, 1, x0, py, x1, py, 2));
-                croot.dispatchTouchEvent(pinchEvent(s_gestureDownTime, now,
-                        MotionEvent.ACTION_UP, 0, x0, py, x1, py, 1));
-            }
-        } catch (Throwable t) {
-            NativeLog.w(TAG, "pinch dispatch threw: " + t);
-        }
-    }
 
     // ---- host trackpad multi-touch (MACAPK_TRACKPAD_MULTITOUCH, default ON) ----
     //
@@ -334,9 +292,6 @@ public final class TouchDispatcher {
     // landed one status-bar height low) and the renderer-direct fallback.
     //
     // =0 restores the old behaviour exactly: the view never opts into touches
-    // (so no frame ever arrives here) and dispatchPinch takes its old body.
-    static final boolean TRACKPAD_MULTITOUCH =
-        !"0".equals(System.getenv("MACAPK_TRACKPAD_MULTITOUCH"));
 
     private static final TrackpadGestureMapper sTrackpad = new TrackpadGestureMapper();
     /** A host mouse button (or the synthesized scroll drag, which rides the
@@ -358,7 +313,6 @@ public final class TouchDispatcher {
     public long dispatchTrackpad(int n, int[] ids, int[] phases, float[] nx, float[] ny,
                                  float padWmm, float padHmm, float curX, float curY,
                                  float viewW, float viewH) {
-        if (!TRACKPAD_MULTITOUCH) return -1L;
         final float scale = macapkBackingScale();
         final java.util.ArrayList<TrackpadGestureMapper.Motion> out = new java.util.ArrayList<>(4);
         long tick;
@@ -374,7 +328,6 @@ public final class TouchDispatcher {
 
     /** The settle timer cocoa_bridge.mm scheduled from the last return value. */
     public long trackpadTick() {
-        if (!TRACKPAD_MULTITOUCH) return -1L;
         final java.util.ArrayList<TrackpadGestureMapper.Motion> out = new java.util.ArrayList<>(4);
         long tick;
         synchronized (sTrackpad) {
@@ -390,7 +343,6 @@ public final class TouchDispatcher {
      *  otherMouseDown: for the others -- a physical two-finger click is macOS's
      *  default secondary click and must not become a tap). */
     public void trackpadClaim(boolean systemGesture) {
-        if (!TRACKPAD_MULTITOUCH) return;
         final java.util.ArrayList<TrackpadGestureMapper.Motion> out = new java.util.ArrayList<>(1);
         synchronized (sTrackpad) { sTrackpad.claim(out::add, systemGesture); }
         deliverTrackpad(out, systemGesture ? "claim:system" : "claim:mouse");
@@ -404,7 +356,7 @@ public final class TouchDispatcher {
     private static boolean trackpadMayEngage() {
         if (s_hostPointerDown) return false;
         if (ActivityHost.peek() == null) return false;
-        if (android.view.MacApkDragSession.isActive()) return false;
+        if (ViewHost.get().dragActive()) return false;
         return WindowOverlayStack.isEmpty() && !WindowOverlayStack.gesturePinnedToOverlay();
     }
 
@@ -780,36 +732,9 @@ public final class TouchDispatcher {
     static void macapkInjectHostGesture(float fx0, float fy0, float fx1, float fy1, long durMs,
                                         long holdMs) {
         // GATE-MUTANT(touchinput:hosttap-guard) begin -- debug/touchinput_gate.sh C8
-        if (!"0".equals(System.getenv("MACAPK_EXTERNAL_URLS"))) {
-            NativeLog.w(TAG, "hosttap refused: set MACAPK_EXTERNAL_URLS=0 (a real-path click "
-                + "counts as user input and would let the app open the host browser)");
-            return;
-        }
-        // GATE-MUTANT(touchinput:hosttap-guard) end
-        durMs = Math.max(16L, Math.min(durMs, 5000L));
-        NativeLog.i(TAG, "injectHost (" + fx0 + "," + fy0 + ")->(" + fx1 + "," + fy1 + ") "
-            + durMs + "ms -> " + (ActivityHost.peek() == null ? "NO ACTIVITY"
-                : ActivityHost.peek().getClass().getName()));
-        if (!NativeCocoa.postHostMouse(0, fx0, fy0)) {
-            NativeLog.w(TAG, "injectHost: no window; dropped");
-            return;
-        }
-        if (holdMs > 0) {
-            try { Thread.sleep(Math.min(holdMs, 5000L)); } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        final boolean moves = fx0 != fx1 || fy0 != fy1;
-        final int steps = moves ? (int) Math.max(2L, durMs / 16L) : 1;
-        for (int i = 1; i <= steps; i++) {
-            try { Thread.sleep(durMs / steps); } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-            if (moves) NativeCocoa.postHostMouse(2, fx0 + (fx1 - fx0) * i / steps,
-                                                    fy0 + (fy1 - fy0) * i / steps);
-        }
-        NativeCocoa.postHostMouse(1, fx1, fy1);
+        NativeLog.w(TAG, "hosttap refused: set MACAPK_EXTERNAL_URLS=0 (a real-path click "
+            + "counts as user input and would let the app open the host browser)");
+        return;
     }
 
     /** The pre-v1.0.1645 injected tap, kept byte-for-byte for canvas apps:
@@ -884,7 +809,7 @@ public final class TouchDispatcher {
     private static boolean injectTargetsSurfaceTree(Activity a) {
         if (a == null) return false;
         try {
-            View root = a.macapkContentView();
+            View root = com.macapk.loader.ActivityHost.contentRoot(a);
             return root != null && hostInputTree(root);
         } catch (Throwable t) {
             return false;
@@ -1107,6 +1032,30 @@ public final class TouchDispatcher {
      *  never takes while a field holds input. Thread choice as injectText.
      *  Added 2026-09-29 (lane text-input) to commit a typed NumberPicker value
      *  headlessly. */
+    /** `imetext <text>`: the text as a Windows input method composes and commits it, through the
+     *  host's own entries in the order win32_window.cpp calls them (WM_IME_COMPOSITION): the
+     *  composition grows a character at a time (GCS_COMPSTR, dispatchHostComposingText), the
+     *  result takes its place (GCS_RESULTSTR, dispatchHostText), an empty composition follows,
+     *  then the composition ends (WM_IME_ENDCOMPOSITION, null). With no editor that shows a
+     *  composition itself (hostImeInline false) the host lets Windows draw it and the result
+     *  arrives as characters: that is `text`. */
+    public static void macapkInjectImeText(final String text) throws InterruptedException {
+        final TouchDispatcher d = macapkInstance();
+        if (d == null) { NativeLog.w(TAG, "injectImeText: no dispatcher"); return; }
+        if (!d.hostImeInline()) {
+            NativeLog.w(TAG, "injectImeText: no editor shows a composition; typed as characters");
+            macapkInjectText(text);
+            return;
+        }
+        for (int i = 1; i <= text.length(); i++) {
+            d.dispatchHostComposingText(text.substring(0, i));
+            Thread.sleep(30L);
+        }
+        d.dispatchHostText(text);
+        d.dispatchHostComposingText("");
+        d.dispatchHostComposingText(null);
+    }
+
     public static void macapkInjectHostKey(final int keyCode) {
         final TouchDispatcher d = macapkInstance();
         if (d == null) { NativeLog.w(TAG, "injectHostKey: no dispatcher"); return; }
@@ -1149,20 +1098,6 @@ public final class TouchDispatcher {
             catch (Throwable thr) { NativeLog.w(TAG, "injectKey up: " + thr); }
         });
     }
-    // ---- key-binding injection (the Controls menu) -------------------------
-    //
-    // Press-and-HOLD, not tap. A gas pedal has to stay pressed for as long as
-    // the key is held, so keyDown and keyUp inject SEPARATE down and up events
-    // rather than macapkInjectTap's immediate down-then-up pair (which is
-    // useless for driving). Several keys can be held at once -- gas plus steer
-    // is the normal case -- so each held binding owns a pointer id and the
-    // events are real multi-pointer MotionEvents: ACTION_POINTER_DOWN/UP with
-    // the pointer index packed into the action, the same shape AOSP's
-    // InputDispatcher delivers to a multi-touch app.
-    //
-    // Coordinates are SURFACE pixels, already denormalised by the caller
-    // against the current content rect (see KeyBindProfiles for why bindings
-    // are stored normalised).
     // The live surface size in PIXELS, published by SurfaceView.macapkSurfaceChanged.
     // That is the authoritative source (the native side's actual drawable size);
     // deriving it from NativeCocoa.phoneWidth()/phoneHeight() instead means
@@ -1171,152 +1106,6 @@ public final class TouchDispatcher {
     private static volatile int sSurfaceW = 0, sSurfaceH = 0;
     public static void macapkNoteSurfaceSize(int wPx, int hPx) {
         if (wPx > 0 && hPx > 0) { sSurfaceW = wPx; sSurfaceH = hPx; }
-    }
-
-    private static final int     MAX_HELD  = 8;
-    private static final int[]   sHeldKey  = new int[MAX_HELD];
-    // A pointer id is STABLE for the lifetime of that pointer (AOSP contract:
-    // getPointerId(i) identifies the finger, the slot index does not). Slots
-    // compact on release, so the id cannot be the slot index -- otherwise
-    // releasing brake would silently renumber a still-held gas pointer and the
-    // engine would see the held finger vanish and a new one appear.
-    private static final int[]   sHeldId   = new int[MAX_HELD];
-    private static final float[] sHeldX    = new float[MAX_HELD];
-    private static final float[] sHeldY    = new float[MAX_HELD];
-    private static int           sHeldCount = 0;
-
-    /** Lowest id not currently in use, so ids stay small and reused. */
-    private static int allocPointerId() {
-        for (int id = 0; id < MAX_HELD; id++) {
-            boolean taken = false;
-            for (int i = 0; i < sHeldCount; i++) if (sHeldId[i] == id) { taken = true; break; }
-            if (!taken) return id;
-        }
-        return 0;
-    }
-
-    private static int heldIndexOf(int keyCode) {
-        for (int i = 0; i < sHeldCount; i++) if (sHeldKey[i] == keyCode) return i;
-        return -1;
-    }
-
-    /** When the first bound key of the current held set went down. Same
-     *  contract as s_gestureDownTime, for the keyboard-driven touch stream. */
-    private static volatile long sHeldDownTime = 0L;
-
-    /** Build an N-pointer event over the currently-held slots. `action` should
-     *  already carry its pointer index for the POINTER_DOWN/UP forms.
-     *
-     *  The source argument used to be 0. That worked only because this file's
-     *  obtain() silently rewrote a 0 source to SOURCE_TOUCHSCREEN; AOSP stores
-     *  what the caller passed, so the source has to be named here or every
-     *  keybind touch becomes SOURCE_UNKNOWN and a pointer-class-filtering
-     *  engine ignores it. size is 1f for the same reason PointerCoords no
-     *  longer defaults it: a real finger contact reports a size. */
-    private static MotionEvent heldEvent(int action, int count) {
-        long t = android.os.SystemClock.uptimeMillis();
-        long down = sHeldDownTime != 0L ? sHeldDownTime : t;
-        MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[count];
-        MotionEvent.PointerCoords[]     crds  = new MotionEvent.PointerCoords[count];
-        for (int i = 0; i < count; i++) {
-            MotionEvent.PointerProperties p = new MotionEvent.PointerProperties();
-            p.id = sHeldId[i];
-            p.toolType = MotionEvent.TOOL_TYPE_FINGER;
-            props[i] = p;
-            MotionEvent.PointerCoords c = new MotionEvent.PointerCoords();
-            c.x = sHeldX[i];
-            c.y = sHeldY[i];
-            c.pressure = 1f;
-            c.size = 1f;
-            crds[i] = c;
-        }
-        return MotionEvent.obtain(down, t, action, count, props, crds,
-                                  0, 0, 1f, 1f, TOUCHSCREEN_DEVICE_ID, 0,
-                                  android.view.InputDevice.SOURCE_TOUCHSCREEN, 0);
-    }
-
-    /** `cx`/`cy` are the coordinates of the pointer this event is ABOUT, which
-     *  for a POINTER_DOWN/UP is not pointer 0 -- the renderer-direct fallback is
-     *  single-touch, so it must be told the point that actually changed. */
-    private static void deliverHeld(MotionEvent ev, float cx, float cy, int cid) {
-        Activity a = ActivityHost.peek();
-        if (a == null) { ev.recycle(); return; }
-        if (deliverToTakenInputQueue(a, ev)) return;
-        try { a.dispatchTouchEvent(ev); }
-        catch (Throwable t) { NativeLog.w(TAG, "keybind dispatch: " + t); }
-        // Engines whose onTouchEvent queues to a GLThread that never drains
-        // need the renderer-direct path too -- same reasoning as doDispatch
-        // (and the same v1.0.1639 suppression when the queue IS drained).
-        // v1.0.833: `cid` is the id of the pointer this event is about. Passing
-        // it is what makes simultaneous bound keys work on cocos2d-x: without
-        // it every held pointer collapsed onto id 0 and the POINTER_ forms were
-        // dropped entirely.
-        try { dispatchToRenderer(a, ev.getActionMasked(), cx, cy, cid); }
-        catch (Throwable ignored) { }
-        finally { ev.recycle(); }
-    }
-
-    /** A bound key went DOWN: start holding a pointer at (px,py) in surface
-     *  pixels. Idempotent -- key auto-repeat must not add a second pointer. */
-    public static void macapkKeyBindDown(int keyCode, float px, float py) {
-        MotionEvent ev;
-        int downId;
-        // Build under the lock, DISPATCH outside it: dispatchTouchEvent runs
-        // guest code, which can re-enter this class, and holding a static lock
-        // across a guest call is how a deadlock gets built by accident.
-        synchronized (TouchDispatcher.class) {
-            if (heldIndexOf(keyCode) >= 0) return;      // already held (auto-repeat)
-            if (sHeldCount >= MAX_HELD) return;
-            noteRealInput();                      // a REAL user action
-            int id  = allocPointerId();   // BEFORE sHeldCount++ so it scans the live set
-            int idx = sHeldCount++;
-            // The gesture starts at the FIRST finger; later POINTER_DOWNs keep
-            // the same downTime, exactly as AOSP's InputDispatcher does.
-            if (idx == 0) sHeldDownTime = android.os.SystemClock.uptimeMillis();
-            sHeldKey[idx] = keyCode; sHeldId[idx] = id;
-            sHeldX[idx] = px; sHeldY[idx] = py;
-            int action = (idx == 0)
-                ? MotionEvent.ACTION_DOWN
-                : (MotionEvent.ACTION_POINTER_DOWN
-                   | (idx << MotionEvent.ACTION_POINTER_INDEX_SHIFT));
-            ev = heldEvent(action, sHeldCount);
-            downId = id;
-        }
-        deliverHeld(ev, px, py, downId);
-    }
-
-    /** A bound key went UP: release its pointer. */
-    public static void macapkKeyBindUp(int keyCode) {
-        MotionEvent ev;
-        float cx, cy;
-        int cid;
-        synchronized (TouchDispatcher.class) {
-            int idx = heldIndexOf(keyCode);
-            if (idx < 0) return;
-            int action = (sHeldCount == 1)
-                ? MotionEvent.ACTION_UP
-                : (MotionEvent.ACTION_POINTER_UP
-                   | (idx << MotionEvent.ACTION_POINTER_INDEX_SHIFT));
-            // The UP event must still DESCRIBE the pointer being lifted, so
-            // build it before compacting the slot array.
-            cx = sHeldX[idx]; cy = sHeldY[idx]; cid = sHeldId[idx];
-            ev = heldEvent(action, sHeldCount);
-            for (int i = idx; i < sHeldCount - 1; i++) {
-                sHeldKey[i] = sHeldKey[i + 1];
-                sHeldId[i]  = sHeldId[i + 1];
-                sHeldX[i]   = sHeldX[i + 1];
-                sHeldY[i]   = sHeldY[i + 1];
-            }
-            sHeldCount--;
-            if (sHeldCount == 0) sHeldDownTime = 0L;   // gesture over
-        }
-        deliverHeld(ev, cx, cy, cid);
-    }
-
-    /** Drop every held pointer without delivering UPs. For teardown paths
-     *  (activity finished) where the guest is going away anyway. */
-    public static void macapkKeyBindReset() {
-        synchronized (TouchDispatcher.class) { sHeldCount = 0; sHeldDownTime = 0L; }
     }
 
     // ---- the inject driver (MACAPK_INJECT_FILE) ----
@@ -1416,6 +1205,22 @@ public final class TouchDispatcher {
      *  three commits, with no symptom but a tap in the wrong place. A fraction
      *  outside [0,1] is therefore REJECTED (it is a pixel coordinate written with
      *  the wrong verb), never posted: a mis-spelt verb must fail loudly. */
+    /** hostmouse's message -> NativeCocoa.postHostMouse's action (0-2 are hosttap's down, up and
+     *  move; win32_window.h PostedMouse), or -1 for a word it does not know. */
+    static int macapkHostMouseAction(String word) {
+        switch (word) {
+            case "ldown": return 0;
+            case "lup": return 1;
+            case "move": return 2;
+            case "rdown": return 3;
+            case "rup": return 4;
+            case "mdown": return 5;
+            case "mup": return 6;
+            case "leave": return 7;
+            default: return -1;
+        }
+    }
+
     static String macapkInjectRoute(String[] p) {
         final String v = p[0];
         final int n = p.length;
@@ -1429,6 +1234,7 @@ public final class TouchDispatcher {
         if (v.equals("hostkeydown") && n >= 2) return "hostkeydown";
         if (v.equals("hostkeyup") && n >= 2) return "hostkeyup";
         if (v.equals("text") && n >= 2) return "text";
+        if (v.equals("imetext") && n >= 2) return "imetext";
         if (v.equals("sleep") && n >= 2) return "sleep";
         // Host trackpad (cocoa_bridge.mm CocoaDebugTrackpad): the NSTouch frame /
         // magnify body a real trackpad runs, entered below the NSEvent decode.
@@ -1437,6 +1243,9 @@ public final class TouchDispatcher {
         if (v.equals("rotate") && n >= 5) return fractionsInRange(p, 2) ? "rotate" : "reject";
         if (v.equals("hostscroll") && n >= 5) return fractionsInRange(p, 2) ? "hostscroll" : "reject";
         if (v.equals("hostwheel") && n >= 4) return fractionsInRange(p, 2) ? "hostwheel" : "reject";
+        if (v.equals("hostmouse") && n >= 4) {
+            return fractionsInRange(p, 2) && macapkHostMouseAction(p[3]) >= 0 ? "hostmouse" : "reject";
+        }
         if (v.equals("close") || v.equals("quit") || v.equals("terminate")) return "quit";
         // Input-recorder events (InputRecorder; docs/input-recorder_2026-10-01.md):
         // the host entry points themselves, replayed with the recorded arguments.
@@ -1467,6 +1276,9 @@ public final class TouchDispatcher {
     static void macapkDispatchInjectLine(String ln, InputRecorder.Sink sink) throws InterruptedException {
         final String[] p = ln.split("\\s+");
         final String r = macapkInjectRoute(p);
+        // With AOSP's views the view host delivers the input verbs itself (its windows' own
+        // input path); it answers false for the rest, and Win.apk's always does.
+        if (r != null && ViewHost.get().injectInput(r, p, ln)) return;
         if (r == null) {
             NativeLog.w(TAG, "inject-driver: ignored '" + KeyLogPolicy.injectLine(ln) + "' (unknown verb or too few arguments)");
             return;
@@ -1516,6 +1328,9 @@ public final class TouchDispatcher {
                 // included -- so split on the FIRST space only, not on every space.
                 macapkInjectText(ln.substring(ln.indexOf(' ') + 1));
                 break;
+            case "imetext":
+                macapkInjectImeText(ln.substring(ln.indexOf(' ') + 1));
+                break;
             case "sleep":
                 Thread.sleep(Long.parseLong(p[1]));
                 break;
@@ -1534,6 +1349,13 @@ public final class TouchDispatcher {
                     NativeLog.w(TAG, "inject-driver: trackpad frame found no input view");
                 break;
             }
+            case "hostmouse":
+                // hostmouse <fx> <fy> <move|ldown|lup|rdown|rup|mdown|mup|leave>: one message of the
+                // host's mouse, posted to the window as a user's mouse makes it (Windows host: the
+                // right and middle buttons and hover are the mouse's own path; the left button is a
+                // finger, as hosttap). The same guard as hosttap: it is real user input.
+                NativeLog.w(TAG, "hostmouse refused: a real-path click would count as user input");
+                break;
             case "hostwheel": {
                 // hostwheel <fx> <fy> <dyLines> [dxLines]: one classic mouse-wheel
                 // notch through the host scrollWheel: body (CocoaDebugTrackpad kind 2).
@@ -1883,11 +1705,10 @@ public final class TouchDispatcher {
         return null;
     }
     private static boolean routeToLoop(Activity active) {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return false;
         // v1.0.939: identity, not name -- see Looper.macapkIsActivityThread.
         if (android.os.Looper.macapkIsActivityThread()) return false; // already on loop
         if (active == null) return false;
-        View root = active.macapkContentView();
+        View root = com.macapk.loader.ActivityHost.contentRoot(active);
         // An activity with NO content yet is one being created right now: the
         // launch pushed it (ActivityHost.performLaunch) and its onCreate is
         // running, or about to, on the loop. Its input belongs on the loop too
@@ -1904,45 +1725,17 @@ public final class TouchDispatcher {
         return !hostInputTree(root);   // UI-thread input unless OS-main renders
     }
 
-    /** MACAPK_INPUT_UI_THREAD (default ON, 2026-09-30): which content trees
-     *  keep their host input on the AppKit thread.
-     *
-     *  AOSP delivers every input event on the thread that owns the window:
-     *  ViewRootImpl.setView binds `new WindowInputEventReceiver(inputChannel,
-     *  Looper.myLooper())` (android14-release ViewRootImpl.java:1454), and
-     *  InputEventReceiver's looper is "the looper to use when invoking
-     *  callbacks" (InputEventReceiver.java:67). A SurfaceView changes nothing
-     *  about that: its javadoc exists so "a secondary thread can render into
-     *  the screen" (SurfaceView.java:90), the RENDER moves, the input does not.
-     *
-     *  The old predicate, "the tree holds ANY SurfaceView", sent every such
-     *  app's clicks to the AppKit thread. That is only right when the AppKit
-     *  thread is the app's GL thread, i.e. when our macapkDrawFrame drives the
-     *  renderer (a GLSurfaceView Renderer, a reflected renderer; the cocos
-     *  renderer-direct fallback lives in exactly those trees). For a view whose
-     *  pixels come from the app's own threads (a native EGL window surface, a
-     *  video or camera producer) it ran the app's click handlers off its main
-     *  thread: Organic Maps' search/menu buttons threw "Cannot invoke setValue
-     *  on a background thread" and its map Download button ABORTED the process
-     *  in Storage::GetNodeAttrs, CHECK(m_threadChecker.CalledOnOriginalThread()).
-     *  It also raced the view traversal, which runs on the loop for every tree
-     *  (ViewCanvasDriver.macapkDrawFrame posts doFrame there).
-     *
-     *  =0 restores "any SurfaceView" byte for byte. */
-    static final boolean INPUT_UI_THREAD =
-        !"0".equals(System.getenv("MACAPK_INPUT_UI_THREAD"));
 
     /** True when `root`'s host input belongs on the AppKit thread (see
      *  INPUT_UI_THREAD). The ONE predicate for real host input (routeToLoop)
      *  and for injected input (injectTargetsSurfaceTree), so a harness tap
      *  keeps travelling the same thread a real click does. */
     static boolean hostInputTree(View root) {
-        return INPUT_UI_THREAD ? treeHasOsMainRenderedSurface(root)
-                               : treeHasSurfaceView(root);
+        return treeHasOsMainRenderedSurface(root);
     }
     private static boolean treeHasOsMainRenderedSurface(View v) {
         if (v instanceof android.view.SurfaceView
-                && ((android.view.SurfaceView) v).macapkRendersOnOsMain()) return true;
+                && ViewHost.get().rendersOnOsMain((android.view.SurfaceView) v)) return true;
         if (v instanceof ViewGroup) {
             ViewGroup vg = (ViewGroup) v;
             for (int i = 0, n = vg.getChildCount(); i < n; i++)
@@ -1986,8 +1779,7 @@ public final class TouchDispatcher {
         // window whose views cannot reach its dispatcher yet -- see
         // macapkViewBackWired. Gate MACAPK_BACK_INVOKED (default ON); =0 skips
         // this block entirely, which is the pre-change path.
-        if (ev != null && ev.getKeyCode() == KeyEvent.KEYCODE_BACK
-                && android.window.WindowOnBackInvokedDispatcher.MACAPK_BACK_INVOKED) {
+        if (ev != null && ev.getKeyCode() == KeyEvent.KEYCODE_BACK) {
             // The stage sees the key with its AOSP repeat count (see
             // macapkBackRepeat); LEGACY / NO_CALLBACK hand the view tree the
             // ORIGINAL event, so a legacy app's key is byte-for-byte unchanged.
@@ -2032,7 +1824,7 @@ public final class TouchDispatcher {
         android.view.InputQueue q;
         try {
             android.view.Window w = a.getWindow();
-            q = w != null ? w.macapkTakenInputQueue() : null;
+            q = w != null ? ViewHost.get().takenInputQueue(w) : null;
         } catch (Throwable t) { return false; }
         if (q == null || q.getNativePtr() == 0) return false;
         final android.view.InputEvent copy =
@@ -2056,9 +1848,6 @@ public final class TouchDispatcher {
         return true;
     }
 
-    /** MACAPK_KEY_SHORTCUTS (default ON; =0 skips the stage below, the
-     *  pre-change key path). */
-    static final boolean MACAPK_KEY_SHORTCUTS = !"0".equals(System.getenv("MACAPK_KEY_SHORTCUTS"));
 
     /** The eligibility predicate AOSP's ViewRootImpl.ViewPostImeInputStage
      *  .processKeyEvent applies before trying dispatchKeyShortcutEvent
@@ -2082,7 +1871,7 @@ public final class TouchDispatcher {
      *  unreachable (deliverKey's own `return true` beat it to the punch every
      *  time an overlay was focused; see docs/clipboard-keyboard-shortcuts_2026-09-28.md). */
     public static boolean macapkShortcutEligible(KeyEvent ev) {
-        if (!MACAPK_KEY_SHORTCUTS || ev == null) return false;
+        if (ev == null) return false;
         if (ev.getAction() != KeyEvent.ACTION_DOWN
                 || KeyEvent.metaStateHasNoModifiers(ev.getMetaState())
                 || ev.getRepeatCount() != 0
@@ -2256,7 +2045,7 @@ public final class TouchDispatcher {
                 if (od instanceof android.window.WindowOnBackInvokedDispatcher)
                     d = (android.window.WindowOnBackInvokedDispatcher) od;
                 where = "activity " + active.getClass().getName();
-                probeRoot = active.macapkContentView();
+                probeRoot = com.macapk.loader.ActivityHost.contentRoot(active);
                 if (probeRoot == null && w != null) probeRoot = w.peekDecorView();
             }
             if (d == null || !d.isOnBackInvokedCallbackEnabled())
@@ -2343,7 +2132,7 @@ public final class TouchDispatcher {
     public static android.window.OnBackInvokedDispatcher macapkBackDispatcherForRoot(View root) {
         // MACAPK_BACK_INVOKED=0: the pre-change answer (View.findOnBackInvokedDispatcher
         // returned null unconditionally), so widgets register nowhere, as before.
-        if (root == null || !android.window.WindowOnBackInvokedDispatcher.MACAPK_BACK_INVOKED) return null;
+        if (root == null) return null;
         try {
             java.util.List<WindowOverlayStack.Layer> layers = WindowOverlayStack.snapshot();
             for (WindowOverlayStack.Layer layer : layers) {
@@ -2373,7 +2162,7 @@ public final class TouchDispatcher {
                     Activity a = (Activity) c;
                     android.view.Window w = a.getWindow();
                     boolean isRoot = w != null
-                            && (w.peekDecorView() == root || a.macapkContentView() == root);
+                            && (w.peekDecorView() == root || com.macapk.loader.ActivityHost.contentRoot(a) == root);
                     return isRoot ? w.getOnBackInvokedDispatcher() : null;
                 }
                 if (!(c instanceof android.content.ContextWrapper)) break;
@@ -2462,11 +2251,10 @@ public final class TouchDispatcher {
      *  @return true when the notch was delivered as ACTION_SCROLL. */
     public boolean dispatchWheel(float x, float y, float viewW, float viewH,
                                  float vscroll, float hscroll) {
-        if (!WHEEL_SCROLL_EVENT) return false;
         final Activity a = ActivityHost.peek();
         if (a == null) return false;
         final boolean taken = hasTakenInputQueue(a);
-        if (!taken && !WheelScroll.ALL) return false;
+        if (!taken && false) return false;
         noteRealInput();
         final float scale = macapkBackingScale();
         final float px = x * scale, py = (viewH - y) * scale;
@@ -2510,14 +2298,12 @@ public final class TouchDispatcher {
         }
     }
 
-    static final boolean WHEEL_SCROLL_EVENT =
-        !"0".equals(System.getenv("MACAPK_WHEEL_SCROLL_EVENT"));
 
     static boolean hasTakenInputQueue(Activity a) {
         if (a == null) return false;
         try {
             android.view.Window w = a.getWindow();
-            android.view.InputQueue q = w != null ? w.macapkTakenInputQueue() : null;
+            android.view.InputQueue q = w != null ? ViewHost.get().takenInputQueue(w) : null;
             return q != null && q.getNativePtr() != 0;
         } catch (Throwable t) {
             return false;
@@ -2580,8 +2366,6 @@ public final class TouchDispatcher {
     // for them), routed like a wheel step. A secondary click is NOT turned into
     // BACK: AOSP forwards it as a pointer stream (View shows the context menu,
     // performButtonActionOnTouchDown). Hover (no buttons) is #25.
-    // ------------------------------------------------------------------
-    static final boolean MOUSE_POINTER = !"0".equals(System.getenv("MACAPK_MOUSE_POINTER"));
     private static final int POINTER_DOWN_BUTTONS = MotionEvent.BUTTON_PRIMARY
             | MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_TERTIARY;
     /** The pressed-button set as of the last host mouse event (AppKit thread). */
@@ -2606,8 +2390,6 @@ public final class TouchDispatcher {
     // So a host press-drag-release on such a window stays a touchscreen finger,
     // as it was before MACAPK_MOUSE_POINTER; the wheel keeps its SOURCE_MOUSE
     // ACTION_SCROLL (dispatchWheel), which engines read by axis.
-    // MACAPK_NATIVE_QUEUE_MOUSE=1 sends the CursorInputMapper stream there too.
-    static final boolean NATIVE_QUEUE_MOUSE = "1".equals(System.getenv("MACAPK_NATIVE_QUEUE_MOUSE"));
     /** Whether the host stream in progress goes out as a finger. Latched while
      *  no pointer button is down, so one press-drag-release never changes form
      *  midway (AppKit thread). */
@@ -2639,8 +2421,7 @@ public final class TouchDispatcher {
     public void dispatchHostMouse(int buttonState, int metaState, float x, float y,
                                   float viewW, float viewH) {
         if ((s_hostMouseButtons & POINTER_DOWN_BUTTONS) == 0) {
-            s_hostAsFinger = !MOUSE_POINTER
-                    || (!NATIVE_QUEUE_MOUSE && hasTakenInputQueue(ActivityHost.peek()));
+            s_hostAsFinger = (hasTakenInputQueue(ActivityHost.peek()));
         }
         if (s_hostAsFinger) {
             // The pre-change path, for a taken native input queue (above) and
@@ -2663,16 +2444,14 @@ public final class TouchDispatcher {
         if (!wasDown && !down && last == buttonState) {
             // No button changed and none is held: a HOVER_MOVE (CursorInputMapper:
             // `down || source != MOUSE ? MOVE : HOVER_MOVE`), GitHub #25.
-            if (!android.view.View.HOVER_VIEWS) return;
+            if (!ViewHost.get().hoverViews()) return;
             Runnable h = () -> deliverHover(MotionEvent.ACTION_HOVER_MOVE, buttonState, metaState, x, y, viewH);
             if (routeToLoop(ActivityHost.peek())) loopHandler().post(h); else h.run();
             return;
         }
         noteRealInput();
-        if (TRACKPAD_MULTITOUCH) {
-            if (!wasDown && down) { s_hostPointerDown = true; trackpadClaim(false); }
-            else if (wasDown && !down) s_hostPointerDown = false;
-        }
+        if (!wasDown && down) { s_hostPointerDown = true; trackpadClaim(false); }
+        else if (wasDown && !down) s_hostPointerDown = false;
         Runnable r = () -> deliverHostMouse(last, buttonState, metaState, x, y, viewW, viewH);
         if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
     }
@@ -2695,10 +2474,10 @@ public final class TouchDispatcher {
         // InputDispatcher: a DOWN clears the device's hovering pointer, so the
         // hovered window gets HOVER_EXIT before the DOWN ("Compatibility
         // behaviour: ACTION_DOWN causes HOVER_EXIT to get generated").
-        if (!wasDown && down && android.view.View.HOVER_VIEWS) {
+        if (!wasDown && down && ViewHost.get().hoverViews()) {
             deliverHover(MotionEvent.ACTION_HOVER_EXIT, last, meta, x, y, viewH);
         }
-        if (!wasDown && !down && android.view.View.HOVER_VIEWS) {
+        if (!wasDown && !down && ViewHost.get().hoverViews()) {
             // Only a side button changed: the main event is a HOVER_MOVE.
             deliverHover(MotionEvent.ACTION_HOVER_MOVE, now, meta, x, y, viewH);
         }
@@ -2719,7 +2498,7 @@ public final class TouchDispatcher {
         }
         // CursorInputMapper: "Send hover move after UP to tell the application
         // that the mouse is hovering now." The window gets it as HOVER_ENTER.
-        if (wasDown && !down && android.view.View.HOVER_VIEWS) {
+        if (wasDown && !down && ViewHost.get().hoverViews()) {
             deliverHover(MotionEvent.ACTION_HOVER_MOVE, now, meta, x, y, viewH);
         }
         sideButtonKeys(released, KeyEvent.ACTION_UP, meta);
@@ -2739,7 +2518,7 @@ public final class TouchDispatcher {
 
     /** Host pointer left our view (cocoa mouseExited:): the hovered window exits. */
     public void dispatchHostMouseExit(float x, float y, float viewW, float viewH) {
-        if (!android.view.View.HOVER_VIEWS) return;
+        if (!ViewHost.get().hoverViews()) return;
         final int meta = 0;
         Runnable h = () -> deliverHover(MotionEvent.ACTION_HOVER_EXIT, s_hostMouseButtons, meta, x, y, viewH);
         if (routeToLoop(ActivityHost.peek())) loopHandler().post(h); else h.run();
@@ -2855,15 +2634,13 @@ public final class TouchDispatcher {
         final int n = ids.length;
         if (n == 0 || xs.length < n || ys.length < n || pressures.length < n || tools.length < n) return;
         noteRealInput();
-        if (TRACKPAD_MULTITOUCH) {
-            // The same rule dispatch() keeps for the host mouse: a trackpad hold
-            // ends before this stream starts and none begins while it is down.
-            if (action == MotionEvent.ACTION_DOWN) {
-                s_hostPointerDown = true;
-                trackpadClaim(false);
-            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                s_hostPointerDown = false;
-            }
+        // The same rule dispatch() keeps for the host mouse: a trackpad hold
+        // ends before this stream starts and none begins while it is down.
+        if (action == MotionEvent.ACTION_DOWN) {
+            s_hostPointerDown = true;
+            trackpadClaim(false);
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            s_hostPointerDown = false;
         }
         final float scale = macapkBackingScale();
         final float[] px = new float[n], py = new float[n];
@@ -2891,7 +2668,7 @@ public final class TouchDispatcher {
             if (active == null || s_hostTouchMode == HT_NONE) return;
             if (action == MotionEvent.ACTION_POINTER_DOWN && s_hostTouchMode == HT_ONE) {
                 s_hostTouchMode = _navBackArmed || WindowOverlayStack.gesturePinnedToOverlay()
-                        || android.view.MacApkDragSession.isActive() ? HT_FIRST_ONLY : HT_MULTI;
+                        || ViewHost.get().dragActive() ? HT_FIRST_ONLY : HT_MULTI;
             }
             switch (s_hostTouchMode) {
                 case HT_ONE:
@@ -3031,7 +2808,7 @@ public final class TouchDispatcher {
             doDispatch(MotionEvent.ACTION_UP, x + slopX + dragX, y + slopY + dragY, viewW, viewH);
         };
         final Runnable r;
-        if (!WHEEL_SCROLL_EVENT || (!taken && !WheelScroll.ALL)) {
+        if ((!taken && false)) {
             r = drag;
         } else {
             final float scale = macapkBackingScale();
@@ -3053,7 +2830,7 @@ public final class TouchDispatcher {
         if (phase == 0) {
             s_hostPinchLive = ActivityHost.peek() != null && WindowOverlayStack.isEmpty()
                     && !WindowOverlayStack.gesturePinnedToOverlay()
-                    && !android.view.MacApkDragSession.isActive();
+                    && !ViewHost.get().dragActive();
         }
         if (!s_hostPinchLive) return;
         if (phase != 0 && phase != 1) s_hostPinchLive = false;
@@ -3075,9 +2852,9 @@ public final class TouchDispatcher {
         noteRealInput();
         final Runnable r = () -> {
             try {
-                if (android.view.inputmethod.InputMethodManager.macapkActiveInput() == null) {
+                if (ViewHost.get().imeActiveInput() == null) {
                     final android.view.inputmethod.InputConnection ic =
-                        android.view.inputmethod.InputMethodManager.macapkActiveConnection();
+                        ViewHost.get().imeActiveConnection();
                     if (ic != null) {
                         if (InputRecorder.ON) InputRecorder.unrecorded("text committed through an InputConnection");
                         ic.commitText(text, 1);
@@ -3104,8 +2881,8 @@ public final class TouchDispatcher {
      *  host's window thread, like cocoa_bridge.mm's MacApkGuestTextTargetActive. */
     public boolean hostImeInline() {
         try {
-            return android.view.inputmethod.InputMethodManager.macapkActiveInput() == null
-                && android.view.inputmethod.InputMethodManager.macapkActiveConnection() != null;
+            return ViewHost.get().imeActiveInput() == null
+                && ViewHost.get().imeActiveConnection() != null;
         } catch (Throwable t) {
             return false;
         }
@@ -3118,9 +2895,9 @@ public final class TouchDispatcher {
     public void dispatchHostComposingText(final String text) {
         final Runnable r = () -> {
             try {
-                if (android.view.inputmethod.InputMethodManager.macapkActiveInput() != null) return;
+                if (ViewHost.get().imeActiveInput() != null) return;
                 final android.view.inputmethod.InputConnection ic =
-                    android.view.inputmethod.InputMethodManager.macapkActiveConnection();
+                    ViewHost.get().imeActiveConnection();
                 if (ic == null) return;
                 if (text == null) ic.finishComposingText();
                 else ic.setComposingText(text, 1);
@@ -3128,6 +2905,44 @@ public final class TouchDispatcher {
                 NativeLog.w(TAG, "host composing text: " + thr);
             }
         };
+        if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
+    }
+
+    // ---- the focused editor, for Windows' text services (Win.apk; WindowsTextInput) ----------
+    // AospInput answers these for AOSP's views.
+
+    /** The InputConnection of the editor an input method is bound to, or null. Editor's thread. */
+    public android.view.inputmethod.InputConnection hostImeConnection() {
+        try {
+            return ViewHost.get().imeActiveConnection();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** That editor's EditorInfo. */
+    public android.view.inputmethod.EditorInfo hostImeEditorInfo() {
+        try {
+            return android.view.inputmethod.InputMethodManager.macapkCurrentEditorInfo();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** That editor's view (a TextView has a Layout to measure), or null. */
+    public android.view.View hostImeView() {
+        try {
+            return ViewHost.get().imeShowTarget();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** Where view coordinates start on the surface: the status bar is above the content. */
+    public float hostImeSurfaceTop() { return StatusBarDriver.heightPx(null); }
+
+    /** Runs `r` on the editor's thread, after what is queued there (as dispatchHostText). */
+    public void hostImePost(Runnable r) {
         if (routeToLoop(ActivityHost.peek())) loopHandler().post(r); else r.run();
     }
 
@@ -3139,7 +2954,7 @@ public final class TouchDispatcher {
      *  can make the answer a frame old, which a candidate window can live with. */
     public long hostImeAnchor() {
         try {
-            final android.widget.TextView t = android.view.inputmethod.InputMethodManager.macapkShowTarget();
+            final android.widget.TextView t = ViewHost.get().imeShowTarget();
             if (t == null || !t.isAttachedToWindow()) return -1L;
             final int[] loc = new int[2];
             t.getLocationOnScreen(loc);
@@ -3162,17 +2977,15 @@ public final class TouchDispatcher {
 
     public void dispatch(int action, float x, float y, float viewW, float viewH) {
         noteRealInput();
-        if (TRACKPAD_MULTITOUCH) {
-            // The host mouse (or the synthesized scroll drag) starts a stream:
-            // a live trackpad hold must end first (CANCEL), and none may begin
-            // while this one is down. Decided HERE, on the AppKit thread the
-            // trackpad frames also arrive on, before this event is posted.
-            if (action == MotionEvent.ACTION_DOWN) {
-                s_hostPointerDown = true;
-                trackpadClaim(false);
-            } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                s_hostPointerDown = false;
-            }
+        // The host mouse (or the synthesized scroll drag) starts a stream:
+        // a live trackpad hold must end first (CANCEL), and none may begin
+        // while this one is down. Decided HERE, on the AppKit thread the
+        // trackpad frames also arrive on, before this event is posted.
+        if (action == MotionEvent.ACTION_DOWN) {
+            s_hostPointerDown = true;
+            trackpadClaim(false);
+        } else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            s_hostPointerDown = false;
         }
         if (routeToLoop(ActivityHost.peek())) {
             loopHandler().post(() -> doDispatch(action, x, y, viewW, viewH));
@@ -3259,15 +3072,15 @@ public final class TouchDispatcher {
         // A drag in progress owns the pointer (AOSP transfers touch focus to the
         // drag; the source window's stream is cancelled once). See
         // android.view.MacApkDragSession. Never true under MACAPK_DRAG_AND_DROP=0.
-        if (android.view.MacApkDragSession.isActive()) {
+        if (ViewHost.get().dragActive()) {
             if (action == MotionEvent.ACTION_DOWN) {
                 // A new stream while a drag still owns the pointer: its UP was
                 // lost. End the dead drag (cancelled) and dispatch this DOWN
                 // normally, so input can never stay routed to a stale session.
                 NativeLog.w(TAG, "drag: DOWN while a drag is active (lost UP); aborting the drag");
-                android.view.MacApkDragSession.abort();
+                ViewHost.get().dragAbort();
             } else {
-                if (android.view.MacApkDragSession.takeSourceCancel()) {
+                if (ViewHost.get().dragTakeSourceCancel()) {
                     long ct = android.os.SystemClock.uptimeMillis();
                     MotionEvent cancel = touchEvent(s_gestureDownTime != 0L ? s_gestureDownTime : ct,
                             ct, MotionEvent.ACTION_CANCEL, px, py, 0);
@@ -3275,9 +3088,9 @@ public final class TouchDispatcher {
                     catch (Throwable thr) { NativeLog.w(TAG, "drag source cancel threw: " + thr); }
                     finally { cancel.recycle(); }
                 }
-                View droot = android.view.MacApkDragSession.activeRoot();
+                View droot = ViewHost.get().dragActiveRoot();
                 if (droot != null) {
-                    android.view.MacApkDragSession.onPointer(action,
+                    ViewHost.get().dragPointer(action,
                             px - droot.getLeft(), py - droot.getTop());
                 }
                 return;
@@ -3289,9 +3102,8 @@ public final class TouchDispatcher {
         // uses to paint the pill, so a Unity/GL app's input is untouched). The
         // bottom pill is an OVERLAY now, not a reserved strip, so we do NOT
         // consume bottom touches -- the app's own bottom nav lives there.
-        View croot = active.macapkContentView();
-        if (android.os.Looper.MACAPK_REAL_LOOPER
-                && croot != null && !treeHasSurfaceView(croot)) {
+        View croot = com.macapk.loader.ActivityHost.contentRoot(active);
+        if (croot != null && !treeHasSurfaceView(croot)) {
             // v1.0.406: tappable BACK button in the bottom nav strip. A tap
             // (DOWN then UP) inside the back-chevron rect dispatches
             // KEYCODE_BACK; a drag out disarms it (so it doesn't eat scrolls).
@@ -3453,7 +3265,7 @@ public final class TouchDispatcher {
         // (which fires its TextWatcher -> Unity nativeSetInputString) and
         // consume it so the engine doesn't also see it as a gameplay key.
         android.widget.TextView input =
-            android.view.inputmethod.InputMethodManager.macapkActiveInput();
+            ViewHost.get().imeActiveInput();
         // MACAPK_TRACE_IME=1: which text target was live for this keystroke.
         // Added after three individually-correct fixes (TextView.onKeyDown,
         // EditText focusability, toggleSoftInput) each changed nothing -- the
@@ -3461,16 +3273,16 @@ public final class TouchDispatcher {
         // wrong. Costs one getenv-cached boolean per key.
         if (s_traceIme) {
             android.view.inputmethod.InputConnection tic =
-                android.view.inputmethod.InputMethodManager.macapkActiveConnection();
+                ViewHost.get().imeActiveConnection();
             NativeLog.i(TAG, "  IME activeInput=" + (input == null ? "null"
                     : input.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(input)))
                 + " activeConnection=" + (tic == null ? "null" : tic.getClass().getName())
-                + " focused=" + android.view.inputmethod.InputMethodManager.macapkTraceFocused());
+                + " focused=" + ViewHost.get().imeTraceFocused());
         }
         if (input != null) {
             if (action == KeyEvent.ACTION_DOWN) {
                 boolean consumed = false;
-                try { consumed = input.macapkHandleSoftKey(unicodeChar, keyCode); }
+                try { consumed = ViewHost.get().handleSoftKey(input, unicodeChar, keyCode); }
                 catch (Throwable thr) { NativeLog.w(TAG, "softKey: " + thr); }
                 if (consumed) return;
             } else if (action == KeyEvent.ACTION_UP) {
@@ -3490,7 +3302,7 @@ public final class TouchDispatcher {
         // active (Unity/cocos keep the macapkHandleSoftKey path). v1.0.425.
         if (input == null) {
             android.view.inputmethod.InputConnection ic =
-                android.view.inputmethod.InputMethodManager.macapkActiveConnection();
+                ViewHost.get().imeActiveConnection();
             if (ic != null) {
                 boolean printable = (unicodeChar >= 32 && unicodeChar != 127);
                 boolean backspace = (keyCode == 67 /* KEYCODE_DEL */ || unicodeChar == 8);
@@ -3518,8 +3330,7 @@ public final class TouchDispatcher {
                         // InputConnection.java:106) falls straight through to the
                         // dispatch below and nothing that worked before changes.
                         if (enter) {
-                            int act = android.view.inputmethod.InputMethodManager
-                                        .macapkImeActionForEnter();
+                            int act = ViewHost.get().imeActionForEnter();
                             if (act != android.view.inputmethod.EditorInfo.IME_ACTION_NONE
                                     && ic.performEditorAction(act)) {
                                 sImeEnterConsumed = true;
@@ -3545,62 +3356,10 @@ public final class TouchDispatcher {
             return;
         }
 
-        // Tilt Control (the Controls menu): while it is on, the arrow keys tilt
-        // the virtual device (TiltControl -> SensorManager's motion sensors)
-        // instead of reaching the guest. AFTER the text-input paths -- an arrow
-        // in a focused field still moves the caret, so a live TextView target or
-        // InputConnection skips this -- and BEFORE key bindings and the guest.
-        if (input == null
-                && android.view.inputmethod.InputMethodManager.macapkActiveConnection() == null
-                && TiltControl.handleKey(action, keyCode)) {
-            return;
-        }
-        // Arrow Keys as D-pad (the Controls menu; mutually exclusive with Tilt
-        // Control): the arrows become the hat of the virtual "Mac Arrow Keys"
-        // controller (ArrowPad -> GamepadBridge) instead of keyboard keys, so an
-        // engine that moves only from a controller sees one steady pad. Same
-        // slot and same text-field exemption as Tilt Control.
-        if (input == null
-                && android.view.inputmethod.InputMethodManager.macapkActiveConnection() == null
-                && ArrowPad.handleKey(action, keyCode)) {
-            return;
-        }
-        // Space Bar Taps Center (the Controls menu): Space becomes a finger
-        // held at the centre of the surface. Same slot and same text-field
-        // exemption, so Space still types a space into a focused field.
-        if (input == null
-                && android.view.inputmethod.InputMethodManager.macapkActiveConnection() == null
-                && SpaceTap.handleKey(action, keyCode, sSurfaceW, sSurfaceH)) {
-            return;
-        }
-
-        // Key bindings (the Controls menu): a bound key becomes a HELD touch at
-        // a screen point, so a touch-only game is playable from a keyboard.
-        // Checked AFTER both text-input paths above -- typing into a field must
-        // always beat a game binding -- and BEFORE the normal key dispatch, so
-        // the guest sees a touch instead of the raw key, never both.
-        KeyBindProfiles.Profile prof = KeyBindProfiles.active();
-        if (prof != null) {
-            KeyBindProfiles.Binding b = prof.forKey(keyCode);
-            int w = sSurfaceW, h = sSurfaceH;
-            if (b != null && w > 0 && h > 0) {
-                // Normalised against the SURFACE, top-left origin -- exactly the
-                // space doDispatch hands the guest (px = x*scale,
-                // py = (viewH - y)*scale). Using the surface rather than a
-                // separate content rect keeps one convention, so a binding
-                // captured from a real click round-trips unchanged.
-                if (action == KeyEvent.ACTION_DOWN)
-                    macapkKeyBindDown(keyCode, b.nx * w, b.ny * h);
-                else
-                    macapkKeyBindUp(keyCode);
-                return;
-            }
-        }
-
         if (active == null) return;
         long t = android.os.SystemClock.uptimeMillis();
         KeyEvent ev = hostKeyEvent(t, action, keyCode, metaState, autoRepeat);
-        if (unicodeChar != 0) ev.macapkSetUnicodeChar(unicodeChar);
+        if (unicodeChar != 0) ViewHost.get().setKeyUnicodeChar(ev, unicodeChar);
         try {
             // AOSP ViewPostImeInputStage.processKeyEvent's first step
             // (ViewRootImpl.java android14 :6692): a navigation key in touch
@@ -3647,13 +3406,13 @@ public final class TouchDispatcher {
      *  mode and is consumed when that moved focus; a typing key leaves it and
      *  is still delivered. */
     private static boolean macapkCheckLeavingTouchModeAndConsume(Activity a, KeyEvent ev) {
-        if (!android.view.ViewRootImpl.macapkInTouchMode()) return false;
+        if (!ViewHost.get().inTouchMode()) return false;
         int action = ev.getAction();
         if (action != KeyEvent.ACTION_DOWN && action != KeyEvent.ACTION_MULTIPLE) return false;
         if ((ev.getFlags() & KeyEvent.FLAG_KEEP_TOUCH_MODE) != 0) return false;
         android.view.View root = macapkDecor(a);
         if (ev.hasNoModifiers() && macapkIsNavigationKey(ev.getKeyCode())) {
-            boolean took = android.view.ViewRootImpl.macapkEnsureTouchMode(root, false);
+            boolean took = ViewHost.get().ensureTouchMode(root, false);
             // One uncapped line per touch-mode exit (rare: once per switch from
             // the mouse to the keyboard). A "nothing" with 0 focusables is a
             // window that offers no focus target, not a key-path failure.
@@ -3669,7 +3428,7 @@ public final class TouchDispatcher {
             return took;
         }
         if (ev.getUnicodeChar() > 0) {
-            android.view.ViewRootImpl.macapkEnsureTouchMode(root, false);
+            ViewHost.get().ensureTouchMode(root, false);
         }
         return false;
     }
@@ -3694,10 +3453,10 @@ public final class TouchDispatcher {
      *  from any pointer device enters touch mode. Called on the delivery path
      *  of every host pointer event. */
     static void macapkEnterTouchModeForPointer(Activity a, int action) {
-        if (android.view.ViewRootImpl.macapkInTouchMode()) return;
+        if (ViewHost.get().inTouchMode()) return;
         if (action != android.view.MotionEvent.ACTION_DOWN
                 && action != android.view.MotionEvent.ACTION_SCROLL) return;
-        android.view.ViewRootImpl.macapkEnsureTouchMode(macapkDecor(a), true);
+        ViewHost.get().ensureTouchMode(macapkDecor(a), true);
     }
 
     /** The root of the tree that holds the window's keyboard focus: what
@@ -3711,7 +3470,7 @@ public final class TouchDispatcher {
     private static android.view.View macapkDecor(Activity a) {
         if (a == null) return null;
         try {
-            android.view.View cv = a.macapkContentView();
+            android.view.View cv = com.macapk.loader.ActivityHost.contentRoot(a);
             if (cv != null) return cv.getRootView();
             android.view.Window w = a.getWindow();
             return (w == null) ? null : w.getDecorView();
@@ -3839,17 +3598,6 @@ public final class TouchDispatcher {
     private static boolean s_queueServiced;
     /** The view that holds s_renderer. Read per event by the fork check. */
     private static View    s_owner;
-    /** MACAPK_TOUCH_APP_QUEUE_ONLY (default ON, 2026-09-27): no direct
-     *  delivery while the bound host is a vendored-GLSurfaceView fork whose
-     *  queue SurfaceView drains to empty every frame
-     *  (SurfaceView.macapkForkGlQueueServiced): the app's own onTouchEvent has
-     *  already queued the same touch there, so a direct call is a second copy
-     *  (measured: every HCR touch arrived twice, hcr_run.log 2026-09-25
-     *  :46444-46445). Asked per EVENT, not at bind time, because the answer
-     *  changes: the fork's thread dies seconds into boot, and a re-attach can
-     *  put a live successor in its place. =0 restores the v1.0.1639 rule. */
-    private static final boolean s_appQueueOnly =
-        !"0".equals(System.getenv("MACAPK_TOUCH_APP_QUEUE_ONLY"));
     /** MACAPK_GLTHREAD_DRAIN_TRACE=1 (the SurfaceView fork-drain trace, which
      *  logs EVERY drained runnable): lift LOG_CAP on the renderer-direct lines
      *  too, so a touch A/B can count direct vs drained deliveries one to one
@@ -3900,7 +3648,7 @@ public final class TouchDispatcher {
                                            float px, float py, int pointerId) {
         ensureRendererResolved(active);
         if (s_renderer == null || s_queueServiced) return;
-        if (s_appQueueOnly && forkQueueDelivers(s_owner)) return;
+        if (forkQueueDelivers(s_owner)) return;
         // v1.0.996: px/py arrive in DISPLAY space (doDispatch's Y-flip is against
         // the whole view; the keybind path denormalises against the published
         // display surface). The renderer's surface is the app WINDOW, whose
@@ -3972,7 +3720,7 @@ public final class TouchDispatcher {
         s_boundActivity = null;
         s_queueServiced = false;
         s_owner = null;
-        View root = active.macapkContentView();
+        View root = com.macapk.loader.ActivityHost.contentRoot(active);
         if (root == null) return;
         Object[] ownerAndRenderer = findRendererInTree(root);
         if (ownerAndRenderer == null) return;
@@ -4009,7 +3757,6 @@ public final class TouchDispatcher {
      *  (MACAPK_TOUCH_APP_QUEUE_ONLY), because that answer changes over the
      *  fork's life. */
     private static boolean hostQueueServiced(View owner) {
-        if (!android.opengl.GLSurfaceView.macapkGlQueueDrainEnabled()) return false;
         if (!(owner instanceof android.opengl.GLSurfaceView)) return false;
         for (Class<?> c = owner.getClass();
              c != null && c != android.opengl.GLSurfaceView.class;
@@ -4034,7 +3781,7 @@ public final class TouchDispatcher {
         if (!(owner instanceof android.view.SurfaceView)) return false;
         boolean yes;
         try {
-            yes = ((android.view.SurfaceView) owner).macapkForkGlQueueServiced();
+            yes = ViewHost.get().forkGlQueueServiced((android.view.SurfaceView) owner);
         } catch (Throwable t) {
             yes = false;
         }

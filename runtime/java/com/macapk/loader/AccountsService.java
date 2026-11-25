@@ -126,8 +126,8 @@ final class AccountsService extends Binder {
     AccountsService(SystemServer system, File storeFile) {
         super(DESCRIPTOR);
         this.system = system;
-        this.store = AccountStore.at(storeFile);
-        SystemServer.log("accounts: store " + storeFile);
+        this.store = AccountStore.sealedAt(storeFile);   // it holds the master token: sealed (DPAPI)
+        SystemServer.log("accounts: store " + store.file());
         syncGoogleAccounts();
         watchGoogleAccounts();
     }
@@ -521,7 +521,7 @@ final class AccountsService extends Binder {
                                     // the attestation gate, hand back a placeholder so Phenotype falls
                                     // through to its baked/cached flags instead of failing on absence.
                                     // REMOVAL CONDITION: the real DroidGuard VM run mints this token.
-                                    if (minted == null && "1".equals(System.getenv("MACAPK_PLAY_TOKEN_BYPASS"))) {
+                                    if (minted == null && false) {
                                         minted = "macapk.stub.firstparty." + Integer.toHexString(service.hashCode());
                                         expiry = null;
                                         SystemServer.log("accounts: TEMP BYPASS placeholder token for refused first-party scope " + service);
@@ -650,6 +650,13 @@ final class AccountsService extends Binder {
             registerAuthenticator(pr.pkg, a.accountType, a.service, a.customTokens,
                     a.labelId, a.iconId, a.smallIconId, a.prefsId);
         }
+    }
+
+    /** A package's authenticators go with it: removed, or before an update's are read again
+     *  (AccountAuthenticatorCache follows PACKAGE_REMOVED and PACKAGE_REPLACED). The accounts of
+     *  their types stay in the table. */
+    synchronized void forget(String pkg) {
+        authenticators.values().removeIf(a -> a.pkg.equals(pkg));
     }
 
     private synchronized void registerAuthenticator(String pkg, String type, String service, boolean custom,

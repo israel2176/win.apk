@@ -57,10 +57,6 @@ import javax.net.ssl.SSLSocket;
 public class SSLSockets {
     private SSLSockets() {}
 
-    /** MACAPK_ALPN=1 opts in; see the correction at the top of this file. */
-    private static final boolean ALPN_ENABLED =
-            System.getenv("MACAPK_ALPN") != null;
-    private static boolean announced = false;
 
     /** AOSP: true iff this is the platform's own (Conscrypt) SSLSocket, which is
      *  what gates OkHttp's Android10SocketAdapter -- and therefore ALPN. Our
@@ -68,18 +64,7 @@ public class SSLSockets {
      *  classloader socket; an app that ships its own Conscrypt still gets false
      *  here and is handled by ConscryptSocketAdapter, as on a device. */
     public static boolean isSupportedSocket(SSLSocket socket) {
-        if (!ALPN_ENABLED || socket == null) return false;
-        // A boot/platform-classloader class reports a null ClassLoader.
-        boolean platform = socket.getClass().getClassLoader() == null;
-        if (platform && !announced) {
-            announced = true;
-            // Instrument the fix itself: without this line a gate that is ON but
-            // never reached is indistinguishable from a gate that is OFF, which
-            // has already cost this project a wasted measurement round.
-            System.err.println("[alpn] MACAPK_ALPN engaged: serving ALPN for "
-                    + "platform SSLSocket " + socket.getClass().getName());
-        }
-        return platform;
+        return false;
     }
 
     /** Enables the TLS session-ticket extension. No-op on Mac.apk. */

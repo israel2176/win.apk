@@ -22,11 +22,6 @@ using GetVersionFn = HRESULT(STDAPICALLTYPE*)(PCWSTR, LPWSTR*);
 CreateEnvironmentFn g_create_environment = nullptr;
 std::wstring g_version;
 
-bool env_flag_off(const char* name) {
-    const char* e = std::getenv(name);
-    return e && e[0] == '0' && e[1] == '\0';
-}
-
 bool headless() {
     const char* e = std::getenv("WINAPK_HEADLESS");
     return e && *e && *e != '0';
@@ -55,16 +50,14 @@ std::string hex_hr(HRESULT hr) {
 }
 
 bool decide() {
-    if (env_flag_off("WINAPK_WEBVIEW2")) {
-        g_unavailable = "WEBVIEW2_OFF";
-        std::fprintf(stderr, "[win.apk] webview2: off (WINAPK_WEBVIEW2=0); web links open in the system browser\n");
-        return false;
-    }
     if (headless()) {
         g_unavailable = "HEADLESS";
         std::fprintf(stderr, "[win.apk] webview2: not used headless; web links open in the system browser\n");
         return false;
     }
+    // Timed: this runs on the thread that asks first, the app's main thread when a WebView is
+    // made or WebSettings.getDefaultUserAgent asked, before the activity's first frame.
+    const ULONGLONG t0 = GetTickCount64();
     HMODULE loader = load_loader();
     if (!loader) {
         g_unavailable = "WEBVIEW2_LOADER_MISSING (error " + std::to_string(GetLastError()) + ")";
@@ -99,7 +92,8 @@ bool decide() {
         g_version.clear();
         return false;
     }
-    std::fprintf(stderr, "[win.apk] webview2: runtime %s; web content shows in-runtime\n", narrow(g_version).c_str());
+    std::fprintf(stderr, "[win.apk] webview2: runtime %s; web content shows in-runtime (found in %llu ms)\n",
+                 narrow(g_version).c_str(), static_cast<unsigned long long>(GetTickCount64() - t0));
     return true;
 }
 
@@ -188,11 +182,16 @@ EnvState g_env_state = EnvState::kNone;
 HRESULT g_env_hr = S_OK;
 ComPtr<ICoreWebView2Environment> g_environment;
 std::vector<std::function<void(ICoreWebView2Environment*)>> g_env_waiters;
+ULONGLONG g_env_asked = 0;  // GetTickCount64 when the environment was asked for
 
 void env_settle(HRESULT hr, ICoreWebView2Environment* environment) {
     if (SUCCEEDED(hr) && environment) {
         g_environment = ComPtr<ICoreWebView2Environment>::retain(environment);
         g_env_state = EnvState::kReady;
+        // The browser process's start, and the first time its profile in the user data folder: the
+        // page's wait, which the app's frames do not share (this is the WebView2 thread).
+        std::fprintf(stderr, "[win.apk] webview2: environment ready in %llu ms\n",
+                     static_cast<unsigned long long>(GetTickCount64() - g_env_asked));
     } else {
         std::fprintf(stderr, "[win.apk] webview2: the environment could not be created (0x%08lx)\n",
                      static_cast<unsigned long>(hr));
@@ -264,6 +263,7 @@ void with_environment(const std::wstring& folder, std::function<void(ICoreWebVie
             return S_OK;
         });
     std::fprintf(stderr, "[win.apk] webview2: user data in %s\n", narrow(folder).c_str());
+    g_env_asked = GetTickCount64();
     const HRESULT hr = g_create_environment(nullptr, folder.c_str(), nullptr, done.get());
     if (FAILED(hr)) env_settle(hr, nullptr);
 }

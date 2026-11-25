@@ -50,6 +50,11 @@ Win.apk compiles it for your processor into a DLL next to the library.
 - **Nothing waits for it.** The app starts at once on an ARM64 JIT, and each
   library switches to its translation as soon as it is ready, even while the
   app is running.
+- **Only what the app uses is translated.** A library the app has never run
+  code in (many apps ship libraries for a feature you may never open) is not
+  translated at all, as Android compiles at install only what an app's
+  profile names. Once the app has run code in it, the translation starts when
+  the app has been quiet for a minute or is closed.
 - **Most libraries are translated whole, once.** A library of up to 1 million
   instructions is translated in one go. A larger one (a browser engine, a big
   app's own code) is translated only where the app's code actually ran, once
@@ -101,6 +106,4 @@ JIT too: not the translation`, and the translation is used again.
 | | Effect |
 |---|---|
 | Settings > Apps > **Speed up ARM apps** (on) | Off: nothing new is translated (a translation under way stops before its next part and resumes once this is on again); translations already made are still used |
-| `WINAPK_AOT=0` | Run ARM code on the JIT only: no translation is loaded or made |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | Use another clang for the translation. Without the bundled one, Win.apk also looks for `clang.exe` on the `PATH` |
-| `WINAPK_ABIS=arm64-v8a` | Install an app's ARM build although it has an x86_64 one, to compare the two |

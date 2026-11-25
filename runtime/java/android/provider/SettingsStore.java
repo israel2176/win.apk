@@ -35,7 +35,7 @@ final class SettingsStore {
 
     private static String resolveAndroidRoot() {
         String root = System.getProperty("macapk.android.root");
-        if (root == null || root.isEmpty()) root = System.getenv("MACAPK_ANDROID_ROOT");
+        if (root == null || root.isEmpty()) root = null;
         if (root == null || root.isEmpty()) {
             // Last-ditch dev default; inert in every real run because the
             // runtime always sets -Dmacapk.android.root. Kept in step with
@@ -294,7 +294,7 @@ final class SettingsStore {
         // got it back above. Not set otherwise, so every other app sees it unset
         // exactly as before.
         if (NS_GLOBAL.equals(ns) && "adb_enabled".equals(name)
-                && "1".equals(System.getenv("MACAPK_DEBUG_CERTS"))) return "1";
+                && false) return "1";
         return null;
     }
 

@@ -7,7 +7,7 @@
 //   java -cp android-framework.jar;macapk-loader.jar;<classes> com.macapk.loader.ApkVerificationTest
 //        <an unsigned APK with a binary manifest and resources.arsc> <scratch dir>
 //
-// CI passes the staged framework-res.apk. The test APKs are made here, with
+// CI passes the staged bin/aosp/framework-res-34.apk (it targets 34). The test APKs are made here, with
 // keys keytool generates and apksig's ApkSigner:
 //   - signed (v1 + v2 + v3), v1 only: verify, report the signer;
 //   - tampered after signing: does not verify;
@@ -92,12 +92,12 @@ public class ApkVerificationTest {
 
         // v1 alone is accepted only below targetSdk 30 (AOSP refuses to install
         // a v1-only APK that targets R or later, and so does the check here:
-        // the input targets 36). The same APK made to target 28 is fine.
-        r = ApkVerification.of(sign(unsigned, "v1-target36.apk", List.of(a), null, true, false, false).getPath());
-        check("v1-only APK targeting 36 does not verify", !r.verified);
+        // the input targets 34). The same APK made to target 28 is fine.
+        r = ApkVerification.of(sign(unsigned, "v1-target34.apk", List.of(a), null, true, false, false).getPath());
+        check("v1-only APK targeting 34 does not verify", !r.verified);
         System.out.println("     (" + r.reason + ")");
         File old = replaceEntry(unsigned, "target28-unsigned.apk", "AndroidManifest.xml",
-                retarget(entry(unsigned, "AndroidManifest.xml"), 36, 28));
+                retarget(entry(unsigned, "AndroidManifest.xml"), 34, 28));
         File v1 = sign(old, "v1.apk", List.of(a), null, true, false, false);
         r = ApkVerification.of(v1.getPath());
         check("v1-only signed APK verifies as scheme 1", r.verified && r.scheme == 1 && eq(r.signers.get(0), a.der()));

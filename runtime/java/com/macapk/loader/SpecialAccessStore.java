@@ -124,24 +124,15 @@ public final class SpecialAccessStore {
         return pkg + "@" + installedAt;
     }
 
-    private static final boolean HONEST;
-    static {
-        String e = System.getenv("MACAPK_ALLFILES_HONEST");
-        HONEST = e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
+    /** Special access answered as Android does (all files access, usage stats, manage media and
+     *  the rest only when granted). Always on: upstream's MACAPK_ALLFILES_HONEST=0, which put back
+     *  answers no Android gives (every op allowed, isExternalStorageManager true), is gone, as the
+     *  owner wants no switches. */
+    private static final boolean HONEST = true;
 
-    /** MACAPK_ALLFILES_HONEST, default ON. Off = the pre-S1 answers everywhere:
-     *  isExternalStorageManager()/isExternalStorageLegacy() true, every op
-     *  MODE_ALLOWED except GET_USAGE_STATS, checkPermission GRANTED for a
-     *  declared MANAGE_* permission, canManageMedia false, the Settings
-     *  special-access intents unresolved, setMode a silent sink. */
     public static boolean honest() { return HONEST; }
 
-    private static final boolean ALL_PERMS_ASK;
-    static {
-        String e = System.getenv("MACAPK_ALL_PERMS_ASK");
-        ALL_PERMS_ASK = windowsHost() && (e == null || e.isEmpty() || e.charAt(0) != '0');
-    }
+    private static final boolean ALL_PERMS_ASK = windowsHost();
 
     /** Every dangerous permission group is asked like Android, not only the
      *  storage family and location (RuntimePermissionGroups), and "Display
@@ -149,9 +140,8 @@ public final class SpecialAccessStore {
      *  grants: ON where the helper knows those verbs. That is Win.apk's
      *  launcher (Win.apk.exe runtime-permission --prompt camera ...); the
      *  Mac's macapk-installhelper does not, so there the install-time rule
-     *  (declared == held) stays, unchanged. MACAPK_ALL_PERMS_ASK=0 turns it
-     *  off on Windows too (the labelled bisect gate; also honest() and
-     *  mediaPermsAsk() gate it, as they gate the rest). */
+     *  (declared == held) stays, unchanged. (Its switch, MACAPK_ALL_PERMS_ASK=0,
+     *  is gone.) */
     public static boolean allPermsAsk() { return ALL_PERMS_ASK && HONEST && MEDIA_PERMS_ASK; }
 
     // ---- where things live -----------------------------------------------
@@ -248,9 +238,11 @@ public final class SpecialAccessStore {
         return s;
     }
 
-    private static Snapshot build() {
+    private static Snapshot build() { return build(selfIdentity()); }
+
+    /** The store's verified entry for the install `self` ({dirName, package, installedAt}) names. */
+    private static Snapshot build(String[] self) {
         java.util.Map<String, Integer> none = java.util.Collections.emptyMap();
-        String[] self = selfIdentity();
         if (self == null) {
             return new Snapshot(null, null, null, none,
                     "no registry row owns android root " + SharedStorage.androidRoot()
@@ -452,11 +444,18 @@ public final class SpecialAccessStore {
      *  this process is running: a row for some other app that happens to share
      *  the root is not us. dirName is only for the logs; the grant is keyed by
      *  the other two (storeKey). */
-    static String[] selfIdentity() {
+    static String[] selfIdentity() { return identityOf(runningPackage()); }
+
+    /** Win.apk's system broker: the registry identity of an installed package, the row the launcher
+     *  keeps for it (one per package), or null. */
+    static String[] identityFor(String pkg) {
+        return windowsHost() && pkg != null ? identityOf(pkg) : null;
+    }
+
+    private static String[] identityOf(String running) {
         File reg = registryFile();
         if (!reg.isFile()) return null;
         String root = normalizeDir(SharedStorage.androidRoot());
-        String running = runningPackage();
         // Win.apk: every app shares one android root and the registry keeps one
         // row per package (the launcher's write_registry), so the row is the
         // running package's; without a known package there is no identity.
@@ -673,7 +672,7 @@ public final class SpecialAccessStore {
         if ("false".equalsIgnoreCase(raw)) return Boolean.FALSE;
         if (!raw.startsWith("@")) return null;
         try {
-            android.app.Application app = android.app.Application.getInstance();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) return null;
             android.content.res.Resources r = app.getResources();
             if (r == null) return null;
@@ -760,13 +759,10 @@ public final class SpecialAccessStore {
                     PERM_ACCESS_MEDIA_LOCATION, PERM_READ_MEDIA_AUDIO, PERM_READ_MEDIA_IMAGES,
                     PERM_READ_MEDIA_VIDEO, PERM_READ_MEDIA_VISUAL_USER_SELECTED));
 
-    private static final boolean MEDIA_PERMS_ASK;
-    static {
-        String e = System.getenv("MACAPK_MEDIA_PERMS_ASK");
-        MEDIA_PERMS_ASK = e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
+    /** The storage and media permissions asked at run time, as on Android. Always on (upstream's
+     *  MACAPK_MEDIA_PERMS_ASK=0, the install-time rule, is gone). See the section header. */
+    private static final boolean MEDIA_PERMS_ASK = true;
 
-    /** MACAPK_MEDIA_PERMS_ASK, default ON. See the section header. */
     public static boolean mediaPermsAsk() { return MEDIA_PERMS_ASK; }
 
     /** The location runtime permissions (2026-10-05). Same tokens, same signed
@@ -925,7 +921,7 @@ public final class SpecialAccessStore {
             // bound yet" from a real 0 on its own, so it asks the process-wide
             // predicate (a 0 is real only once the manifest has bound it).
             this(level, target, declaredAll, state, pickerPromptEnabled,
-                 android.app.Application.macapkTargetSdkKnown(target));
+                 com.macapk.loader.app.Apps.targetSdkKnown(target));
         }
 
         /** `targetResolved` says whether `target` is a REAL answer. liveModel
@@ -1221,7 +1217,7 @@ public final class SpecialAccessStore {
         // The MANIFEST's own value: a 0 is AOSP's no-<uses-sdk> default, real
         // even before macapkInitVersion binds it (MACAPK_TARGETSDK_ZERO; =0
         // restores `> 0`, and the old synthesis never produced a 0 anyway).
-        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        boolean resolved = (m.targetSdk >= 0);
         return new PermModel(level, m.targetSdk, declared, snapshot().perms,
                              PHOTO_PICKER_PROMPT_ENABLED, resolved);
     }
@@ -1445,7 +1441,7 @@ public final class SpecialAccessStore {
         for (Manifest.UsesPermissionEntry e : m.usesPermissions) if (e.name != null) declared.add(e.name);
         int level;
         try { level = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { level = 29; }
-        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        boolean resolved = (m.targetSdk >= 0);
         return new GroupModel(level, m.targetSdk, declared, snapshot().perms, resolved);
     }
 
@@ -1466,6 +1462,36 @@ public final class SpecialAccessStore {
     public static Boolean holds(String perm) {
         Boolean s = storagePermissionGranted(perm);
         return s != null ? s : trackedPermissionGranted(perm);
+    }
+
+    /** Win.apk's system broker: snapshots of other packages' entries, each rebuilt when a file changes. */
+    private static final java.util.Map<String, Object[]> sOthers = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Whether the user granted `perm`, a dangerous permission `m` (package `pkg`) requests: the
+     *  checkPermission answer that app's own process gives (GroupModel over its verified entry), asked
+     *  by the system broker when another app's component requires the permission. */
+    public static boolean runtimeGrantedFor(String pkg, Manifest m, String perm) {
+        if (pkg == null || m == null || perm == null) return false;
+        long[] key = statKey();
+        Object[] c = sOthers.get(pkg);
+        Snapshot snap;
+        if (c != null && java.util.Arrays.equals((long[]) c[0], key)) {
+            snap = (Snapshot) c[1];
+        } else {
+            String[] id = identityFor(pkg);
+            snap = id == null ? new Snapshot(null, pkg, null, java.util.Collections.<String, Integer>emptyMap(),
+                    pkg + ": no registry row") : build(id);
+            sOthers.put(pkg, new Object[] { key, snap });
+        }
+        java.util.List<String> declared = new java.util.ArrayList<>();
+        for (Manifest.UsesPermissionEntry e : m.usesPermissions) if (e.name != null) declared.add(e.name);
+        if (isStoragePermission(perm) && !RuntimePermissionGroups.isTracked(perm)) {
+            return declared.contains(perm) && (m.targetSdk > 0 && m.targetSdk < 23 || tokGranted(snap.perms.get(perm)));
+        }
+        int level;
+        try { level = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { level = 29; }
+        boolean resolved = m.targetSdk >= 0;
+        return new GroupModel(level, m.targetSdk, declared, snap.perms, resolved).granted(perm);
     }
 
     /** The stored token for `perm` (for logs and the handler's revoke check). */

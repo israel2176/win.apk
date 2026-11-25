@@ -81,6 +81,8 @@ public class PackageInstaller {
             "android.content.pm.extra.INSTALL_CONSTRAINTS";
     public static final String EXTRA_INSTALL_CONSTRAINTS_RESULT =
             "android.content.pm.extra.INSTALL_CONSTRAINTS_RESULT";
+    /** AOSP (API 34): the packages a waitForInstallConstraints answer is about. */
+    public static final String EXTRA_PACKAGES = "android.content.pm.extra.PACKAGES";
     public static final String EXTRA_UNARCHIVE_PACKAGE_NAME =
             "android.content.pm.extra.UNARCHIVE_PACKAGE_NAME";
     public static final String EXTRA_UNARCHIVE_ALL_USERS =
@@ -312,15 +314,60 @@ public class PackageInstaller {
         }
     }
 
+    /** Whether `constraints` hold for `packageNames` now (AOSP GentleUpdateHelper):
+     *  "app not foreground / not interacting / not top visible" fail while the app
+     *  has a window open (an activity the user opened: the system broker's record of
+     *  its processes, SystemClient.appState; a process the system started headless
+     *  for a service or a job is in the background, as on a device); "device idle"
+     *  fails while any app is open (the PC is in use). There is no telephony, so
+     *  "not in call" holds. With no broker the answer is unknown and the constraints
+     *  are taken as met, as before: one app runs and it is the one asking. */
+    static boolean constraintsMet(java.util.List<String> packageNames, InstallConstraints c) {
+        if (c == null) return true;
+        boolean perApp = c.isAppNotForegroundRequired() || c.isAppNotInteractingRequired()
+                || c.isAppNotTopVisibleRequired();
+        if (perApp && packageNames != null) {
+            for (String pkg : packageNames) {
+                if (com.macapk.loader.SystemClient.appState(pkg) == com.macapk.loader.SystemServer.APP_OPEN) {
+                    return false;
+                }
+            }
+        }
+        if (c.isDeviceIdleRequired()
+                && com.macapk.loader.SystemClient.appState("") == com.macapk.loader.SystemServer.APP_OPEN) {
+            return false;
+        }
+        return true;
+    }
+
+    /** How often a wait for install constraints looks again. */
+    private static final long CONSTRAINTS_POLL_MS = 5_000L;
+
+    /** Wait (off the caller's thread) until `c` holds for `packageNames` or `timeoutMillis`
+     *  passes, then hand `done` the answer. */
+    private static void whenConstraintsMet(java.util.List<String> packageNames, InstallConstraints c,
+            long timeoutMillis, java.util.function.Consumer<Boolean> done) {
+        Thread t = new Thread(() -> {
+            long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMillis);
+            boolean met = constraintsMet(packageNames, c);
+            while (!met && System.currentTimeMillis() < deadline) {
+                try {
+                    Thread.sleep(Math.min(CONSTRAINTS_POLL_MS,
+                            Math.max(1L, deadline - System.currentTimeMillis())));
+                } catch (InterruptedException e) {
+                    break;
+                }
+                met = constraintsMet(packageNames, c);
+            }
+            done.accept(met);
+        }, "install-constraints");
+        t.setDaemon(true);
+        t.start();
+    }
+
     /** AOSP PackageInstaller.checkInstallConstraints(List, InstallConstraints,
      *  Executor, Consumer) (API 34): ask, right now, whether the given
-     *  constraints hold for the named packages.
-     *
-     *  Every constraint AOSP defines is about state Mac.apk does not have: a
-     *  device idle window, a phone call in progress, another app in the
-     *  foreground or interacting. There is one app and no telephony, so each
-     *  constraint is vacuously satisfied -- the same answer a device gives when
-     *  the phone is idle and the target app is not running. Delivered on the
+     *  constraints hold for the named packages (constraintsMet). Delivered on the
      *  caller's Executor, as the contract requires. */
     public void checkInstallConstraints(java.util.List<String> packageNames,
             InstallConstraints constraints, java.util.concurrent.Executor executor,
@@ -329,20 +376,18 @@ public class PackageInstaller {
                 || callback == null) {
             throw new NullPointerException("checkInstallConstraints requires non-null arguments");
         }
-        executor.execute(new Runnable() {
+        // The broker is asked off the caller's thread (it may be the main one).
+        whenConstraintsMet(packageNames, constraints, 0L, met -> executor.execute(new Runnable() {
             @Override public void run() {
-                callback.accept(new InstallConstraintsResult(true));
+                callback.accept(new InstallConstraintsResult(met));
             }
-        });
+        }));
     }
 
     /** AOSP PackageInstaller.waitForInstallConstraints(List, InstallConstraints,
      *  IntentSender, long) (API 34): the asynchronous form -- wait up to
      *  timeoutMillis for the constraints to hold, then report through the
-     *  IntentSender. They already hold here (see checkInstallConstraints), so
-     *  the result is delivered immediately, which is the same observable
-     *  sequence a device produces when the constraints are met on the first
-     *  check. */
+     *  IntentSender, with the result (satisfied, or not when the time ran out). */
     public void waitForInstallConstraints(java.util.List<String> packageNames,
             InstallConstraints constraints, android.content.IntentSender statusReceiver,
             long timeoutMillis) {
@@ -350,7 +395,9 @@ public class PackageInstaller {
             // AOSP: "@throws IllegalArgumentException if the timeout is out of range."
             throw new IllegalArgumentException("timeoutMillis out of range: " + timeoutMillis);
         }
-        deliverConstraintsSatisfied(statusReceiver);
+        final java.util.List<String> pkgs = packageNames;
+        whenConstraintsMet(pkgs, constraints, timeoutMillis,
+                met -> deliverConstraintsResult(statusReceiver, pkgs, met));
     }
 
     // ---- App archiving (API 35) -------------------------------------------
@@ -444,13 +491,16 @@ public class PackageInstaller {
                 STATUS_FAILURE, LEGACY_INSTALL_FAILED_INTERNAL_ERROR, message);
     }
 
-    /** waitForInstallConstraints' success shape: AOSP fills the sender with
-     *  EXTRA_PACKAGES, EXTRA_INSTALL_CONSTRAINTS_RESULT and a STATUS_SUCCESS. */
-    private static void deliverConstraintsSatisfied(android.content.IntentSender statusReceiver) {
+    /** waitForInstallConstraints' answer: AOSP fills the sender with
+     *  EXTRA_PACKAGES and EXTRA_INSTALL_CONSTRAINTS_RESULT (and a STATUS_SUCCESS:
+     *  the wait itself worked, whatever its result). */
+    private static void deliverConstraintsResult(android.content.IntentSender statusReceiver,
+            java.util.List<String> packageNames, boolean met) {
         if (statusReceiver == null) return;
         android.content.Intent fillIn = new android.content.Intent();
+        if (packageNames != null) fillIn.putExtra(EXTRA_PACKAGES, packageNames.toArray(new String[0]));
         fillIn.putExtra(EXTRA_STATUS, STATUS_SUCCESS);
-        fillIn.putExtra(EXTRA_INSTALL_CONSTRAINTS_RESULT, new InstallConstraintsResult(true));
+        fillIn.putExtra(EXTRA_INSTALL_CONSTRAINTS_RESULT, new InstallConstraintsResult(met));
         sendQuietly(statusReceiver, fillIn);
     }
 
@@ -470,7 +520,7 @@ public class PackageInstaller {
     private static void sendQuietly(android.content.IntentSender sender,
                                     android.content.Intent fillIn) {
         try {
-            sender.sendIntent(android.app.Application.macapk_get(), 0, fillIn, null, null);
+            sender.sendIntent(com.macapk.loader.app.Apps.current(), 0, fillIn, null, null);
         } catch (Throwable ignored) {
             // AOSP swallows a dead IntentSender the same way (the caller is
             // gone; there is nobody left to tell).
@@ -707,7 +757,7 @@ public class PackageInstaller {
 
     private static void requireInstalled(String packageName)
             throws PackageManager.NameNotFoundException {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         String self = (app != null) ? app.getPackageName() : null;
         if (packageName == null || self == null || !packageName.equals(self)) {
             throw new PackageManager.NameNotFoundException(String.valueOf(packageName));
@@ -1123,7 +1173,7 @@ public class PackageInstaller {
          *  silently keeping the session while reporting success would leave the
          *  caller waiting for an install the new owner will never commit. */
         public void transfer(String packageName) throws PackageManager.NameNotFoundException {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             String self = (app != null) ? app.getPackageName() : null;
             if (packageName != null && packageName.equals(self)) {
                 throw new IllegalArgumentException(
@@ -1439,7 +1489,10 @@ public class PackageInstaller {
     }
 
     public static final class InstallConstraints implements android.os.Parcelable {
-        public static final InstallConstraints GENTLE_UPDATE = new InstallConstraints();
+        /** AOSP: "the app is not interacting with the user" (Builder
+         *  .setAppNotInteractingRequired), a store's update of an app in use waits. */
+        public static final InstallConstraints GENTLE_UPDATE =
+                new InstallConstraints(false, false, true, false, false);
 
         // 2026-08-23 conformance sweep: previously the Builder's setters were
         // no-ops (returned `this` without storing anything) and every
@@ -1448,11 +1501,9 @@ public class PackageInstaller {
         // made this class trivially "stateless" but also meant an app that
         // actually READ its own constraints back always got the wrong
         // answer. Real fields now back the getters (matching AOSP field
-        // names 1:1, PackageInstaller.java L5241-5299); Mac.apk still
-        // trivially satisfies every constraint immediately (see
-        // commitSessionAfterInstallConstraintsAreMet below), so this does
-        // not change install behaviour -- only what the object reports
-        // about itself.
+        // names 1:1, PackageInstaller.java L5241-5299). Win.apk honours them
+        // with the system broker on (constraintsMet above): an app the user
+        // has open is "foreground", "interacting" and "top visible".
         private boolean mDeviceIdleRequired;
         private boolean mAppNotForegroundRequired;
         private boolean mAppNotInteractingRequired;
@@ -1518,10 +1569,10 @@ public class PackageInstaller {
         }
     }
 
-    /** AOSP API-34: commit once the constraints hold. On Mac.apk there is one
-     *  foreground app and no calls/idle states to wait for, so the
-     *  constraints are trivially met and this is a plain commit (F-Droid's
-     *  SDK>=31 session path reaches here when canUseInstallConstraints). */
+    /** AOSP API-34: commit once the constraints hold for the session's package
+     *  (a store's "gentle update": not while the user is in the app it updates),
+     *  else, when timeoutMillis passes first, STATUS_FAILURE_TIMEOUT with AOSP's
+     *  message. F-Droid's SDK>=31 session path reaches here too. */
     public void commitSessionAfterInstallConstraintsAreMet(int sessionId,
             android.content.IntentSender statusReceiver,
             InstallConstraints constraints, long timeoutMillis) {
@@ -1529,6 +1580,22 @@ public class PackageInstaller {
         if (s == null) {
             throw new SecurityException("Session " + sessionId + " does not exist");
         }
-        s.commit(statusReceiver);
+        java.util.List<String> pkgs = s.appPackageName != null
+                ? java.util.Collections.singletonList(s.appPackageName)
+                : java.util.Collections.<String>emptyList();
+        whenConstraintsMet(pkgs, constraints, timeoutMillis, met -> {
+            if (met) {
+                s.commit(statusReceiver);
+                return;
+            }
+            com.macapk.loader.NativeLog.i("PackageInstaller", "session " + sessionId
+                    + ": install constraints not met within " + timeoutMillis + " ms (" + pkgs + " in use)");
+            if (statusReceiver == null) return;
+            android.content.Intent fillIn = new android.content.Intent();
+            fillIn.putExtra(EXTRA_SESSION_ID, sessionId);
+            fillIn.putExtra(EXTRA_STATUS, STATUS_FAILURE_TIMEOUT);
+            fillIn.putExtra(EXTRA_STATUS_MESSAGE, "Install constraints not satisfied within timeout");
+            sendQuietly(statusReceiver, fillIn);
+        });
     }
 }

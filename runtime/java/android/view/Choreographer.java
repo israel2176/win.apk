@@ -217,9 +217,6 @@ public final class Choreographer {
     // the thread's own Looper (see android.os.Looper.macapkScheduleVsync).
     // What it cost to be a timer: a render-pacing thread (Unity's
     // "UnityChoreographer", whose doFrame handler is the ONLY writer of the frame
-    // counter UnityMain waits on) ticked off the display, on its own clock.
-    static final boolean VSYNC_THREADS =
-        !"0".equals(System.getenv("MACAPK_CHOREO_VSYNC_THREADS"));
     // NANOTIME_BASE: every frame time this class hands out is in the
     // System.nanoTime() timebase, AOSP's documented contract. The previous
     // process-relative rebasedNanos() base (kept for =0) broke any consumer that
@@ -229,9 +226,6 @@ public final class Choreographer {
     // presentTime came out near minus the host uptime (the "TimeManager freeze"
     // that swappy_present_tick's offset rewrite papered over). Our own
     // ValueAnimator.reverse() and AnimationUtils.currentAnimationTimeMillis()
-    // already used raw System.nanoTime() against these frame times.
-    static final boolean NANOTIME_BASE =
-        !"0".equals(System.getenv("MACAPK_CHOREO_NANOTIME_BASE"));
     // AOSP Choreographer's private tokens, so removeCallbacks(type, null, token)
     // cannot confuse a frame callback with a posted Runnable.
     private static final Object FRAME_CALLBACK_TOKEN = new Object();
@@ -274,24 +268,14 @@ public final class Choreographer {
     // per-thread Handler path untouched (see postFrameCallbackDelayed below).
     private static final java.util.ArrayList<FrameAction> sMainQueue = new java.util.ArrayList<>();
     private boolean isMainVsyncDriven() {
-        return android.os.Looper.MACAPK_REAL_LOOPER
-            && mLooper == android.os.Looper.getMainLooper();
+        return mLooper == android.os.Looper.getMainLooper();
     }
     // v1.0.411 DIAGNOSTIC (MACAPK_CHOREO_THREADDIAG): confirm WHICH thread the
     // Compose window recomposer's AndroidUiFrameClock Choreographer lives on, and
     // whether its postFrameCallback takes the drained main-vsync path or the dead
-    // per-thread Handler-timer path. The decisive probe for "Reddit's screen
-    // recomposer parks in withFrameNanos because its Choreographer is never drained."
-    private static final boolean THREADDIAG = System.getenv("MACAPK_CHOREO_THREADDIAG") != null;
-    private static final java.util.concurrent.atomic.AtomicInteger sChoreoFire =
-        new java.util.concurrent.atomic.AtomicInteger();
     // Time-diagnostic (MACAPK_CHOREO_TIME): log the frameTimeNanos delta Unity
     // actually receives each frame. Unity 2019+ derives Time.deltaTime from this
     // Choreographer timestamp, so a wrong per-frame delta here = crawling
-    // animations even at 60fps render. (MACAPK_UHOOK also turned it on, with a
-    // Crossy-era call/post log; both went with the il2cpp diag kit, 2026-09-27.)
-    private static final boolean TIMEDIAG = System.getenv("MACAPK_CHOREO_TIME") != null;
-    private static volatile long sLastWhen = 0;
 
     // MACAPK_FRAME_TRACE=1 (diagnostic, off by default; one static read when
     // unset): a "choreo-thread:<thread>" interval batch for every PER-THREAD
@@ -304,8 +288,7 @@ public final class Choreographer {
     // (this dispatch was late too) from a frame that was late on its own.
     private static final boolean FRAME_TRACE;
     static {
-        String e = System.getenv("MACAPK_FRAME_TRACE");
-        FRAME_TRACE = e != null && e.startsWith("1");
+        FRAME_TRACE = false;
     }
     private long mTracePrevNanos;
     private int mTraceN;
@@ -345,35 +328,18 @@ public final class Choreographer {
     // On a real Android device frameTimeNanos is boot-relative and small, so
     // rebase ours process-relative to match. Rebasing subtracts a CONSTANT, so
     // every frame-to-frame DELTA is unchanged -- delta-based consumers are
-    // unaffected; only the (huge) absolute timestamp is corrected.
-    private static volatile long sNanoBase = 0;
-    private static long rebasedNanos() {
-        long n = System.nanoTime();
-        long b = sNanoBase;
-        if (b == 0) {
-            synchronized (Choreographer.class) {
-                if (sNanoBase == 0) sNanoBase = n;
-                b = sNanoBase;
-            }
-        }
-        long r = n - b;
-        return r < 0 ? 0 : r;
-    }
 
     /** "Now" on the frame clock: System.nanoTime() (AOSP), or rebasedNanos()
      *  under MACAPK_CHOREO_NANOTIME_BASE=0. Every frame time and due time in
      *  this class goes through here or toFrameClock, so the two can never mix. */
     private static long frameClockNanos() {
-        return NANOTIME_BASE ? System.nanoTime() : rebasedNanos();
+        return System.nanoTime();
     }
 
     /** A System.nanoTime()-base timestamp (a delivered vsync) on the frame
      *  clock: unchanged, or shifted by rebasedNanos()'s own base under =0. */
     private static long toFrameClock(long nanoTimeNanos) {
-        if (NANOTIME_BASE) return nanoTimeNanos;
-        rebasedNanos();   // initialises sNanoBase if this is the first use
-        long r = nanoTimeNanos - sNanoBase;
-        return r < 0 ? 0 : r;
+        return nanoTimeNanos;
     }
 
     // AOSP derives the non-main-vsync Handler tick from the real display:
@@ -408,7 +374,7 @@ public final class Choreographer {
         // vsync-driven frame; the main looper answers false here (it has its own
         // per-real-frame drain), and so does a runtime too old to bind the
         // natives, which keeps the Handler timer.
-        mVsyncThread = VSYNC_THREADS && mLooper.macapkCanReceiveVsync();
+        mVsyncThread = mLooper.macapkCanReceiveVsync();
         mDisplayEventReceiver = mVsyncThread ? this::onDisplayVsync : null;
         mVsyncFrameRunnable = mVsyncThread ? () -> doVsyncFrame(mVsyncTimestampNanos) : null;
     }
@@ -417,12 +383,6 @@ public final class Choreographer {
      *  call from any thread that has a Looper; we do the same. */
     public static Choreographer getInstance() {
         Choreographer c = sThreadInstance.get();
-        if (THREADDIAG) android.util.Log.i("Mac.apk.Choreo",
-            "getInstance thread=" + Thread.currentThread().getName()
-            + " mLooper==mainLooper=" + (c.mLooper == android.os.Looper.getMainLooper())
-            + " mainVsyncDriven=" + c.isMainVsyncDriven()
-            + " vsyncThread=" + c.mVsyncThread
-            + " realLooper=" + android.os.Looper.MACAPK_REAL_LOOPER);
         return c;
     }
 
@@ -482,11 +442,6 @@ public final class Choreographer {
 
     public void postFrameCallbackDelayed(FrameCallback callback, long delayMillis) {
         if (callback == null) return;
-        if (THREADDIAG) android.util.Log.i("Mac.apk.Choreo",
-            "postFrameCallback thread=" + Thread.currentThread().getName()
-            + " mainVsyncDriven=" + isMainVsyncDriven()
-            + " mLooper==main=" + (mLooper == android.os.Looper.getMainLooper())
-            + " cb=" + callback.getClass().getName());
         // Tier 3 M7: the MAIN-loop Choreographer queues the callback for the next
         // REAL vsync (drained by macapkDriveMainFrame) instead of a 16 ms Handler
         // timer. A delay-0 postFrameCallback (the ValueAnimator / withFrameNanos
@@ -517,14 +472,6 @@ public final class Choreographer {
                 @Override public void run() {
                     mPendingCallbacks.remove(callback);
                     if (FRAME_TRACE) traceThreadFrame();
-                    if (TIMEDIAG) {
-                        long _lw = sLastWhen; sLastWhen = when;
-                        android.util.Log.i("Mac.apk.Choreo",
-                            "doFrame fire #" + sChoreoFire.incrementAndGet()
-                            + " when=" + when + " dWhenMs="
-                            + ((when - _lw) / 1_000_000L)
-                            + " nowMs=" + (System.nanoTime() / 1_000_000L));
-                    }
                     try {
                         mLastFrameTimeNanos = when;
                         callback.doFrame(when);
@@ -642,7 +589,7 @@ public final class Choreographer {
      *  MACAPK_CHOREO_NANOTIME_BASE=0 this is exactly the old rebasedNanos(). */
     public long getFrameTime() { return getFrameTimeNanos() / 1_000_000L; }
     public long getFrameTimeNanos() {
-        if (NANOTIME_BASE && mCallbacksRunning) return mLastFrameTimeNanos;
+        if (mCallbacksRunning) return mLastFrameTimeNanos;
         return frameClockNanos();
     }
 
@@ -688,9 +635,6 @@ public final class Choreographer {
         // AOSP doFrame order: INPUT(0) -> ANIMATION(1) -> INSETS_ANIMATION(2)
         // -> [TRAVERSAL(3) = canvas] -> COMMIT(4).
         due.sort((a, b) -> Integer.compare(a.type, b.type));
-        if (TIMEDIAG) android.util.Log.i("Mac.apk.Choreo",
-            "doMainFrame fire #" + sChoreoFire.incrementAndGet() + " ran=" + due.size()
-            + " nanos=" + nanos);
         mCallbacksRunning = true;
         try {
             for (FrameAction a : due) {
@@ -848,17 +792,10 @@ public final class Choreographer {
         }
         final int n = sVsyncFrames.incrementAndGet();
         if (FRAME_TRACE) traceThreadFrame();
-        if (TIMEDIAG) {
-            long lw = sLastWhen; sLastWhen = frameTimeNanos;
-            android.util.Log.i("Mac.apk.Choreo", "doFrame(vsync) #" + n
-                + " thread=" + Thread.currentThread().getName()
-                + " frameTimeNanos=" + frameTimeNanos
-                + " dMs=" + ((frameTimeNanos - lw) / 1_000_000L)
-                + " ageUs=" + ((System.nanoTime() - timestampNanos) / 1_000L));
-        } else if (n == 1) {
+        if (n == 1) {
             android.util.Log.i("Mac.apk.Choreo", "first vsync-driven doFrame on thread="
                 + Thread.currentThread().getName()
-                + " (MACAPK_CHOREO_VSYNC_THREADS=1, nanoTimeBase=" + NANOTIME_BASE + ")");
+                + " (MACAPK_CHOREO_VSYNC_THREADS=1, nanoTimeBase=" + true + ")");
         }
         for (int type = CALLBACK_INPUT; type <= CALLBACK_LAST; type++) {
             doVsyncCallbacks(type, frameTimeNanos);
@@ -913,4 +850,9 @@ public final class Choreographer {
             synchronized (mLock) { mCallbacksRunning = false; }
         }
     }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP Choreographer.getFrameIntervalNanos: the display's frame interval. */
+    public long getFrameIntervalNanos() { return frameIntervalNanos(); }
 }

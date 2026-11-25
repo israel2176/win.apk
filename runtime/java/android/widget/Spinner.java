@@ -56,33 +56,12 @@ public class Spinner extends AbsSpinner implements DialogInterface.OnClickListen
         macapkReadGravity(context, attrs, defStyleAttr);
     }
 
-    /** Labelled bisect gate (wave 5, 2026-09-26): AOSP Spinner is clickable
-     *  through its STYLE (Widget.Spinner sets `clickable` true, core/res
-     *  styles.xml:644-656) and shows its popup from its own performClick
-     *  override, only when no OnClickListener handled the click
-     *  (Spinner.java :785-797):
-     *      boolean handled = super.performClick();
-     *      if (!handled) { handled = true; if (!mPopup.isShowing()) mPopup.show(...); }
-     *  The legacy port instead installed an OnClickListener on itself whose
-     *  onClick called performClick() -- and performClick() began with
-     *  super.performClick(), which invokes that same listener. So every tap on
-     *  a Spinner recursed until StackOverflowError and the popup was never
-     *  reached (measured offline: debug/w5widgets_gate.sh row sp-click, whose
-     *  control reproduces the overflow). MACAPK_SPINNER_CLICK_AOSP=0 restores
-     *  the self-listener. */
-    static final boolean MACAPK_SPINNER_CLICK_AOSP =
-            !"0".equals(System.getenv("MACAPK_SPINNER_CLICK_AOSP"));
 
     private void installClick() {
-        if (MACAPK_SPINNER_CLICK_AOSP) {
-            // Stands in for Widget.Spinner's `clickable` attribute, which this
-            // constructor does not read.
-            setClickable(true);
-            return;
-        }
-        setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { performClick(); }
-        });
+        // Stands in for Widget.Spinner's `clickable` attribute, which this
+        // constructor does not read.
+        setClickable(true);
+        return;
     }
 
     /** AOSP Spinner's constructor: `mGravity = a.getInt(R.styleable.Spinner_gravity,
@@ -96,7 +75,7 @@ public class Spinner extends AbsSpinner implements DialogInterface.OnClickListen
      *  start|center_vertical) becomes visible. Framework ids from
      *  android.R.attr: gravity 0x010100af, spinnerStyle 0x01010081. */
     private void macapkReadGravity(Context context, android.util.AttributeSet attrs, int defStyleAttr) {
-        if (!MACAPK_SPINNER_RECYCLE || context == null) return;
+        if (context == null) return;
         try {
             final android.content.res.TypedArray a = context.obtainStyledAttributes(attrs,
                     new int[] { 0x010100af /* android.R.attr.gravity */ },
@@ -113,7 +92,6 @@ public class Spinner extends AbsSpinner implements DialogInterface.OnClickListen
      *  (MACAPK_SPINNER_WIDTH, see AbsSpinner). */
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-        if (!MACAPK_SPINNER_WIDTH) return;
         if (mPopup != null && MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.AT_MOST) {
             final int measuredWidth = getMeasuredWidth();
             setMeasuredDimension(Math.min(Math.max(measuredWidth,
@@ -171,19 +149,14 @@ public class Spinner extends AbsSpinner implements DialogInterface.OnClickListen
     }
 
     @Override public boolean performClick() {
-        if (MACAPK_SPINNER_CLICK_AOSP) {
-            // AOSP :785-797: a registered OnClickListener wins; otherwise the
-            // click opens the popup.
-            boolean handled = super.performClick();
-            if (!handled) {
-                handled = true;
-                if (!mPopup.isShowing()) macapkShowPopup();
-            }
-            return handled;
+        // AOSP :785-797: a registered OnClickListener wins; otherwise the
+        // click opens the popup.
+        boolean handled = super.performClick();
+        if (!handled) {
+            handled = true;
+            if (!mPopup.isShowing()) macapkShowPopup();
         }
-        super.performClick();
-        macapkShowPopup();
-        return true;
+        return handled;
     }
 
     /** The popup half of performClick, unchanged from the legacy port. */
@@ -293,7 +266,7 @@ public class Spinner extends AbsSpinner implements DialogInterface.OnClickListen
      *  keeps its non-modal popup, which is what AOSP does. */
     private static ListPopupWindow macapkNewDropdown(Context context) {
         ListPopupWindow p = new ListPopupWindow(context);
-        if (!"0".equals(System.getenv("MACAPK_OVERLAY_NOTFOCUSABLE_NONMODAL"))) p.setModal(true);
+        p.setModal(true);
         return p;
     }
 }

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <cmath>
 #include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -29,14 +30,6 @@ int64_t nano_time() {
 }
 
 // ---- the mixer -------------------------------------------------------------------------
-class Source {
-public:
-    virtual ~Source() = default;
-    // Adds `frames` stereo frames at `out_rate` into `out`. False: finished,
-    // drop me.
-    virtual bool mix(float* out, size_t frames, int out_rate) = 0;
-};
-
 namespace {
 
 template <typename T>
@@ -65,12 +58,18 @@ public:
         sources_.push_back(std::move(s));
     }
     void remove(const Source* s) {
-        std::lock_guard<std::mutex> hold(lock_);
-        sources_.erase(std::remove_if(sources_.begin(), sources_.end(),
-                                      [s](const std::shared_ptr<Source>& x) { return x.get() == s; }),
-                       sources_.end());
+        {
+            std::lock_guard<std::mutex> hold(lock_);
+            sources_.erase(std::remove_if(sources_.begin(), sources_.end(),
+                                          [s](const std::shared_ptr<Source>& x) { return x.get() == s; }),
+                           sources_.end());
+        }
+        // The cycle in progress may still hold `s` in its copy of the list:
+        // wait for it to end, so the caller may free what s->mix() reads.
+        if (std::this_thread::get_id() != thread_.load()) std::lock_guard<std::mutex> cycle(cycle_);
     }
     int rate() const { return rate_.load(); }
+    size_t period() const { return period_.load(); }
 
 private:
     Mixer() {
@@ -79,6 +78,7 @@ private:
 
     void mix(float* out, size_t frames) {
         std::fill(out, out + frames * 2, 0.0f);
+        std::lock_guard<std::mutex> cycle(cycle_);
         std::vector<std::shared_ptr<Source>> now;
         {
             std::lock_guard<std::mutex> hold(lock_);
@@ -90,23 +90,92 @@ private:
         for (size_t i = 0; i < frames * 2; ++i) out[i] = std::clamp(out[i], -1.0f, 1.0f);
     }
 
+    // Told by Windows when the default output changes (headphones plugged in, a Bluetooth headset, the
+    // user's choice in Settings): the stream moves to the new default, as AudioFlinger reroutes a track
+    // to the device the policy picks. One for the process, never released (the mixer lives as long).
+    class DefaultWatch final : public IMMNotificationClient {
+    public:
+        explicit DefaultWatch(std::atomic<bool>* changed) : changed_(changed) {}
+        ULONG STDMETHODCALLTYPE AddRef() override { return 1; }
+        ULONG STDMETHODCALLTYPE Release() override { return 1; }
+        HRESULT STDMETHODCALLTYPE QueryInterface(REFIID iid, void** out) override {
+            if (iid == __uuidof(IUnknown) || iid == __uuidof(IMMNotificationClient)) {
+                *out = static_cast<IMMNotificationClient*>(this);
+                return S_OK;
+            }
+            *out = nullptr;
+            return E_NOINTERFACE;
+        }
+        HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR) override {
+            if (flow == eRender && role == eConsole) changed_->store(true);
+            return S_OK;
+        }
+        HRESULT STDMETHODCALLTYPE OnDeviceStateChanged(LPCWSTR, DWORD) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE OnDeviceAdded(LPCWSTR) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE OnDeviceRemoved(LPCWSTR) override { return S_OK; }
+        HRESULT STDMETHODCALLTYPE OnPropertyValueChanged(LPCWSTR, const PROPERTYKEY) override { return S_OK; }
+
+    private:
+        std::atomic<bool>* changed_;
+    };
+
+    enum class Device { kNone, kLost };
+
     void run() {
+        thread_ = std::this_thread::get_id();
         CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        if (!run_device()) run_silent();
+        IMMDeviceEnumerator* watcher = nullptr;
+        if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                       IID_PPV_ARGS(&watcher)))) {
+            watcher->RegisterEndpointNotificationCallback(new DefaultWatch(&default_changed_));
+        }
+        // Each end of a device is followed by the new default; with none, the mixer keeps time silently and
+        // looks again every few seconds, or as soon as Windows names a new default. Before, the first loss
+        // (a headset unplugged) left every stream silent until the app was closed.
+        bool silent_said = false;
+        for (;;) {
+            default_changed_ = false;
+            const int64_t opened = nano_time();
+            const Device how = run_device();
+            const bool brief = nano_time() - opened < 1000000000LL;  // gone at once: do not spin on it
+            if (how == Device::kLost) {
+                std::fprintf(stderr, "[win.apk] audio: the output device %s; opening the default one\n",
+                             default_changed_ ? "is no longer the default" : "went away");
+                std::fflush(stderr);
+                silent_said = false;
+                if (!brief) continue;
+            } else if (!silent_said) {
+                std::fprintf(stderr,
+                             "[win.apk] audio: no output device (%s failed, 0x%08lx); playing silently until there "
+                             "is one\n",
+                             failed_at_, static_cast<unsigned long>(failed_hr_));
+                std::fflush(stderr);
+                silent_said = true;
+            }
+            run_silent(3000);
+        }
     }
 
-    // The default render endpoint, shared mode, event driven.
-    bool run_device() {
+    bool step(const char* what, HRESULT hr) {
+        failed_at_ = what;
+        failed_hr_ = hr;
+        return SUCCEEDED(hr);
+    }
+
+    // The default render endpoint, shared mode, event driven, until it ends: kNone when it did not open.
+    Device run_device() {
         Com<IMMDeviceEnumerator> enumerator;
         Com<IMMDevice> device;
         Com<IAudioClient> client;
         Com<IAudioRenderClient> render;
         WAVEFORMATEX* fmt = nullptr;
-        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator))) ||
-            FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)) ||
-            FAILED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client))) ||
-            FAILED(client->GetMixFormat(&fmt))) {
-            return false;
+        if (!step("MMDeviceEnumerator", CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                                         IID_PPV_ARGS(&enumerator))) ||
+            !step("the default output", enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device)) ||
+            !step("IAudioClient",
+                  device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(&client))) ||
+            !step("GetMixFormat", client->GetMixFormat(&fmt))) {
+            return Device::kNone;
         }
         const bool is_float =
             fmt->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
@@ -116,22 +185,30 @@ private:
         const int bits = fmt->wBitsPerSample;
         HANDLE ready = CreateEventW(nullptr, FALSE, FALSE, nullptr);
         UINT32 buffer_frames = 0;
-        const bool ok = (is_float ? bits == 32 : bits == 16) &&
-                        SUCCEEDED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
-                                                     400000 /* 40 ms */, 0, fmt, nullptr)) &&
-                        SUCCEEDED(client->SetEventHandle(ready)) && SUCCEEDED(client->GetBufferSize(&buffer_frames)) &&
-                        SUCCEEDED(client->GetService(IID_PPV_ARGS(&render))) && SUCCEEDED(client->Start());
-        rate_ = static_cast<int>(fmt->nSamplesPerSec);
+        const bool ok = step("the device's format (16-bit or float only)",
+                             (is_float ? bits == 32 : bits == 16) ? S_OK : E_NOTIMPL) &&
+                        step("Initialize", client->Initialize(AUDCLNT_SHAREMODE_SHARED,
+                                                              AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 400000 /* 40 ms */,
+                                                              0, fmt, nullptr)) &&
+                        step("SetEventHandle", client->SetEventHandle(ready)) &&
+                        step("GetBufferSize", client->GetBufferSize(&buffer_frames)) &&
+                        step("GetService", client->GetService(IID_PPV_ARGS(&render))) &&
+                        step("Start", client->Start());
+        if (ok) rate_ = static_cast<int>(fmt->nSamplesPerSec);
+        REFERENCE_TIME device_period = 0;  // 100 ns units
+        if (ok && SUCCEEDED(client->GetDevicePeriod(&device_period, nullptr)) && device_period > 0) {
+            period_ = static_cast<size_t>(device_period * rate_.load() / 10000000LL);
+        }
         CoTaskMemFree(fmt);
         if (!ok) {
             CloseHandle(ready);
-            return false;
+            return Device::kNone;
         }
         std::vector<float> mixbuf;
-        for (;;) {
+        while (!default_changed_.load()) {
             WaitForSingleObject(ready, 200);
             UINT32 padding = 0;
-            if (FAILED(client->GetCurrentPadding(&padding))) break;  // device gone
+            if (FAILED(client->GetCurrentPadding(&padding))) break;  // device gone (AUDCLNT_E_DEVICE_INVALIDATED)
             const UINT32 frames = buffer_frames - padding;
             if (frames == 0) continue;
             BYTE* data = nullptr;
@@ -153,15 +230,17 @@ private:
         }
         client->Stop();
         CloseHandle(ready);
-        return false;  // the device went away: keep time silently from here on
+        return Device::kLost;
     }
 
-    // No device: consume audio at real time, discarding it.
-    void run_silent() {
+    // No device: consume audio at real time, discarding it, for `ms` or until Windows names a new default.
+    void run_silent(int ms) {
         if (rate_.load() <= 0) rate_ = 48000;
+        period_ = static_cast<size_t>(rate_.load() / 100);  // the 10 ms sleep below
         std::vector<float> mixbuf;
-        int64_t last = nano_time();
-        for (;;) {
+        const int64_t start = nano_time();
+        int64_t last = start;
+        while (!default_changed_.load() && last - start < static_cast<int64_t>(ms) * 1000000LL) {
             Sleep(10);
             const int64_t now = nano_time();
             const size_t frames = static_cast<size_t>((now - last) * rate_.load() / 1000000000LL);
@@ -173,8 +252,14 @@ private:
     }
 
     std::mutex lock_;
+    std::mutex cycle_;  // held through one mix cycle (remove waits on it)
     std::vector<std::shared_ptr<Source>> sources_;
     std::atomic<int> rate_{48000};
+    std::atomic<size_t> period_{480};
+    std::atomic<std::thread::id> thread_{};
+    std::atomic<bool> default_changed_{false};
+    const char* failed_at_ = "";  // the mixer thread's: the step a device did not open at, and its HRESULT
+    HRESULT failed_hr_ = S_OK;
 };
 
 }  // namespace
@@ -395,6 +480,12 @@ void stream_params(Stream* s, float* speed, float* pitch) { s->params(speed, pit
 size_t stream_capacity(Stream* s) { return s->capacity(); }
 size_t stream_set_buffer_size(Stream* s, size_t frames) { return s->set_buffer_size(frames); }
 int64_t stream_underruns(Stream* s) { return s->underruns(); }
+
+// ---- pulled sources ----------------------------------------------------------------------
+void source_add(std::shared_ptr<Source> s) { Mixer::get().add(std::move(s)); }
+void source_remove(const Source* s) { Mixer::get().remove(s); }
+int output_rate() { return Mixer::get().rate(); }
+size_t output_period_frames() { return Mixer::get().period(); }
 
 // ---- clip voices -------------------------------------------------------------------------
 class Voice final : public Source {

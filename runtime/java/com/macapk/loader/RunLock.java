@@ -39,7 +39,7 @@ public final class RunLock {
 
     /** Take the run lock if we have an installed identity and it is free. */
     public static synchronized void ensureHeld() {
-        if (sFd >= 0 || "0".equals(System.getenv("MACAPK_RUN_LOCK"))) return;
+        if (sFd >= 0) return;
         String[] self;
         try { self = SpecialAccessStore.selfIdentity(); } catch (Throwable t) { self = null; }
         if (self == null || self[0] == null || self[0].isEmpty()) return;   // dev / harness run

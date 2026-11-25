@@ -15,15 +15,36 @@ public final class WinProcesses {
     static native String commandLine(int pid);
     /** Whether `pid` is alive and is this user's Win.apk runtime. */
     static native boolean isRuntime(int pid);
+    /** Whether `pid` is alive and is this user's launcher of this install (Win.apk.exe above the
+     *  runtime's bin folder, also the install helper). */
+    private static native boolean isLauncher(int pid);
     /** When `pid` started (FILETIME ticks): with the pid, one process for good. */
     static native long startTime(int pid);
     /** The pipe-name prefix this user's runtimes share. */
     static native String pipePrefix();
+    /** The pid of a process that is not this user's Win.apk runtime and holds the published binder
+     *  name (another install's or build's broker), seen at the last lookup and still running; 0 for
+     *  none. Win.apk-only (binder_win.cpp). */
+    static native int foreignServer(String name);
+
+    /** foreignServer, 0 where the natives are not bound. */
+    static int foreignServerOf(String name) {
+        try { return foreignServer(name); } catch (UnsatisfiedLinkError e) { return 0; }
+    }
 
     public static boolean available() {
         if (!HostAppSupport.windowsHost()) return false;
         try {
             return pipePrefix() != null;
+        } catch (UnsatisfiedLinkError e) {
+            return false;
+        }
+    }
+
+    /** Whether `pid` is the launcher (see isLauncher); false where the natives are not bound. */
+    public static boolean launcher(int pid) {
+        try {
+            return isLauncher(pid);
         } catch (UnsatisfiedLinkError e) {
             return false;
         }

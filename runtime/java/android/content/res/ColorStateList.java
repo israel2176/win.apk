@@ -20,33 +20,14 @@
 // by resource id -- that wiring lives in Resources.java.
 package android.content.res;
 
-public class ColorStateList implements android.os.Parcelable {
+import com.macapk.loader.gfx.GfxBackend;
+
+public class ColorStateList extends ComplexColor implements android.os.Parcelable {
     // Parallel arrays: mStateSpecs[i] is the spec for color mColors[i].
     private final int[][] mStateSpecs;
     private final int[] mColors;
     private final int mDefaultColor;
 
-    /** fwxml (docs/fwxml-platform-xml-typed-values_2026-09-26.md). Default ON;
-     *  `MACAPK_CSL_THEMELESS_AOSP=0` restores the pre-change inflate (only
-     *  android:color chased a theme reference; android:alpha / android:lStar
-     *  were parsed as bare floats, so "@dimen/x" and "?attr/x" read as 1.0 /
-     *  absent) and drops the unresolved-reference record below
-     *  (canApplyTheme() false, obtainForTheme() returns this).
-     *
-     *  What it mirrors: AOSP reads each <item> through
-     *  `Resources.obtainAttributes(r, theme, attrs, R.styleable.ColorStateListItem)`
-     *  (android14-release ColorStateList.java :363-368), which resolves EVERY
-     *  item value the same way -- a literal, a reference by id, or with a theme
-     *  a theme attribute -- before getColor / getFloat read it. A theme
-     *  attribute that does not resolve (every one, with no theme; one the
-     *  theme lacks, with a theme) is extracted (`a.extractThemeAttrs()`, :365)
-     *  and read as absent, so the colour is Color.MAGENTA, the alpha 1.0 and
-     *  the lStar -1, and the list REMEMBERS it (mThemeAttrs, :405-423) so that
-     *  applyTheme / obtainForTheme (:457-533) can finish the job once a theme
-     *  that has it is known. MAGENTA is a placeholder on a device too; it is
-     *  only ever seen when nothing applies such a theme. */
-    static final boolean MACAPK_CSL_THEMELESS_AOSP =
-        !"0".equals(System.getenv("MACAPK_CSL_THEMELESS_AOSP"));
 
     /** AOSP mThemeAttrs, by value expression instead of attr id (our Theme is
      *  name-keyed): per row, {color, alpha, lStar} theme references the
@@ -289,13 +270,6 @@ public class ColorStateList implements android.os.Parcelable {
         // wins for the real fleet apps, the un-flattening work is NOT gated on
         // getAttributeNameResource at all; if androidx wins, it is. Static
         // analysis could not settle it -- two lanes reasoned to opposite
-        // conclusions from the same code -- so this is the one-run answer.
-        if (System.getenv("MACAPK_TRACE_CSL_INFLATE") != null) {
-            try {
-                com.macapk.loader.NativeLog.i("Mac.apk.CSL",
-                    "OUR inflate() running for " + parser.getPositionDescription());
-            } catch (Throwable ignored) {}
-        }
         final int innerDepth = parser.getDepth() + 1;
         int depth;
         int type;
@@ -345,7 +319,7 @@ public class ColorStateList implements android.os.Parcelable {
                 // value and is not recorded. With no theme nothing resolves, so
                 // that case is unchanged.
                 if ("color".equals(local)) {
-                    if (MACAPK_CSL_THEMELESS_AOSP && isThemeRef(value)) {
+                    if (isThemeRef(value)) {
                         int c = resolveColor(r, value, MACAPK_UNRESOLVED, theme);
                         if (c == MACAPK_UNRESOLVED) thColor = value.trim();   // MAGENTA stands
                         else baseColor = c;
@@ -355,9 +329,7 @@ public class ColorStateList implements android.os.Parcelable {
                     continue;
                 }
                 if ("alpha".equals(local)) {
-                    if (!MACAPK_CSL_THEMELESS_AOSP) {
-                        alphaMod = parseFloat(value, 1.0f);
-                    } else if (isThemeRef(value)) {
+                    if (isThemeRef(value)) {
                         float a = resolveFloat(r, value, Float.NaN, theme);
                         if (Float.isNaN(a)) thAlpha = value.trim();   // absent: 1.0
                         else alphaMod = a;
@@ -367,9 +339,7 @@ public class ColorStateList implements android.os.Parcelable {
                     continue;
                 }
                 if ("lStar".equals(local)) {
-                    if (!MACAPK_CSL_THEMELESS_AOSP) {
-                        lStar = parseFloat(value, -1.0f);
-                    } else if (isThemeRef(value)) {
+                    if (isThemeRef(value)) {
                         float l = resolveFloat(r, value, Float.NaN, theme);
                         if (Float.isNaN(l)) thLStar = value.trim();   // absent: -1
                         else lStar = l;
@@ -606,7 +576,7 @@ public class ColorStateList implements android.os.Parcelable {
         value = value.trim();
         if (value.isEmpty()) return def;
         if (value.charAt(0) == '#') {
-            try { return android.graphics.Color.macapkParseResourceColor(value); }
+            try { return GfxBackend.get().parseResourceColor(value); }
             catch (Throwable t) { return def; }
         }
         // A `?attr` item colour with NO theme to chase it stays at the
@@ -741,5 +711,28 @@ public class ColorStateList implements android.os.Parcelable {
     }
 
     public int getChangingConfigurations() { return 0; }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP ColorStateList.hasFocusStateSpecified: a state spec names state_focused. */
+    public boolean hasFocusStateSpecified() {
+        return android.util.StateSet.containsAttribute(mStateSpecs, android.R.attr.state_focused);
+    }
+
+    /** AOSP ColorStateList.getColors. */
+    public int[] getColors() { return mColors; }
+
+    /** AOSP ColorStateList.getConstantState (a ComplexColor's; AOSP's VectorDrawable and
+     *  GradientDrawable keep it in their state): this list, which nothing here changes in place. */
+    @Override public ConstantState<ComplexColor> getConstantState() {
+        final ColorStateList self = this;
+        return new ConstantState<ComplexColor>() {
+            @Override public int getChangingConfigurations() { return self.getChangingConfigurations(); }
+            @Override public ComplexColor newInstance() { return self; }
+            @Override public ComplexColor newInstance(Resources res, Resources.Theme theme) {
+                return theme == null ? self : self.obtainForTheme(theme);
+            }
+        };
+    }
 }
 

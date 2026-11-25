@@ -169,14 +169,14 @@ public class ComponentInfo extends PackageItemInfo {
     public CharSequence loadLabel(android.content.pm.PackageManager pm) {
         if (nonLocalizedLabel != null) return nonLocalizedLabel;
         if (labelRes != 0) {
-            CharSequence own = macapkLabelFromRes(labelRes);
+            CharSequence own = macapkLabelFromRes(pm, packageName, labelRes, applicationInfo);
             if (own != null) return own;
         }
         ApplicationInfo ai = applicationInfo;
         if (ai != null) {
             if (ai.nonLocalizedLabel != null) return ai.nonLocalizedLabel;
             if (ai.labelRes != 0) {
-                CharSequence app = macapkLabelFromRes(ai.labelRes);
+                CharSequence app = macapkLabelFromRes(pm, packageName, ai.labelRes, ai);
                 if (app != null) return app;
             }
         }
@@ -184,16 +184,27 @@ public class ComponentInfo extends PackageItemInfo {
         return packageName != null ? packageName : "";
     }
 
+    /** AOSP's resources (-Dwinapk.aosp.res=1): only then is a label read the AOSP way too. */
+    private static final boolean AOSP_RES = "1".equals(System.getProperty("winapk.aosp.res"));
+
     /** Resolve a label string resource, or null when it does not resolve --
      *  null (not the id, not an empty string) so each tier of the AOSP chain
      *  above can fall through cleanly to the next. */
-    private static CharSequence macapkLabelFromRes(int res) {
+    private static CharSequence macapkLabelFromRes(android.content.pm.PackageManager pm, String pkg, int res,
+            ApplicationInfo ai) {
         try {
             android.content.res.Resources r = android.content.res.Resources.getSystem();
             if (r != null) {
                 String s = r.getString(res);
                 if (s != null && !s.isEmpty()) return s;
             }
+        } catch (Throwable ignored) {}
+        // AOSP's own way (PackageItemInfo.loadUnsafeLabel): pm.getText out of the package's
+        // Resources. Win.apk's system Resources answer an app's id too, but AOSP's
+        // (-Dwinapk.aosp.res=1) hold the framework's table only, as on a device.
+        try {
+            CharSequence t = pm != null && AOSP_RES ? pm.getText(pkg, res, ai) : null;
+            if (t != null && t.length() > 0) return t;
         } catch (Throwable ignored) {}
         return null;
     }

@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 // WHERE THE DATA COMES FROM
 // ---------------------------------------------------------------------------
-// Every value here is derived from AVFoundation's own advertised formats, read
+// Every value here is derived from the webcam's own advertised formats, read
 // through CameraBackend.formats() -> CameraBridge.getFormat*(). Nothing is a
 // constant table and nothing is invented: a size appears here only because
 // AVCaptureDevice.formats listed it. An instance is built exactly one way, by
@@ -68,6 +68,7 @@ package android.hardware.camera2.params;
 
 import android.util.Range;
 import android.util.Size;
+import com.macapk.loader.view.ViewHost;
 
 public final class StreamConfigurationMap {
 
@@ -230,12 +231,12 @@ public final class StreamConfigurationMap {
             return reader.getImageFormat() != android.graphics.ImageFormat.PRIVATE
                     && isOutputFormat(reader.getImageFormat());
         }
-        android.graphics.SurfaceTexture st = surface.macapkGetSurfaceTexture();
+        android.graphics.SurfaceTexture st = ViewHost.get().surfaceTexture(surface);
         return st != null && !st.isReleased();
     }
 
     // High-speed (constrained slow-motion) capture is a distinct HAL mode with
-    // its own guaranteed >=120fps stream combinations. AVFoundation exposes no
+    // its own guaranteed >=120fps stream combinations. A webcam exposes no
     // equivalent through this backend, so there are no high-speed sizes, and
     // therefore no size can be one -- an app that guards on
     // getHighSpeedVideoSizes() first (the documented order) never reaches the

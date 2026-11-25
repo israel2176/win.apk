@@ -223,8 +223,11 @@ std::wstring photo_url_in(const std::wstring& body) {
     if (open == std::wstring::npos || close == std::wstring::npos) return L"";
     const std::wstring url = json_unquote(body.substr(open, close - open + 1));
     if (url.rfind(L"https://lh", 0) != 0 || url.size() > 2048) return L"";
-    const size_t slash = url.find(L'/', 8);
-    if (slash == std::wstring::npos || slash < 30 || url.compare(slash - 22, 22, L".googleusercontent.com") != 0) {
+    // The host is the authority up to its path, query or fragment ("https://lh.evil.example?.googleusercontent.com/"
+    // is evil.example's), with no user info.
+    const size_t slash = url.find_first_of(L"/?#", 8);
+    if (slash == std::wstring::npos || url[slash] != L'/' || slash < 30 ||
+        url.compare(slash - 22, 22, L".googleusercontent.com") != 0 || url.find(L'@') < slash) {
         return L"";
     }
     for (const wchar_t c : url) {

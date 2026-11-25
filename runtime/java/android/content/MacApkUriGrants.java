@@ -79,17 +79,7 @@ public final class MacApkUriGrants {
 
     private static final String TAG = "UriGrants";
 
-    /** MACAPK_PERSISTED_URI_GRANTS, default ON. */
-    public static final boolean ENABLED =
-            !"0".equals(System.getenv("MACAPK_PERSISTED_URI_GRANTS"));
 
-    /** MACAPK_URI_GRANT_ENFORCE, default ON (v1.0.1657): the records GATE access. It
-     *  needs the records, so it is off whenever MACAPK_PERSISTED_URI_GRANTS=0 (there
-     *  is nothing to consult). =0: nothing is checked against them, Context's URI
-     *  permission checks answer GRANTED and HostDocumentsProvider's per-pick
-     *  capability alone decides, exactly as before. */
-    public static final boolean ENFORCE =
-            ENABLED && !"0".equals(System.getenv("MACAPK_URI_GRANT_ENFORCE"));
 
     /** UriGrantsManagerService.java:112. */
     public static final int MAX_PERSISTED_URI_GRANTS = 512;
@@ -204,7 +194,7 @@ public final class MacApkUriGrants {
      *  every in-memory record and reloads the persisted ones, which is exactly the
      *  state a process start has. Called from HostDocumentsProvider.init. */
     public static void init(File dataDir) {
-        if (!ENABLED || dataDir == null) return;
+        if (dataDir == null) return;
         synchronized (sLock) {
             sStore = new File(dataDir, ".macapk/uri_grants.json");
             sPerms.clear();
@@ -289,7 +279,7 @@ public final class MacApkUriGrants {
      *  Intent's flags. Called by DocumentPickerHandler when it delivers RESULT_OK,
      *  the point where ActivityRecord.sendResult makes that call on a device. */
     public static void grantFromIntent(Intent intent) {
-        if (!ENABLED || intent == null) return;
+        if (intent == null) return;
         final int mode = intent.getFlags();
         if ((mode & RW) == 0) return;   // checkGrantUriPermission: no READ/WRITE, no grant
         List<Uri> uris = new ArrayList<>();
@@ -428,7 +418,7 @@ public final class MacApkUriGrants {
      *  loses every mode, persisted ones included (revokeUriPermissionLocked :873-900
      *  with modeFlags | FLAG_GRANT_PERSISTABLE_URI_PERMISSION, includingOwners). */
     public static void revoke(Uri uri) {
-        if (!ENABLED || uri == null) return;
+        if (uri == null) return;
         synchronized (sLock) {
             ensureLoadedLocked();
             boolean persistChanged = false;
@@ -455,7 +445,7 @@ public final class MacApkUriGrants {
      *  pure no-op labelled "one app, nothing to reach" -- true only when this
      *  app IS the provider, not for a provider standing in for another package. */
     public static void revokeNonOwned(Uri uri, int modeFlags) {
-        if (!ENFORCE || uri == null) return;
+        if (uri == null) return;
         synchronized (sLock) {
             ensureLoadedLocked();
             boolean persistChanged = false;
@@ -477,7 +467,7 @@ public final class MacApkUriGrants {
      *  ActivityManagerService.checkUriPermission (:6362-6377), i.e. every
      *  Context.checkUriPermission and ContentProvider's last-chance check. */
     public static boolean check(Uri uri, int modeFlags) {
-        if (!ENFORCE || uri == null) return false;
+        if (uri == null) return false;
         final boolean persistable = (modeFlags & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0;
         final int minStrength = persistable ? STRENGTH_PERSISTABLE : STRENGTH_OWNED;
         final boolean prefix = (modeFlags & Intent.FLAG_GRANT_PREFIX_URI_PERMISSION) != 0;
@@ -530,7 +520,7 @@ public final class MacApkUriGrants {
      *  .grantUriPermission (:6401-6431) builds exactly this Intent -- data = uri,
      *  flags = modeFlags -- and grants it with no owner. */
     public static void grantFromProvider(Uri uri, int modeFlags) {
-        if (!ENFORCE || uri == null) return;
+        if (uri == null) return;
         checkFlagsArgument(modeFlags, RW | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
                 | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
         if ((modeFlags & RW) == 0) return;

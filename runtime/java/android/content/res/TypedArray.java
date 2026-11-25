@@ -14,6 +14,8 @@
 // styled, the activity reaches setContentView.
 package android.content.res;
 
+import com.macapk.loader.gfx.GfxBackend;
+
 public class TypedArray implements AutoCloseable {
     private final Resources resources;
     private final int[] data;       // length parallel to attrs[]
@@ -105,8 +107,7 @@ public class TypedArray implements AutoCloseable {
         // mirror-image rule below, MACAPK_TYPEDARRAY_FW_SLOT_ID.)
         // MACAPK_ATTR_NS_EXACT=0 reverts to the fuzzy match: a labelled
         // bisect gate, not a mode we support.
-        if ((attrs[index] >>> 24) == 0x7f
-                && !"0".equals(System.getenv("MACAPK_ATTR_NS_EXACT"))) {
+        if ((attrs[index] >>> 24) == 0x7f) {
             return attributeSet.macapkAttributeText(
                 "http://schemas.android.com/apk/res-auto", name);
         }
@@ -248,12 +249,6 @@ public class TypedArray implements AutoCloseable {
     // contract is that =0 restores the pre-identity answers. For a TypedArray
     // read those include this lookup, since asking `android:X` sidesteps the
     // bare-name walk A1 fixed; debug/attrident_gate.sh's control (a) asserts
-    // exactly that contract, row by row.
-    // ------------------------------------------------------------------
-    private static final boolean MACAPK_ATTR_IDENTITY_ON =
-        !"0".equals(System.getenv("MACAPK_ATTR_IDENTITY"));
-    static final boolean MACAPK_TYPEDARRAY_FW_SLOT_ID = MACAPK_ATTR_IDENTITY_ON
-        && !"0".equals(System.getenv("MACAPK_TYPEDARRAY_FW_SLOT_ID"));
     private static final String MACAPK_NS_ANDROID =
         "http://schemas.android.com/apk/res/android";
     /** Resources.StyleMergedAttributeSet's private `direct` / `style` layers,
@@ -265,18 +260,16 @@ public class TypedArray implements AutoCloseable {
     private static final boolean MACAPK_TYPEDARRAY_FW_SLOT_ID_LIVE;
     static {
         java.lang.reflect.Field d = null, s = null;
-        if (MACAPK_TYPEDARRAY_FW_SLOT_ID) {
-            try {
-                d = Resources.StyleMergedAttributeSet.class.getDeclaredField("direct");
-                s = Resources.StyleMergedAttributeSet.class.getDeclaredField("style");
-                d.setAccessible(true);
-                s.setAccessible(true);
-            } catch (Throwable t) {
-                d = null; s = null;
-                System.err.println("[Mac.apk.TypedArray] framework-slot identity OFF:"
-                    + " Resources.StyleMergedAttributeSet has no direct/style fields ("
-                    + t + ")");
-            }
+        try {
+            d = Resources.StyleMergedAttributeSet.class.getDeclaredField("direct");
+            s = Resources.StyleMergedAttributeSet.class.getDeclaredField("style");
+            d.setAccessible(true);
+            s.setAccessible(true);
+        } catch (Throwable t) {
+            d = null; s = null;
+            System.err.println("[Mac.apk.TypedArray] framework-slot identity OFF:"
+                + " Resources.StyleMergedAttributeSet has no direct/style fields ("
+                + t + ")");
         }
         MACAPK_MERGED_DIRECT = d;
         MACAPK_MERGED_STYLE = s;
@@ -348,14 +341,11 @@ public class TypedArray implements AutoCloseable {
     //
     // MACAPK_TYPEDARRAY_FW_THEME_ID=0 restores the bare-name theme query: a
     // labelled bisect gate, independent of MACAPK_TYPEDARRAY_FW_SLOT_ID (and,
-    // like it, off under MACAPK_ATTR_IDENTITY=0).
-    static final boolean MACAPK_TYPEDARRAY_FW_THEME_ID = MACAPK_ATTR_IDENTITY_ON
-        && !"0".equals(System.getenv("MACAPK_TYPEDARRAY_FW_THEME_ID"));
 
     /** The name the THEME tier is asked for `index`: `android:` + name for a
      *  framework slot, the name unchanged otherwise (and with the gate off). */
     private String macapkThemeTierName(int index, String name) {
-        if (!MACAPK_TYPEDARRAY_FW_THEME_ID || name == null || name.startsWith("android:")
+        if (name == null || name.startsWith("android:")
                 || index < 0 || index >= attrs.length || (attrs[index] >>> 24) != 0x01) {
             return name;
         }
@@ -391,12 +381,6 @@ public class TypedArray implements AutoCloseable {
     // ------------------------------------------------------------------
     boolean macapkThemeTier;
 
-    /** Read ONCE: macapkRawValueAt is on the hot path of every attribute read
-     *  of every inflated view, and a getenv per call is not free. */
-    private static final String MACAPK_TRACE_ATTR =
-        System.getenv("MACAPK_TRACE_ATTR");
-    private static final String MACAPK_THEME_TIER_XML =
-        System.getenv("MACAPK_THEME_TIER_XML");
 
     /** The theme tier is LIVE only when the Theme actually carries an
      *  applied-style cascade. The distinction is fleet-load-bearing:
@@ -426,7 +410,7 @@ public class TypedArray implements AutoCloseable {
      *  attributes X never declared (the manifest theme's values), where the
      *  emulator answers `has=0`. Null when nothing answers. */
     private String macapkRawValueAt(int index) {
-        if (MACAPK_TYPEDARRAY_SLOT_MEMO && index >= 0 && index < attrs.length) {
+        if (index >= 0 && index < attrs.length) {
             return macapkMemoRaw(index);
         }
         return macapkRawValueAtImpl(index, setValueAt(index));
@@ -472,9 +456,6 @@ public class TypedArray implements AutoCloseable {
     //
     // MACAPK_TYPEDARRAY_SLOT_MEMO=0 restores the per-accessor walk exactly: a
     // labelled bisect gate.
-    // ------------------------------------------------------------------
-    static final boolean MACAPK_TYPEDARRAY_SLOT_MEMO =
-        !"0".equals(System.getenv("MACAPK_TYPEDARRAY_SLOT_MEMO"));
     /** 0 = nothing cached, 1 = bound-set answer only (it was null),
      *  2 = bound-set answer, raw and origin. */
     private byte[] macapkMemoState;
@@ -526,7 +507,7 @@ public class TypedArray implements AutoCloseable {
 
     /** The bound-set answer (tiers 1-4) for `index`: memoised, or setValueAt. */
     private String macapkBoundValueAt(int index) {
-        if (MACAPK_TYPEDARRAY_SLOT_MEMO && index >= 0 && index < attrs.length) {
+        if (index >= 0 && index < attrs.length) {
             return macapkMemoSetValue(index);
         }
         return setValueAt(index);
@@ -540,7 +521,7 @@ public class TypedArray implements AutoCloseable {
         // ThemeEnforcement throw, where four successive fixes to the theme
         // TABLE could not have worked because the theme TIER is not consulted
         // at all on the XML-inflation path. Remove once that is settled.
-        String trace = MACAPK_TRACE_ATTR;
+        String trace = null;
         if (trace != null) {
             String nm = attrNameAt(index);
             if (trace.equals(nm)) {
@@ -600,7 +581,7 @@ public class TypedArray implements AutoCloseable {
         // nothing else, so an empty cascade answered null whether the gate opened
         // or not. MEASURED on bobball: `cascadeOnly=null` with the gate shut, and
         // an empty for-loop with it open -- identical.
-        boolean tier5 = macapkThemeTier || !"0".equals(MACAPK_THEME_TIER_XML);
+        boolean tier5 = true;
         if (tier5 && theme != null) {
             String name = attrNameAt(index);
             if (name != null) {
@@ -626,8 +607,7 @@ public class TypedArray implements AutoCloseable {
                 // window-background theming works end to end and the
                 // unitconverter pair holds.
                 if (("windowBackground".equals(name)
-                        || "android:windowBackground".equals(name))
-                        && !"1".equals(System.getenv("MACAPK_THEME_TIER_WINDOWBG"))) {
+                        || "android:windowBackground".equals(name))) {
                     return null;
                 }
                 // THE REAL TIER-5 GATE. An activity whose manifest theme we
@@ -714,18 +694,10 @@ public class TypedArray implements AutoCloseable {
         // STYLE_RESOURCE_ID in AttributeResolution.cpp's ApplyStyle).
         final String raw;
         final int rawOrigin;
-        if (MACAPK_TYPEDARRAY_SLOT_MEMO) {
-            // The memo acquired this slot the same way (clear, acquire, read)
-            // and kept the origin with the raw; see MACAPK_TYPEDARRAY_SLOT_MEMO.
-            raw = macapkMemoRaw(index);
-            rawOrigin = macapkMemoOrigin[index];
-        } else {
-            Resources.macapkClearValueOrigin();
-            raw = macapkRawValueAt(index);
-            // Read what the ACQUISITION recorded now: the A2 check below may
-            // walk a ?attr through the theme, and that query re-clears the slot.
-            rawOrigin = Resources.macapkReadValueOrigin();
-        }
+        // The memo acquired this slot the same way (clear, acquire, read)
+        // and kept the origin with the raw; see MACAPK_TYPEDARRAY_SLOT_MEMO.
+        raw = macapkMemoRaw(index);
+        rawOrigin = macapkMemoOrigin[index];
         // Cluster A2: an @null / @empty value (literal, or a ?attr whose theme
         // leaf is one) is AOSP's TYPE_NULL record; no record, and state 3
         // remembers DATA_NULL_EMPTY for peekValue. Checked before the resolver
@@ -989,7 +961,7 @@ public class TypedArray implements AutoCloseable {
         // Diagnostic (env-gated): show what a big styleable parse
         // (ConstraintLayout.LayoutParams-sized) actually resolved.
         if (attrs.length > 40
-                && System.getenv("MACAPK_TRACE_TA") != null) {
+                && false) {
             StringBuilder sb = new StringBuilder("TA parse attrs=")
                 .append(attrs.length).append(" found=").append(count)
                 .append(" set=[");
@@ -1076,9 +1048,6 @@ public class TypedArray implements AutoCloseable {
     // gate, not a mode we support. Gate: debug/attrident_gate.sh (with the
     // gate at 0 every battery row reproduces its pre-fix answer; `--control`
     // also checks those rows against the pinned pre-fix source).
-    // ------------------------------------------------------------------
-    static final boolean MACAPK_TYPEDARRAY_NULL_HASVALUE =
-        !"0".equals(System.getenv("MACAPK_TYPEDARRAY_NULL_HASVALUE"));
     // The TYPE_NULL data values are android.util.TypedValue.DATA_NULL_UNDEFINED
     // (0) and DATA_NULL_EMPTY (1), TypedValue.java :169 / :173 (android14-release).
     /** Per-index cache of a `?attr` value's theme leaf classification:
@@ -1092,7 +1061,7 @@ public class TypedArray implements AutoCloseable {
      *  the gate off. `raw` is macapkRawValueAt(index), passed in so a caller
      *  that already has it does not walk the tiers twice. */
     private int macapkNullDataOf(int index, String raw) {
-        if (!MACAPK_TYPEDARRAY_NULL_HASVALUE || raw == null) return -1;
+        if (raw == null) return -1;
         String v = raw.trim();
         if (v.length() > 1 && v.charAt(0) == '?' && index >= 0 && index < attrs.length) {
             if (macapkNullHop == null) macapkNullHop = new byte[attrs.length];
@@ -1286,37 +1255,35 @@ public class TypedArray implements AutoCloseable {
             //   antennapod 96.39 -> 96.39
             // All three regressions are gone. Trace with
             // MACAPK_TRACE_WINDOW_FLAGS=1, which names the answering style.
-            if (!"0".equals(System.getenv("MACAPK_WINDOW_FLAGS_FROM_THEME"))) {
-                switch (name) {
-                    case "windowNoTitle":
-                    case "windowActionBar":
-                    case "windowActionBarOverlay":
-                    case "windowIsFloating":
-                    case "windowActionModeOverlay": {
-                        if (theme != null) {
-                            try {
-                                // The slot's own identity, like every other
-                                // theme-tier read in this file
-                                // (MACAPK_TYPEDARRAY_FW_THEME_ID): for a
-                                // FRAMEWORK slot (android.R.attr.windowNoTitle,
-                                // AppCompatTheme_android_windowIsFloating ...)
-                                // the theme is asked for android:X, so an absent
-                                // android: record no longer falls through to
-                                // the APP attribute of the same name here.
-                                // AppCompat's own 0x7f AppCompatTheme_window*
-                                // slots are unchanged (the helper returns the
-                                // name as-is), and so is the gate-off path.
-                                String raw = theme.resolveAttrRaw(macapkThemeTierName(index, name));
-                                if (raw != null) {
-                                    raw = raw.trim();
-                                    if ("true".equalsIgnoreCase(raw))  return true;
-                                    if ("false".equalsIgnoreCase(raw)) return false;
-                                }
-                            } catch (Throwable ignored) {}
-                        }
-                        if ("windowNoTitle".equals(name)) return true;
-                        return def;
+            switch (name) {
+                case "windowNoTitle":
+                case "windowActionBar":
+                case "windowActionBarOverlay":
+                case "windowIsFloating":
+                case "windowActionModeOverlay": {
+                    if (theme != null) {
+                        try {
+                            // The slot's own identity, like every other
+                            // theme-tier read in this file
+                            // (MACAPK_TYPEDARRAY_FW_THEME_ID): for a
+                            // FRAMEWORK slot (android.R.attr.windowNoTitle,
+                            // AppCompatTheme_android_windowIsFloating ...)
+                            // the theme is asked for android:X, so an absent
+                            // android: record no longer falls through to
+                            // the APP attribute of the same name here.
+                            // AppCompat's own 0x7f AppCompatTheme_window*
+                            // slots are unchanged (the helper returns the
+                            // name as-is), and so is the gate-off path.
+                            String raw = theme.resolveAttrRaw(macapkThemeTierName(index, name));
+                            if (raw != null) {
+                                raw = raw.trim();
+                                if ("true".equalsIgnoreCase(raw))  return true;
+                                if ("false".equalsIgnoreCase(raw)) return false;
+                            }
+                        } catch (Throwable ignored) {}
                     }
+                    if ("windowNoTitle".equals(name)) return true;
+                    return def;
                 }
             }
             if ("windowNoTitle".equals(name)) return true;
@@ -1338,6 +1305,12 @@ public class TypedArray implements AutoCloseable {
             v = r;
         }
         try { return Integer.parseInt(v); } catch (NumberFormatException ignored) {}
+        // A compiled TYPE_INT_HEX value as BinaryXmlParser spells it ("0x17", a platform layer's
+        // android:gravity, which AOSP's LayerDrawable reads with getInteger): its data
+        // (MACAPK_HEX_REFS, WINAPK_AOSP_GFX=1).
+        if (MACAPK_HEX_REFS && v.startsWith("0x") && v.length() > 2) {
+            try { return (int) Long.parseLong(v.substring(2), 16); } catch (NumberFormatException ignored) {}
+        }
         // v1.0.96: Material widgets pass enum-string values through
         // styled attrs (e.g. app:labelVisibilityMode="labeled" maps to
         // NavigationBarView.LABEL_VISIBILITY_LABELED = 1). AOSP's
@@ -1462,7 +1435,7 @@ public class TypedArray implements AutoCloseable {
                 // Gravity.parse yields NO_GRAVITY for a string it does not
                 // recognise; report "no mapping" in that case so the caller's
                 // own default wins rather than a silent 0.
-                int g = android.view.Gravity.parse(v);
+                int g = com.macapk.loader.view.ViewHost.get().parseGravity(v);
                 return g != android.view.Gravity.NO_GRAVITY
                     ? g : Integer.MIN_VALUE;
             }
@@ -1496,16 +1469,8 @@ public class TypedArray implements AutoCloseable {
         return Integer.MIN_VALUE;
     }
     public int getInteger(int index, int def) { return getInt(index, def); }
-    private static final boolean TRACE_GUIDE =
-        System.getenv("MACAPK_TRACE_GUIDE") != null;
     public float getFloat(int index, float def) {
         String v = macapkRawValueAt(index);
-        if (TRACE_GUIDE) {
-            String nm = attrNameAt(index);
-            if (nm != null && nm.toLowerCase().contains("guide"))
-                com.macapk.loader.NativeLog.i("TA.guide",
-                    "getFloat idx=" + index + " name=" + nm + " raw=" + v + " def=" + def);
-        }
         if (v == null) return def;
         // `@fraction/X` / `@dimen/X` references reach float-typed attrs
         // (ConstraintLayout parses layout_constraintGuide_percent via
@@ -1572,22 +1537,13 @@ public class TypedArray implements AutoCloseable {
         if (v.startsWith("#")) {
             // macapkParseResourceColor handles the #RGB/#ARGB shorthand apktool can
             // re-emit, which the public Color.parseColor rejects as AOSP does.
-            try { return android.graphics.Color.macapkParseResourceColor(v); }
+            try { return GfxBackend.get().parseResourceColor(v); }
             catch (Throwable e) { return def; }
         }
         return def;
     }
     public int getDimensionPixelSize(int index, int def)  {
         String v = macapkRawValueAt(index);
-        if (TRACE_GUIDE) {
-            String nm = attrNameAt(index);
-            if (nm != null && nm.toLowerCase().contains("guide")) {
-                Float px2 = (v == null) ? null : macapkParseDimenToPx(v);
-                com.macapk.loader.NativeLog.i("TA.guide",
-                    "getDimPxSize idx=" + index + " name=" + nm + " raw=" + v
-                    + " -> px=" + px2 + " def=" + def);
-            }
-        }
         if (v == null) return def;
         Float px = macapkParseDimenToPx(v);
         if (px == null) {
@@ -1602,42 +1558,14 @@ public class TypedArray implements AutoCloseable {
         // truncated, so every sub-pixel literal (0.5dp hairline dividers,
         // borders, stroke widths at 1x) became 0 and was not drawn, and 1.5dp
         // came out 1 px instead of 2. getDimensionPixelOffset (truncation) is a
-        // separate method. MACAPK_DIM_PIXEL_SIZE=0 restores the truncation.
-        if (!MACAPK_DIM_PIXEL_SIZE) return (int) (float) px;
         int res = (int) (px + (px >= 0 ? 0.5f : -0.5f));
         if (res != 0) return res;
         return px == 0f ? 0 : (px > 0f ? 1 : -1);
     }
-    static final boolean MACAPK_DIM_PIXEL_SIZE =
-            !"0".equals(System.getenv("MACAPK_DIM_PIXEL_SIZE"));
 
-    /** MACAPK_TA_ATTR_DIMEN (default ON). A style item that is a THEME
-     *  REFERENCE to a dimension ("?android:actionBarSize", the minHeight of
-     *  Widget.Toolbar, styles.xml:1284) reached the dimension getters as the raw
-     *  "?..." string, which macapkParseDimenToPx cannot parse, so the caller's
-     *  default won -- while getValue() on the SAME slot already answered the
-     *  resolved TYPE_DIMENSION record. AOSP resolves the reference before any
-     *  getter sees it (AttributeResolution.cpp ApplyStyle -> ResolveAttributeReference),
-     *  so getDimensionPixelSize answers complexToDimensionPixelSize of it
-     *  (TypedArray.java getDimensionPixelSize, android14). Only the "?" case is
-     *  routed through the record, so every raw that parsed before parses the same.
-     *  =0 restores the raw-only answer.
-     *  BLAST RADIUS IS FLEET-WIDE, not just the platform Toolbar that found it:
-     *  every getDimension / getDimensionPixelSize / getDimensionPixelOffset /
-     *  getLayoutDimension read of a style item written as a ?attr dimension
-     *  moves, including View's constructor read of minHeight / minWidth /
-     *  padding. So androidx Widget.AppCompat.Toolbar (minHeight=?attr/
-     *  actionBarSize) and the Material widget styles in most of the corpus
-     *  change size (F-Droid, Anki, NewPipe, Aegis, Gallery, ...), while only
-     *  Mastodon uses the platform Toolbar. Measure the Canvas pair set
-     *  MACAPK_TA_ATTR_DIMEN=0 vs 1 with debug/recap_ab.sh BEFORE landing and
-     *  record the per-app delta. Unit evidence: debug/w5fragments_gate.sh
-     *  (android.widget.Toolbar minHeight 0 -> 112 px at 2x). */
-    static final boolean MACAPK_TA_ATTR_DIMEN =
-        !"0".equals(System.getenv("MACAPK_TA_ATTR_DIMEN"));
 
     private android.util.TypedValue macapkAttrDimenRecord(int index, String raw) {
-        if (!MACAPK_TA_ATTR_DIMEN || raw == null || !raw.startsWith("?")) return null;
+        if (raw == null || !raw.startsWith("?")) return null;
         android.util.TypedValue rec = macapkRecordAt(index);
         return rec != null && rec.type == android.util.TypedValue.TYPE_DIMENSION ? rec : null;
     }
@@ -1666,6 +1594,19 @@ public class TypedArray implements AutoCloseable {
             String resolved = macapkLookupRaw("getDimenRaw", v.substring(7));
             if (resolved == null) return null;
             v = resolved.trim();
+        }
+        // A platform file's reference by id ("@0x01050036", BinaryXmlParser's spelling when it has
+        // no name): the platform table's dimension. Only with WINAPK_AOSP_GFX=1, whose drawables
+        // read platform drawable XML through this TypedArray.
+        if (MACAPK_HEX_REFS && v.startsWith("@0x") && resources != null) {
+            try {
+                android.util.TypedValue tv = new android.util.TypedValue();
+                resources.getValue((int) Long.parseLong(v.substring(3), 16), tv, true);
+                if (tv.type == android.util.TypedValue.TYPE_DIMENSION) {
+                    return android.util.TypedValue.complexToDimension(tv.data, macapkMetrics());
+                }
+            } catch (Throwable ignored) { }
+            return null;
         }
         if (v.startsWith("@") || v.startsWith("?")) {
             return null;  // other refs unsupported here
@@ -1730,8 +1671,10 @@ public class TypedArray implements AutoCloseable {
      *  It used to share getDimensionPixelSize, which was itself truncating;
      *  now that Size rounds (MACAPK_DIM_PIXEL_SIZE), Offset keeps its own
      *  truncation, exactly the answer it always gave. */
+    /** Whether a reference spelled by id ("@0x0105...", a platform file's) is read as that id:
+     *  WINAPK_AOSP_GFX=1, where AOSP's drawables read platform drawable XML through this class. */
+    private static final boolean MACAPK_HEX_REFS = com.macapk.loader.gfx.GfxBackend.isAosp();
     public int getDimensionPixelOffset(int index, int def) {
-        if (!MACAPK_DIM_PIXEL_SIZE) return getDimensionPixelSize(index, def);
         String v = macapkRawValueAt(index);
         if (v == null) return def;
         Float px = macapkParseDimenToPx(v);
@@ -1885,6 +1828,13 @@ public class TypedArray implements AutoCloseable {
             // constraint engine activates.
             if ("parent".equals(v)) return 0;
             try { return Integer.parseInt(v); } catch (NumberFormatException ignored) { return def; }
+        }
+        // A platform file's reference, as BinaryXmlParser spells one it has no name for
+        // ("@0x010805e9"): the id itself, which is what AOSP's TypedArray reads from the compiled
+        // value. AOSP's drawables read their android:src / android:drawable this way
+        // (MACAPK_HEX_REFS: with WINAPK_AOSP_GFX=1 only, until the Java2D side is checked with it).
+        if (MACAPK_HEX_REFS && v.startsWith("@0x") && v.length() > 3) {
+            try { return (int) Long.parseLong(v.substring(3), 16); } catch (NumberFormatException ignored) { }
         }
         // Strip leading '@' and optional '+id/' prefix; identifier of
         // form `<type>/<name>` looks up in ResourceIndex.
@@ -2059,8 +2009,6 @@ public class TypedArray implements AutoCloseable {
         //   wikipedia: the other 6 viewInflaterClass fleet apps -- must hold
         //   their v1.0.919 recap scores.
         // Parity: OSAGET.base.str.probeString + .probeStringRef flip to EXACT
-        // (golden `base-string` / `plain`), 1718 -> 1720 of 1732.
-        if ("0".equals(System.getenv("MACAPK_THEME_STRING_FALLBACK"))) return null;
         String raw;
         // The slot's own identity (MACAPK_TYPEDARRAY_FW_THEME_ID): android:X for a
         // framework slot.
@@ -2086,10 +2034,6 @@ public class TypedArray implements AutoCloseable {
         // name or a locale is worse off than one that receives its own default.
         // This is the validation the v1.0.894 blanket attempt lacked.
         if (raw.startsWith("@") || raw.startsWith("?")) return null;
-        if (System.getenv("MACAPK_TRACE_THEMEPROBE") != null) {
-            android.util.Log.i("Mac.apk.ThemeProbe",
-                "themeOnly getString attr=" + name + " -> " + raw);
-        }
         return raw;
     }
     public CharSequence getText(int index)                { return getString(index); }
@@ -2122,18 +2066,6 @@ public class TypedArray implements AutoCloseable {
      *  resolved through Resources.getTextArray (the ResourceIndex). */
     public CharSequence[] getTextArray(int index) {
         String v = macapkRawValueAt(index);
-        if (!TEXTARRAY_AOSP) {
-            if (v != null && (v.startsWith("@array/") || v.startsWith("@android:array/"))) {
-                int id = getResourceId(index, 0);
-                if (id != 0 && resources != null) {
-                    try {
-                        CharSequence[] arr = resources.getTextArray(id);
-                        if (arr != null) return arr;
-                    } catch (Throwable ignored) {}
-                }
-            }
-            return new CharSequence[0];
-        }
         // AOSP getValueAt()==false: unset, @null, @empty, ?attr->@null (TYPE_NULL).
         if (!hasValue(index)) return null;
         // hasValue's legacy universal-true arm (no source at all): nothing to read,
@@ -2157,9 +2089,6 @@ public class TypedArray implements AutoCloseable {
                 + v + "\")");
     }
 
-    /** MACAPK_TYPEDARRAY_TEXTARRAY_AOSP (labelled bisect gate, default ON). */
-    private static final boolean TEXTARRAY_AOSP =
-            !"0".equals(System.getenv("MACAPK_TYPEDARRAY_TEXTARRAY_AOSP"));
     public String getNonResourceString(int index)         { return null; }
     public android.graphics.drawable.Drawable getDrawable(int index) {
         // v1.0.97: when the attribute carries a `@drawable/foo`
@@ -2199,6 +2128,24 @@ public class TypedArray implements AutoCloseable {
             }
         }
         return new android.graphics.drawable.VectorDrawable();
+    }
+    /** AOSP TypedArray.getDrawableForDensity (@hide; AOSP's AdaptiveIconDrawable reads its layers
+     *  with it): the density is the Resources' own here, as getDrawable's is. */
+    public android.graphics.drawable.Drawable getDrawableForDensity(int index, int density) {
+        return getDrawable(index);
+    }
+    /** AOSP TypedArray.getComplexColor (@hide): what AOSP's VectorDrawable fills and strokes a path
+     *  with. A colour file whose root is a {@code <gradient>} is a GradientColor (AOSP's own, through
+     *  GfxBackend: WINAPK_AOSP_GFX=1 only); anything else is getColorStateList's answer, or null
+     *  when the attribute has no value. */
+    public ComplexColor getComplexColor(int index) {
+        if (!hasValue(index)) return null;
+        int id = getResourceId(index, 0);
+        if (id != 0 && resources != null) {
+            ComplexColor gradient = resources.macapkGradientColor(id, theme);
+            if (gradient != null) return gradient;
+        }
+        return getColorStateList(index);
     }
     /** v1.0.97: never return null. Material widgets that read a
      *  themed ColorStateList chain immediately into getDefaultColor()
@@ -2416,5 +2363,14 @@ public class TypedArray implements AutoCloseable {
         if (r == null) return null;
         return r.getFont(id);   // throws NotFoundException when unresolvable
     }
+
+    // AOSP hides this; AOSP's own graphics and text classes call it (WINAPK_AOSP_GFX=1 puts them,
+    // lib/aosp-graphics.jar, before this framework: windows/README.md, "Milestone 2").
+    /** AOSP TypedArray.extractThemeAttrs: the theme attributes left to resolve; none here, since
+     *  this TypedArray resolves them when it is obtained. */
+    public int[] extractThemeAttrs() { return null; }
+
+    /** AOSP TypedArray.extractThemeAttrs(int[]). */
+    public int[] extractThemeAttrs(int[] scrap) { return null; }
 }
 

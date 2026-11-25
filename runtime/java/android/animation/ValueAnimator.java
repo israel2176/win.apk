@@ -212,16 +212,6 @@ public class ValueAnimator extends Animator {
     }
 
     @Override public void start() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            // Shipped path: snap-to-end so the lifecycle fires in order (no pump).
-            mReversing = false;
-            currentFraction = 1f;
-            computeAnimatedValue(1f);
-            applyAnimatedValue(animatedValue, 1f);
-            fireUpdate();
-            super.start();
-            return;
-        }
         // Real path: drive the value frame-by-frame off the vsync Choreographer.
         // AOSP: start() always plays forward -- reverse() sets a one-time
         // direction for the CURRENT run only ("future playing of the animation
@@ -240,19 +230,6 @@ public class ValueAnimator extends Animator {
     // the start. See the mReversing field comment for the one-time-per-run
     // contract.
     public void reverse() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            // Shipped snap-to-end path has no time axis to run backward across;
-            // mirror the observable contract by snapping to the opposite
-            // endpoint instead of always 1.
-            mReversing = !mReversing;
-            float f = mReversing ? 0f : 1f;
-            currentFraction = f;
-            computeAnimatedValue(f);
-            applyAnimatedValue(animatedValue, f);
-            fireUpdate();
-            super.start();
-            return;
-        }
         if (mRunning) {
             if (mStartTimeNanos >= 0L) {
                 // Rebase mStartTimeNanos so the fraction doAnimationFrame
@@ -282,7 +259,6 @@ public class ValueAnimator extends Animator {
     }
 
     @Override public void cancel() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) { super.cancel(); return; }
         if (!mRunning) return;
         mRunning = false;
         android.view.Choreographer.getInstance().removeFrameCallback(mFrameCallback);
@@ -291,7 +267,6 @@ public class ValueAnimator extends Animator {
     }
 
     @Override public void end() {
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) { super.end(); return; }
         android.view.Choreographer.getInstance().removeFrameCallback(mFrameCallback);
         // Jump to the terminal value in the CURRENT playback direction:
         // fraction 1 normally, fraction 0 if reverse() flipped this run.

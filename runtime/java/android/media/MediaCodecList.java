@@ -505,20 +505,18 @@ public final class MediaCodecList {
                     hw = false;   // could not measure: the honest default is software, never a guessed true
                 }
                 int[] probe = null;
-                if (PROFILE_LEVELS) {
+                try {
+                    probe = com.macapk.loader.NativeMedia.nativeVideoCapabilities(mime);
+                } catch (RuntimeException | LinkageError e) {
+                    // Loud for the same reason as the mime probe above: a
+                    // stale native half would otherwise put the empty
+                    // (reject-everything) table back without a trace.
                     try {
-                        probe = com.macapk.loader.NativeMedia.nativeVideoCapabilities(mime);
-                    } catch (RuntimeException | LinkageError e) {
-                        // Loud for the same reason as the mime probe above: a
-                        // stale native half would otherwise put the empty
-                        // (reject-everything) table back without a trace.
-                        try {
-                            com.macapk.loader.NativeLog.w("MediaCodecList",
-                                    "profile/level probe unavailable for " + mime + " ("
-                                    + e.getClass().getSimpleName() + ": " + e.getMessage()
-                                    + ") -- registering it without a profile/level table");
-                        } catch (Throwable ignored) {}
-                    }
+                        com.macapk.loader.NativeLog.w("MediaCodecList",
+                                "profile/level probe unavailable for " + mime + " ("
+                                + e.getClass().getSimpleName() + ": " + e.getMessage()
+                                + ") -- registering it without a profile/level table");
+                    } catch (Throwable ignored) {}
                 }
                 out.add(videoToolboxEntry(mime, hw, probe));
             }
@@ -562,13 +560,6 @@ public final class MediaCodecList {
         }
     }
 
-    /** Whether video decoders carry a real profile/level table (default ON).
-     *  MACAPK_CODEC_PROFILE_LEVELS=0 restores the previous registry byte for
-     *  byte: every video decoder with an EMPTY profileLevels and the declared
-     *  2-4096 size range -- which ExoPlayer reads as "supports no profile"
-     *  (NewPipe then played its live kiosk at 144p). */
-    static final boolean PROFILE_LEVELS =
-            !"0".equals(System.getenv("MACAPK_CODEC_PROFILE_LEVELS"));
 
     // ---- The verified-real libvpx VIDEO truth (VP8 + VP9), a SEPARATE ----
     // ---- provider from VideoToolboxDecoders -- see that class's doc.    --
@@ -606,27 +597,18 @@ public final class MediaCodecList {
             // decoders, when it has them, come through VideoToolboxDecoders.
             if (!com.macapk.loader.HostVideo.vpxBuiltIn()) return out;
             for (String mime : new String[] { MIME_VP8, MIME_VP9 }) {
-                if (PROFILE_LEVELS) {
-                    // AOSP's own declaration for this same library:
-                    // size 2x2..2048x2048, block-count 1-16384 (see
-                    // libvpxProfileLevels' doc for the source lines).
-                    out.add(HostCodecCapability.videoDecoder(
-                            mime, /*hardwareAccelerated=*/false,
-                            AOSP_VPX_SIZE_RANGE, AOSP_VPX_SIZE_RANGE,
-                            VideoToolboxDecoders.FRAME_RATE_RANGE,
-                            2, 2,
-                            null,
-                            libvpxProfileLevels(mime),
-                            AOSP_VPX_MAX_BLOCKS));
-                    continue;
-                }
+                // AOSP's own declaration for this same library:
+                // size 2x2..2048x2048, block-count 1-16384 (see
+                // libvpxProfileLevels' doc for the source lines).
                 out.add(HostCodecCapability.videoDecoder(
                         mime, /*hardwareAccelerated=*/false,
-                        VideoToolboxDecoders.SIZE_RANGE, VideoToolboxDecoders.SIZE_RANGE,
+                        AOSP_VPX_SIZE_RANGE, AOSP_VPX_SIZE_RANGE,
                         VideoToolboxDecoders.FRAME_RATE_RANGE,
-                        2, 2,   // width/height alignment: universal 4:2:0 chroma bound
-                        null,   // no bitrate ceiling measured; leave unbounded rather than guessed
-                        new MediaCodecInfo.CodecProfileLevel[0]));
+                        2, 2,
+                        null,
+                        libvpxProfileLevels(mime),
+                        AOSP_VPX_MAX_BLOCKS));
+                continue;
             }
             return out;
         }

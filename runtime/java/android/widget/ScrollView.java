@@ -111,8 +111,7 @@ public class ScrollView extends FrameLayout {
      *  overscrolls (canOverscroll is false for SOURCE_MOUSE).
      *  WheelScroll.VIEWS=0: not handled (pre-v1.0.2273). */
     @Override public boolean onGenericMotionEvent(MotionEvent event) {
-        if (com.macapk.loader.WheelScroll.VIEWS
-                && event.getAction() == MotionEvent.ACTION_SCROLL) {
+        if (event.getAction() == MotionEvent.ACTION_SCROLL) {
             final float axisValue;
             if (event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)) {
                 axisValue = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
@@ -325,13 +324,13 @@ public class ScrollView extends FrameLayout {
     /** The app's OWN declared targetSdkVersion, or the MODERN answer
      *  (Integer.MAX_VALUE) when it cannot be read. Unresolved never latches and
      *  never guesses legacy -- the convention stated on
-     *  android.app.Application.macapkAppTargetSdk. */
+     *  com.macapk.loader.app.Apps.targetSdk. */
     private int macapkTargetSdk() {
         try {
             android.content.Context c = getContext();
             android.content.pm.ApplicationInfo ai =
                     (c != null) ? c.getApplicationInfo() : null;
-            if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) return ai.targetSdkVersion;
         } catch (Throwable ignored) { }
         return Integer.MAX_VALUE;
     }
@@ -419,9 +418,17 @@ public class ScrollView extends FrameLayout {
             getPaddingLeft() + getPaddingRight() + hMargins + widthUsed,
             lp != null ? lp.width
                        : android.view.ViewGroup.LayoutParams.MATCH_PARENT);
+        // AOSP: makeSafeMeasureSpec(max(0, parentHeight - padding - margins -
+        // heightUsed), UNSPECIFIED): the viewport stays a hint (targetSdk >= 23).
+        // Size 0 made a FlexboxLayout inside shrink its items below nothing.
+        int vMargins = 0;
+        if (lp instanceof android.view.ViewGroup.MarginLayoutParams mlp)
+            vMargins = mlp.topMargin + mlp.bottomMargin;
         int childHeightMeasureSpec =
             android.view.View.MeasureSpec.makeMeasureSpec(
-                0, android.view.View.MeasureSpec.UNSPECIFIED);
+                Math.max(0, android.view.View.MeasureSpec.getSize(parentHeightMeasureSpec)
+                    - getPaddingTop() - getPaddingBottom() - vMargins - heightUsed),
+                android.view.View.MeasureSpec.UNSPECIFIED);
         child.measure(childWidthMeasureSpec, childHeightMeasureSpec);
     }
 
@@ -613,5 +620,52 @@ public class ScrollView extends FrameLayout {
         final android.view.View child = getChildCount() > 0 ? getChildAt(0) : null;
         if (child == null) return false;
         return child.getHeight() > getHeight() - getPaddingTop() - getPaddingBottom();
+    }
+
+    // ---- Accessibility: AOSP ScrollView (android-14), for a screen reader (HostAccessibility) ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        if (isEnabled()) {
+            final int scrollRange = getScrollRange();
+            if (scrollRange > 0) {
+                info.setScrollable(true);
+                if (getScrollY() > 0) {
+                    info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD);
+                    info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP);
+                }
+                if (getScrollY() < scrollRange) {
+                    info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD);
+                    info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN);
+                }
+            }
+        }
+    }
+
+    @Override
+    public boolean performAccessibilityActionInternal(int action, android.os.Bundle arguments) {
+        if (super.performAccessibilityActionInternal(action, arguments)) return true;
+        if (!isEnabled()) return false;
+        final int viewportHeight = getHeight() - getPaddingBottom() - getPaddingTop();
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD
+                || action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_DOWN.getId()) {
+            final int targetScrollY = Math.min(getScrollY() + viewportHeight, getScrollRange());
+            if (targetScrollY != getScrollY()) {
+                smoothScrollTo(0, targetScrollY);
+                return true;
+            }
+            return false;
+        }
+        if (action == android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+                || action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_UP.getId()) {
+            final int targetScrollY = Math.max(getScrollY() - viewportHeight, 0);
+            if (targetScrollY != getScrollY()) {
+                smoothScrollTo(0, targetScrollY);
+                return true;
+            }
+            return false;
+        }
+        return false;
     }
 }

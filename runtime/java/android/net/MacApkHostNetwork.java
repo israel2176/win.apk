@@ -57,18 +57,7 @@ import java.util.concurrent.TimeUnit;
 
 final class MacApkHostNetwork {
 
-    /** Set MACAPK_NET_HOST_TRUTH=0 to restore the pre-v1 constant answer
-     *  ("always WIFI, always connected"). Present so a future session can A/B
-     *  this change in one run instead of re-deriving the boundary; it is the
-     *  labelled bisect gate CLAUDE.md asks for. */
-    private static final boolean HOST_TRUTH =
-            !"0".equals(System.getenv("MACAPK_NET_HOST_TRUTH"));
 
-    /** MACAPK_OFFLINE=1 forces the airplane-mode posture regardless of the
-     *  host -- see ConnectivityManager for why that gate exists. */
-    private static final boolean FORCE_OFFLINE =
-            "1".equals(System.getenv("MACAPK_OFFLINE"))
-                    || "true".equalsIgnoreCase(System.getenv("MACAPK_OFFLINE"));
 
     private static final long TTL_MS = 5_000L;
 
@@ -91,6 +80,8 @@ final class MacApkHostNetwork {
         final List<InetAddress> addresses;
         final List<LinkAddress> linkAddresses;
         final List<InetAddress> dnsServers;
+        /** Whether the host counts this network as metered (meteredOf). */
+        boolean metered;
 
         Snapshot(boolean connected, String interfaceName, int transport, int mtu,
                 List<InetAddress> addresses, List<LinkAddress> linkAddresses,
@@ -106,7 +97,7 @@ final class MacApkHostNetwork {
     }
 
     static boolean forcedOffline() {
-        return FORCE_OFFLINE;
+        return false;
     }
 
     static Snapshot get() {
@@ -121,22 +112,13 @@ final class MacApkHostNetwork {
     }
 
     private static Snapshot probe() {
-        if (FORCE_OFFLINE) {
-            return new Snapshot(false, null, TRANSPORT_WIFI, 0,
-                    Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList());
-        }
-        if (!HOST_TRUTH) {
-            // The historical constant answer, kept reachable for bisecting.
-            return new Snapshot(true, null, TRANSPORT_WIFI, 0,
-                    Collections.emptyList(), Collections.emptyList(),
-                    Collections.emptyList());
-        }
 
         // Windows: the host layer's own answer (see the top of the file).
         String[] host = com.macapk.loader.HostRadios.defaultNetwork();
         if (host != null) {
-            return fromHost(host, hostInterfaceName(host));
+            Snapshot snap = fromHost(host, hostInterfaceName(host));
+            snap.metered = meteredOf(com.macapk.loader.HostRadios.networkMetered(), snap);
+            return snap;
         }
 
         String iface = defaultRouteInterface();
@@ -185,6 +167,18 @@ final class MacApkHostNetwork {
 
         return new Snapshot(connected, iface, transportOf(iface), mtu, addrs, links,
                 dnsServers());
+    }
+
+    /**
+     * Whether the default network is metered: Windows' own answer
+     * (HostRadios.networkMetered: 1 metered, 0 not) when it gives one, else what
+     * Android assumes of the transport (a mobile network is metered, the rest are
+     * not). No host call in here, so a test can feed it any answer.
+     */
+    static boolean meteredOf(int host, Snapshot s) {
+        if (s == null || !s.connected) return false;
+        if (host >= 0) return host == 1;
+        return s.transport == TRANSPORT_CELLULAR;
     }
 
     /**

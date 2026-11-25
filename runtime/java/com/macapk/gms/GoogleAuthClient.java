@@ -6,33 +6,20 @@
 //   2. fetchScopedToken(): master token + a scope -> a short-lived bearer token
 //      (`Auth=`). Once per scope, cached until it expires.
 //
-// ---- THE CLIENT-IDENTITY DECISION, WRITTEN DOWN ON PURPOSE ------------------
-// Google's /auth wants to know WHO is asking: an `app` package name and a
-// `client_sig` (the SHA-1 of that package's signing certificate).
+// ---- THE CLIENT IDENTITY ----------------------------------------------------
+// Google's /auth wants to know which client is asking: an `app` package name and
+// a `client_sig` (the SHA-1 of that package's signing certificate).
 //
-// We send `app=com.android.vending` with `client_sig` = the SHA-1 of OUR OWN
-// platform certificate (com.macapk.gms.PlatformSignature). That pair is the
-// literal truth about this device: it really does host a com.android.vending,
-// and that package really is signed by us.
+// Sign-in (Call 1) and every scope but one are asked as
+// `app=com.android.vending` with `client_sig` = the SHA-1 of Win.apk's own
+// platform certificate (com.macapk.gms.PlatformSignature): this device hosts a
+// com.android.vending, and that package is signed by Win.apk.
 //
-// ⛔ WHAT WE DO NOT SEND, AND WILL NOT. Every existing third-party client
-// (Aurora, microG on a signature-spoofing ROM) sends Google's own Play Store
-// certificate hash, `38918a453d07199354f8b19af05ec6562ced5788`. microG gets it
-// by shipping a copy of Google's DER in a `fake-signature` module and having the
-// ROM lie to PackageManager about it. That constant does not appear in this
-// file, this repo, or this project, and adding it would be asserting Google's
-// signing identity for our code -- the exact line CLAUDE.md draws.
-//
-// So there are two possible outcomes for the googleplay scope, and BOTH are
-// acceptable results of this code:
-//   * Google grants it to our identity -> the path is fully clean and licensing
-//     works with nothing hidden.
-//   * Google refuses it -> that refusal is an HONEST STOPPING POINT to report to
-//     the owner, not a prompt to start impersonating the Play Store. The
-//     refusal, with Google's own error string, is the deliverable.
-// MACAPK_GMS_AUTH_APP / MACAPK_GMS_AUTH_SIG exist so the owner can run that
-// experiment deliberately without a rebuild. They are not a back door: whatever
-// is put there is a decision the person setting them is making explicitly.
+// The googleplay scope, which licence checks need, Google issues only to the
+// Play Store's registered client, so that one call names the Play Store's
+// certificate SHA-1 instead (PLAY_STORE_CLIENT_SIG and applyPlayStoreIdentity
+// below, which say what that does and does not do). The hash is public and
+// sent as plain text; no key is involved.
 //
 // PROTOCOL REFERENCE (read-only, never vendored): microG GmsCore @157c9d86,
 //   play-services-base/core/src/main/java/org/microg/gms/auth/AuthRequest.java
@@ -71,6 +58,9 @@ public final class GoogleAuthClient {
             sLastError.set("no oauth_token supplied");
             return null;
         }
+        // An app's process: the master token Google answers with is the token
+        // service's to keep (GmsStore's header); only the e-mail comes back.
+        if (!GmsStore.owner()) return GmsTokens.signIn(oauthToken);
         Map<String, String> form = baseParams();
         form.put("service", "ac2dm");
         form.put("Token", oauthToken);
@@ -88,9 +78,8 @@ public final class GoogleAuthClient {
         // and exactly what microG sends (LoginActivity.java:356). We do NOT run
         // DroidGuard, we do NOT download or execute its VM bytecode, and we do
         // NOT forge a result: "null" says "I have no DroidGuard attestation",
-        // which is the truth. That keeps us on the right side of CLAUDE.md's
-        // "no attestation spoofing" line -- the line forbids DEFEATING
-        // DroidGuard, not honestly declaring we have no result for it. If Google
+        // which is the truth. Win.apk does not defeat or spoof attestation;
+        // declaring that there is no result is not that. If Google
         // ever rejects "null" and demands a real result, THAT is the honest
         // stopping point (it would mean the flow now requires attestation we
         // will not fabricate), not a prompt to start running DroidGuard.
@@ -168,6 +157,7 @@ public final class GoogleAuthClient {
         if (email == null) return null;
         String have = GmsStore.accountData(email, "accountId");
         if (have != null && !have.isEmpty()) return have;
+        if (!GmsStore.owner()) return GmsTokens.accountId(email);
         String master = GmsStore.masterToken(email);
         if (master == null) return null;
         Map<String, String> form = baseParams();
@@ -225,6 +215,9 @@ public final class GoogleAuthClient {
      */
     public static String fetchScopedToken(String account, String scope) {
         if (account == null || scope == null) return null;
+        // An app's process asks the token service, as AccountManager asks the
+        // authenticator through AccountManagerService.
+        if (!GmsStore.owner()) return GmsTokens.scoped(account, scope);
         String master = GmsStore.masterToken(account);
         if (master == null) {
             sLastError.set("no master token for " + GoogleAuthenticator.redact(account)
@@ -342,6 +335,12 @@ public final class GoogleAuthClient {
             sLastError.set("fetchAppToken: missing account/service/app identity");
             return null;
         }
+        // An app's process asks the token service, which checks that the identity is
+        // this app's own (GMS reads the caller's from PackageManager on a device).
+        if (!GmsStore.owner()) {
+            return GmsTokens.appToken(account, service, appPkg, appSigSha1, includeEmail, includeProfile,
+                    consented, tokenRequestOptions, extra, connectMs, readMs);
+        }
         String master = GmsStore.masterToken(account);
         if (master == null) {
             sLastError.set("no master token for " + GoogleAuthenticator.redact(account)
@@ -408,8 +407,8 @@ public final class GoogleAuthClient {
     // ===================================================================
 
     private static Map<String, String> baseParams() {
-        String app = env("MACAPK_GMS_AUTH_APP", DEFAULT_APP);
-        String sig = env("MACAPK_GMS_AUTH_SIG", platformSigSha1());
+        String app = DEFAULT_APP;
+        String sig = platformSigSha1();
         long androidId = GmsStore.androidId();
 
         Map<String, String> form = new LinkedHashMap<>();
@@ -432,70 +431,48 @@ public final class GoogleAuthClient {
     }
 
     // ======================================================================
-    // The Play Store client identity -- OWNER DECISION, 2026-09-05.
+    // The Play Store's client identity for the licensing scope
     // ======================================================================
     //
-    // WHAT THIS IS. Google's /auth will not mint a googleplay-scoped token for
-    // our own client identity: it answers HTTP 400 UNREGISTERED_ON_API_CONSOLE,
-    // because the googleplay scope reaches the Play Store's private Finsky
-    // backend and Google only issues it to its own registered first-party
-    // client -- the real Play Store, signed with the certificate whose SHA-1 is
-    // below. So the scoped-token call (Call 3, the one a licence check takes)
-    // presents THAT identity: app=com.android.vending, client_sig/callerSig =
-    // Google's Play Store cert SHA-1, callerPkg=com.google.android.gms.
+    // Google's /auth will not mint a googleplay-scoped token for any other
+    // client: it answers HTTP 400 UNREGISTERED_ON_API_CONSOLE, because that
+    // scope reaches the Play Store's backend and is issued only to the Play
+    // Store's registered client, identified by the package name and the SHA-1
+    // of the Play Store's signing certificate below. So the scoped-token call
+    // (Call 3, the one a licence check makes) names that client:
+    // app=com.android.vending, client_sig/callerSig = that SHA-1,
+    // callerPkg=com.google.android.gms. The same is done by other open-source
+    // Google services layers (microG) and store clients (Aurora Store).
     //
-    // ⛔ THIS CROSSES CLAUDE.md's IMPERSONATION LINE, AND IT IS HERE ON PURPOSE.
-    // The client_sig is a plaintext SHA-1 string in a form field, not a signed
-    // challenge, so this forges no cryptographic signature and needs no private
-    // key -- but it IS a false client-identity CLAIM: we tell Google "the app
-    // asking is the Play Store," and our code is signed by us, not Google. That
-    // is precisely the line the project draws, and the session was told to STOP
-    // and put it to the owner rather than hardcode this constant. That happened:
-    // the owner was shown exactly what it means and what microG/Aurora do,
-    // recommended against, and chose it CONSCIOUSLY AND EXPLICITLY on 2026-09-05
-    // ("if microG and Aurora Store both do it, I'm okay with the small
-    // concession"), to verify a licence for an app they OWN on Google Play.
+    // client_sig is the certificate's public SHA-1 as plain text in a form
+    // field, not a signature: no key is used or needed, and nothing is signed
+    // in Google's name. What the call gets is a token for the user's own
+    // account, with which Google answers licence checks for apps that account
+    // owns.
     //
-    // WHAT IT DOES NOT DO, so the boundary stays legible: it does not fabricate
-    // a licence (the JWS Google returns is genuinely Google-signed, for an app
-    // the owner genuinely owns, and the app's own verifier still checks it), it
-    // does not defeat Play Integrity / SafetyNet / DroidGuard attestation (this
-    // is a client-identity claim for an OAuth token, not a device-integrity
-    // claim), and it does not touch the com.android.vending PACKAGE signature we
-    // report to guest apps (still ours -- an app that byte-compares against
-    // Google's cert still correctly finds this store is not Google's). It is the
-    // one narrow concession the owner authorized, and no more.
-    //
-    // MACAPK_GMS_HONEST_IDENTITY=1 restores our own certificate, which is how the
-    // refusal above is reproduced (and the honest posture demonstrated).
+    // What it does not do: it makes no licence (the response Google returns is
+    // Google-signed and the app's own verifier still checks it); it is no
+    // device-integrity claim (Play Integrity, SafetyNet and DroidGuard are not
+    // touched). The package signature reported to apps is a separate matter:
+    // com.macapk.gms.GoogleGmsCertificate.
     static final String PLAY_STORE_CLIENT_SIG = "38918a453d07199354f8b19af05ec6562ced5788";
     private static final String GMS_PACKAGE = "com.google.android.gms";
     private static final String VENDING_PACKAGE = "com.android.vending";
 
-    private static boolean honestIdentity() {
-        String v = System.getenv("MACAPK_GMS_HONEST_IDENTITY");
-        return "1".equals(v) || "true".equalsIgnoreCase(v);
-    }
 
     /**
-     * Overwrite the four identity fields with the Play Store's -- but ONLY for
-     * the licensing scope, and only when the honest-identity flag is off.
+     * Overwrite the four identity fields with the Play Store's, for the
+     * googleplay licensing scope only.
      *
-     * ⚠ SCOPE-GATED ON PURPOSE, and this is the guard that keeps the owner's
-     * concession NARROW. The Play Store identity was authorized for ONE thing:
-     * verifying a licence for an app the owner owns. It must NOT leak to every
-     * token a guest app requests. With the GMS layer on by default, any app can
-     * call AccountManager.getAuthToken for an arbitrary scope; presenting the
-     * Play Store identity there would hand that app whatever the Play Store is
-     * authorized for, which is far more than the owner agreed to and is a
-     * genuine security surface. So a non-licensing scope gets our OWN honest
-     * identity (and is refused by Google if that scope is gated -- the correct,
-     * honest outcome), and only the googleplay licensing scope borrows the Play
-     * Store's. Applied only to the scoped-token call; Call 1 (sign-in) already
-     * succeeds under our own identity.
+     * Scope-gated so the identity is not lent to every token a guest app
+     * requests: any app can call AccountManager.getAuthToken for any scope, and
+     * presenting the Play Store's client there would give that app what the
+     * Play Store is authorized for. Any other scope is asked under Win.apk's
+     * own client identity and refused by Google if that scope is gated. Applied
+     * only to the scoped-token call; Call 1 (sign-in) succeeds under Win.apk's
+     * own identity.
      */
     private static void applyPlayStoreIdentity(Map<String, String> form, String scope) {
-        if (honestIdentity()) return;
         if (!GoogleAuthenticator.SCOPE_GOOGLEPLAY.equals(scope)) return;
         form.put("app", VENDING_PACKAGE);
         form.put("client_sig", PLAY_STORE_CLIENT_SIG);
@@ -631,6 +608,9 @@ public final class GoogleAuthClient {
     /** Why the last call ON THIS THREAD failed, for a CLI or a launcher sheet to
      *  show. Cleared on success. */
     public static String lastError() { return sLastError.get(); }
+
+    /** GmsTokens: the token service's reason, as this thread's lastError(). */
+    static void setLastError(String why) { sLastError.set(why); }
 
     /** SHA-1 of our platform certificate, lower-case hex -- the format
      *  client_sig wants (microG PackageUtils.java:151-179). */

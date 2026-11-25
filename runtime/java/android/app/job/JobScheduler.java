@@ -54,6 +54,13 @@ public abstract class JobScheduler {
 
     public abstract void cancelAll();
 
+    /** @hide Win.apk: the system broker hands this process a job it held while no
+     *  process of the app was alive and that is due now (com.macapk.loader.BrokerJobs):
+     *  run it at once, as JobSchedulerService starts a ready job, instead of applying
+     *  its minimum latency again. The engine's own override does that; this default
+     *  only schedules it. */
+    public int macapkRunNow(JobInfo job) { return schedule(job); }
+
     /** AOSP: "a list of all of the app's scheduled jobs. This includes jobs
      *  that are currently started as well as those that are still waiting
      *  to run." A finished one-shot is neither, so it must not be listed --

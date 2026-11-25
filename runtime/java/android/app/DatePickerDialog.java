@@ -40,9 +40,9 @@ public class DatePickerDialog extends AlertDialog
         // so the dialog and its picker ran in the activity theme.
         // MACAPK_DIALOG_THEME_WRAPPER=0: AlertDialog(context, 0) then stores the
         // caller's Context unchanged and the picker is built on it, as before.
-        super(context, MACAPK_DIALOG_THEME_WRAPPER ? resolveDialogTheme(context, themeResId) : 0);
+        super(context, resolveDialogTheme(context, themeResId));
         mListener = listener;
-        mDatePicker = new DatePicker(MACAPK_DIALOG_THEME_WRAPPER ? getContext() : context);
+        mDatePicker = new DatePicker(getContext());
         // AOSP passes `this` (the dialog implements OnDateChangedListener).
         try { mDatePicker.init(year, month, dayOfMonth, this); } catch (Throwable ignored) {}
         try { setView(mDatePicker); } catch (Throwable ignored) {}

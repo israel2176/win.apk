@@ -21,6 +21,8 @@ namespace {
 // EGL_ANGLE_platform_angle and its D3D / Vulkan / WARP / SwiftShader values.
 constexpr EGLint kPlatformAngle = 0x3202, kPlatformType = 0x3203, kTypeD3D11 = 0x3208, kTypeVulkan = 0x3450,
                  kDeviceType = 0x3209, kDeviceWarp = 0x320B, kDeviceSwiftShader = 0x3487;
+// EGL_ANGLE_platform_angle_d3d's native display for "Direct3D 11, never 9" (EGL_D3D11_ONLY_DISPLAY_ANGLE).
+const EGLNativeDisplayType kD3D11OnlyDisplay = reinterpret_cast<EGLNativeDisplayType>(-3);
 
 EGLDisplay g_display = EGL_NO_DISPLAY;
 EGLConfig g_config = nullptr;
@@ -39,12 +41,22 @@ EGLDisplay open_display(EGLint type, EGLint device) {
     using GetPlatformDisplay = EGLDisplay(EGLAPIENTRY*)(EGLenum, void*, const EGLint*);
     auto get = reinterpret_cast<GetPlatformDisplay>(eglGetProcAddress("eglGetPlatformDisplayEXT"));
     if (!get) return EGL_NO_DISPLAY;
+    // A display of the app's GL's own, not the graphics DLL's (hwui_build/glue/layers.cpp), on which
+    // HWUI's render thread draws every window: ANGLE keeps one Direct3D 11 device with one immediate
+    // context per display and takes no lock around the GL calls of contexts that share nothing, so
+    // an app's GL thread drawing on the render thread's display corrupted ANGLE's state and crashed
+    // it. On a phone the app's EGL contexts and HWUI's are clients of a driver that is safe across
+    // threads; here each gets its own device. ANGLE hands out one display per native display,
+    // platform type, device and power preference: the native display that says "Direct3D 11 only",
+    // which a Direct3D 11 display is anyway, makes this one another than the DLL's
+    // (EGL_DEFAULT_DISPLAY). Nothing crosses between the two: the app's frames reach the compositor
+    // as pixels (gl_read_current).
     EGLint attribs[] = {kPlatformType, type, EGL_NONE, EGL_NONE, EGL_NONE};
     if (device) {
         attribs[2] = kDeviceType;
         attribs[3] = device;
     }
-    EGLDisplay d = get(kPlatformAngle, EGL_DEFAULT_DISPLAY, attribs);
+    EGLDisplay d = get(kPlatformAngle, type == kTypeD3D11 ? kD3D11OnlyDisplay : EGL_DEFAULT_DISPLAY, attribs);
     if (d == EGL_NO_DISPLAY) return d;
     EGLint major = 0, minor = 0;
     if (!eglInitialize(d, &major, &minor)) return EGL_NO_DISPLAY;
@@ -59,18 +71,15 @@ bool init() {
         std::fprintf(stderr, "[win.apk] GL: ANGLE (libEGL.dll, libGLESv2.dll) is not next to the runtime\n");
         return false;
     }
-    const char* backend = std::getenv("WINAPK_ANGLE_BACKEND");
-    const bool want_sw = backend && std::strcmp(backend, "swiftshader") == 0;
-    const bool want_hw = backend && std::strcmp(backend, "d3d11") == 0;
     // A GPU first, then Direct3D's software rasterizer (WARP, part of every
     // Windows), then ANGLE's own (SwiftShader).
     const char* used = "Direct3D 11";
-    if (!want_sw) g_display = open_display(kTypeD3D11, 0);
-    if (g_display == EGL_NO_DISPLAY && !want_sw && !want_hw) {
+    g_display = open_display(kTypeD3D11, 0);
+    if (g_display == EGL_NO_DISPLAY) {
         g_display = open_display(kTypeD3D11, kDeviceWarp);
         used = "Direct3D 11 WARP (software)";
     }
-    if (g_display == EGL_NO_DISPLAY && !want_hw) {
+    if (g_display == EGL_NO_DISPLAY) {
         g_display = open_display(kTypeVulkan, kDeviceSwiftShader);
         used = "SwiftShader (software Vulkan)";
     }
@@ -169,128 +178,6 @@ void gl_read_current(std::vector<uint32_t>* argb, int W, int H) {
     if (fbo) glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
     argb->resize(rgba.size());
     argb_from_rgba(rgba.data(), argb->data(), W, H);
-}
-
-namespace {
-
-// A context's two pixel pack buffers for the asynchronous read. glReadPixels
-// into one returns at once (the GPU DMAs into it); the other, whose readback
-// was issued a frame ago and so is done, is mapped and converted with no stall.
-struct PackBuffers {
-    GLuint pbo[2] = {0, 0};
-    int w[2] = {0, 0}, h[2] = {0, 0};  // the size each buffer currently holds
-    bool filled[2] = {false, false};
-    int cur = 0;          // the buffer this frame's readback goes into
-    bool broken = false;  // a PBO/map failure: fall back to the sync read for good
-};
-std::mutex g_pack_lock;
-std::map<EGLContext, PackBuffers> g_packs;  // std::map: element pointers stay valid across other keys
-
-bool async_readback_enabled() {
-    static const bool on = [] {
-        const char* e = std::getenv("WINAPK_GL_ASYNC_READBACK");
-        return e && e[0] == '1';
-    }();
-    return on;
-}
-
-}  // namespace
-
-bool gl_async_readback_enabled() { return async_readback_enabled(); }
-
-bool gl_read_current_async(std::vector<uint32_t>* argb, int W, int H, int* pw, int* ph) {
-    if (W <= 0 || H <= 0) return false;
-    EGLDisplay dpy = eglGetCurrentDisplay();
-    EGLContext ctx = eglGetCurrentContext();
-    EGLint version = 2;
-    if (ctx != EGL_NO_CONTEXT) eglQueryContext(dpy, ctx, EGL_CONTEXT_CLIENT_VERSION, &version);
-
-    PackBuffers* pb = nullptr;
-    if (version >= 3 && ctx != EGL_NO_CONTEXT) {
-        std::lock_guard<std::mutex> hold(g_pack_lock);
-        pb = &g_packs[ctx];  // pointer stays valid; only this context's thread erases this key
-    }
-    if (!pb || pb->broken) {  // ES 2 or a prior PBO/map failure: present this frame synchronously
-        gl_read_current(argb, W, H);
-        *pw = W;
-        *ph = H;
-        return true;
-    }
-
-    while (glGetError() != GL_NO_ERROR) {
-    }  // start from a clean error state
-    GLint fbo = 0, align = 4, prev_binding = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
-    glGetIntegerv(GL_PACK_ALIGNMENT, &align);
-    glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &prev_binding);
-    if (fbo) glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    if (align != 4) glPixelStorei(GL_PACK_ALIGNMENT, 4);
-
-    // A lost or recreated context (its EGLContext pointer reused) leaves our
-    // buffer names invalid: make them afresh. glGenBuffers only reserves names,
-    // and glIsBuffer stays false until a name is first bound, so bind both here
-    // to turn them into real buffer objects -- otherwise this check would see
-    // the not-yet-used one as invalid and regenerate the pair every frame,
-    // losing the previous frame and presenting nothing.
-    if (!pb->pbo[0] || !glIsBuffer(pb->pbo[0]) || !glIsBuffer(pb->pbo[1])) {
-        if (pb->pbo[0]) glDeleteBuffers(2, pb->pbo);
-        glGenBuffers(2, pb->pbo);
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[0]);
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[1]);
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
-        pb->filled[0] = pb->filled[1] = false;
-        pb->w[0] = pb->w[1] = pb->h[0] = pb->h[1] = 0;
-        pb->cur = 0;
-    }
-
-    const int cur = pb->cur, prev = cur ^ 1;
-    const size_t need = static_cast<size_t>(W) * H * 4;
-
-    // Issue this frame's readback into `cur` -- returns at once into the PBO.
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[cur]);
-    if (pb->w[cur] != W || pb->h[cur] != H) {  // size changed (a resize) or first use: (re)allocate
-        glBufferData(GL_PIXEL_PACK_BUFFER, static_cast<GLsizeiptr>(need), nullptr, GL_STREAM_READ);
-    }
-    glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-    const bool read_ok = glGetError() == GL_NO_ERROR;
-    if (read_ok) {
-        pb->w[cur] = W;
-        pb->h[cur] = H;
-        pb->filled[cur] = true;
-    }
-
-    // Present the previous frame, done by now, mapped from `prev`. On a resize
-    // it still holds the old size, which the present path handles.
-    bool have = false;
-    if (read_ok && pb->filled[prev] && pb->w[prev] > 0 && pb->h[prev] > 0) {
-        const int PW = pb->w[prev], PH = pb->h[prev];
-        const size_t pbytes = static_cast<size_t>(PW) * PH * 4;
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pb->pbo[prev]);
-        const void* src = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, static_cast<GLsizeiptr>(pbytes), GL_MAP_READ_BIT);
-        if (src) {
-            argb->resize(static_cast<size_t>(PW) * PH);
-            argb_from_rgba(static_cast<const uint32_t*>(src), argb->data(), PW, PH);
-            glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-            *pw = PW;
-            *ph = PH;
-            have = true;
-        }
-    }
-
-    glBindBuffer(GL_PIXEL_PACK_BUFFER, static_cast<GLuint>(prev_binding));
-    if (align != 4) glPixelStorei(GL_PACK_ALIGNMENT, align);
-    if (fbo) glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(fbo));
-
-    if (!read_ok) {  // the backend would not do the PBO readback: give up on it for this context
-        pb->broken = true;
-        std::fprintf(stderr, "[win.apk] GL: async readback failed, using the synchronous read\n");
-        gl_read_current(argb, W, H);
-        *pw = W;
-        *ph = H;
-        return true;
-    }
-    pb->cur = prev;  // next frame reads into the other buffer
-    return have;     // false only on the first frame of a context (nothing buffered yet)
 }
 
 void* gl_shared_display() { return init() ? g_display : nullptr; }

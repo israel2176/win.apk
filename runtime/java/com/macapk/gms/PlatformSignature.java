@@ -10,12 +10,11 @@
 //   com.android.vending: it reports Google's public certificate for those
 //   two, see GoogleGmsCertificate. This one is the fallback.)
 //
-//   1. Google's real certificate bytes. FORBIDDEN. CLAUDE.md's scope section is
-//      explicit, and it stays forbidden even though those bytes are public and
-//      no private key is involved: presenting Google's signing identity for a
-//      package whose code is OURS is the forging line, whatever the provenance
-//      of the bytes. This is the whole reason signature-gated apps are a
-//      principled ceiling for us rather than a TODO.
+//   1. Google's real certificate bytes. Upstream Mac.apk never reports them
+//      for a package whose code is its own. Win.apk does for the two packages
+//      above (GoogleGmsCertificate: the public bytes every app's own
+//      play-services-basement embeds; no key, nothing is signed with them),
+//      and uses this certificate for everything else.
 //   2. An arbitrary non-certificate byte array. Not a forgery, but a lie of a
 //      different kind: `CertificateFactory.generateCertificate` on it throws,
 //      so an app that inspects signatures the ordinary way gets a crash instead

@@ -28,9 +28,10 @@
 //
 // STILL AN APPROXIMATION, and named so it is not mistaken for truth:
 // NET_CAPABILITY_VALIDATED is inferred from "there is a default route", not
-// from an actual reachability probe, and isActiveNetworkMetered() is still a
-// flat false (macOS does surface per-interface Low Data Mode; we do not read
-// it yet).
+// from an actual reachability probe, and isActiveNetworkMetered() is
+// Windows' own answer on Win.apk (the connection's cost) but still a flat
+// false on the Mac (macOS does surface per-interface Low Data Mode; we do not
+// read it yet).
 package android.net;
 
 import android.content.Context;
@@ -103,7 +104,14 @@ public class ConnectivityManager {
         if (offline()) return new NetworkInfo[0];
         return new NetworkInfo[] { getActiveNetworkInfo() };
     }
-    public boolean isActiveNetworkMetered() { return false; }
+    /** AOSP ConnectivityService.isActiveNetworkMetered: the default network lacks
+     *  NET_CAPABILITY_NOT_METERED; true when there is none ("default to safe value").
+     *  Metered is the host's answer (Windows: the connection's cost, Settings'
+     *  "Metered connection"; MacApkHostNetwork.meteredOf). */
+    public boolean isActiveNetworkMetered() {
+        if (offline()) return true;
+        return MacApkHostNetwork.get().metered;
+    }
     public boolean isDefaultNetworkActive() { return !offline(); }
     /** Pre-ICS API. AdMob/analytics SDKs still call it on older targetSdk apps. */
     public boolean getBackgroundDataSetting() { return true; }

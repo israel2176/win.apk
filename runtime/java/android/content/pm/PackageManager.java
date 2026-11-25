@@ -482,7 +482,7 @@ public abstract class PackageManager {
     public List<android.content.pm.PackageInfo> getInstalledPackages(int flags) {
         java.util.ArrayList<android.content.pm.PackageInfo> out = new java.util.ArrayList<>();
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 android.content.pm.PackageInfo self =
                     getPackageInfo(app.getPackageName(), flags);
@@ -505,7 +505,7 @@ public abstract class PackageManager {
     public List<android.content.pm.ApplicationInfo> getInstalledApplications(int flags) {
         java.util.ArrayList<android.content.pm.ApplicationInfo> out = new java.util.ArrayList<>();
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 android.content.pm.ApplicationInfo self =
                     getApplicationInfo(app.getPackageName(), flags);
@@ -551,7 +551,7 @@ public abstract class PackageManager {
             if (p != null) return p[0];
             return null;
         }
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         return (app != null) ? app.getPackageName() : null;
     }
 
@@ -567,7 +567,7 @@ public abstract class PackageManager {
             String[] p = com.macapk.loader.AppUids.packagesFor(uid);
             if (p != null) return p;
         }
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app == null) return null;
         int selfUid = android.os.Process.myUid();
         try {
@@ -616,7 +616,7 @@ public abstract class PackageManager {
         }
         // Fill ApplicationInfo from the calling app's known info.
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app != null) {
                 info.applicationInfo = app.getApplicationInfo();
             }
@@ -986,7 +986,7 @@ public abstract class PackageManager {
     // DOES have a manifest. The justification that used to live here -- "the
     // components don't actually exist as services in our process model" -- had
     // been false since ServiceRegistry, the v1.0.997 manifest-broadcast
-    // dispatch and Boot.installAutoInitProviders landed: those three DO
+    // dispatch and Boot.appProviders landed: those three DO
     // instantiate manifest components, so an unrecorded setComponentEnabledSetting
     // was a returns-success-does-nothing method. Removed at v1.1.0 rather than
     // left as a comment that tells the next reader not to look.
@@ -1036,7 +1036,7 @@ public abstract class PackageManager {
      *  Context.getResources() to get a Resources independent of Context state. */
     public android.content.res.Resources getResourcesForApplication(String appPackageName)
             throws NameNotFoundException {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app == null || appPackageName == null) throw new NameNotFoundException(appPackageName);
         // The platform package "android" (framework-res.apk): a device returns a
         // Resources over the framework AssetManager, which Resources.getSystem()
@@ -1755,7 +1755,7 @@ public abstract class PackageManager {
      *  they cannot be read. */
     private PermissionInfo[] selfDeclaredPermissions() {
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) return null;
             PackageInfo info = getPackageInfo(app.getPackageName(), GET_PERMISSIONS);
             return (info != null) ? info.permissions : null;
@@ -2113,15 +2113,13 @@ public abstract class PackageManager {
      *  to. "@throws SecurityException when the caller is not the active
      *  installer for the given package."
      *
-     *  Mac.apk records no installer of record -- getInstallerPackageName returns
-     *  null for every package (side-loaded, exactly as AOSP reports for an adb
-     *  install) -- so no caller is the active installer and the SecurityException
-     *  is the answer a device gives for the same call. The check is written out
-     *  rather than hardcoded so it starts succeeding the day an installer of
-     *  record is recorded. */
+     *  The installer is getInstallerPackageName's answer (InstallerOfRecord:
+     *  the recorded installer, or Google Play for an app the user installed
+     *  while Win.apk reports Play as the installer); any other caller gets the
+     *  SecurityException a device gives. */
     public void setApplicationCategoryHint(String packageName, int categoryHint) {
         String installer = getInstallerPackageName(packageName);
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         String self = (app != null) ? app.getPackageName() : null;
         if (installer == null || self == null || !installer.equals(self)) {
             throw new SecurityException("Calling package " + self
@@ -2198,7 +2196,7 @@ public abstract class PackageManager {
             launch.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         }
         android.app.PendingIntent pi = android.app.PendingIntent.getActivity(
-                android.app.Application.macapk_get(), 0, launch,
+                com.macapk.loader.app.Apps.current(), 0, launch,
                 android.app.PendingIntent.FLAG_IMMUTABLE);
         return pi.getIntentSender();
     }
@@ -2292,10 +2290,10 @@ public abstract class PackageManager {
      *  update ownership of a package. "@throws SecurityException if you are not
      *  the current update owner of the given package."
      *
-     *  Mac.apk grants update ownership to nobody -- InstallSourceInfo
-     *  .getUpdateOwnerPackageName() is always null, and SessionParams
-     *  .setRequestUpdateOwnership is recorded but never honoured -- so no caller
-     *  is the owner. AOSP's IllegalArgumentException branch ("if the given
+     *  The owner is InstallSourceInfo.getUpdateOwnerPackageName(): Google Play
+     *  for an app Win.apk reports Play installed (InstallerOfRecord), else
+     *  nobody. Win.apk enforces no ownership, so relinquishing is a no-op for
+     *  the owner. AOSP's IllegalArgumentException branch ("if the given
      *  package is invalid") covers an uninstalled name and is checked first. */
     public void relinquishUpdateOwnership(String targetPackage) {
         try {
@@ -2303,6 +2301,12 @@ public abstract class PackageManager {
         } catch (NameNotFoundException e) {
             throw new IllegalArgumentException("Unknown package " + targetPackage, e);
         }
+        String owner = null;
+        try { owner = getInstallSourceInfo(targetPackage).getUpdateOwnerPackageName(); }
+        catch (NameNotFoundException ignored) {}
+        android.app.Application app = com.macapk.loader.app.Apps.current();
+        String self = (app != null) ? app.getPackageName() : null;
+        if (owner != null && owner.equals(self)) return;
         throw new SecurityException("Caller is not the update owner of " + targetPackage);
     }
 
@@ -2492,7 +2496,7 @@ public abstract class PackageManager {
                     "null path", null);
         }
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             ApplicationInfo self = (app != null) ? app.getApplicationInfo() : null;
             String selfApk = (self != null) ? self.sourceDir : null;
             if (selfApk != null

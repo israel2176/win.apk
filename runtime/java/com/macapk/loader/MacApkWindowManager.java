@@ -13,9 +13,10 @@ import android.view.Display;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import com.macapk.loader.view.ViewHost;
 
 public final class MacApkWindowManager implements WindowManager {
-    private static final Display DEFAULT_DISPLAY = new Display();
+    private static final Display DEFAULT_DISPLAY = ViewHost.get().newDisplay();
 
     @Override public Display getDefaultDisplay() { return DEFAULT_DISPLAY; }
 

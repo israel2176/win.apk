@@ -1,4 +1,5 @@
 package android.widget;
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.view.View;
 
@@ -9,20 +10,6 @@ import android.view.View;
  *  Scaling/cropping behavior follows the AOSP ScaleType contract
  *  (FIT_CENTER default, CENTER and FIT_XY common alternatives). */
 public class ImageView extends View {
-    // Process-environment snapshots for the per-draw / per-frame / per-layout /
-    // per-event sites below (debug/w9textdraw_verify/hoist_getenv.py). A
-    // System.getenv call encodes the name and hashes it on every call; the
-    // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
-    // "subsequent calls to putenv/setenv from C will not be visible from Java
-    // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_SKIP_ALL_IMAGE_DRAW = System.getenv("MACAPK_SKIP_ALL_IMAGE_DRAW");
-    private static final String ENV_MACAPK_SKIP_IMAGEVIEW_DRAW = System.getenv("MACAPK_SKIP_IMAGEVIEW_DRAW");
-    private static final String ENV_MACAPK_TRACE_FEATUREIMG = System.getenv("MACAPK_TRACE_FEATUREIMG");
-    private static final String ENV_MACAPK_TRACE_IMAGEVIEW_DRAW = System.getenv("MACAPK_TRACE_IMAGEVIEW_DRAW");
-    private static final String ENV_MACAPK_TRACE_IMAGEVIEW_MEASURE = System.getenv("MACAPK_TRACE_IMAGEVIEW_MEASURE");
-    private static final String ENV_MACAPK_TRACE_IMAGEVIEW_SET = System.getenv("MACAPK_TRACE_IMAGEVIEW_SET");
-    private static final String ENV_MACAPK_TRACE_TINT = System.getenv("MACAPK_TRACE_TINT");
 
     public enum ScaleType { MATRIX, FIT_XY, FIT_START, FIT_CENTER, FIT_END, CENTER, CENTER_CROP, CENTER_INSIDE }
 
@@ -89,12 +76,18 @@ public class ImageView extends View {
                 a, new int[]{0x01010119 /* android.R.attr.src */}, defStyleAttr, defStyleRes);
             int srcId = ta.getResourceId(0, 0);
             if (srcId != 0) {
-                android.graphics.drawable.Drawable d = c.getResources().getDrawable(srcId);
+                // AOSP reads it as `a.getDrawable(R.styleable.ImageView_src)`, which loads the
+                // drawable with the theme the attributes were obtained through, so a vector's
+                // `android:tint="?android:textColor"` resolves. Under the AOSP graphics switch
+                // only: there AOSP's drawables inflate themselves and read their ?attr values
+                // when inflated (the Java2D path keeps its theme-less load).
+                android.graphics.drawable.Drawable d = THEMED_DRAWABLES
+                        ? ta.getDrawable(0) : c.getResources().getDrawable(srcId);
                 if (d != null) setImageDrawable(d);
             }
             ta.recycle();
         } catch (Throwable ignored) {}
-        if (MACAPK_IMAGEVIEW_THEME_TINT) macapkApplyStyledTint(c, a, defStyleAttr, defStyleRes);
+        macapkApplyStyledTint(c, a, defStyleAttr, defStyleRes);
     }
 
     /** AOSP ImageView.<init> (android14 ImageView.java:213-230):
@@ -116,8 +109,8 @@ public class ImageView extends View {
      *  the attribute resolves, so an untinted ImageView is untouched; the
      *  inflater's direct XML case still runs afterwards and wins.
      *  MACAPK_IMAGEVIEW_THEME_TINT=0 restores the XML-only read. */
-    static final boolean MACAPK_IMAGEVIEW_THEME_TINT =
-        !"0".equals(System.getenv("MACAPK_IMAGEVIEW_THEME_TINT"));
+    /** WINAPK_AOSP_GFX=1: the picture is loaded with the view's theme, as AOSP loads it. */
+    private static final boolean THEMED_DRAWABLES = GfxBackend.isAosp();
     private void macapkApplyStyledTint(Context c, android.util.AttributeSet a,
                                        int defStyleAttr, int defStyleRes) {
         try {
@@ -286,16 +279,6 @@ public class ImageView extends View {
         }
         this.bitmap = extracted;
         mMacapkBitmapTintable = extracted != null && tintable;
-        if ("1".equals(ENV_MACAPK_TRACE_IMAGEVIEW_SET)) {
-            try {
-                com.macapk.loader.NativeLog.i("ImageView",
-                    "setImageDrawable@" + Integer.toHexString(System.identityHashCode(this))
-                    + " bounds=[" + getLeft() + "," + getTop() + "-" + getRight() + "," + getBottom() + "]"
-                    + " drawable=" + (d != null ? d.getClass().getSimpleName() : "null")
-                    + " bitmap=" + (extracted != null
-                            ? (extracted.getWidth() + "x" + extracted.getHeight()) : "null"));
-            } catch (Throwable ignored) {}
-        }
         // v1.0.842 (lane STATELIST): AOSP's ImageView.updateDrawable (the
         // real installer setImageDrawable/setImageResource/setImageBitmap
         // all funnel through) syncs drawable state UNCONDITIONALLY when
@@ -358,19 +341,6 @@ public class ImageView extends View {
         if (mHasImageTintMode) drawable.setTintMode(mImageTintMode);
         // Diagnostic (MACAPK_TRACE_TINT, zero cost unset): the effective image
         // tint per view, so a wrong icon colour names its resolved ARGB instead
-        // of being inferred from a screenshot.
-        if (ENV_MACAPK_TRACE_TINT != null) {
-            try {
-                int eff = (mImageTintList == null) ? 0
-                    : mImageTintList.getColorForState(getDrawableState(),
-                                                      mImageTintList.getDefaultColor());
-                com.macapk.loader.NativeLog.i("Mac.apk.ImageView",
-                    "imageTint " + drawable.getClass().getSimpleName()
-                    + " -> #" + Integer.toHexString(eff)
-                    + " default=#" + (mImageTintList == null ? "null"
-                        : Integer.toHexString(mImageTintList.getDefaultColor())));
-            } catch (Throwable ignored) {}
-        }
         // The drawable (or one of its children) may not have been stateful
         // before applying the tint, so try again per AOSP's own comment.
         if (drawable.isStateful()) drawable.setState(getDrawableState());
@@ -425,8 +395,11 @@ public class ImageView extends View {
         // rather than crashing.
         try {
             if (getContext() != null && getContext().getResources() != null) {
-                android.graphics.drawable.Drawable d =
-                    getContext().getResources().getDrawable(resId);
+                // AOSP resolveUri: `mContext.getDrawable(mResource)`, with the view's theme
+                // (under the AOSP graphics switch; see macapkApplySrc).
+                android.graphics.drawable.Drawable d = THEMED_DRAWABLES
+                    ? getContext().getDrawable(resId)
+                    : getContext().getResources().getDrawable(resId);
                 if (d != null) setImageDrawable(d);
             }
         } catch (Throwable ignored) {}
@@ -624,9 +597,7 @@ public class ImageView extends View {
         if (drawable != null) {
             try { drawable.setLayoutDirection(getLayoutDirection()); } catch (Throwable ignored) {}
         }
-        // v1.0.100 diagnostic: skip drawing of named ImageView subclasses.
-        if ("1".equals(ENV_MACAPK_SKIP_ALL_IMAGE_DRAW)) return;
-        String skip = ENV_MACAPK_SKIP_IMAGEVIEW_DRAW;
+        String skip = null;
         if (skip != null && !skip.isEmpty()
             && getClass().getSimpleName().equals(skip)) {
             return;
@@ -652,7 +623,7 @@ public class ImageView extends View {
                     // MACAPK_TRACE_IMAGEVIEW_DRAW=verbose  -> EVERY draw, with
                     //   per-instance counter (catches double-traversal of the
                     //   same ImageView per frame, which the one-shot mode hides)
-                    String tracelvl = ENV_MACAPK_TRACE_IMAGEVIEW_DRAW;
+                    String tracelvl = null;
                     boolean verbose = "verbose".equals(tracelvl);
                     boolean fireOnce = "1".equals(tracelvl);
                     if (verbose || (fireOnce && !traced)) {
@@ -673,8 +644,8 @@ public class ImageView extends View {
                                 + "@" + Integer.toHexString(System.identityHashCode(this))
                                 + " bounds=[" + getLeft() + "," + getTop()
                                 + "-" + getRight() + "," + getBottom() + "]"
-                                + " canvas-translate=(" + canvas.macapkGetCurrentTx()
-                                + "," + canvas.macapkGetCurrentTy() + ")"
+                                + " canvas-translate=(" + GfxBackend.get().currentTx(canvas)
+                                + "," + GfxBackend.get().currentTy(canvas) + ")"
                                 + " drawable=" + drawable.getClass().getSimpleName()
                                 + "@" + Integer.toHexString(System.identityHashCode(drawable))
                                 + " parents=" + parentChain);
@@ -839,17 +810,6 @@ public class ImageView extends View {
         final int macapkPadSave = canvas.save();
         if (padL != 0 || padT != 0) canvas.translate(padL, padT);
         try {
-        if ("1".equals(ENV_MACAPK_TRACE_FEATUREIMG)
-                && getClass().getSimpleName().contains("FeatureImage")) {
-            try {
-                com.macapk.loader.NativeLog.i("ImageView",
-                    "FeatureImage.onDraw scaleType=" + scaleType
-                    + " view=" + viewW + "x" + viewH
-                    + " img=" + imgW + "x" + imgH
-                    + " absTop=" + getTop() + " absBottom=" + getBottom()
-                    + " canvasTy=" + canvas.macapkGetCurrentTy());
-            } catch (Throwable ignored) {}
-        }
         switch (scaleType) {
             case FIT_XY:
                 canvas.drawBitmap(b,
@@ -1015,21 +975,8 @@ public class ImageView extends View {
         }
     }
 
-    /** MACAPK_IMAGEVIEW_ANIM_HOOKS, default ON (2026-09-29). AOSP's ImageView
-     *  has NO onAnimationStart/onAnimationEnd overrides (android14
-     *  ImageView.java), so View's run: they set/clear PFLAG_ANIMATION_STARTED
-     *  (AOSP View.java:27496-27511), which ViewGroup.finishAnimatingView reads
-     *  before calling onAnimationEnd. Ours used to be no-ops that hid View's, so
-     *  a tween animation on an ImageView never counted as started and the app's
-     *  own onAnimationEnd never ran -- Simple Solitaire moves each dealt card in
-     *  its ImageView subclass's onAnimationEnd, so the board never dealt. With
-     *  the gate on these delegate to View, i.e. behave as if absent (the public
-     *  signature is kept so an app subclass links the same either way).
-     *  =0 restores the old no-op overrides exactly. */
-    private static final boolean ANIM_HOOKS =
-        !"0".equals(System.getenv("MACAPK_IMAGEVIEW_ANIM_HOOKS"));
-    public void onAnimationStart() { if (ANIM_HOOKS) super.onAnimationStart(); }
-    public void onAnimationEnd() { if (ANIM_HOOKS) super.onAnimationEnd(); }
+    public void onAnimationStart() { super.onAnimationStart(); }
+    public void onAnimationEnd() { super.onAnimationEnd(); }
 
     @Override public void setVisibility(int visibility) {
         super.setVisibility(visibility);
@@ -1077,59 +1024,7 @@ public class ImageView extends View {
         }
     }
 
-    /** Labelled bisect gate (2026-09-25): the AOSP padding-inclusive wrap_content
-     *  measure below changes the size of every padded wrap_content ImageView in
-     *  every app. MACAPK_IMAGEVIEW_MEASURE_PADDING=0 restores the legacy
-     *  min(intrinsic, spec) measure so a regression can be A/B'd in one run. */
-    private static final boolean MEASURE_PADDING =
-            !"0".equals(System.getenv("MACAPK_IMAGEVIEW_MEASURE_PADDING"));
-    private static final boolean TRACE_MEASURE =
-            "1".equals(System.getenv("MACAPK_TRACE_IMAGEVIEW_MEASURE"));
-    /** Labelled bisect gate (v1.0.1648): AOSP's head of onMeasure for a NULL
-     *  drawable and for a drawable with NO intrinsic size. AOSP android14-release
-     *  ImageView.onMeasure (L1129+): a null drawable measures as w = h = 0 (and
-     *  never adjusts view bounds); otherwise w = mDrawableWidth, h =
-     *  mDrawableHeight, each floored to 1 when <= 0 -- then padding, the
-     *  suggested minimum and resolveSizeAndState. The legacy code instead
-     *  returned View.onMeasure for both cases, and View.getDefaultSize answers
-     *  the full SPEC size under AT_MOST (View.java getDefaultSize). MEASURED
-     *  victim: Google Calculator's tablet layout (layout-sw800dp-w1200dp) has a
-     *  wrap_content drag handle whose src is a size-less <shape> (intrinsic
-     *  -1x-1, padding 24/44 px, min 96 px). AOSP measures it 96x96 and the
-     *  emulator draws exactly that; we measured it 3360x1636, and its tinted
-     *  #44464f fill covered the whole history pane (tablet A/B 73.5%). Note:
-     *  docs/google-calculator-tablet-two-pane_2026-09-25.md.
-     *  MACAPK_IMAGEVIEW_MEASURE_NOINTRINSIC=0 restores the two early returns. */
-    private static final boolean MEASURE_NOINTRINSIC =
-            !"0".equals(System.getenv("MACAPK_IMAGEVIEW_MEASURE_NOINTRINSIC"));
 
-    /** Labelled bisect gate (wave 5, 2026-09-26): the adjustViewBounds branch of
-     *  onMeasure, ported line for line from AOSP android14-release
-     *  ImageView.onMeasure (:1129-1245). The legacy arm differed from AOSP in
-     *  three places, and the first is the one with a measured victim:
-     *   1. "Allow the height to outgrow its original estimate if width is
-     *      fixed" (:1217-1221). AOSP assigns the resolved value to heightSize
-     *      (and, symmetrically, widthSize at :1201-1204); ours assigned it back
-     *      to newHeight, so the comparison `newHeight <= heightSize` was made
-     *      against the INTRINSIC estimate and a width-EXACTLY view could never
-     *      grow taller than its drawable. MEASURED victim:
-     *      de.tobiasbielefeld.solitaire's game-selector tiles (TableRow cell,
-     *      width EXACTLY 553, height unbounded, a 333x353 BitmapDrawable,
-     *      padding 8): AOSP measures 553x585 and the tablet emulator draws
-     *      537-px tiles at a 586-px row pitch; ours measured 553x369, so
-     *      FIT_CENTER shrank each bitmap to 333 px inside its cell
-     *      (docs/fleet-canvas-games-solitaires-feudal_2026-09-26.md, F2).
-     *   2. The outgrow is skipped under sCompatAdjustViewBounds
-     *      (targetSdkVersion <= JELLY_BEAN_MR1, :259), which ours never read.
-     *   3. AOSP never applies the suggested minimum inside the resize path; only
-     *      the "measure in the normal way" else-branch (:1229-1241) does, and
-     *      through resolveSizeAndState, which drops it under EXACTLY. Ours
-     *      clamped to the minimum on every adjustViewBounds measure, including
-     *      the both-EXACTLY case where AOSP answers the specs verbatim.
-     *  MACAPK_IMAGEVIEW_ADJUST_AOSP=0 restores the legacy arm exactly.
-     *  Offline gate: debug/w5widgets_gate.sh (rows iv-*). */
-    private static final boolean ADJUST_AOSP =
-            !"0".equals(System.getenv("MACAPK_IMAGEVIEW_ADJUST_AOSP"));
 
     /** AOSP ImageView.sCompatAdjustViewBounds (:162), set once in initImageView
      *  (:257-259) from the app's targetSdkVersion:
@@ -1151,7 +1046,7 @@ public class ImageView extends View {
             final android.content.pm.ApplicationInfo ai = c != null ? c.getApplicationInfo() : null;
             if (ai != null) targetSdkVersion = ai.targetSdkVersion;
         } catch (Throwable ignored) { }
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdkVersion)) return;   // never latch an unresolved read
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)) return;   // never latch an unresolved read
         sCompatAdjustViewBounds =
                 targetSdkVersion <= android.os.Build.VERSION_CODES.JELLY_BEAN_MR1;
         sCompatAdjustDone = true;
@@ -1229,43 +1124,14 @@ public class ImageView extends View {
     }
 
     private void traceMeasure(String path, int wSpec, int hSpec, int iw, int ih, int mw, int mh) {
-        if (!TRACE_MEASURE) return;
-        try {
-            com.macapk.loader.NativeLog.i("ImageView",
-                "onMeasure@" + Integer.toHexString(System.identityHashCode(this))
-                + " id=0x" + Integer.toHexString(getId())
-                + " path=" + path
-                + " wSpec=" + android.view.View.MeasureSpec.toString(wSpec)
-                + " hSpec=" + android.view.View.MeasureSpec.toString(hSpec)
-                + " intrinsic=" + iw + "x" + ih
-                + " pad=" + getPaddingLeft() + "," + getPaddingTop() + "," + getPaddingRight() + "," + getPaddingBottom()
-                + " min=" + getSuggestedMinimumWidth() + "x" + getSuggestedMinimumHeight()
-                + " -> " + (mw & MEASURED_SIZE_MASK) + "x" + (mh & MEASURED_SIZE_MASK));
-        } catch (Throwable ignored) {}
+        return;
     }
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         android.graphics.drawable.Drawable d = drawable;
         int iw, ih;
-        if (!MEASURE_NOINTRINSIC) {
-            if (d == null) {
-                super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                traceMeasure("legacy-null", widthMeasureSpec, heightMeasureSpec, -1, -1,
-                        getMeasuredWidthAndState(), getMeasuredHeightAndState());
-                return;
-            }
-            iw = d.getIntrinsicWidth();
-            ih = d.getIntrinsicHeight();
-            if (iw <= 0 && ih <= 0) {
-                // No intrinsic size (ColorDrawable, badly-built Vector-
-                // Drawable, etc.) -- defer to spec-size base behavior.
-                super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-                traceMeasure("legacy-nointrinsic", widthMeasureSpec, heightMeasureSpec, iw, ih,
-                        getMeasuredWidthAndState(), getMeasuredHeightAndState());
-                return;
-            }
-        } else if (d == null) {
+        if (d == null) {
             iw = 0;                 // AOSP: "If no drawable, its intrinsic size is 0."
             ih = 0;
         } else {
@@ -1282,183 +1148,43 @@ public class ImageView extends View {
         // This is the AOSP ImageView.onMeasure adjustViewBounds path (verbatim
         // shape). F-Droid's screenshots are height=EXACTLY(row) + width=wrap +
         // adjustViewBounds, so each gets width = rowHeight * (iw/ih).
-        if (adjustViewBounds && d != null && (MEASURE_NOINTRINSIC || (iw > 0 && ih > 0))) {
-            if (ADJUST_AOSP) {
-                macapkMeasureAdjustAosp(widthMeasureSpec, heightMeasureSpec, cw, ch);
-                return;
-            }
-            // Legacy adjustViewBounds arm (MACAPK_IMAGEVIEW_ADJUST_AOSP=0), kept
-            // verbatim so the bisect gate restores the exact pre-change measure.
-            // Under NOINTRINSIC this runs with the floored cw/ch, as AOSP does.
-            iw = cw;
-            ih = ch;
-            int pl = getPaddingLeft(), pr = getPaddingRight();
-            int pt = getPaddingTop(), pb = getPaddingBottom();
-            int wm = android.view.View.MeasureSpec.getMode(widthMeasureSpec);
-            int hm = android.view.View.MeasureSpec.getMode(heightMeasureSpec);
-            boolean resizeWidth  = wm != android.view.View.MeasureSpec.EXACTLY;
-            boolean resizeHeight = hm != android.view.View.MeasureSpec.EXACTLY;
-            float desiredAspect = (float) iw / (float) ih;
-            int widthSize  = resolveAdjustedSize(iw + pl + pr, maxWidth, widthMeasureSpec);
-            int heightSize = resolveAdjustedSize(ih + pt + pb, maxHeight, heightMeasureSpec);
-            if (resizeWidth || resizeHeight) {
-                int innerW = widthSize - pl - pr;
-                int innerH = heightSize - pt - pb;
-                float actualAspect = innerH > 0 ? (float) innerW / (float) innerH : desiredAspect;
-                if (Math.abs(actualAspect - desiredAspect) > 0.0000001f) {
-                    boolean done = false;
-                    if (resizeWidth) {
-                        int newWidth = (int) (desiredAspect * (heightSize - pt - pb)) + pl + pr;
-                        if (!resizeHeight) newWidth = resolveAdjustedSize(newWidth, maxWidth, widthMeasureSpec);
-                        if (newWidth <= widthSize) { widthSize = newWidth; done = true; }
-                    }
-                    if (!done && resizeHeight) {
-                        int newHeight = (int) ((widthSize - pl - pr) / desiredAspect) + pt + pb;
-                        if (!resizeWidth) newHeight = resolveAdjustedSize(newHeight, maxHeight, heightMeasureSpec);
-                        if (newHeight <= heightSize) { heightSize = newHeight; }
-                    }
-                }
-            }
-            if (widthSize  < getSuggestedMinimumWidth())  widthSize  = getSuggestedMinimumWidth();
-            if (heightSize < getSuggestedMinimumHeight()) heightSize = getSuggestedMinimumHeight();
-            setMeasuredDimension(widthSize, heightSize);
-            traceMeasure("adjustViewBounds", widthMeasureSpec, heightMeasureSpec, iw, ih, widthSize, heightSize);
+        if (adjustViewBounds && d != null) {
+            macapkMeasureAdjustAosp(widthMeasureSpec, heightMeasureSpec, cw, ch);
             return;
         }
         int wMode = android.view.View.MeasureSpec.getMode(widthMeasureSpec);
         int wSize = android.view.View.MeasureSpec.getSize(widthMeasureSpec);
         int hMode = android.view.View.MeasureSpec.getMode(heightMeasureSpec);
         int hSize = android.view.View.MeasureSpec.getSize(heightMeasureSpec);
-        if (MEASURE_PADDING) {
-            // AOSP android14-release ImageView.onMeasure, the non-adjustViewBounds
-            // "measure in the normal way" branch:
-            //     w += pleft + pright;  h += ptop + pbottom;
-            //     w = Math.max(w, getSuggestedMinimumWidth()); (same for h)
-            //     widthSize = resolveSizeAndState(w, widthMeasureSpec, 0);
-            // with w/h = mDrawableWidth/Height, each floored to 1 when <= 0.
-            // The legacy switch below used min(intrinsic, spec) and never added
-            // padding, so a wrap_content ImageView with padding squeezed its
-            // drawable into (intrinsic - padding): org.fossify.gallery's search
-            // magnifier (48dp asset, paddingStart 32px) drew 16px wide, and
-            // de.tobiasbielefeld.solitaire's drawer-header icon (96px asset,
-            // paddingTop 32px) measured 96x96 and so drew into a 96x64 content
-            // box (64px) where the emulator's view is 128px tall.
-            // Offline gate: debug/imageview_measure_gate.sh.
-            // The v1.0.131 "EXACTLY 0 -> intrinsic" fallback is kept (it is a
-            // workaround for an unresolved itemIconSize, not AOSP behaviour),
-            // so this changes only the AT_MOST/UNSPECIFIED arms plus the
-            // TOO_SMALL state bit AOSP's resolveSizeAndState reports.
-            int dw = cw + getPaddingLeft() + getPaddingRight();
-            int dh = ch + getPaddingTop() + getPaddingBottom();
-            dw = Math.max(dw, getSuggestedMinimumWidth());
-            dh = Math.max(dh, getSuggestedMinimumHeight());
-            int mw = (wMode == android.view.View.MeasureSpec.EXACTLY && wSize == 0 && iw > 0)
-                    ? iw : resolveSizeAndState(dw, widthMeasureSpec, 0);
-            int mh = (hMode == android.view.View.MeasureSpec.EXACTLY && hSize == 0 && ih > 0)
-                    ? ih : resolveSizeAndState(dh, heightMeasureSpec, 0);
-            traceMeasure("normal", widthMeasureSpec, heightMeasureSpec, iw, ih, mw, mh);
-            setMeasuredDimension(mw, mh);
-            return;
-        }
-        // Legacy min(intrinsic, spec) arm (MACAPK_IMAGEVIEW_MEASURE_PADDING=0).
-        // Under NOINTRINSIC a size-less or null drawable reaches it too, so it
-        // must use the floored content size or AT_MOST would give min(-1, spec).
-        if (MEASURE_NOINTRINSIC) {
-            iw = cw;
-            ih = ch;
-        }
-        int outW;
-        switch (wMode) {
-            case android.view.View.MeasureSpec.EXACTLY:
-                // v1.0.131: Material's NavigationBarItemView.setIconSize
-                // sets the LP to EXACTLY(themeIconSize) where
-                // themeIconSize == ?attr/itemIconSize. Our TypedArray
-                // returns 0 for that dimension resource, so the icon
-                // LP ends up at (0, 0). Falling through to wSize=0
-                // gives a 0x0 icon -- invisible. When the spec is
-                // EXACTLY 0 AND we have a drawable with non-zero
-                // intrinsic, prefer the intrinsic size as a graceful
-                // fallback. Real Android resolves itemIconSize via the
-                // theme cascade; this branch covers our framework gap
-                // generically until full dimension-resource resolution
-                // lands.
-                outW = (wSize == 0 && iw > 0) ? iw : wSize;
-                break;
-            case android.view.View.MeasureSpec.AT_MOST: outW = Math.min(iw, wSize); break;
-            default: /* UNSPECIFIED */                   outW = iw; break;
-        }
-        int outH;
-        switch (hMode) {
-            case android.view.View.MeasureSpec.EXACTLY:
-                outH = (hSize == 0 && ih > 0) ? ih : hSize;
-                break;
-            case android.view.View.MeasureSpec.AT_MOST: outH = Math.min(ih, hSize); break;
-            default: /* UNSPECIFIED */                   outH = ih; break;
-        }
-        // 2026-08-13 (opencalculator function-row lane): minWidth/minHeight may
-        // only WIDEN the measured size under AT_MOST/UNSPECIFIED, never under
-        // EXACTLY. AOSP's real ImageView.onMeasure (aosp-mirror/platform_
-        // frameworks_base android13-release, core/java/android/widget/
-        // ImageView.java, the non-adjustViewBounds "measure in the normal way"
-        // branch) computes `w = Math.max(w, getSuggestedMinimumWidth())` and
-        // then ALWAYS passes it through `resolveSizeAndState(w, widthMeasureSpec,
-        // 0)` (View.java) -- whose `case EXACTLY: result = specSize;` arm
-        // returns the PARENT-GIVEN size verbatim, discarding `w` (and therefore
-        // minWidth) entirely. This code applied the clamp unconditionally
-        // instead, so an EXACTLY-measured ImageButton/ImageView (the weighted
-        // second pass of a `layout_width="0dp" layout_weight="1"` LinearLayout
-        // row, which gives each child an EXACT share regardless of its own
-        // minWidth -- verified by reading LinearLayout.measureHorizontal's
-        // `childWidth = share` branch) got silently WIDENED past its allotted
-        // share whenever minWidth exceeded it.
-        //
-        // MEASURED victim: opencalculator's function row (5 buttons, weights
-        // 1/1/1/1/0.6). Its `style="@style/CalculatorButton.Function"` chain
-        // (-> CalculatorButton -> Widget.Material3.Button -> ... ->
-        // Base.Widget.AppCompat.Button -> @android:style/Widget.Material.Button,
-        // minWidth=88dp/minHeight=48dp) went unresolved before v1.0.974's
-        // `?attr`/`@style/` style-ref fix (MACAPK_ATTRSTYLE); once resolved,
-        // View's 4-arg constructor's own oSA4 read (runtime/java/android/view/
-        // View.java) calls setMinimumWidth(176) [88dp @ d=2] on exponentButton
-        // (an AppCompatImageButton) at construction. TRACE_LAYOUT bounds,
-        // MACAPK_ATTRSTYLE=0 vs =1, same binary:
-        //   square  l=0   r=168            l=0   r=168            unchanged
-        //   pi      l=168 r=336            l=168 r=336            unchanged
-        //   EXPONENT l=336 r=505 w=169  -> l=336 r=512 w=176   <- CLAMPED to minW
-        //   factorial l=505 r=674 w=169 -> l=512 r=681 w=169     <- pushed +7px
-        //   chevron l=674 r=776 w=102   -> l=681 r=783 w=102     <- pushed +7px
-        // exponentButton's own weight-share width (169px) is what real Android
-        // measures (weight-based EXACTLY children ignore minWidth on a device
-        // exactly as LinearLayout.measureHorizontal does here); the +7px clamp
-        // to 176px is what pushed every later sibling right, matching the
-        // measured glyph drift (^+3.3, !+8.0, chevron+6.4 -- docs/attr-style-
-        // refs-and-edittext-underline_2026-08-13.md §4). Mode-gating this leaves
-        // AT_MOST/UNSPECIFIED callers (a bare wrap_content ImageButton with no
-        // parent weight) unchanged -- minWidth still floors those exactly as
-        // before -- and does not touch the v1.0.131 "EXACTLY 0 -> intrinsic"
-        // fallback above, which already ran first and produced the real
-        // `outW`/`outH` this only conditionally raises.
-        //
-        // NOT applied to the adjustViewBounds branch above (lines ~870-901),
-        // which carries the SAME unconditional clamp shape and the SAME AOSP
-        // mismatch (real AOSP's resizeWidth/resizeHeight path never consults
-        // getSuggestedMinimumWidth/Height at all) -- left alone because no
-        // measured victim currently exercises it and this fix is scoped to the
-        // one that does. A future pass can retire it the same way once it has
-        // its own falsifier.
-        if (wMode != android.view.View.MeasureSpec.EXACTLY && outW < getSuggestedMinimumWidth())  outW = getSuggestedMinimumWidth();
-        if (hMode != android.view.View.MeasureSpec.EXACTLY && outH < getSuggestedMinimumHeight()) outH = getSuggestedMinimumHeight();
-        if ("1".equals(ENV_MACAPK_TRACE_IMAGEVIEW_MEASURE)) {
-            try {
-                com.macapk.loader.NativeLog.i("ImageView",
-                    "onMeasure@" + Integer.toHexString(System.identityHashCode(this))
-                    + " wSpec=" + wMode + "/" + wSize
-                    + " hSpec=" + hMode + "/" + hSize
-                    + " intrinsic=" + iw + "x" + ih
-                    + " -> " + outW + "x" + outH);
-            } catch (Throwable ignored) {}
-        }
-        setMeasuredDimension(outW, outH);
+        // AOSP android14-release ImageView.onMeasure, the non-adjustViewBounds
+        // "measure in the normal way" branch:
+        //     w += pleft + pright;  h += ptop + pbottom;
+        //     w = Math.max(w, getSuggestedMinimumWidth()); (same for h)
+        //     widthSize = resolveSizeAndState(w, widthMeasureSpec, 0);
+        // with w/h = mDrawableWidth/Height, each floored to 1 when <= 0.
+        // The legacy switch below used min(intrinsic, spec) and never added
+        // padding, so a wrap_content ImageView with padding squeezed its
+        // drawable into (intrinsic - padding): org.fossify.gallery's search
+        // magnifier (48dp asset, paddingStart 32px) drew 16px wide, and
+        // de.tobiasbielefeld.solitaire's drawer-header icon (96px asset,
+        // paddingTop 32px) measured 96x96 and so drew into a 96x64 content
+        // box (64px) where the emulator's view is 128px tall.
+        // Offline gate: debug/imageview_measure_gate.sh.
+        // The v1.0.131 "EXACTLY 0 -> intrinsic" fallback is kept (it is a
+        // workaround for an unresolved itemIconSize, not AOSP behaviour),
+        // so this changes only the AT_MOST/UNSPECIFIED arms plus the
+        // TOO_SMALL state bit AOSP's resolveSizeAndState reports.
+        int dw = cw + getPaddingLeft() + getPaddingRight();
+        int dh = ch + getPaddingTop() + getPaddingBottom();
+        dw = Math.max(dw, getSuggestedMinimumWidth());
+        dh = Math.max(dh, getSuggestedMinimumHeight());
+        int mw = (wMode == android.view.View.MeasureSpec.EXACTLY && wSize == 0 && iw > 0)
+                ? iw : resolveSizeAndState(dw, widthMeasureSpec, 0);
+        int mh = (hMode == android.view.View.MeasureSpec.EXACTLY && hSize == 0 && ih > 0)
+                ? ih : resolveSizeAndState(dh, heightMeasureSpec, 0);
+        traceMeasure("normal", widthMeasureSpec, heightMeasureSpec, iw, ih, mw, mh);
+        setMeasuredDimension(mw, mh);
+        return;
     }
 
     /** AOSP ImageView.matrix-management. */
@@ -1499,11 +1225,9 @@ public class ImageView extends View {
      *  cascade with defStyleRes; this only stops discarding it. =0 restores the
      *  3-arg answer exactly (View's 3-arg constructor IS the 4-arg one with 0). */
     public ImageView(android.content.Context c, android.util.AttributeSet a, int defStyleAttr, int defStyleRes) {
-        super(c, a, defStyleAttr, MACAPK_IMAGEVIEW_DEFSTYLERES ? defStyleRes : 0);
-        macapkApplySrc(c, a, defStyleAttr, MACAPK_IMAGEVIEW_DEFSTYLERES ? defStyleRes : 0);
+        super(c, a, defStyleAttr, defStyleRes);
+        macapkApplySrc(c, a, defStyleAttr, defStyleRes);
     }
-    static final boolean MACAPK_IMAGEVIEW_DEFSTYLERES =
-        !"0".equals(System.getenv("MACAPK_IMAGEVIEW_DEFSTYLERES"));
 
     protected boolean drawChild(android.graphics.Canvas canvas, android.view.View child, long drawingTime) { return false; }
 

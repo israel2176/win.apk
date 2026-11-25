@@ -40,7 +40,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class CameraCaptureHandler {
     private static final String TAG = "Win.apk.Camera";
 
-    static final boolean ON = !"0".equals(System.getenv("MACAPK_IMAGE_CAPTURE"));
 
     /** The camera app a device lists for the capture intents (AOSP Camera2). */
     static final String CAMERA_PACKAGE = "com.android.camera2";
@@ -51,10 +50,10 @@ public final class CameraCaptureHandler {
     private static final int INLINE_MAX = 640;
 
     private static final class Pending {
-        final Activity.MacApkHostResult token;
+        final com.macapk.loader.app.HostResult token;
         final SpecialAccessHandler.Cover cover;
         final Uri output;
-        Pending(Activity.MacApkHostResult token, SpecialAccessHandler.Cover cover, Uri output) {
+        Pending(com.macapk.loader.app.HostResult token, SpecialAccessHandler.Cover cover, Uri output) {
             this.token = token; this.cover = cover; this.output = output;
         }
     }
@@ -65,7 +64,7 @@ public final class CameraCaptureHandler {
 
     /** The PURE predicate: an image-capture intent this host can serve. */
     static boolean isCaptureIntent(Intent intent) {
-        if (!ON || intent == null) return false;
+        if (intent == null) return false;
         String a = intent.getAction();
         return (MediaStore.ACTION_IMAGE_CAPTURE.equals(a) || MediaStore.ACTION_IMAGE_CAPTURE_SECURE.equals(a))
             && available();
@@ -113,7 +112,7 @@ public final class CameraCaptureHandler {
     /** Claim the caller's result synchronously, cover it as the full-screen
      *  camera activity would, and show the host's screen. */
     static boolean handle(Intent outer, Intent real, SpecialAccessHandler.Cover cover) {
-        final Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        final com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         final SpecialAccessHandler.Cover c = SpecialAccessHandler.RESULT_ORDER_AOSP ? cover : null;
         final Uri output = outputOf(real);
         final long id = sSeq.getAndIncrement();
@@ -190,7 +189,7 @@ public final class CameraCaptureHandler {
                 try (OutputStream out = new FileOutputStream(f)) { out.write(jpeg); }
                 return true;
             }
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             if (app == null) throw new IllegalStateException("no application");
             try (OutputStream out = app.getContentResolver().openOutputStream(uri, "w")) {
                 if (out == null) throw new java.io.IOException("no stream for " + uri);

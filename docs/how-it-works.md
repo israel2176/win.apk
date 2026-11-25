@@ -49,9 +49,10 @@ they are closed.
 
 - **The Java side** runs on a standard Java VM (built from Eclipse Temurin 21,
   included; the Java classes every app loads are kept ready to map, so starts
-  after the first are quicker)
-  against a re-implementation of Android's framework (the Activity, View,
-  Resources... classes), which comes from Mac.apk.
+  are quicker) against Android's framework: Android 14's own app, view,
+  resource and graphics code (the Activity, View, Resources and Canvas
+  classes, from the Android Open Source Project), with the rest re-implemented
+  for Windows, starting from Mac.apk's.
 - **The native side** (`.so` libraries in the APK) is loaded by Win.apk's own
   loader. Android libraries expect Android's C library and Linux's calling
   conventions; Win.apk provides a Windows version of that library and bridges
@@ -59,7 +60,8 @@ they are closed.
 - **Graphics** go through ANGLE, which turns the app's OpenGL ES into
   Direct3D 11, the graphics API every Windows GPU supports.
 - **Everything else** is Windows: WASAPI for sound, Media Foundation for video
-  and webcams, WebView2 (Microsoft Edge) for web pages, the Windows location
+  and webcams (with VP8, VP9, AV1 and Opus decoders built into Win.apk for
+  what Windows lacks without Microsoft's codec packs), WebView2 (Microsoft Edge) for web pages, the Windows location
   service, Windows' Bluetooth and Wi-Fi APIs, Windows notifications.
 
 ## Permissions and privacy
@@ -73,9 +75,10 @@ between apps.** Each app runs with your Windows account's rights, like any
 program you install. Install only apps you trust. See [SECURITY.md](../SECURITY.md).
 
 Win.apk has no telemetry and uploads no logs or crash reports by itself. Its
-own connections are GitHub (the daily update check, which can be turned off),
-f-droid.org (the Store) and Google (when you sign in, or an app uses Google's
-services). The apps you run talk to their own servers, as on a phone.
+own connections are GitHub (the daily update check, which can be turned off,
+and getting the Store's app) and Google (when you sign in, or an app uses
+Google's services). The Store is an app like the others: it talks to Google
+Play's catalogue and to APKPure, where its downloads come from. The apps you run talk to their own servers, as on a phone.
 
 ## Where things are kept
 

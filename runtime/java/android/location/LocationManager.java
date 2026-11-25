@@ -296,8 +296,6 @@ public class LocationManager {
     private static final float FASTEST_INTERVAL_JITTER_PERCENTAGE = .10f;
     private static final long MIN_REQUEST_DELAY_MS = 30 * 1000;
 
-    private static final boolean ENFORCE =
-            !"0".equals(System.getenv("MACAPK_LOCATION_ENFORCE"));
 
     private static final int PERMISSION_NONE = 0, PERMISSION_COARSE = 1, PERMISSION_FINE = 2;
 
@@ -378,12 +376,9 @@ public class LocationManager {
      *  caller may proceed when enforcement is switched off. */
     private static boolean enforceLocationPermission() {
         if (permissionLevel() != PERMISSION_NONE) return true;
-        if (ENFORCE) {
-            throw new SecurityException("uid " + android.os.Process.myUid() + " does not have "
-                    + android.Manifest.permission.ACCESS_COARSE_LOCATION + " or "
-                    + android.Manifest.permission.ACCESS_FINE_LOCATION + ".");
-        }
-        return false;
+        throw new SecurityException("uid " + android.os.Process.myUid() + " does not have "
+                + android.Manifest.permission.ACCESS_COARSE_LOCATION + " or "
+                + android.Manifest.permission.ACCESS_FINE_LOCATION + ".");
     }
 
     /** May a host fix reach this app at all? The master switch is on, the app

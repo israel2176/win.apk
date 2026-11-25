@@ -34,7 +34,7 @@ std::vector<UserFolder> user_folders();
 
 enum class UserFolderMode {
     kMap,    // make the junctions, moving what the volume folders hold into the user's folders
-    kKeep,   // change nothing (MACAPK_USER_FOLDERS=0): only report the junctions there are
+    kKeep,   // change nothing: only report the junctions there are
     kUnmap,  // the Settings switch is off: each of our junctions becomes an empty folder again
 };
 

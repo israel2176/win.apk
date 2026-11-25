@@ -7,29 +7,46 @@ import java.util.Properties;
 
 /**
  * The installer of record: which package committed the PackageInstaller session
- * that installed an app (AOSP InstallSource.installerPackageName). A package
- * installed any other way (dropped on Mac.apk, copied in) has none, which is what
- * a device reports for an adb install.
+ * that installed an app (AOSP InstallSource.installerPackageName), and what
+ * PackageManager reports as the installer when there is none.
  *
- * It is recorded only when an app really installs another through
+ * The record. It is written only when an app really installs another through
  * PackageInstaller (PackageInstallerBackend, success path) and forgotten when the
  * package is uninstalled. It is shared between processes through a small
  * properties file beside installed_apps.json, because the installing process
  * (Play's background process) and the process that later asks (the installed app,
- * or Play itself) are different runtimes.
+ * or Play itself) are different runtimes. Google Play calls
+ * PackageManager.setApplicationCategoryHint right after a successful install, and
+ * AOSP only allows that for the installer of record: with no record the
+ * SecurityException made Play report the install as failed (INSTALL_ERROR 6200).
  *
- * Why it exists: Google Play calls PackageManager.setApplicationCategoryHint
- * right after a successful install, and AOSP only allows that for the installer
- * of record. With no record the SecurityException made Play report the install
- * as failed (INSTALL_ERROR 6200) although the app was installed and launchable.
- * This is the real relationship, not a fabricated one: getInstallerPackageName
- * stays null for every package nobody installed through PackageInstaller.
+ * The default (Win.apk): an app the user installed with no
+ * record (from the library, an APK opened in Explorer) is reported as installed by
+ * Google Play, as `adb install -i com.android.vending` leaves it on a device. Apps
+ * such as bit and Bank Hapoalim read getInstallSourceInfo's installing/initiating
+ * package and stop at "reinstall from the store" when it names none. The
+ * launcher's Settings > Apps > "Report Google Play as the installer"
+ * (HKCU\Software\Win.apk PlayInstaller, absent = on) turns it off; the runtime
+ * passes it as WINAPK_PLAY_INSTALLER (0 = off). A real record always wins, so an
+ * app F-Droid or Aurora installed still names that store. Not defaulted: Play,
+ * Play services and the Services Framework themselves (system apps on a device,
+ * which no store installed: the registry's denied set), any package this process
+ * cannot see as installed (AOSP has no installer for it), and every app when
+ * Win.apk reports no Play Store package (MACAPK_GMS_PRESENT=0): naming an
+ * installer that getPackageInfo says is missing is the contradiction PlayServices
+ * exists to avoid.
  */
 public final class InstallerOfRecord {
     private InstallerOfRecord() {}
 
+    // Test seams (InstallerOfRecordTest): the environment, whether Win.apk reports a Play Store
+    // package, and whether the Play ledger backfill runs (it needs SQLite).
+    static java.util.function.UnaryOperator<String> env = System::getenv;
+    static java.util.function.BooleanSupplier playPresent = PlayServices::vendingPresent;
+    static boolean backfill = true;
+
     private static File file() {
-        String o = System.getenv("MACAPK_INSTALLER_RECORD_FILE");
+        String o = env.apply("MACAPK_INSTALLER_RECORD_FILE");
         if (o != null && !o.isEmpty()) return new File(o);
         // Win.apk: beside installed_apps.json in the host's data folder.
         if (HostAppSupport.windowsHost()) return HostAppSupport.file("installer-of-record.properties");
@@ -50,17 +67,32 @@ public final class InstallerOfRecord {
     /** The package that installed `pkg` through PackageInstaller, or null. */
     public static String get(String pkg) {
         if (pkg == null) return null;
-        // Win.apk, debugging only: WINAPK_TEST_INSTALLER=<package> (e.g. com.android.vending) answers that
-        // installer for every app but itself, to see how an app behaves once it believes a store installed
-        // it. Never set by the launcher or the installer; no setting shows it.
-        String test = System.getenv("WINAPK_TEST_INSTALLER");
-        if (test != null && !test.isEmpty() && !test.equals(pkg)) return test;
         String v = load().getProperty(pkg);
-        if (v == null || v.isEmpty()) v = backfillFromPlay(pkg);
+        if ((v == null || v.isEmpty()) && backfill) v = backfillFromPlay(pkg);
         return (v == null || v.isEmpty()) ? null : v;
     }
 
-    private static final String PLAY = "com.android.vending";
+    /** Settings > Apps > "Report Google Play as the installer": WINAPK_PLAY_INSTALLER, absent = on. */
+    public static boolean playDefaultOn() {
+        return !"0".equals(env.apply("WINAPK_PLAY_INSTALLER"));
+    }
+
+    /**
+     * The installer PackageManager reports for `pkg` (getInstallerPackageName and every name of
+     * getInstallSourceInfo): the record when there is one, else Google Play
+     * for an app the user installed while the setting is on, else null. `installed`: `pkg` is the
+     * running app, or one the installed-apps registry has and the caller may see.
+     */
+    public static String reported(String pkg, boolean installed) {
+        String v = get(pkg);
+        if (v != null) return v;
+        if (!installed || pkg == null || pkg.isEmpty()) return null;
+        if (MacApkPackageManager.InstalledRegistry.denied(pkg)) return null;  // Play, Play services, GSF
+        if (!playDefaultOn() || !playPresent.getAsBoolean()) return null;
+        return PLAY;
+    }
+
+    public static final String PLAY = "com.android.vending";
     private static final java.util.Set<String> backfillTried =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -79,8 +111,7 @@ public final class InstallerOfRecord {
         if (PLAY.equals(pkg) || !backfillTried.add(pkg)) return null;
         java.io.File tmp = null;
         try {
-            long installedAt = MacApkPackageManager.InstalledRegistry.enabled()
-                    ? rowInstalledAt(pkg) : 0L;
+            long installedAt = rowInstalledAt(pkg);
             if (installedAt <= 0L) return null;
             java.io.File db = playLedger();
             if (db == null) return null;
@@ -130,7 +161,7 @@ public final class InstallerOfRecord {
     /** Play's localappstate.db under the app-data root (the data dir carries
      *  Play's version, so it is found by listing). */
     private static java.io.File playLedger() {
-        String root = System.getenv("MACAPK_APPDATA_ROOT");
+        String root = env.apply("MACAPK_APPDATA_ROOT");
         java.io.File base = (root != null && !root.isEmpty()) ? new java.io.File(root)
                 : new java.io.File(System.getProperty("user.home"), "Library/Application Support/MacApk");
         java.io.File data = new java.io.File(base, PLAY + "/data/data");
@@ -165,7 +196,19 @@ public final class InstallerOfRecord {
             try (FileOutputStream out = new FileOutputStream(tmp)) {
                 p.store(out, "package=installer of record (PackageInstaller)");
             }
-            if (!tmp.renameTo(f)) tmp.delete();
+            // A replacing move, not File.renameTo: on Windows renameTo will not replace an existing
+            // file (only Win.apk's java.base overlay makes it), so on a stock JDK every write after
+            // the first was dropped -- a record could never be changed or removed -- and silently.
+            try {
+                java.nio.file.Files.move(tmp.toPath(), f.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException e) {
+                java.nio.file.Files.move(tmp.toPath(), f.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            } finally {
+                tmp.delete();  // nothing left behind when the move failed
+            }
         } catch (Throwable t) {
             NativeLog.e("InstallerOfRecord", "could not record installer of " + pkg + ": " + t);
         }

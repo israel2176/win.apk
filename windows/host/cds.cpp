@@ -107,7 +107,7 @@ std::string java_version(const fs::path& jdk) {
 struct State {
     bool shared = false;  // the framework archive is on for this start
     JavaVM* vm = nullptr;
-    fs::path dir, jsa, ok, fails;  // <dir>\framework-<key>.jsa / .ok / .fails
+    fs::path dir, jsa, ok, fails;  // <dir>\framework-<graphics>-<key>.jsa / .ok / .fails
     bool using_archive = false;    // -XX:SharedArchiveFile is this start's
     // The dump this start owes (none when it maps an archive).
     bool dump_owed = false;
@@ -155,21 +155,48 @@ void spawn_dump() {
     std::fflush(stderr);
 }
 
+// How long an app start waits for a dump another process is making (an install's,
+// cds_dump_at_install) before it goes on without the archive. The dump took ~3.5 s on a 4-core
+// runner and 15 s under Wine; a start that maps the archive is worth the wait, one that waits
+// for a dump stuck behind a busy machine is not.
+constexpr DWORD kDumpWaitMs = 30000;
+// How long the dump's JVM may run before it is taken as stuck: ~20 times the slowest seen (Wine).
+constexpr DWORD kDumpRunMs = 5 * 60 * 1000;
+
+// When another process is dumping the archive (it holds Local\WinApk-cds-dump, run_dump), waits
+// for it to finish, at most kDumpWaitMs. True when it finished in time.
+bool wait_for_running_dump() {
+    HANDLE one = OpenMutexW(SYNCHRONIZE | MUTEX_MODIFY_STATE, FALSE, L"Local\\WinApk-cds-dump");
+    if (!one) return false;  // no dump running
+    const double t0 = startup_seconds();
+    std::fprintf(stderr, "[win.apk] cds: the framework archive is being made (by an install); this start waits "
+                         "for it\n");
+    std::fflush(stderr);
+    const DWORD w = WaitForSingleObject(one, kDumpWaitMs);
+    const bool done = w == WAIT_OBJECT_0 || w == WAIT_ABANDONED;
+    if (done) ReleaseMutex(one);
+    CloseHandle(one);
+    std::fprintf(stderr, "[win.apk] cds: %s after %.1f s\n",
+                 done ? "the dump ended" : "still dumping; going on without it", startup_seconds() - t0);
+    return done;
+}
+
+// After the first frame, the dump waits 10 s: an app is busiest right after it opens (its own
+// start-up work, the first screens), and a below-normal priority dump of ~3.5 s of four cores would
+// still take memory and cache from it; an app closed sooner dumps at exit (cds_before_exit).
 DWORD WINAPI dump_later(void*) {
-    const std::wstring d = env(L"WINAPK_CDS_DUMP_DELAY_MS");
-    Sleep(d.empty() ? 10000 : static_cast<DWORD>(std::wcstoul(d.c_str(), nullptr, 10)));
+    Sleep(10000);
     spawn_dump();
     return 0;
 }
 
-// Removes the files of other keys: an archive another Win.apk or JRE made.
-// One still mapped by a running app cannot go yet; a later dump retries.
-void drop_stale(const fs::path& dir, const std::wstring& key) {
+// Removes the files of this graphics' other keys: an archive another Win.apk or JRE made
+// (cds::stale_archive_file; the other graphics' archive stays). One still mapped by a running
+// app cannot go yet; a later dump retries.
+void drop_stale(const fs::path& dir, const std::wstring& stem) {
     std::error_code ec;
-    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
-        const std::wstring n = it->path().filename().wstring();
-        if (n.rfind(L"framework-", 0) == 0 && n.find(key) == std::wstring::npos) remove_file(it->path());
-    }
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        if (cds::stale_archive_file(it->path().filename().wstring(), stem)) remove_file(it->path());
 }
 
 // The dump itself: merges the class lists, runs `java -Xshare:dump` and puts
@@ -180,8 +207,7 @@ int run_dump(const std::vector<std::wstring>& a) {
     if (a.size() < 5 || a[4] != L"--") return 2;
     const fs::path jsa = a[0], java = a[1], shipped = a[2], recorded = a[3];
     const fs::path dir = jsa.parent_path();
-    std::wstring key = jsa.stem().wstring();  // framework-<key>
-    key = key.substr(key.find(L'-') + 1);
+    const std::wstring stem = jsa.stem().wstring();  // framework-<graphics>-<key>
     HANDLE one = CreateMutexW(nullptr, FALSE, L"Local\\WinApk-cds-dump");
     if (one) {
         const DWORD w = WaitForSingleObject(one, 0);
@@ -218,11 +244,22 @@ int run_dump(const std::vector<std::wstring>& a) {
     PROCESS_INFORMATION pi{};
     const ULONGLONG t0 = GetTickCount64();
     DWORD rc = 1;
+    const char* why = nullptr;  // what went wrong outside the JVM, for dump.log
+    char why_buf[96];
     if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, INFINITE);
+        // Bounded: a JVM stuck in its dump would hold Local\WinApk-cds-dump for good, and every later
+        // start would wait kDumpWaitMs for it and never get an archive.
+        if (WaitForSingleObject(pi.hProcess, kDumpRunMs) == WAIT_TIMEOUT) {
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
+            why = "the dump did not end in time and was stopped";
+        }
         GetExitCodeProcess(pi.hProcess, &rc);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
+    } else {
+        std::snprintf(why_buf, sizeof why_buf, "java could not be started (error %lu)", GetLastError());
+        why = why_buf;
     }
     const bool ok = rc == 0 && fs::exists(part, ec) && MoveFileExW(part.c_str(), jsa.c_str(), MOVEFILE_REPLACE_EXISTING);
     remove_file(list);
@@ -230,16 +267,17 @@ int run_dump(const std::vector<std::wstring>& a) {
     // The recorded list was this key's; the dump has it now.
     if (!recorded.empty() && recorded.parent_path() == dir) remove_file(recorded);
     if (ok) {
-        drop_stale(dir, key);
+        drop_stale(dir, stem);
     } else {
         write_text(fails, std::to_string(read_count(fails) + 1));
     }
     if (out != INVALID_HANDLE_VALUE) {
-        char line[200];
+        char line[320];
         DWORD n = 0;
-        const int len = std::snprintf(line, sizeof line, "\n[win.apk] cds dump: %zu classes listed, exit %lu, %s in %.1f s\n",
-                                      classes, rc, ok ? "archive in place" : "no archive",
-                                      (GetTickCount64() - t0) / 1000.0);
+        const int len = std::snprintf(line, sizeof line,
+                                      "\n[win.apk] cds dump: %zu classes listed, exit %lu, %s in %.1f s%s%s\n", classes,
+                                      rc, ok ? "archive in place" : "no archive", (GetTickCount64() - t0) / 1000.0,
+                                      why ? "; " : "", why ? why : "");
         WriteFile(out, line, static_cast<DWORD>(len), &n, nullptr);
         CloseHandle(out);
     }
@@ -266,11 +304,6 @@ double startup_seconds() {
 
 void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::path& lib, const fs::path& data,
                const std::wstring& app) {
-    const std::wstring mode = env(L"WINAPK_CDS");
-    if (mode == L"0" || mode == L"off") {
-        std::fprintf(stderr, "[win.apk] cds: off (WINAPK_CDS=0)\n");
-        return;
-    }
     // The JRE's own archive: only when no module is patched.
     const auto baked = cds::read_baked(jdk / "lib" / "winapk-baked-patches");
     if (baked.empty()) {
@@ -302,19 +335,16 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         fs::create_directories(rd, ec);
         record_to = fs::path(rd) / (app + L".classlist");
     }
-    if (mode == L"base") {
-        std::fprintf(stderr, "[win.apk] cds: the Java runtime's archive only (WINAPK_CDS=base; checked in %.0f ms)\n",
-                     digest_ms);
-        if (!record_to.empty()) opts->push_back("-XX:DumpLoadedClassList=" + utf8(record_to.wstring()));
-        return;
-    }
 
     // The framework archive's key.
-    std::wstring shipped_w;
-    fs::path shipped = env_set(L"WINAPK_CDS_CLASSLIST", &shipped_w) ? fs::path(shipped_w)
-                                                                     : lib / "winapk-framework.classlist";
+    fs::path shipped = lib / "winapk-framework.classlist";
     if (!shipped.empty() && !fs::exists(shipped, ec)) shipped.clear();
-    std::vector<std::string> parts = {"winapk-cds-1", java_version(jdk), cds::stamp(jdk / "lib" / "modules"),
+    // The framework is in the key and in the file's name: AOSP's graphics alone, or with AOSP's
+    // resources or views (their jars first on the class path, which the key has too), each keep
+    // an archive of their own.
+    const std::string graphics = cds::graphics_of(*opts);
+    std::vector<std::string> parts = {"winapk-cds-1", "graphics=" + graphics, java_version(jdk),
+                                      cds::stamp(jdk / "lib" / "modules"),
                                       cds::stamp(jdk / "bin" / "server" / "classes.jsa"),
                                       utf8(shipped.wstring()), shipped.empty() ? "" : cds::stamp(shipped)};
     std::string cp;
@@ -337,7 +367,7 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         }
     }
     const std::string key = cds::key_of(parts);
-    const std::wstring stem = L"framework-" + wide(key);
+    const std::wstring stem = L"framework-" + wide(graphics) + L"-" + wide(key);
     g.jsa = g.dir / (stem + L".jsa");
     g.ok = g.dir / (stem + L".ok");
     g.fails = g.dir / (stem + L".fails");
@@ -345,18 +375,22 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
     g.java_exe = jdk / "bin" / "java.exe";
     g.shipped = shipped;
     // The dump runs with this start's options, except: the class path is the
-    // framework's, and the collector is G1, the only one HotSpot 21 archives
+    // framework's, the collector is G1, the only one HotSpot 21 archives
     // heap objects with (interned strings, class mirrors); a Serial start
-    // loads them all the same.
+    // loads them all the same; and the heap is small: the dump allocates
+    // little beyond the classes' mirrors and strings (~20 MB), and the app's
+    // -Xms128m -Xmx1g made it a 200+ MB process (cds::dump_heap_options).
     g.dump_opts.clear();
     g.dump_opts.push_back("-cp");
     g.dump_opts.push_back(cp);
     for (const std::string& o : *opts) {
         if (cds::per_launch(o) || starts(o, "-Djava.class.path=")) continue;
         if (starts(o, "-XX:+Use") && o.size() > 10 && o.compare(o.size() - 2, 2, "GC") == 0) continue;
+        if (starts(o, "-Xms") || starts(o, "-Xmx")) continue;
         g.dump_opts.push_back(o);
     }
     g.dump_opts.push_back("-XX:+UseG1GC");
+    for (const char* o : cds::kDumpHeapOptions) g.dump_opts.push_back(o);
 
     if (read_count(g.fails) >= 2) {
         std::fprintf(stderr, "[win.apk] cds: the framework archive failed twice for this Win.apk and Java runtime; "
@@ -365,12 +399,15 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         g.shared = false;
         return;
     }
+    // An app's start while an install makes the archive: it is moments away, and mapping it beats
+    // both a start without it and a second dump of its own after the first frame.
+    if (!app.empty() && !fs::exists(g.jsa, ec)) wait_for_running_dump();
     if (fs::exists(g.jsa, ec)) {
         opts->push_back("-XX:SharedArchiveFile=" + utf8(g.jsa.wstring()));
         // Its first use checks the whole file (a CRC): a damaged file is refused
         // instead of crashed on. Once it has mapped, .ok spares the rest, until
-        // a crash (on_crash). WINAPK_CDS_VERIFY=1 checks it at every start.
-        const bool verify = !fs::exists(g.ok, ec) || env(L"WINAPK_CDS_VERIFY") == L"1";
+        // a crash (on_crash).
+        const bool verify = !fs::exists(g.ok, ec);
         wcsncpy(g_ok_path, g.ok.c_str(), MAX_PATH * 4 - 1);
         set_crash_hook(on_crash);
         if (verify) opts->push_back("-XX:+VerifySharedSpaces");
@@ -384,9 +421,10 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
                          : g.dir / (stem + L"." + std::to_wstring(GetCurrentProcessId()) + L".classlist");
         opts->push_back("-XX:DumpLoadedClassList=" + utf8(g.recorded.wstring()));
         g.dump_owed = true;
-        std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk and Java runtime yet; this start "
-                             "records the classes it loads, and the archive is made in the background after its "
-                             "first frame (patches checked in %.0f ms)\n", digest_ms);
+        std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk, Java runtime and graphics (%s) "
+                             "yet; this start records the classes it loads, and the archive is made in the "
+                             "background after its first frame (patches checked in %.0f ms)\n",
+                     graphics.c_str(), digest_ms);
         return;
     }
     if (!record_to.empty()) opts->push_back("-XX:DumpLoadedClassList=" + utf8(record_to.wstring()));
@@ -460,6 +498,16 @@ int cds_prepare() {
     std::fprintf(stderr, "[win.apk] cds: %s %s (%s)\n", utf8(g.jsa.wstring()).c_str(),
                  rc == 0 ? "made" : "NOT made", utf8((g.dir / L"dump.log").wstring()).c_str());
     return rc;
+}
+
+void cds_dump_at_install() {
+    std::error_code ec;
+    if (!g.shared || fs::exists(g.jsa, ec) || read_count(g.fails) >= 2) return;
+    std::fprintf(stderr, "[win.apk] cds: no framework archive for this Win.apk yet: made from the shipped class "
+                         "list beside this install, so that the app's first start maps it\n");
+    g.recorded.clear();  // nothing recorded: the shipped list alone
+    g.dump_owed = true;
+    spawn_dump();
 }
 
 int cds_dump_main(int argc, wchar_t** argv) {

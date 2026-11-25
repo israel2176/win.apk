@@ -8,8 +8,10 @@
 // device cannot be opened, which AudioRecord reports as an init failure.
 //
 // A capture thread converts the device's frames to the app's rate and channel
-// count (linear resampling) into a buffer the reads drain.
+// count (linear resampling) into a buffer the reads drain. OpenSL ES's
+// recorders (native_opensles.cpp) use the same capture, through audio_capture.h.
 
+#include "audio_capture.h"
 #include "host_natives.h"
 
 #include <algorithm>
@@ -17,6 +19,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -29,11 +32,10 @@
 #include <audioclient.h>
 #include <mmdeviceapi.h>
 
-namespace winapk::host {
+namespace winapk::audio {
 
 namespace {
 
-constexpr jint kPermGranted = 1, kPermDenied = 2;
 const GUID kSubtypeFloat = {0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 
 template <typename T>
@@ -45,6 +47,8 @@ struct Com {
     T** operator&() { return &p; }
     T* operator->() { return p; }
 };
+
+}  // namespace
 
 bool microphone_allowed() {
     wchar_t value[32] = {};
@@ -122,11 +126,22 @@ private:
         Com<IAudioCaptureClient> capture;
         WAVEFORMATEX* fmt = nullptr;
         HANDLE ready = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        bool ok = SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator))) &&
-                  SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device)) &&
-                  SUCCEEDED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                             reinterpret_cast<void**>(&client))) &&
-                  SUCCEEDED(client->GetMixFormat(&fmt));
+        // Which step failed, and how: the app only sees an AudioRecord that did not initialize, as on a
+        // device whose microphone cannot be opened, so the log is where the cause is told.
+        const char* failed_at = "";
+        HRESULT hr = S_OK;
+        auto check = [&](const char* what, HRESULT r) {
+            failed_at = what;
+            hr = r;
+            return SUCCEEDED(r);
+        };
+        bool ok = check("MMDeviceEnumerator", CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                                               IID_PPV_ARGS(&enumerator))) &&
+                  check("the default microphone", enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device)) &&
+                  check("IAudioClient (microphone access in Windows' privacy settings?)",
+                        device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                         reinterpret_cast<void**>(&client))) &&
+                  check("GetMixFormat", client->GetMixFormat(&fmt));
         bool is_float = false;
         int dev_channels = 0, dev_rate = 0, bits = 0;
         if (ok) {
@@ -136,11 +151,21 @@ private:
             dev_channels = fmt->nChannels;
             dev_rate = static_cast<int>(fmt->nSamplesPerSec);
             bits = fmt->wBitsPerSample;
-            ok = (is_float ? bits == 32 : bits == 16) &&
-                 SUCCEEDED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 400000, 0,
-                                              fmt, nullptr)) &&
-                 SUCCEEDED(client->SetEventHandle(ready)) && SUCCEEDED(client->GetService(IID_PPV_ARGS(&capture))) &&
-                 SUCCEEDED(client->Start());
+            ok = check("the device's format (16-bit or float only)", (is_float ? bits == 32 : bits == 16)
+                                                                             ? S_OK
+                                                                             : E_NOTIMPL) &&
+                 check("Initialize", client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                                        400000, 0, fmt, nullptr)) &&
+                 check("SetEventHandle", client->SetEventHandle(ready)) &&
+                 check("GetService", client->GetService(IID_PPV_ARGS(&capture))) && check("Start", client->Start());
+        }
+        if (!ok) {
+            std::fprintf(stderr, "[win.apk] microphone: cannot open: %s failed (0x%08lx)", failed_at,
+                         static_cast<unsigned long>(hr));
+            if (dev_rate) std::fprintf(stderr, "; the device mixes %d Hz, %d channels, %d bits%s", dev_rate,
+                                       dev_channels, bits, is_float ? " float" : "");
+            std::fprintf(stderr, "\n");
+            std::fflush(stderr);
         }
         if (fmt) CoTaskMemFree(fmt);
         signal(ok);
@@ -220,6 +245,66 @@ private:
     std::mutex data_lock_;
     std::condition_variable data_cv_;
     std::deque<float> buf_;
+};
+
+bool record_audio_permitted() {
+    using GetVms = jint(JNICALL*)(JavaVM**, jsize, jsize*);
+    HMODULE jvm = GetModuleHandleW(L"jvm.dll");
+    auto get_vms = jvm ? reinterpret_cast<GetVms>(GetProcAddress(jvm, "JNI_GetCreatedJavaVMs")) : nullptr;
+    JavaVM* vm = nullptr;
+    jsize count = 0;
+    if (!get_vms || get_vms(&vm, 1, &count) != JNI_OK || count < 1 || !vm) return true;
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("winapk-audio-permission"), nullptr};
+        if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) return true;
+    }
+    bool held = true;
+    jclass store = env->FindClass("com/macapk/loader/SpecialAccessStore");
+    jmethodID holds =
+        store ? env->GetStaticMethodID(store, "holds", "(Ljava/lang/String;)Ljava/lang/Boolean;") : nullptr;
+    jstring perm = holds ? env->NewStringUTF("android.permission.RECORD_AUDIO") : nullptr;
+    jobject answer = perm ? env->CallStaticObjectMethod(store, holds, perm) : nullptr;
+    if (answer && !env->ExceptionCheck()) {
+        jclass boolean = env->FindClass("java/lang/Boolean");
+        jmethodID value = boolean ? env->GetMethodID(boolean, "booleanValue", "()Z") : nullptr;
+        if (value) held = env->CallBooleanMethod(answer, value) != JNI_FALSE;
+        if (boolean) env->DeleteLocalRef(boolean);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (answer) env->DeleteLocalRef(answer);
+    if (perm) env->DeleteLocalRef(perm);
+    if (store) env->DeleteLocalRef(store);
+    return held;
+}
+
+std::shared_ptr<Capture> capture_create(int rate, int channels, int buffer_frames) {
+    if (rate <= 0 || channels <= 0) return nullptr;
+    return std::make_shared<Capture>(rate, channels, buffer_frames);
+}
+bool capture_start(Capture* c) { return c->start(); }
+void capture_stop(Capture* c) { c->stop(); }
+size_t capture_read(Capture* c, float* out, size_t n, bool blocking) { return c->read(out, n, blocking); }
+
+}  // namespace winapk::audio
+
+namespace winapk::host {
+
+namespace {
+
+using audio::Capture;
+using audio::microphone_allowed;
+
+constexpr jint kPermGranted = 1, kPermDenied = 2;
+
+template <typename T>
+struct Com {
+    T* p = nullptr;
+    ~Com() {
+        if (p) p->Release();
+    }
+    T** operator&() { return &p; }
+    T* operator->() { return p; }
 };
 
 std::mutex g_lock;

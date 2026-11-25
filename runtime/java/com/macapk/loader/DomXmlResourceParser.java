@@ -66,6 +66,22 @@ public final class DomXmlResourceParser
     private String inputEncoding;
 
     public DomXmlResourceParser() {}
+
+    /** The attributes of the element the parser is on, kept there: a parser of its own that holds
+     *  only that start tag and is never advanced. A TypedArray obtained from a pull parser reads its
+     *  values when obtained on Android (AssetManager copies them out), and AOSP's drawables read
+     *  their TypedArray after their inflate() has moved the parser on to their children; this one
+     *  reads its AttributeSet when asked, so Resources binds it to this copy (WINAPK_AOSP_GFX=1).
+     *  Null when the parser is not on a start tag. */
+    public DomXmlResourceParser macapkAtCurrentElement() {
+        if (cursor < 0 || cursor >= events.size() || events.get(cursor).type != START_TAG) return null;
+        DomXmlResourceParser c = new DomXmlResourceParser();
+        c.events.add(events.get(cursor));
+        c.cursor = 0;
+        c.pullSemantics = pullSemantics;
+        c.inputEncoding = inputEncoding;
+        return c;
+    }
     public DomXmlResourceParser(InputStream in) throws XmlPullParserException {
         setInput(in, null);
     }
@@ -83,8 +99,6 @@ public final class DomXmlResourceParser
         }
     }
 
-    static final boolean MACAPK_DOM_BUILDER_REUSE =
-        !"0".equals(System.getenv("MACAPK_DOM_BUILDER_REUSE"));
 
     private static DocumentBuilder newBuilder() throws javax.xml.parsers.ParserConfigurationException {
         DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
@@ -133,8 +147,8 @@ public final class DomXmlResourceParser
             // TextCtorCheck cost, 2026-09-26. DocumentBuilder is not
             // thread-safe, hence ThreadLocal; reset() returns it to the
             // factory configuration.
-            DocumentBuilder db = MACAPK_DOM_BUILDER_REUSE ? REUSED.get() : newBuilder();
-            if (MACAPK_DOM_BUILDER_REUSE) db.reset();
+            DocumentBuilder db = REUSED.get();
+            db.reset();
             Document doc = db.parse(in);
             buildEvents(doc);
         } catch (Throwable t) {
@@ -464,7 +478,8 @@ public final class DomXmlResourceParser
     private static boolean macapkInternalAttr(Node n) {
         String uri = n.getNamespaceURI();
         return BinaryXmlParser.MACAPK_ALIAS_NS.equals(uri) || BinaryXmlParser.MACAPK_ATTRID_NS.equals(uri)
-            || BinaryXmlParser.MACAPK_DOCNAME_NS.equals(uri) || BinaryXmlParser.MACAPK_VALUE_NS.equals(uri);
+            || BinaryXmlParser.MACAPK_DOCNAME_NS.equals(uri) || BinaryXmlParser.MACAPK_VALUE_NS.equals(uri)
+            || BinaryXmlParser.MACAPK_REF_NS.equals(uri);
     }
     @Override public int getAttributeCount() {
         NamedNodeMap a = currentAttrs();
@@ -507,9 +522,35 @@ public final class DomXmlResourceParser
     @Override public boolean isAttributeDefault(int index) { return false; }
     @Override public String getAttributeValue(int index) {
         Node a = nthAttr(index);
-        return a == null ? null : a.getNodeValue();
+        if (a == null) return null;
+        if (AppCaller.isApp(0)) {
+            String r = aospRef(a);
+            if (r != null) return r;
+        }
+        return a.getNodeValue();
     }
     @Override public String getAttributeValue(String namespace, String name) {
+        Node n = attrNode(namespace, name);
+        if (n == null) return null;
+        if (AppCaller.isApp(0)) {
+            String r = aospRef(n);
+            if (r != null) return r;
+        }
+        return n.getNodeValue();
+    }
+    /** What XmlBlock.Parser answers the app for a compiled reference or theme
+     *  attribute, "@<id>" / "?<id>" (BinaryXmlParser.MACAPK_REF_NS), or null when
+     *  the attribute is not one. The framework's own callers keep the
+     *  "@type/name" spelling it resolves by (AppCaller decides who asked). */
+    private static String aospRef(Node a) {
+        if (!(a instanceof org.w3c.dom.Attr)) return null;
+        org.w3c.dom.Element el = ((org.w3c.dom.Attr) a).getOwnerElement();
+        if (el == null) return null;
+        String key = BinaryXmlParser.valueKey(a.getNodeName());
+        if (!el.hasAttributeNS(BinaryXmlParser.MACAPK_REF_NS, key)) return null;
+        return el.getAttributeNS(BinaryXmlParser.MACAPK_REF_NS, key);
+    }
+    private Node attrNode(String namespace, String name) {
         NamedNodeMap a = currentAttrs();
         if (a == null || name == null) return null;
         // Pass 1: namespace-qualified lookup (the "android" URI is
@@ -528,7 +569,7 @@ public final class DomXmlResourceParser
             } else {
                 nsOk = namespace.equals(uri);
             }
-            if (nameOk && nsOk) return n.getNodeValue();
+            if (nameOk && nsOk) return n;
         }
         // Pass 2 (null/empty namespace only): any-namespace local-name
         // match. Our TypedArray emulates styleable lookups BY NAME and
@@ -548,7 +589,7 @@ public final class DomXmlResourceParser
                 if (nm.startsWith("xmlns")) continue;
                 String ln = n.getLocalName();
                 if (name.equals(ln) || name.equals(nm)) {
-                    return n.getNodeValue();
+                    return n;
                 }
             }
         }
@@ -557,7 +598,7 @@ public final class DomXmlResourceParser
         for (int i = 0; i < a.getLength(); ++i) {
             Node n = a.item(i);
             if (BinaryXmlParser.MACAPK_ALIAS_NS.equals(n.getNamespaceURI()) && name.equals(n.getLocalName())) {
-                return n.getNodeValue();
+                return n;
             }
         }
         return null;
@@ -655,8 +696,6 @@ public final class DomXmlResourceParser
         // machine was a stub, so MaterialShapeDrawable resolved the FAB's tint
         // against an empty state (see Drawable.setState). These are ONE change --
         // the state fix is a near-no-op alone, because with all-zero specs every
-        // row matches anyway, and real ids alone are the regression.
-        if ("0".equals(System.getenv("MACAPK_ATTR_NAME_RESOURCE"))) return 0;
         Node n = nthAttr(index);
         if (n == null) return 0;
         String local = n.getLocalName();
@@ -674,7 +713,7 @@ public final class DomXmlResourceParser
         final boolean isAndroidNs = uri != null
             && uri.startsWith("http://schemas.android.com/apk/res/android");
         if (isAndroidNs) {
-            int id = android.content.res.ColorStateList.macapkFrameworkAttrId(local);
+            int id = com.macapk.loader.res.ResBackend.get().frameworkAttrId(local);
             if (id == 0) warnUnresolvedAttr("android", local);
             return id;
         }
@@ -687,7 +726,7 @@ public final class DomXmlResourceParser
         // No namespace declared: the app's own table first, framework second.
         int id = lookupResource("attr", local);
         if (id != 0) return id;
-        return android.content.res.ColorStateList.macapkFrameworkAttrId(local);
+        return com.macapk.loader.res.ResBackend.get().frameworkAttrId(local);
     }
     private static void warnUnresolvedAttr(String ns, String local) {
         if (!sUnresolvedAttrWarned.add(ns + ":" + local)) return;
@@ -790,7 +829,7 @@ public final class DomXmlResourceParser
      *  initialized yet. */
     private static int lookupResource(String type, String name) {
         try {
-            Object idx = android.content.res.Resources.macapkGetResourceIndex();
+            Object idx = com.macapk.loader.res.ResBackend.get().resourceIndex();
             if (idx == null) return 0;
             java.lang.reflect.Method m = idx.getClass()
                 .getMethod("idOfName", String.class, String.class, String.class);

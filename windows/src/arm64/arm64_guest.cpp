@@ -159,7 +159,10 @@ namespace winapk::arm64 {
 
 namespace {
 
+// A guest stack's size, unless the thread asked for more (set_stack_request:
+// pthread_create's stack size), up to kMaxGuestStack.
 constexpr size_t kGuestStack = 4 * 1024 * 1024;
+constexpr size_t kMaxGuestStack = 64 * 1024 * 1024;
 // Reserved but never committed below each guest stack, so an overflow faults
 // at once instead of writing into whatever is mapped next to it.
 constexpr size_t kStackGuard = 64 * 1024;
@@ -246,9 +249,14 @@ void add(Stats& to, const Stats& s) {
 
 // ---- per-thread guest state -----------------------------------------------------
 
+// The stack size the thread's creator asked for (set_stack_request), read
+// when the thread first enters guest code.
+thread_local size_t t_stack_request = 0;
+
 struct ThreadState {
     Cpu cpu;
-    uint8_t* stack = nullptr;
+    uint8_t* stack = nullptr;  // the guard, then stack_size bytes of stack
+    size_t stack_size = 0;
     uint64_t stack_top = 0;
     int depth = 0;  // nested runs on this thread
     // JIT engines, created on first use; they read cpu.tpidr in place. The
@@ -277,12 +285,13 @@ struct ThreadState {
     }
 
     ThreadState() {
-        stack = static_cast<uint8_t*>(VirtualAlloc(nullptr, kStackGuard + kGuestStack, MEM_RESERVE, PAGE_NOACCESS));
-        if (!stack || !VirtualAlloc(stack + kStackGuard, kGuestStack, MEM_COMMIT, PAGE_READWRITE)) {
+        stack_size = std::max(kGuestStack, std::min(kMaxGuestStack, (t_stack_request + 0xffff) & ~size_t{0xffff}));
+        stack = static_cast<uint8_t*>(VirtualAlloc(nullptr, kStackGuard + stack_size, MEM_RESERVE, PAGE_NOACCESS));
+        if (!stack || !VirtualAlloc(stack + kStackGuard, stack_size, MEM_COMMIT, PAGE_READWRITE)) {
             std::fprintf(stderr, "[win.apk] arm64: cannot allocate a guest stack\n");
             std::abort();
         }
-        stack_top = (reinterpret_cast<uint64_t>(stack) + kStackGuard + kGuestStack - kStackSlack) & ~uint64_t{15};
+        stack_top = (reinterpret_cast<uint64_t>(stack) + kStackGuard + stack_size - kStackSlack) & ~uint64_t{15};
         cpu.tpidr = reinterpret_cast<uint64_t>(&tls[1]);
         // Translated code stops taking host stack this far above its end
         // (Cpu::stack_floor), and leaves the rest to the host functions it
@@ -310,16 +319,7 @@ struct ThreadState {
     }
 };
 
-// WINAPK_ARM64_ENGINE=interp, =jit or =aot, for comparing the engines on an app.
-Engine initial_engine() {
-    char buf[16];
-    const DWORD n = GetEnvironmentVariableA("WINAPK_ARM64_ENGINE", buf, sizeof buf);
-    if (n > 0 && n < sizeof buf && std::strcmp(buf, "interp") == 0) return Engine::kInterpreter;
-    if (n > 0 && n < sizeof buf && std::strcmp(buf, "jit") == 0 && jit_built()) return Engine::kJit;
-    return Engine::kAot;
-}
-
-std::atomic<Engine> g_engine{initial_engine()};
+std::atomic<Engine> g_engine{Engine::kAot};
 
 // Runs ts.cpu from its pc until it returns to its stop_pc.
 void execute(ThreadState& ts) {
@@ -746,8 +746,30 @@ void register_shim_functions() {
         {"vdprintf", 2}, {"__vsprintf_chk", 4}, {"__vsnprintf_chk", 5}, {"__android_log_vprint", 3},
         {"vsscanf", 2}, {"vfscanf", 2}, {"vscanf", 1}, {"vsyslog", 2},
     };
+    // The rewrite goes by address, so a shim function that also stands for
+    // a name outside the list (a shared no-op) would have every call under
+    // that name rewritten too: say so and leave it alone. vsyslog on the
+    // shared no-op turned openlog(ident, 0, 0) into a read of 0x18.
+    auto shared = [](const char* name, void* p, auto&& listed) {
+        for (const std::string& other : mini_bionic_names_of(p)) {
+            if (!listed(other.c_str())) {
+                std::fprintf(stderr, "[win.apk] arm64: the shim function for %s also serves %s; its arguments are "
+                             "not rewritten\n", name, other.c_str());
+                return true;
+            }
+        }
+        return false;
+    };
     for (const auto& f : kVaList) {
-        if (void* p = mini_bionic_resolve(f.name)) register_va_list_function(p, f.index);
+        void* p = mini_bionic_resolve(f.name);
+        if (!p) continue;
+        const bool alone = !shared(f.name, p, [&](const char* other) {
+            for (const auto& g : kVaList) {
+                if (g.index == f.index && std::strcmp(g.name, other) == 0) return true;
+            }
+            return false;
+        });
+        if (alone) register_va_list_function(p, f.index);
     }
     // And those that take a guest callback, with its argument index.
     static const struct {
@@ -762,6 +784,13 @@ void register_shim_functions() {
     for (const auto& f : kCallbacks) {
         void* p = mini_bionic_resolve(f.name);
         if (!p) continue;
+        const bool is_shared = shared(f.name, p, [&](const char* other) {
+            for (const auto& g : kCallbacks) {
+                if (g.index == f.index && std::strcmp(g.name, other) == 0) return true;
+            }
+            return false;
+        });
+        if (is_shared) continue;
         AcquireSRWLockExclusive(&g_host_functions_lock);
         g_host_functions[reinterpret_cast<uint64_t>(p)].guest_fn_args |= static_cast<uint8_t>(1u << f.index);
         ReleaseSRWLockExclusive(&g_host_functions_lock);
@@ -943,6 +972,17 @@ uint64_t call(const void* fn, const uint64_t* args, size_t nargs) {
     uint64_t x0 = 0;
     run_guest(thread_state(), reinterpret_cast<uint64_t>(fn), gpr, nullptr, nullptr, 0, &x0, nullptr, nullptr);
     return x0;
+}
+
+void set_stack_request(size_t bytes) { t_stack_request = bytes; }
+
+bool current_guest_stack(uint64_t* lo, uint64_t* hi) {
+    // depth > 0: a guest run is under way on this thread, so the caller is
+    // guest code (or a host function it called), whose sp is on this stack.
+    if (!t_state || t_state->depth == 0) return false;
+    *lo = reinterpret_cast<uint64_t>(t_state->stack) + kStackGuard;
+    *hi = *lo + t_state->stack_size;
+    return true;
 }
 
 void* host_callable(void* fn) {

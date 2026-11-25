@@ -7,7 +7,8 @@ private reporting: the repository's **Security** tab, then **Report a
 vulnerability**. Say what you found, how to reproduce it, and which Win.apk
 version and Windows version you used.
 
-Only the newest pre-release is supported; a fix ships in the next one.
+Only the newest release is supported; a fix ships in the next one, which
+Win.apk offers through its update check.
 
 ## What Win.apk is, security-wise
 
@@ -21,9 +22,10 @@ around it. Consequences:
 - Android's permission dialogs (location, camera, contacts and so on) decide
   what the Android framework tells the app, not what the process can reach.
 - All apps share one Android file system under `%LOCALAPPDATA%\Win.apk\android`.
-- Preview builds are not code-signed. Windows SmartScreen warns on install,
+- Releases are not code-signed yet. Windows SmartScreen may warn on install,
   and some scanners flag the runtime because it writes and then runs
-  translated code.
+  translated code. The update check runs a downloaded installer only when its
+  size and SHA-256 match the release's.
 
 ## What counts as a vulnerability
 
@@ -32,11 +34,14 @@ Reports in these areas are welcome:
 - The permission store: a way for an app to grant itself a permission, or to
   forge or alter `appops\app-ops.json`, which the launcher signs and the
   runtime verifies.
-- The Store: a way to install an APK that does not match the SHA-256 in
-  F-Droid's index, or to make Win.apk fetch from somewhere other than
-  f-droid.org.
-- The Google sign-in window: anything that would expose the Google session or
-  the stored tokens (`gms\gms_state.properties`) to an app or another user.
+- The Store: a way to make Win.apk install, as its Store app, an
+  `apk-store.apk` that is not the one GitHub's release lists (by size and
+  SHA-256), or to fetch it from anywhere but that release; or a way for
+  another app to get the Store's permission to install apps.
+- The Google sign-in window and the token service: anything that would expose
+  the Google session or the stored tokens (`gms\tokens.dat`, sealed with
+  DPAPI and opened only by the account's owner side) to an app's Java code,
+  or let an app get a token minted for another app.
 - The install helper (`Win.apk.exe install` and the permission verbs): a way
   for an app to drive it without the user's answer.
 - Memory-safety bugs in the loader, the linker or the Bionic shim that a

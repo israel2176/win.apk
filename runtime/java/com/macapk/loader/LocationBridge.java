@@ -26,7 +26,6 @@ public final class LocationBridge {
 
     private static final String TAG = "Mac.apk.Location";
 
-    public static final boolean ON = !"0".equals(System.getenv("MACAPK_LOCATION_HOST"));
 
     // CLAuthorizationStatus, values verbatim from CLLocationManager.h. macOS has
     // no WhenInUse state (the header marks it API_UNAVAILABLE(macos)); a granted
@@ -73,27 +72,23 @@ public final class LocationBridge {
     public static boolean available() {
         int b = sBound;
         if (b < 0) {
-            if (!ON) {
-                b = 0;
-            } else {
-                try {
-                    b = nativeBound() ? 1 : 0;
-                    if (b == 1) {
-                        java.io.File h = locateHelper();
-                        nativeSetHelper(h != null ? h.getPath() : null);
-                        try {
-                            NativeLog.i(TAG, h != null ? "Mac.apk Location helper: " + h
-                                    : "no Mac.apk Location helper found: macOS cannot show its"
-                                      + " location prompt for this runtime");
-                        } catch (Throwable ignored) { }
-                    }
-                } catch (Throwable t) {
-                    // NativeLog is itself native: an offline JVM (the gates)
-                    // has no runtime library, and the log must not throw.
-                    try { NativeLog.w(TAG, "macOS Location Services not bridged: " + t); }
-                    catch (Throwable ignored) { }
-                    b = 0;
+            try {
+                b = nativeBound() ? 1 : 0;
+                if (b == 1) {
+                    java.io.File h = locateHelper();
+                    nativeSetHelper(h != null ? h.getPath() : null);
+                    try {
+                        NativeLog.i(TAG, h != null ? "Mac.apk Location helper: " + h
+                                : "no Mac.apk Location helper found: macOS cannot show its"
+                                  + " location prompt for this runtime");
+                    } catch (Throwable ignored) { }
                 }
+            } catch (Throwable t) {
+                // NativeLog is itself native: an offline JVM (the gates)
+                // has no runtime library, and the log must not throw.
+                try { NativeLog.w(TAG, "macOS Location Services not bridged: " + t); }
+                catch (Throwable ignored) { }
+                b = 0;
             }
             sBound = b;
         }
@@ -109,11 +104,6 @@ public final class LocationBridge {
      *  macapk-installhelper (PackageInstallerBackend.locateHelper). */
     static java.io.File locateHelper() {
         final String rel = "Helpers/Mac.apk Location.app/Contents/MacOS/macapk-location";
-        String env = System.getenv("MACAPK_LOCATION_HELPER");
-        if (env != null && !env.isEmpty()) {
-            java.io.File f = new java.io.File(env);
-            return f.canExecute() ? f : null;
-        }
         try {
             String cmd = ProcessHandle.current().info().command().orElse(null);
             if (cmd != null) {

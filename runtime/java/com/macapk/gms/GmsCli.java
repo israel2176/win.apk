@@ -34,6 +34,9 @@ public final class GmsCli {
      */
     public static int run(String[] args) {
         if (args.length == 0) { usage(); return 2; }
+        // `--gms` is the account's own side (the launcher's Settings, its sign-in
+        // window, the token service): it reads the master token itself (GmsStore).
+        GmsStore.becomeOwner();
         // Before any HTTPS call: Boot.run does this for an app's process, but
         // `--gms` boots no app, and without the roots Windows trusts every
         // call to Google behind a filtering proxy failed with "PKIX path building failed".
@@ -49,6 +52,7 @@ public final class GmsCli {
                 case "signin-window": return signinWindow();
                 case "signin-master": return signinMaster();
                 case "accounts": return accounts();
+                case "device-id": return deviceId();
                 case "gcmtoken": return gcmtoken(arg(args, 1, "<package>"),
                                                  arg(args, 2, "<senderId>"),
                                                  args.length > 3 ? args[3] : null);
@@ -63,6 +67,7 @@ public final class GmsCli {
                 case "license":  return license(arg(args, 1, "<package>"),
                                                 Integer.parseInt(arg(args, 2, "<versionCode>")));
                 case "signout":  return signout(args.length > 1 ? args[1] : null);
+                case "token-service": return GmsTokenService.serve();
                 default: usage(); return 2;
             }
         } catch (IllegalArgumentException e) {
@@ -85,6 +90,8 @@ public final class GmsCli {
           + "  signin-url              print the Google sign-in URL and what to copy back\n"
           + "  signin-window           open Google's sign-in page in a window (needs the runtime)\n"
           + "  accounts                machine-readable: ACCOUNT<tab>email<tab>services per line\n"
+          + "  device-id               machine-readable: DEVICE_ID<tab>android_id<tab>gsf|checkin, the\n"
+          + "                          id an uncertified device registers with Google (none: no line)\n"
           + "  gcmtoken <pkg> <sender> [certSha1]   register for FCM push -> a real token\n"
           + "  mcslogin                connect+login to Google's MCS push server (framing+auth test)\n"
           + "  signin <oauth_token>    exchange a WebView oauth_token for a master token\n"
@@ -99,6 +106,7 @@ public final class GmsCli {
           + "                          Prints response KEYS and JWT claim NAMES only, never values.\n"
           + "  license <pkg> <vc>      run a Play-Licensing check for a package\n"
           + "  signout                 forget the account and every cached token\n"
+          + "  token-service           serve the apps' token requests (GmsTokenService) until idle\n"
           + "\n"
           + "The layer's flag (MACAPK_GMS_PRESENT) gates what GUESTS see; these\n"
           + "commands work regardless, because they are the operator's own tools.");
@@ -127,13 +135,9 @@ public final class GmsCli {
             }
         }
         System.out.println("identity we present to Google:");
-        System.out.println("  app        = " + envOr("MACAPK_GMS_AUTH_APP", "com.android.vending"));
-        System.out.println("  client_sig = " + envOr("MACAPK_GMS_AUTH_SIG",
-                                                     GoogleAuthClient.platformSigSha1())
+        System.out.println("  app        = com.android.vending");
+        System.out.println("  client_sig = " + GoogleAuthClient.platformSigSha1()
                                              + "   (our platform cert, never Google's)");
-        System.out.println("layer flag     : MACAPK_GMS_PRESENT="
-            + (System.getenv("MACAPK_GMS_PRESENT") == null ? "(unset -> OFF)"
-                                                           : System.getenv("MACAPK_GMS_PRESENT")));
     }
 
     private static int selfTest() {
@@ -382,6 +386,97 @@ public final class GmsCli {
         // mutation; the launcher's panel-open probe backfills it this way.
         GmsStore.syncAccountSentinel();
         return 0;
+    }
+
+    /**
+     * The device's Google Services Framework android_id, as Google's page for
+     * uncertified devices (google.com/android/uncertified) asks for it: a signed
+     * decimal. `DEVICE_ID<tab>id<tab>source`, where source is `gsf` (the real
+     * Services Framework's gservices.db, table main, read with the runtime's own
+     * SQLite) or `checkin` (no GSF database: this layer's own checkin, rendered
+     * as GservicesProvider hands it to apps). No line and exit 0 when neither
+     * exists: nothing to register is an ordinary state, not a failure.
+     *
+     * Registering is Google's own path for a device that is not Play Protect
+     * certified (custom ROMs use it); nothing here claims a
+     * certification the device does not have.
+     */
+    private static int deviceId() {
+        java.io.File gservices = gservicesDb();
+        String id = null;
+        String source = "gsf";
+        if (gservices != null) {
+            // The real GSF's database: its id or none (not checked in yet). The
+            // layer's own checkin is another device to Google, so no fallback.
+            id = gsfAndroidId(gservices);
+        } else {
+            long own = GmsStore.androidId();
+            if (own != 0L) {
+                id = Long.toString(own);
+                source = "checkin";
+            }
+        }
+        if (id != null) System.out.println("DEVICE_ID\t" + id + "\t" + source);
+        return 0;
+    }
+
+    /** The real GSF's gservices.db, or null. GSF keeps it in
+     *  /data/user/0/com.google.android.gsf/databases, here under the Android
+     *  root; the data folder may carry the app's library name rather than the
+     *  package, so every data folder is looked in and the newest file wins. */
+    private static java.io.File gservicesDb() {
+        String root = System.getProperty("macapk.android.root");
+        if (root == null || root.isEmpty()) root = System.getProperty("winapk.android.root");
+        if (root == null || root.isEmpty()) return null;
+        java.util.List<java.io.File> candidates = new java.util.ArrayList<>();
+        candidates.add(new java.io.File(root, "data/user/0/com.google.android.gsf/databases/gservices.db"));
+        java.io.File[] dirs = new java.io.File(root, "data/data").listFiles();
+        if (dirs != null) {
+            for (java.io.File d : dirs) candidates.add(new java.io.File(d, "databases/gservices.db"));
+        }
+        java.io.File best = null;
+        for (java.io.File f : candidates) {
+            if (f.isFile() && (best == null || f.lastModified() > best.lastModified())) best = f;
+        }
+        return best;
+    }
+
+    /** gservices.db's android_id (table main), as GSF writes it: a signed decimal; or null. */
+    private static String gsfAndroidId(java.io.File best) {
+        java.io.File tmp = null;
+        try {
+            // A copy, with its WAL: GSF may be running, and a read-only open of
+            // a WAL database needs the -shm only a live writer keeps
+            // (InstallerOfRecord reads Play's ledger the same way).
+            tmp = java.nio.file.Files.createTempDirectory("gservices").toFile();
+            java.io.File copy = new java.io.File(tmp, "gservices.db");
+            java.nio.file.Files.copy(best.toPath(), copy.toPath());
+            java.io.File wal = new java.io.File(best.getPath() + "-wal");
+            if (wal.isFile()) {
+                java.nio.file.Files.copy(wal.toPath(), new java.io.File(tmp, "gservices.db-wal").toPath());
+            }
+            android.database.sqlite.SQLiteDatabase db = android.database.sqlite.SQLiteDatabase
+                    .openDatabase(copy.getPath(), null, android.database.sqlite.SQLiteDatabase.OPEN_READWRITE);
+            try (android.database.Cursor c = db.rawQuery(
+                    "SELECT value FROM main WHERE name = ?", new String[] { "android_id" })) {
+                if (!c.moveToFirst()) return null;
+                String v = c.getString(0);
+                if (v == null) return null;
+                long id = Long.parseLong(v.trim());  // a signed decimal, as GSF writes it
+                return id == 0L ? null : Long.toString(id);
+            } finally {
+                db.close();
+            }
+        } catch (Throwable t) {
+            System.err.println("device-id: " + best + " unreadable: " + t);
+            return null;
+        } finally {
+            if (tmp != null) {
+                java.io.File[] fs = tmp.listFiles();
+                if (fs != null) for (java.io.File f : fs) f.delete();
+                tmp.delete();
+            }
+        }
     }
 
     private static int token(String scope) {

@@ -241,7 +241,6 @@ public class LauncherApps {
     public java.util.List<LauncherActivityInfo> getActivityList(String packageName,
             UserHandle user) {
         java.util.List<LauncherActivityInfo> out = new java.util.ArrayList<>();
-        if (!QUERY) return out;
         if (user != null && !UserHandle.SYSTEM.equals(user)
                 && user.getIdentifier() != UserHandle.myUserId()) {
             return null;
@@ -262,7 +261,7 @@ public class LauncherApps {
      *  it resolves. Otherwise it returns null." LauncherAppsService.resolveLauncherActivityInternal:
      *  the intent's COMPONENT, looked up with getActivityInfo, null when absent. */
     public LauncherActivityInfo resolveActivity(android.content.Intent intent, UserHandle user) {
-        if (!QUERY || intent == null || intent.getComponent() == null) return null;
+        if (intent == null || intent.getComponent() == null) return null;
         PackageManager pm = macapkPm();
         if (pm == null) return null;
         try {
@@ -273,8 +272,6 @@ public class LauncherApps {
         }
     }
 
-    private static final boolean QUERY =
-        !"0".equals(System.getenv("MACAPK_LAUNCHERAPPS_QUERY"));
 
     private static LauncherActivityInfo macapkInfo(PackageManager pm, ActivityInfo ai,
             UserHandle user) {
@@ -353,7 +350,7 @@ public class LauncherApps {
     /** AOSP LauncherAppsService.isPackageEnabled: getPackageInfo(...) != null
      *  && applicationInfo.enabled. MACAPK_LAUNCHERAPPS_QUERY=0 -> false. */
     public boolean isPackageEnabled(String packageName, UserHandle user) {
-        if (!QUERY || packageName == null) return false;
+        if (packageName == null) return false;
         PackageManager pm = macapkPm();
         try {
             PackageInfo pi = pm != null ? pm.getPackageInfo(packageName, 0) : null;
@@ -365,7 +362,7 @@ public class LauncherApps {
     /** AOSP LauncherAppsService.isActivityEnabled: the activity resolves for the
      *  caller (getActivityInfo != null). */
     public boolean isActivityEnabled(android.content.ComponentName component, UserHandle user) {
-        if (!QUERY || component == null) return false;
+        if (component == null) return false;
         PackageManager pm = macapkPm();
         try {
             return pm != null && pm.getActivityInfo(component, 0) != null;
@@ -509,7 +506,6 @@ public class LauncherApps {
      *  cross-app hand-off). MACAPK_LAUNCHERAPPS_QUERY=0 restores the old throw. */
     public void startMainActivity(android.content.ComponentName component, UserHandle user,
             android.graphics.Rect sourceBounds, android.os.Bundle opts) {
-        if (!QUERY) throw notLauncher();
         if (component == null) throw new NullPointerException("component");
         if (user != null && !UserHandle.SYSTEM.equals(user)
                 && user.getIdentifier() != UserHandle.myUserId()) {
@@ -543,7 +539,9 @@ public class LauncherApps {
         launch.setPackage(null);
         launch.setComponent(component);
         launch.setSourceBounds(sourceBounds);
-        com.macapk.loader.ActivityHost.start(launch);
+        launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        android.app.Application app = com.macapk.loader.app.Apps.current();
+        if (app != null) app.startActivity(launch);
     }
 
     /** AOSP: "Starts the settings activity to show the application details for
@@ -577,7 +575,7 @@ public class LauncherApps {
 
     private static PackageManager macapkPm() {
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             return (app != null) ? app.getPackageManager() : null;
         } catch (Throwable t) {
             return null;

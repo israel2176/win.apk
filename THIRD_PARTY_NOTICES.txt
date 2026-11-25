@@ -9,9 +9,9 @@ Win.apk's own code is licensed under the GNU AGPL v3.0 (LICENSE.txt).
 The Android apps you choose to run with Win.apk are not part of Win.apk and are
 not covered by these notices; you are responsible for your rights to them.
 
-The source tree also holds files of upstream Mac.apk that the Windows build
-does not use (its macOS libraries and their notices); Mac.apk's own notices are
-in its repository, https://github.com/kksimp/Mac.apk .
+The source tree keeps only the upstream Mac.apk files the Windows build uses
+(runtime/java and a few native sources, of which the build compiles sections);
+Mac.apk's own notices are in its repository, https://github.com/kksimp/Mac.apk .
 
 Contents
   1. Mac.apk (the Android runtime Win.apk is based on)
@@ -93,31 +93,115 @@ converted to JVM bytecode (thirdparty/apache-http-legacy/). Apache
 HttpComponents and The Android Open Source Project. Source:
 https://android.googlesource.com/platform/external/apache-http .
 
-Android framework code and resources -- lib\android-framework.jar,
-bin\tools\framework-res.apk
+Android framework code -- lib\android-framework.jar
 SPDX-License-Identifier: Apache-2.0
 Parts of the framework re-implementation follow or contain code of the
-Android Open Source Project; framework-res.apk is the platform resource table
-compiled from AOSP's frameworks/base/core/res. Copyright (C) The Android Open
-Source Project. Source: https://source.android.com/ .
+Android Open Source Project. Copyright (C) The Android Open Source Project.
+Source: https://source.android.com/ . The platform resource table is AOSP's
+own (bin\aosp\framework-res-34.apk, under "AOSP resources" below).
 
-Fonts -- in lib\android-framework.jar (fonts/)
-  Roboto, Roboto Condensed: Copyright 2011 Google Inc. Apache-2.0.
-  Droid Sans Mono: Digitized data copyright (c) 2007, Google Corporation.
-    Apache-2.0.
-  Coming Soon: Copyright (c) 2010 by Open Window. Apache-2.0.
-  Noto Sans Hebrew, Noto Serif: Copyright 2012 Google Inc.; Noto Sans Symbols:
-    Copyright 2013 Google Inc. OFL-1.1.
-  Carrois Gothic SC: Copyright (c) 2011 by Ralph du Carrois, with Reserved
-    Font Name 'Carrois'. OFL-1.1.
-  Cutive Mono: Copyright (c) 2012, vernon adams, with Reserved Font Names
-    'Cutive'. OFL-1.1.
-  Dancing Script: Copyright (c) 2011, Pablo Impallari, with Reserved Font Name
-    'Dancing Script'. OFL-1.1.
-  Source Sans Pro: Copyright 2010, 2012, 2014 Adobe Systems Incorporated, with
-    Reserved Font Name 'Source'. OFL-1.1.
-As AOSP ships them. The Apache License and the SIL Open Font License are in
-section 5.
+AOSP graphics (what apps draw with) --
+lib\aosp-graphics.jar, bin\aosp-hwui.dll, bin\aosp\
+aosp-graphics.jar is built by windows/scripts/build_aosp_gfx.sh from Robolectric's
+build of AOSP 14 (Maven Central: org.robolectric:android-all
+14-robolectric-10818077), a selection of its classes plus Win.apk's own
+stand-ins (windows/java/aosp_gfx, AGPL-3.0 as the rest of Win.apk).
+aosp-hwui.dll is built by windows/hwui_build from AOSP 14's sources
+(android-14.0.0_r1, https://android.googlesource.com/), with the edits
+windows/hwui_build/patch_src.py makes and Win.apk's own glue
+(windows/hwui_build/glue, AGPL-3.0). The fonts and hyphenation patterns come
+from Robolectric's org.robolectric:nativeruntime-dist-compat 1.0.18. These
+entries are written from the components they are built from. The licences
+named "(<file>.txt)" ship in full in bin\licenses\aosp-graphics\.
+  aosp-graphics.jar: AOSP's android.graphics, android.text and android.util
+    classes (frameworks/base). Copyright (C) The Android Open Source Project.
+    SPDX-License-Identifier: Apache-2.0 (section 5).
+  aosp-hwui.dll: AOSP's HWUI (frameworks/base/libs/hwui: the render thread,
+    the GL pipeline, the graphics JNI), the framework's JNI code
+    (frameworks/base/core/jni), minikin, libandroidfw's headers, libutils,
+    libcutils and liblog (system/core, system/logging), libbase,
+    libnativehelper and parts of frameworks/native (libarect, the EGL blob
+    cache). Copyright (C) The Android Open Source Project. Apache-2.0
+    (section 5). Built into it:
+    - Skia (external/skia), with its Ganesh GL backend. Copyright (c) 2011
+      Google Inc. BSD-3-Clause (skia.txt).
+    - HarfBuzz. Copyright the HarfBuzz authors (Google, Ebrahim Byagowi,
+      Facebook, Mozilla, Red Hat and others, as listed in harfbuzz.txt). MIT
+      (harfbuzz.txt).
+    - FreeType. Portions of this software are copyright (C) The FreeType
+      Project (https://www.freetype.org). All rights reserved. Used under the
+      FreeType License (freetype-FTL.txt).
+    - ICU 72 (libicuuc, libicui18n, and its data, bin\aosp\icu\icudt72l.dat).
+      Copyright (C) 2016 and later Unicode, Inc. and others. Unicode License
+      (icu.txt), with the licences of the data ICU includes (icu.txt).
+    - libpng. Copyright (c) 1995-2022 The PNG Reference Library Authors.
+      PNG Reference Library License version 2 (libpng.txt).
+    - libjpeg-turbo. Copyright (C) 1991-2021 The libjpeg-turbo Project and
+      many others; this software is based in part on the work of the
+      Independent JPEG Group. IJG License, BSD-3-Clause and Zlib
+      (libjpeg-turbo.txt).
+    - libwebp. Copyright (c) 2010, Google Inc. BSD-3-Clause (libwebp.txt).
+    - giflib. Copyright (c) 1997 Eric S. Raymond. MIT (giflib.txt).
+    - Wuffs (wuffs-mirror-release-c). Copyright The Wuffs Authors.
+      Apache-2.0 (section 5).
+    - {fmt} (external/fmtlib). Copyright (c) 2012 - present, Victor
+      Zverovich. MIT (fmt.txt).
+    - Expat. Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and
+      Clark Cooper, Copyright (c) 2001 and later Expat maintainers. MIT
+      (expat.txt).
+    - zlib. Copyright (C) 1995-2022 Jean-loup Gailly and Mark Adler. Zlib
+      (section 5).
+    - The C++ run-time libraries, statically linked as in winapk-runtime.exe
+      (section 3).
+  bin\aosp\fonts\ (with fonts.xml) and bin\aosp\hyphen-data\: Android's
+    system fonts and hyphenation patterns as AOSP 14 ships them, without
+    Noto Sans CJK (Chinese, Japanese and Korean text uses the fonts Windows
+    has; none of them is shipped).
+    Apache-2.0 (section 5): Roboto, Roboto Condensed (Copyright 2011 Google
+      Inc.), Droid Sans Mono (Copyright (c) 2007 Google Corporation), Coming
+      Soon (Copyright (c) 2010 by Open Window).
+    OFL-1.1 (section 5): the Noto fonts (Noto Sans and Serif for the scripts
+      fonts.xml names, but CJK; Noto Color Emoji; Copyright Google Inc.),
+      Carrois Gothic SC (Ralph du Carrois, Reserved Font Name 'Carrois'),
+      Cutive Mono (vernon adams, Reserved Font Name 'Cutive'), Dancing Script
+      (Pablo Impallari, Reserved Font Name 'Dancing Script'), Source Sans Pro
+      (Adobe Systems Incorporated, Reserved Font Name 'Source').
+    The hyphenation patterns are AOSP's (external/hyphenation-patterns),
+    compiled from TeX's hyph-utf8 patterns, each under the licence its
+    pattern file states (permissive licences, MIT, LPPL), as AOSP ships them.
+
+AOSP resources -- lib\aosp-resources.jar, bin\aosp\framework-res-34.apk
+Built by windows/scripts/build_aosp_res.sh from Robolectric's build of AOSP 14
+(org.robolectric:android-all 14-robolectric-10818077) and Robolectric 4.16's
+Java port of libandroidfw (org.robolectric:resources, utils, pluginapi 4.16),
+with Win.apk's own classes (windows/java/aosp_res, AGPL-3.0 as the rest of
+Win.apk; its Native*.java are adapted from Robolectric's shadows, Apache-2.0).
+  aosp-resources.jar: AOSP's android.content.res and the classes they name
+    (frameworks/base), Copyright (C) The Android Open Source Project; the
+    libandroidfw port, Copyright (C) Robolectric contributors. Apache-2.0
+    (section 5).
+  framework-res-34.apk: AOSP 14's framework resources (core/res) as
+    android-all carries them. Copyright (C) The Android Open Source Project.
+    Apache-2.0 (section 5).
+
+AOSP views -- lib\aosp-views.jar
+Built by windows/scripts/build_aosp_views.sh from Robolectric's build of AOSP 14
+(org.robolectric:android-all 14-robolectric-10818077), with Win.apk's own
+classes (windows/java/aosp_views, AGPL-3.0 as the rest of Win.apk).
+  aosp-views.jar: AOSP's android.view, android.widget,
+    com.android.internal.{view,widget,policy} and the classes they name
+    (frameworks/base), Copyright (C) The Android Open Source Project.
+    Apache-2.0 (section 5).
+
+AOSP app layer -- lib\aosp-app.jar
+Built by windows/scripts/build_aosp_app.sh from Robolectric's build of AOSP 14
+(org.robolectric:android-all 14-robolectric-10818077), with Win.apk's own
+classes (windows/java/aosp_app, AGPL-3.0 as the rest of Win.apk).
+  aosp-app.jar: AOSP's android.app lifecycle and the classes it names
+    (ActivityThread, Activity, Application, ContextImpl, LoadedApk,
+    Instrumentation, the framework's Fragment and the app's AIDL interfaces
+    to the system; frameworks/base), Copyright (C) The Android Open Source
+    Project. Apache-2.0 (section 5).
 
 --------------------------------------------------------------------------------
 3. Components compiled into winapk-runtime.exe
@@ -126,6 +210,29 @@ section 5.
 libwebp 1.5.0 (decoder) -- WebP images
 SPDX-License-Identifier: BSD-3-Clause
 Copyright (c) 2010, Google Inc. Source: https://chromium.googlesource.com/webm/libwebp .
+
+libvpx 1.17.0 (VP8 and VP9 decoders) -- VP8 and VP9 video
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2010, The WebM Project authors, with Google's patent licence
+(PATENTS in its source). Source: https://chromium.googlesource.com/webm/libvpx .
+Licence in section 5.
+
+dav1d 1.5.5 -- AV1 video
+SPDX-License-Identifier: BSD-2-Clause
+Copyright (c) 2018-2025, VideoLAN and dav1d authors. Source:
+https://code.videolan.org/videolan/dav1d . Licence in section 5.
+
+Opus 1.6.1 (libopus, the decoder) -- Opus audio
+SPDX-License-Identifier: BSD-3-Clause
+Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic, Jean-Marc Valin, Timothy
+B. Terriberry, CSIRO, Gregory Maxwell, Mark Borgerding, Erik de Castro Lopo,
+Mozilla, Amazon; with the royalty-free patent licences its licence names.
+Source: https://opus-codec.org/ . Licence in section 5.
+
+libwebm 1.0.0.32 (mkvparser) -- WebM and Matroska files
+SPDX-License-Identifier: BSD-3-Clause
+Copyright (c) 2010, Google Inc. Source: https://chromium.googlesource.com/webm/libwebm .
+Its licence is libwebp's, in section 5.
 
 SQLite 3.54.1 (amalgamation)
 SPDX-License-Identifier: blessing (public domain)
@@ -154,12 +261,14 @@ Source: https://llvm.org/ , https://www.mingw-w64.org/ .
 4. Components used at run time but not shipped
 --------------------------------------------------------------------------------
 
-- ICU: Windows' own icu.dll (Windows 10 1903 and later).
+- ICU: Windows' own icu.dll (Windows 10 1903 and later); ICU 72 ships only
+  inside aosp-hwui.dll (section 2).
 - The Microsoft Edge WebView2 Runtime, Media Foundation, WASAPI and the other
   Windows APIs: part of Windows.
-- F-Droid's catalog (index-v1.json) and app icons: downloaded from
-  https://f-droid.org when the Store opens. The apps, their names,
-  descriptions and icons belong to their authors.
+- The Store's app (https://github.com/israel2176/win.apk-store): not
+  shipped; downloaded from its GitHub releases when the Store first opens.
+  The apps it shows and installs, their names, descriptions and icons belong
+  to their authors.
 - Google's Play services, Services Framework and Play Store: never shipped or
   downloaded by Win.apk; installed by the user from Google-signed files.
 
@@ -169,7 +278,9 @@ Source: https://llvm.org/ , https://www.mingw-w64.org/ .
 
 ................................................................................
 Apache License 2.0 (AOSP code and resources, apksig, org.apache.http.legacy,
-SwiftShader, the Vulkan loader, Roboto, Droid Sans Mono, Coming Soon)
+SwiftShader, the Vulkan loader; and the AOSP graphics files:
+aosp-graphics.jar, aosp-hwui.dll, aosp-app.jar, the Apache-licensed fonts of
+bin\aosp\fonts: Roboto, Droid Sans Mono, Coming Soon and others)
 ................................................................................
 
                                  Apache License
@@ -350,8 +461,8 @@ SwiftShader, the Vulkan loader, Roboto, Droid Sans Mono, Coming Soon)
    END OF TERMS AND CONDITIONS
 
 ................................................................................
-SIL Open Font License 1.1 (Noto, Carrois Gothic SC, Cutive Mono, Dancing
-Script, Source Sans Pro)
+SIL Open Font License 1.1 (the OFL fonts of bin\aosp\fonts: Noto, Carrois
+Gothic SC, Cutive Mono, Dancing Script, Source Sans Pro and others)
 ................................................................................
 
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
@@ -460,7 +571,7 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 DEALINGS IN THE SOFTWARE.
 
 ................................................................................
-libwebp (BSD-3-Clause)
+libwebp and libwebm (BSD-3-Clause)
 ................................................................................
 
 Copyright (c) 2010, Google Inc. All rights reserved.
@@ -492,6 +603,118 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+................................................................................
+libvpx (BSD-3-Clause)
+................................................................................
+
+Copyright (c) 2010, The WebM Project authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google, nor the WebM Project, nor the names
+    of its contributors may be used to endorse or promote products
+    derived from this software without specific prior written
+    permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+................................................................................
+dav1d (BSD-2-Clause)
+................................................................................
+
+Copyright (c) 2018-2025, VideoLAN and dav1d authors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+................................................................................
+Opus (BSD-3-Clause)
+................................................................................
+
+Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
+                    Jean-Marc Valin, Timothy B. Terriberry,
+                    CSIRO, Gregory Maxwell, Mark Borgerding,
+                    Erik de Castro Lopo, Mozilla, Amazon
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of Internet Society, IETF or IETF Trust, nor the
+names of specific contributors, may be used to endorse or promote
+products derived from this software without specific prior written
+permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Opus is subject to the royalty-free patent licenses which are
+specified at:
+
+Xiph.Org Foundation:
+https://datatracker.ietf.org/ipr/1524/
+
+Microsoft Corporation:
+https://datatracker.ietf.org/ipr/1914/
+
+Broadcom Corporation:
+https://datatracker.ietf.org/ipr/1526/
 
 ................................................................................
 ANGLE (BSD-3-Clause)

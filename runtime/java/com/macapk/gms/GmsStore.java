@@ -8,23 +8,35 @@
 // would mean three file formats, three lock disciplines and three chances to
 // write a token to a world-readable file. So: one store, one file, one lock.
 //
-// ---- WHERE THE SECRETS GO --------------------------------------------------
-// Default: a 0600 file under ~/Library/Application Support/Mac.apk/gms/. That is
-// the same protection Aurora Store's own token XML gets on a device, and the
-// same protection this runtime already gives installed_apps.json's neighbours.
-// The permissions are applied BEFORE any content is written (see save()), not
-// after, so there is no window in which the token exists at umask default.
+// ---- WHERE THE SECRETS GO, AND WHO READS THEM (Win.apk) --------------------
+// Two files under <data>\gms\ (MACAPK_GMS_DIR):
+//   gms_state.properties  what any process may know: which accounts are signed in
+//                         (account.<email>.signedIn), their non-secret data, the
+//                         checkin identity, the FCM registration record.
+//   tokens.dat            the secrets: each account's MASTER TOKEN and the cached
+//                         scoped tokens, as a Properties text sealed with DPAPI for
+//                         the Windows user (com.macapk.loader.DataProtection).
 //
-// The macOS Keychain is implemented too but is OPT-IN (MACAPK_GMS_KEYCHAIN=1),
-// and the reason is specific rather than laziness: a keychain item's ACL is
-// bound to the code signature of the process that created it, and
-// runtime/scripts/build.sh RE-SIGNS macapk-runtime on every build. A rebuilt
-// binary reading an item created by the previous build is a DIFFERENT identity
-// to securityd, which answers with an interactive "allow?" panel. In a headless
-// CLI run (--license-check) or a Dock launch that panel is either invisible or
-// blocks forever, which turns a token read into a hang with no error. Once the
-// signing identity is stable across builds (a release-signed bundle), flipping
-// the default here is a one-line change and the right one.
+// ONLY THE ACCOUNT'S OWNER OPENS tokens.dat. On Android the master token is held by
+// the account authenticator (Google Play services) alone; an app asks
+// AccountManager.getAuthToken and gets a scoped token, never the master token. Here
+// the owner side is: the launcher's `--gms` verbs (Settings > Google account and its
+// sign-in window), the token service (`--gms token-service`, GmsTokenService) and the
+// system broker (its account service gives the master token to Google's own Play
+// services as the account's password, as AccountManagerService does). Such a process
+// calls becomeOwner() first. Every other process -- every app's -- gets its tokens
+// from the token service over Binder (GmsTokens), and masterToken() refuses it.
+//
+// MIGRATION. An older Win.apk kept the master token and the tokens in plain text in
+// gms_state.properties. The first owner process that reads it moves them into
+// tokens.dat (sealed), then rewrites gms_state.properties without them. An app's
+// process that finds no tokens.dat beside an existing gms_state.properties asks the
+// token service to do that before it reads the file.
+//
+// WHAT THIS DOES NOT DO: every app runs with the Windows user's rights and its native
+// code is not confined, so code that sets out to can still read the user's DPAPI
+// secrets. This keeps the token out of every app's Java code paths and out of plain
+// files; isolating apps from each other needs a sandbox (future work).
 //
 // FORMAT: java.util.Properties. Flat, JDK-native, and its store()/load() pair
 // escapes '=' ':' and whitespace in BOTH keys and values -- which matters,
@@ -56,10 +68,37 @@ public final class GmsStore {
     private static final String P_ACCOUNT        = "account.";       // account.<email>.masterToken
     private static final String P_TOKEN          = "token.";         // token.<email>.<scope>.value / .expiry
 
+    private static final String S_SIGNED_IN      = ".signedIn";      // account.<email>.signedIn (public)
+    private static final String S_MASTER         = ".masterToken";   // account.<email>.masterToken (sealed)
+
     private static final Object LOCK = new Object();
     private static Properties sProps;      // null until first load
+    private static Properties sSecrets;    // owner only; null until first load
 
     private GmsStore() {}
+
+    // ===================================================================
+    // Who may read the secrets
+    // ===================================================================
+
+    private static volatile boolean sOwner;
+
+    /** This process holds the account (see the header): the launcher's `--gms` verbs,
+     *  the token service and the system broker. Called once, before any GmsStore use. */
+    public static void becomeOwner() { sOwner = true; }
+
+    /** Whether this process reads the secrets itself; otherwise it asks the token service. */
+    public static boolean owner() { return sOwner; }
+
+    /** GmsTokensTest plays both sides in one process. */
+    static void ownerForTest(boolean on) { sOwner = on; }
+
+    private static void requireOwner(String what) {
+        if (!sOwner) {
+            throw new SecurityException(what + ": only the account's owner holds the master token"
+                    + " (an app asks the token service for a scoped token)");
+        }
+    }
 
     // ===================================================================
     // Location
@@ -76,6 +115,9 @@ public final class GmsStore {
     }
 
     private static File file() { return new File(dir(), "gms_state.properties"); }
+
+    /** The sealed secrets (owner only). */
+    static File secretsFile() { return new File(dir(), "tokens.dat"); }
 
     // ===================================================================
     // Load / save
@@ -95,6 +137,9 @@ public final class GmsStore {
             // elsewhere, and its next save() writes the stale copy back over
             // it. So a cached copy is good only while the file is unchanged.
             if (sProps != null && f.lastModified() == sStampTime && f.length() == sStampSize) return sProps;
+            // An app's process does not read a file that may still hold an older
+            // Win.apk's plain master token: the owner moves it out first.
+            if (!sOwner && f.isFile() && !secretsFile().exists()) GmsTokens.migrate();
             Properties p = new Properties();
             boolean clean = false;
             if (f.isFile()) {
@@ -113,8 +158,124 @@ public final class GmsStore {
             sReadClean = clean;
             sStampTime = f.lastModified();
             sStampSize = f.length();
+            if (sOwner && clean && (hasSecretKeys(p) || !secretsFile().exists())) migrate(p);
             return p;
         }
+    }
+
+    /** Whether `p` (gms_state.properties) still holds what belongs in tokens.dat. */
+    private static boolean hasSecretKeys(Properties p) {
+        for (String key : p.stringPropertyNames()) if (isSecretKey(key)) return true;
+        return false;
+    }
+
+    private static boolean isSecretKey(String key) {
+        return (key.startsWith(P_ACCOUNT) && key.endsWith(S_MASTER)) || key.startsWith(P_TOKEN);
+    }
+
+    /** An older Win.apk's plain secrets -> tokens.dat, sealed; then the public file
+     *  without them. tokens.dat is written first: a crash between the two leaves the
+     *  secrets in both, and the next owner run finishes the move. Writes tokens.dat
+     *  even with nothing to move, so an app's process knows there is nothing left to
+     *  move. The caller holds LOCK. */
+    private static void migrate(Properties pub) {
+        Properties sec = secrets();
+        if (sec == null) return;   // unreadable: leave the plain copy rather than lose it
+        int moved = 0;
+        for (String key : new ArrayList<>(pub.stringPropertyNames())) {
+            if (!isSecretKey(key)) continue;
+            String v = pub.getProperty(key);
+            if (sec.getProperty(key) == null) sec.setProperty(key, v);
+            if (key.startsWith(P_ACCOUNT) && key.endsWith(S_MASTER)) {
+                pub.setProperty(key.substring(0, key.length() - S_MASTER.length()) + S_SIGNED_IN, "1");
+            }
+            pub.remove(key);
+            moved++;
+        }
+        if (!saveSecrets()) return;
+        if (moved > 0) {
+            save();
+            try { Files.deleteIfExists(new File(file().getPath() + ".tmp").toPath()); } catch (Throwable ignored) {}
+            warn("moved " + moved + " secret entr" + (moved == 1 ? "y" : "ies") + " from " + file().getName()
+                    + " into " + secretsFile().getName() + " (sealed)");
+        }
+    }
+
+    // ===================================================================
+    // The sealed secrets (owner only)
+    // ===================================================================
+
+    private static long sSecStampTime = -1, sSecStampSize = -1;
+    /** Whether tokens.dat exists but could not be opened: then it is not written over. */
+    private static boolean sSecUnreadable;
+
+    /** The secrets, reloaded when another owner process changed the file; null when
+     *  the file exists and cannot be opened (another Windows user's, or changed). */
+    private static Properties secrets() {
+        synchronized (LOCK) {
+            File f = secretsFile();
+            if (sSecrets != null && f.lastModified() == sSecStampTime && f.length() == sSecStampSize) return sSecrets;
+            Properties p = new Properties();
+            sSecUnreadable = false;
+            if (f.isFile()) {
+                try {
+                    byte[] plain = com.macapk.loader.DataProtection.unseal(Files.readAllBytes(f.toPath()));
+                    p.load(new java.io.ByteArrayInputStream(plain));
+                    java.util.Arrays.fill(plain, (byte) 0);
+                } catch (Throwable t) {
+                    // Not signed out: the account stays listed, its token requests fail
+                    // with this reason, and the file is left for a later look.
+                    warn("could not open " + f + ": " + t);
+                    sSecUnreadable = true;
+                    sSecrets = null;
+                    return null;
+                }
+            }
+            sSecrets = p;
+            sSecStampTime = f.lastModified();
+            sSecStampSize = f.length();
+            return p;
+        }
+    }
+
+    /** Seal and write the secrets, beside then over the file (a reader sees the old
+     *  file or the new one). False when nothing was written: no data protection, or
+     *  the file that is there could not be opened. */
+    private static boolean saveSecrets() {
+        synchronized (LOCK) {
+            if (sSecrets == null || sSecUnreadable) return false;
+            File f = secretsFile();
+            try {
+                java.io.ByteArrayOutputStream text = new java.io.ByteArrayOutputStream();
+                sSecrets.store(text, null);
+                byte[] plain = text.toByteArray();
+                byte[] sealed = com.macapk.loader.DataProtection.seal(plain);
+                java.util.Arrays.fill(plain, (byte) 0);
+                File parent = f.getParentFile();
+                if (parent != null && !parent.isDirectory()) Files.createDirectories(parent.toPath());
+                File tmp = new File(f.getPath() + ".tmp");
+                Files.write(tmp.toPath(), sealed);
+                try {
+                    Files.move(tmp.toPath(), f.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                            java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                } catch (IOException e) {
+                    Files.write(f.toPath(), sealed);
+                    Files.deleteIfExists(tmp.toPath());
+                }
+                sSecStampTime = f.lastModified();
+                sSecStampSize = f.length();
+                return true;
+            } catch (Throwable t) {
+                warn("could not write " + f + ": " + t);
+                return false;
+            }
+        }
+    }
+
+    private static String secret(String key) {
+        requireOwner("reading a " + (key.startsWith(P_TOKEN) ? "token" : "master token"));
+        Properties p = secrets();
+        return p == null ? null : p.getProperty(key);
     }
 
     /** True when the accounts this process sees come from a complete read of
@@ -151,7 +312,7 @@ public final class GmsStore {
                 }
                 chmod600(tmp);
                 try (OutputStream out = Files.newOutputStream(tmp.toPath())) {
-                    sProps.store(out, "Mac.apk GMS state -- contains OAuth tokens. Mode 0600.");
+                    sProps.store(out, "Win.apk Google account state; the tokens are in tokens.dat, sealed");
                 }
                 chmod600(tmp);   // store() does not change perms; re-assert after truncate
                 try {
@@ -161,7 +322,7 @@ public final class GmsStore {
                     // No atomic replace here (a reader holding the file without
                     // delete sharing): write in place, as before.
                     try (OutputStream out = Files.newOutputStream(f.toPath())) {
-                        sProps.store(out, "Mac.apk GMS state -- contains OAuth tokens. Mode 0600.");
+                        sProps.store(out, "Win.apk Google account state; the tokens are in tokens.dat, sealed");
                     }
                     Files.deleteIfExists(tmp.toPath());
                     chmod600(f);
@@ -324,14 +485,21 @@ public final class GmsStore {
         List<String> out = new ArrayList<>();
         Properties p = props();
         for (String key : p.stringPropertyNames()) {
-            if (key.startsWith(P_ACCOUNT) && key.endsWith(".masterToken")) {
-                String name = key.substring(P_ACCOUNT.length(),
-                        key.length() - ".masterToken".length());
-                if (!name.isEmpty()) out.add(name);
+            // .masterToken: a file an owner has not migrated yet (the name only; the
+            // value is never read here).
+            String suffix = key.endsWith(S_SIGNED_IN) ? S_SIGNED_IN : key.endsWith(S_MASTER) ? S_MASTER : null;
+            if (suffix != null && key.startsWith(P_ACCOUNT)) {
+                String name = key.substring(P_ACCOUNT.length(), key.length() - suffix.length());
+                if (!name.isEmpty() && !out.contains(name)) out.add(name);
             }
         }
         java.util.Collections.sort(out);
         return out;
+    }
+
+    /** Whether `account` is signed in. Any process may ask; the master token is not read. */
+    public static boolean hasAccount(String account) {
+        return account != null && accountNames().contains(account);
     }
 
     public static boolean hasAccount() { return !accountNames().isEmpty(); }
@@ -345,21 +513,31 @@ public final class GmsStore {
         return a.isEmpty() ? null : a.get(0);
     }
 
+    /** The account's master token. Owner processes only (see the header): anywhere
+     *  else this throws SecurityException. */
     public static String masterToken(String account) {
         if (account == null) return null;
-        return keychainAware(P_ACCOUNT + account + ".masterToken");
+        return secret(P_ACCOUNT + account + S_MASTER);
     }
 
+    /** Store a signed-in account: its master token sealed, then the public marker
+     *  (a process that sees the marker finds the token). Owner processes only. */
     public static void putAccount(String account, String masterToken) {
         if (account == null || masterToken == null) return;
-        putKeychainAware(P_ACCOUNT + account + ".masterToken", masterToken);
+        requireOwner("storing an account");
+        synchronized (LOCK) {
+            Properties sec = secrets();
+            if (sec == null) throw new IllegalStateException("the account's token store cannot be opened");
+            sec.setProperty(P_ACCOUNT + account + S_MASTER, masterToken);
+            if (!saveSecrets()) throw new IllegalStateException("the account's token could not be stored");
+            props().setProperty(P_ACCOUNT + account + S_SIGNED_IN, "1");
+        }
         save();
     }
 
     /** A non-secret per-account attribute (the `services=` list Google returns
-     *  at sign-in, the display name, ...). Deliberately NOT keychain-routed:
-     *  these are not credentials, and putting them behind an opt-in flag would
-     *  make an account look half-present when the flag is off. */
+     *  at sign-in, the display name, the account id, ...): in gms_state.properties,
+     *  which any process may read, because none of it is a credential. */
     public static String accountData(String account, String key) {
         if (account == null || key == null) return null;
         return props().getProperty(P_ACCOUNT + account + ".data." + key);
@@ -376,18 +554,20 @@ public final class GmsStore {
 
     public static void removeAccount(String account) {
         if (account == null) return;
-        Properties p = props();
+        requireOwner("removing an account");
         synchronized (LOCK) {
-            List<String> doomed = new ArrayList<>();
-            for (String key : p.stringPropertyNames()) {
-                if (key.startsWith(P_ACCOUNT + account + ".")
-                 || key.startsWith(P_TOKEN + account + ".")) {
-                    doomed.add(key);
-                }
+            Properties p = props();
+            for (String key : new ArrayList<>(p.stringPropertyNames())) {
+                if (key.startsWith(P_ACCOUNT + account + ".") || key.startsWith(P_TOKEN + account + ".")) p.remove(key);
             }
-            for (String key : doomed) {
-                p.remove(key);
-                keychainDelete(key);
+            Properties sec = secrets();
+            if (sec != null) {
+                for (String key : new ArrayList<>(sec.stringPropertyNames())) {
+                    if (key.startsWith(P_ACCOUNT + account + ".") || key.startsWith(P_TOKEN + account + ".")) {
+                        sec.remove(key);
+                    }
+                }
+                saveSecrets();
             }
         }
         save();
@@ -407,13 +587,17 @@ public final class GmsStore {
      *
      *  The 5-minute skew is the usual clock-drift guard: a token that expires in
      *  three minutes is treated as already gone, because the request it would be
-     *  used for may not land inside that window. */
+     *  used for may not land inside that window.
+     *
+     *  In an app's process the answer comes from the token service, as an app's
+     *  peekAuthToken comes from AccountManagerService's token table. */
     public static String authToken(String account, String scope) {
         if (account == null || scope == null) return null;
+        if (!sOwner) return GmsTokens.peek(account, scope);
         String base = P_TOKEN + account + "." + scope;
-        String value = keychainAware(base + ".value");
+        String value = secret(base + ".value");
         if (value == null || value.isEmpty()) return null;
-        long expiry = parseLong(props().getProperty(base + ".expiry"), 0L);
+        long expiry = parseLong(secret(base + ".expiry"), 0L);
         if (expiry > 0 && System.currentTimeMillis() > expiry - 300_000L) {
             return null;    // expired or about to be
         }
@@ -425,27 +609,30 @@ public final class GmsStore {
      *                       expiry rather than inventing one. */
     public static void putAuthToken(String account, String scope, String token, long expirySeconds) {
         if (account == null || scope == null || token == null) return;
+        if (!sOwner) { GmsTokens.put(account, scope, token, expirySeconds); return; }
         String base = P_TOKEN + account + "." + scope;
-        putKeychainAware(base + ".value", token);
         synchronized (LOCK) {
+            Properties sec = secrets();
+            if (sec == null) return;
+            sec.setProperty(base + ".value", token);
             if (expirySeconds > 0) {
-                props().setProperty(base + ".expiry",
-                        Long.toString(System.currentTimeMillis() + expirySeconds * 1000L));
+                sec.setProperty(base + ".expiry", Long.toString(System.currentTimeMillis() + expirySeconds * 1000L));
             } else {
-                props().remove(base + ".expiry");
+                sec.remove(base + ".expiry");
             }
+            saveSecrets();
         }
-        save();
     }
 
-    /** Every scope we hold a token for on this account. Needed because AOSP's
-     *  invalidateAuthToken identifies a token by its VALUE, not by its scope, so
-     *  the caller has to search. */
+    /** Every scope we hold a token for on this account. Owner only. */
     public static java.util.List<String> scopesFor(String account) {
         java.util.List<String> out = new ArrayList<>();
         if (account == null) return out;
+        requireOwner("listing tokens");
+        Properties sec = secrets();
+        if (sec == null) return out;
         String prefix = P_TOKEN + account + ".";
-        for (String key : props().stringPropertyNames()) {
+        for (String key : sec.stringPropertyNames()) {
             if (key.startsWith(prefix) && key.endsWith(".value")) {
                 out.add(key.substring(prefix.length(), key.length() - ".value".length()));
             }
@@ -453,12 +640,12 @@ public final class GmsStore {
         return out;
     }
 
-    /** The cached token WITHOUT the expiry check. Only for identifying a token
-     *  by value during invalidation -- an expired token still has to be found
-     *  and removed, and {@link #authToken} would hide it. */
+    /** The cached token WITHOUT the expiry check. Owner only: for identifying a token
+     *  by value during invalidation -- an expired token still has to be found and
+     *  removed, and {@link #authToken} would hide it. */
     public static String authTokenRaw(String account, String scope) {
         if (account == null || scope == null) return null;
-        return keychainAware(P_TOKEN + account + "." + scope + ".value");
+        return secret(P_TOKEN + account + "." + scope + ".value");
     }
 
     /** AOSP AccountManager.invalidateAuthToken semantics: drop the cached copy so
@@ -466,113 +653,46 @@ public final class GmsStore {
      *  a device. */
     public static void invalidateAuthToken(String account, String scope) {
         if (account == null || scope == null) return;
+        if (!sOwner) { GmsTokens.invalidate(account, scope); return; }
         String base = P_TOKEN + account + "." + scope;
         synchronized (LOCK) {
-            props().remove(base + ".value");
-            props().remove(base + ".expiry");
+            Properties sec = secrets();
+            if (sec == null) return;
+            sec.remove(base + ".value");
+            sec.remove(base + ".expiry");
+            saveSecrets();
         }
-        keychainDelete(base + ".value");
-        save();
+    }
+
+    /** AOSP's invalidateAuthToken(type, VALUE): drop every cached token of every
+     *  account whose value is `token` (AccountManagerService searches its token
+     *  table the same way). */
+    public static void invalidateAuthTokenValue(String token) {
+        if (token == null) return;
+        if (!sOwner) { GmsTokens.invalidateValue(token); return; }
+        synchronized (LOCK) {
+            for (String name : accountNames()) {
+                for (String scope : scopesFor(name)) {
+                    if (token.equals(authTokenRaw(name, scope))) invalidateAuthToken(name, scope);
+                }
+            }
+        }
     }
 
     /** Drop every cached scoped token for an account, keeping the master token.
      *  Used when Google rejects a token for a reason that invalidates the whole
-     *  cache (a password change, a revoked app grant). */
+     *  cache (a password change, a revoked app grant). Owner only. */
     public static void invalidateAllTokens(String account) {
         if (account == null) return;
-        Properties p = props();
+        requireOwner("dropping tokens");
         synchronized (LOCK) {
-            List<String> doomed = new ArrayList<>();
-            for (String key : p.stringPropertyNames()) {
-                if (key.startsWith(P_TOKEN + account + ".")) doomed.add(key);
+            Properties sec = secrets();
+            if (sec == null) return;
+            for (String key : new ArrayList<>(sec.stringPropertyNames())) {
+                if (key.startsWith(P_TOKEN + account + ".")) sec.remove(key);
             }
-            for (String key : doomed) { p.remove(key); keychainDelete(key); }
+            saveSecrets();
         }
-        save();
-    }
-
-    // ===================================================================
-    // Keychain (opt-in; see the file header for why it is not the default)
-    // ===================================================================
-
-    private static boolean keychainEnabled() {
-        String v = System.getenv("MACAPK_GMS_KEYCHAIN");
-        return "1".equals(v) || "true".equalsIgnoreCase(v);
-    }
-
-    private static final String KEYCHAIN_SERVICE = "Mac.apk GMS";
-
-    /** Read a secret: keychain when enabled, else the properties file. When the
-     *  keychain is enabled but has no item, we fall back to the file -- that is
-     *  what makes turning the flag on non-destructive for an existing session. */
-    private static String keychainAware(String key) {
-        if (keychainEnabled()) {
-            String v = keychainRead(key);
-            if (v != null) return v;
-        }
-        return props().getProperty(key);
-    }
-
-    private static void putKeychainAware(String key, String value) {
-        if (keychainEnabled() && keychainWrite(key, value)) {
-            // Written to the keychain -- make sure no plaintext copy lingers in
-            // the file from a previous run with the flag off.
-            synchronized (LOCK) { props().remove(key); }
-            return;
-        }
-        synchronized (LOCK) { props().setProperty(key, value); }
-    }
-
-    private static String keychainRead(String account) {
-        try {
-            java.lang.Process p = new ProcessBuilder("/usr/bin/security",
-                    "find-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE, "-w")
-                    .redirectErrorStream(false).start();
-            String out = readAll(p.getInputStream());
-            p.getErrorStream().close();
-            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) { p.destroyForcibly(); return null; }
-            if (p.exitValue() != 0) return null;
-            out = out.trim();
-            return out.isEmpty() ? null : out;
-        } catch (Throwable t) {
-            return null;
-        }
-    }
-
-    private static boolean keychainWrite(String account, String value) {
-        try {
-            // -U updates in place if the item already exists, which is the
-            // difference between refreshing a token and accumulating a duplicate
-            // keychain item per refresh.
-            java.lang.Process p = new ProcessBuilder("/usr/bin/security",
-                    "add-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE,
-                    "-w", value, "-U")
-                    .redirectErrorStream(true).start();
-            readAll(p.getInputStream());
-            if (!p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)) { p.destroyForcibly(); return false; }
-            return p.exitValue() == 0;
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    private static void keychainDelete(String account) {
-        if (!keychainEnabled()) return;
-        try {
-            java.lang.Process p = new ProcessBuilder("/usr/bin/security",
-                    "delete-generic-password", "-a", account, "-s", KEYCHAIN_SERVICE)
-                    .redirectErrorStream(true).start();
-            readAll(p.getInputStream());
-            p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
-        } catch (Throwable ignored) {}
-    }
-
-    private static String readAll(InputStream in) throws IOException {
-        java.io.ByteArrayOutputStream b = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = in.read(buf)) > 0) b.write(buf, 0, n);
-        return b.toString("UTF-8");
     }
 
     // ===================================================================
@@ -586,7 +706,10 @@ public final class GmsStore {
      *  The CLI needs this because it mutates the store in one JVM and a second
      *  process must see it; a long-lived app process never calls it. */
     public static void reload() {
-        synchronized (LOCK) { sProps = null; sStampTime = -1; sStampSize = -1; }
+        synchronized (LOCK) {
+            sProps = null; sStampTime = -1; sStampSize = -1;
+            sSecrets = null; sSecStampTime = -1; sSecStampSize = -1;
+        }
     }
 
     private static void warn(String msg) {

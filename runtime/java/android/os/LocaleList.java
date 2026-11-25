@@ -27,6 +27,48 @@ public final class LocaleList implements Parcelable {
     public LocaleList(Locale... locales) {
         this.locales = (locales != null) ? locales : new Locale[0];
     }
+
+    /** AOSP (@hide): topLocale first, then otherLocales without it. AOSP's ResourcesImpl calls it
+     *  (-Dwinapk.aosp.res=1) to put the best-supported locale of several first. */
+    public LocaleList(Locale topLocale, LocaleList otherLocales) {
+        final int inputLength = otherLocales == null ? 0 : otherLocales.locales.length;
+        int topIndex = -1;
+        for (int i = 0; i < inputLength; i++) {
+            if (topLocale.equals(otherLocales.locales[i])) {
+                topIndex = i;
+                break;
+            }
+        }
+        final Locale[] out = new Locale[inputLength + (topIndex == -1 ? 1 : 0)];
+        out[0] = (Locale) topLocale.clone();
+        int o = 1;
+        for (int i = 0; i < inputLength; i++) {
+            if (i != topIndex) out[o++] = (Locale) otherLocales.locales[i].clone();
+        }
+        this.locales = out;
+    }
+
+    /** AOSP (@hide): getFirstMatch, with English taken as supported (ResourcesImpl). */
+    public Locale getFirstMatchWithEnglishSupported(String[] supportedLocales) {
+        if (locales.length == 1) return locales[0];
+        if (locales.length == 0) return null;
+        // AOSP's computeFirstMatchIndex(supported, true): English first, then each supported one.
+        int best = findFirstMatchIndex(Locale.forLanguageTag("en-Latn"));
+        for (int i = 0; best != 0 && i < supportedLocales.length; i++) {
+            best = Math.min(best, findFirstMatchIndex(Locale.forLanguageTag(supportedLocales[i])));
+        }
+        return locales[best == Integer.MAX_VALUE ? 0 : best];
+    }
+
+    /** AOSP (@hide): whether the locales an APK has are only the pseudo-locales (or none). */
+    public static boolean isPseudoLocalesOnly(String[] supportedLocales) {
+        if (supportedLocales == null) return true;
+        if (supportedLocales.length > 3) return false;  // AOSP: NUM_PSEUDO_LOCALES + 1
+        for (String tag : supportedLocales) {
+            if (!tag.isEmpty() && !isPseudoLocale(Locale.forLanguageTag(tag))) return false;
+        }
+        return true;
+    }
     public Locale get(int index) {
         return (index >= 0 && index < locales.length) ? locales[index] : null;
     }
@@ -161,6 +203,13 @@ public final class LocaleList implements Parcelable {
     // JVM's own single-locale Locale.getDefault(), this class's pre-existing
     // (and still correct-if-narrower) behavior.
     private static LocaleList readAppleLanguagesOrdered() {
+        // Win.apk: WINAPK_LOCALES, the device's ranked system languages the host passes as
+        // -Dwinapk.locales (windows/host/runtime_main.cpp), ahead of the host's own locale.
+        String winApk = System.getProperty("winapk.locales");
+        if (winApk != null && !winApk.isBlank()) {
+            LocaleList list = forLanguageTags(winApk.trim().replace('_', '-'));
+            if (list.size() > 0) return list;
+        }
         LocaleList override = readMacApkLanguageOverride();
         if (override != null) return override;
         try {

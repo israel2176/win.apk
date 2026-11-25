@@ -85,7 +85,7 @@ public class LauncherActivityInfo {
 
     private static PackageManager macapkPackageManager() {
         try {
-            android.app.Application app = android.app.Application.macapk_get();
+            android.app.Application app = com.macapk.loader.app.Apps.current();
             return (app != null) ? app.getPackageManager() : null;
         } catch (Throwable t) {
             return null;

@@ -145,15 +145,13 @@ import android.graphics.SurfaceTexture;
 import android.opengl.EGL14;
 import android.opengl.EGL15;
 import com.macapk.loader.NativeLog;
+import com.macapk.loader.view.ViewHost;
 
 public final class MacApkEGL10 implements EGL10 {
     private static final String TAG = "Mac.apk.EGL10";
 
     public static final MacApkEGL10 INSTANCE = new MacApkEGL10();
 
-    /** MACAPK_EGL10_REAL (default ON): see the class header. */
-    private static final boolean REAL =
-        !"0".equals(System.getenv("MACAPK_EGL10_REAL"));
     /** Set once when the EGL14/EGL15 natives turn out to be missing (a bare
      *  JVM without the runtime's bridges): every later call degrades to the
      *  legacy contract instead of throwing UnsatisfiedLinkError into an app. */
@@ -209,7 +207,6 @@ public final class MacApkEGL10 implements EGL10 {
      *  on it answers from this table row. MACAPK_GL_SURFACE_CONFIG=0 restores
      *  the old null. */
     public static EGLConfig macapkWindowSurfaceConfig() {
-        if ("0".equals(System.getenv("MACAPK_GL_SURFACE_CONFIG"))) return null;
         for (Config c : CONFIGS)
             if (c.r == 8 && c.g == 8 && c.b == 8 && c.a == 8 && c.depth == 24 && c.stencil == 0)
                 return c;
@@ -337,7 +334,7 @@ public final class MacApkEGL10 implements EGL10 {
     private static final java.util.concurrent.ConcurrentHashMap<Long, RealConfig> sConfigs =
         new java.util.concurrent.ConcurrentHashMap<>();
 
-    private static boolean realOn() { return REAL && !sRealBroken; }
+    private static boolean realOn() { return !sRealBroken; }
 
     private static void realBroken(Throwable t) {
         if (!sRealBroken) {
@@ -359,7 +356,7 @@ public final class MacApkEGL10 implements EGL10 {
         if (b != null && (b || !fresh)) return b;
         boolean v;
         try {
-            v = android.view.SurfaceView.macapkIsSurfaceViewGlThread(Thread.currentThread());
+            v = ViewHost.get().isSurfaceViewGlThread(Thread.currentThread());
         } catch (Throwable t) {
             v = false;
         }
@@ -401,7 +398,7 @@ public final class MacApkEGL10 implements EGL10 {
     // request, i.e. the legacy contract on Windows. macOS is unaffected.
     private static final boolean WINDOWS_HOST = System.mapLibraryName("x").endsWith(".dll");
     private static final boolean WINDOWS_BACKEND =
-        WINDOWS_HOST && !"0".equals(System.getenv("MACAPK_EGL_WINDOWS_BACKEND"));
+        WINDOWS_HOST;
     private static final int EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE = 0x3208;
     private static final int EGL_PLATFORM_ANGLE_TYPE_VULKAN_ANGLE = 0x3450;
     private static final int EGL_PLATFORM_ANGLE_DEVICE_TYPE_ANGLE = 0x3209;
@@ -415,8 +412,7 @@ public final class MacApkEGL10 implements EGL10 {
      *  so, as on a device where another client of libEGL got there first), or
      *  null when none does (the legacy contract answers, as before). */
     private static android.opengl.EGLDisplay obtainWindowsDisplay() {
-        String want = System.getenv("WINAPK_ANGLE_BACKEND");
-        boolean sw = "swiftshader".equals(want), hw = "d3d11".equals(want);
+        boolean sw = false, hw = false;
         java.util.List<long[]> ladder = new java.util.ArrayList<>();
         if (!sw) {
             ladder.add(new long[] { EGL_PLATFORM_ANGLE_TYPE_ANGLE, EGL_PLATFORM_ANGLE_TYPE_D3D11_ANGLE,
@@ -727,7 +723,7 @@ public final class MacApkEGL10 implements EGL10 {
             return legacyCreateWindowSurface(display, config, nativeWindow, attribList);
         } else if (nativeWindow instanceof android.view.Surface) {
             android.view.Surface s = (android.view.Surface) nativeWindow;
-            st = s.macapkGetSurfaceTexture();
+            st = ViewHost.get().surfaceTexture(s);
             if (st == null) return legacyCreateWindowSurface(display, config, nativeWindow, attribList);
             if (!s.isValid()) {
                 // jni_eglCreateWindowSurface's not_valid_surface branch.
@@ -774,8 +770,7 @@ public final class MacApkEGL10 implements EGL10 {
     private static native int nativeSwapSurfaceViewWindow(android.opengl.EGLDisplay dpy,
                                                           android.opengl.EGLSurface surface);
     private static native void nativeForgetSurfaceViewWindow(android.opengl.EGLSurface surface);
-    private static final boolean VIEW_WINDOW = System.getProperty("winapk.android.root") != null
-        && !"0".equals(System.getenv("WINAPK_GL_VIEW_WINDOW"));
+    private static final boolean VIEW_WINDOW = System.getProperty("winapk.android.root") != null;
 
     private EGLSurface viewWindow(RealDisplay d, EGLConfig config, Object nativeWindow, int[] attribList) {
         if (!VIEW_WINDOW || !(config instanceof RealConfig)) return null;
@@ -793,7 +788,7 @@ public final class MacApkEGL10 implements EGL10 {
         if (h == null || h.getNativeHandle() == 0) return null;
         // The SurfaceView now shows the native window's layer through its hole,
         // as for an engine that called ANativeWindow_fromSurface.
-        sur.macapkNoteNativeWindowConsumer();
+        ViewHost.get().noteNativeWindowConsumer(sur);
         if (shouldLogReal()) {
             NativeLog.i(TAG, "eglCreateWindowSurface(SurfaceView) on " + Thread.currentThread().getName()
                 + " -> a window surface on the SurfaceView (0x" + Long.toHexString(h.getNativeHandle()) + ")");
@@ -1103,9 +1098,6 @@ public final class MacApkEGL10 implements EGL10 {
     //
     // Bookkeeping ONLY: no EGL answer changes (the eglproducer gate's CTL-OFF
     // diff of every ANSWER line against the pre-fix class still holds). With
-    // MACAPK_GL_SINGLE_OWNER=0 nothing is recorded and nothing is reported.
-    private static final boolean GL_SINGLE_OWNER =
-        !"0".equals(System.getenv("MACAPK_GL_SINGLE_OWNER"));
     /** Threads legacyCreateContext refused that have not yet been reported as
      *  survivors. Weak keys: a refused thread that dies is simply collected. */
     private static final java.util.Map<Thread, Boolean> REFUSED =
@@ -1119,10 +1111,9 @@ public final class MacApkEGL10 implements EGL10 {
      *  survivor. Asked fresh, straight from SurfaceView, never through the
      *  FORK_THREAD cache, so the bookkeeping cannot change any EGL answer. */
     private static void noteRefused() {
-        if (!GL_SINGLE_OWNER) return;
         Thread t = Thread.currentThread();
         try {
-            if (!android.view.SurfaceView.macapkIsSurfaceViewGlThread(t)) return; /*FORKONLY*/
+            if (!ViewHost.get().isSurfaceViewGlThread(t)) return; /*FORKONLY*/
             REFUSED.put(t, Boolean.TRUE);
         } catch (Throwable ignored) {
             // Bookkeeping must never become a crash inside eglCreateContext.
@@ -1131,11 +1122,10 @@ public final class MacApkEGL10 implements EGL10 {
 
     /** The calling thread made {@code call} after being refused: report it once. */
     private static void noteSurvivorCall(String call) {
-        if (!GL_SINGLE_OWNER) return;
         Thread t = Thread.currentThread();
         if (REFUSED.remove(t) == null) return; /*MARK*/
         try {
-            android.view.SurfaceView.macapkMarkGlThreadSurvivedRefusal(t, call);
+            ViewHost.get().markGlThreadSurvivedRefusal(t, call);
         } catch (Throwable ignored) {
             // A SurfaceView without the entry point (an older framework class
             // ahead on the classpath) must not turn bookkeeping into a crash.
@@ -1205,9 +1195,6 @@ public final class MacApkEGL10 implements EGL10 {
     // MACAPK_EGL10_REAL=0: the promotion runs on the REAL contract's display
     // and reads ANGLE's error through eglGetError's real branch, so under the
     // legacy-everywhere lever it must be off too, or that lever would stop
-    // restoring the pre-change answers for exactly the apps it exists for.
-    private static final boolean SURVIVOR_CONTEXT = REAL && GL_SINGLE_OWNER
-        && !"0".equals(System.getenv("MACAPK_GL_SURVIVOR_CONTEXT"));
     /** EGL_KHR_create_context's EGL_OPENGL_ES3_BIT_KHR (EGLExt). */
     private static final int EGL_OPENGL_ES3_BIT = 0x0040;
 
@@ -1296,7 +1283,6 @@ public final class MacApkEGL10 implements EGL10 {
      *  GL thread asked for (noteRefused recorded it in REFUSED only if it is
      *  one; any other refused thread is never promoted). */
     private static void survivorNoteRequest(EGLConfig config, int[] attribs) {
-        if (!SURVIVOR_CONTEXT) return;
         if (!REFUSED.containsKey(Thread.currentThread())) return;
         Survivor s = SURVIVOR.get();
         if (s == null) {
@@ -1352,7 +1338,7 @@ public final class MacApkEGL10 implements EGL10 {
      *  the promotion can actually happen (see survivorCheckArgs). */
     private static EGLSurface survivorCreateWindow(EGLDisplay display, EGLConfig config,
                                                    Object nativeWindow, int[] attribList) {
-        if (!SURVIVOR_CONTEXT || !realOn()) return null;
+        if (!realOn()) return null;
         Survivor s = SURVIVOR.get();
         if (s == null) return null;
         // EGLImpl hands a SurfaceView's or SurfaceHolder's Surface to
@@ -1545,7 +1531,6 @@ public final class MacApkEGL10 implements EGL10 {
     /** The unbind triple on a survivor with our context current: release it.
      *  A no-op everywhere else, so the legacy `return true` is unchanged. */
     private static void survivorRelease() {
-        if (!SURVIVOR_CONTEXT) return;
         Survivor s = SURVIVOR.get();
         if (s == null || s.draw == null || s.dpy == null) return;
         nativeCall();
@@ -1597,7 +1582,6 @@ public final class MacApkEGL10 implements EGL10 {
      *  made for it (freed once released if still current, §3.7.2) and drop its
      *  display ref. A no-op on every other thread. */
     private static void survivorDestroyContext() {
-        if (!SURVIVOR_CONTEXT) return;
         Survivor s = SURVIVOR.get();
         if (s == null || s.ctx == null || s.dpy == null) return;
         nativeCall();

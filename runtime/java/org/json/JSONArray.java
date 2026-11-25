@@ -5,7 +5,7 @@ public class JSONArray {
     private final ArrayList<Object> items = new ArrayList<>();
     public JSONArray() {}
     public JSONArray(JSONTokener t) throws JSONException {
-        if ("1".equals(System.getenv("MACAPK_JSON_NOPARSE"))) return;  // see JSONObject
+          // see JSONObject
         Object parsed = t.nextValue();
         if (parsed instanceof JSONArray a) {
             this.items.addAll(a.items);
@@ -195,6 +195,25 @@ public class JSONArray {
         for (Object value : items) stringer.value(value);
         stringer.endArray();
     }
+
+    /** AOSP JSONArray.join: each value as JSON (strings quoted), separated by {@code separator}. */
+    public String join(String separator) throws JSONException {
+        JSONStringer stringer = new JSONStringer();
+        stringer.open(JSONStringer.Scope.NULL, "");
+        for (int i = 0, size = items.size(); i < size; i++) {
+            if (i > 0) stringer.out.append(separator);
+            stringer.value(items.get(i));
+        }
+        stringer.close(JSONStringer.Scope.NULL, JSONStringer.Scope.NULL, "");
+        return stringer.out.toString();
+    }
+
+    /** AOSP: equal when the other is a JSONArray holding equal values. */
+    @Override public boolean equals(Object o) {
+        return o instanceof JSONArray && ((JSONArray) o).items.equals(items);
+    }
+
+    @Override public int hashCode() { return items.hashCode(); }
 
     /** AOSP JSONArray.toJSONObject: pair each name with this array's value at
      *  the same index. Returns null if names/values are empty. */

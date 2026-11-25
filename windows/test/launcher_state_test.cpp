@@ -1,6 +1,6 @@
 // launcher_state_test.cpp -- winapk-launcher-state-test: the launcher's state machines
-// (launcher/app_runs.h, launcher/installs.h, launcher/updates.h), which hold no lock and make no Windows call, driven
-// step by step as the library's thread and a worker's thread drive them.
+// (launcher/app_runs.h, launcher/installs.h, launcher/updates.h, launcher/store_app.h), which hold no lock and
+// make no Windows call, driven step by step as the library's thread and a worker's thread drive them.
 //
 //   winapk-launcher-state-test
 //
@@ -10,18 +10,35 @@
 // copied, while the runtime converts it, once it is being kept and after its end; the queue's order.
 // The update check and download: one check at a time; what each result leaves known and what the
 // InfoBar says of it (once per release); a failed check keeps a newer version found before; the
-// download's progress.
+// download's progress. The release offered (never a draft; a pre-release only while there is no full release),
+// an installer downloaded only with GitHub's SHA-256 of it, and run only at the release's size, SHA-256, version
+// and signer; a download's body kept only at the length HTTP announced. The Store (launcher/store_app.h): its
+// apk-store.apk downloaded only with GitHub's SHA-256 of it and kept only at the release's size and SHA-256; first
+// opening, the daily check's update, an update that waits while the store app runs, and each failure.
 // The Threads window (launcher/debug_threads.h, include/winapk/debug_protocol.h): an agent's answer
 // survives its own writer and a cut-off reply; every thread Windows lists is a row with or without an
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
+// The library's files (launcher/library_files.h, std::filesystem only), on real files: a bundle kept as hard
+// links to its installed APKs, that step done again over a cut-off one, an update's files set aside, then
+// dropped or put back, never written.
+// Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
+// done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
+// clock went back), and waits while on battery, with no network or while an app starts.
 
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 #include <vector>
 
 #include "../launcher/app_runs.h"
 #include "../launcher/debug_threads.h"
 #include "../launcher/installs.h"
+#include "../launcher/library_files.h"
+#include "../launcher/maintenance.h"
+#include "../launcher/store_app.h"
 #include "../launcher/updates.h"
 
 namespace {
@@ -490,6 +507,250 @@ void test_updates() {
     }
 }
 
+// The rules a release, its installer and a download's body are held to (updates.h): GitHub's release fields, the
+// file's facts, HTTP's framing.
+void test_update_integrity() {
+    using namespace winapk::launcher;
+    std::printf("the release and its installer\n");
+    check("versions: v0.10.0 > 0.9.1, 0.2 = 0.2.0, the suffix not counted",
+          compare_versions(L"v0.10.0", L"0.9.1") > 0 && compare_versions(L"0.2", L"0.2.0") == 0 &&
+              compare_versions(L"0.3.0-preview", L"0.3.0") == 0 && version_numbers(L"preview").empty());
+
+    const std::string hex(64, 'a');
+    check("a digest: sha256: and 64 hex digits, read in any case, given in lower case",
+          asset_sha256("sha256:" + hex) == hex && asset_sha256("sha256:" + std::string(64, 'A')) == hex &&
+              asset_sha256("SHA256:" + hex) == hex);
+    check("another algorithm, a digit short or long, a letter past f, nothing: no SHA-256",
+          asset_sha256("sha1:" + hex).empty() && asset_sha256("sha512:" + hex).empty() &&
+              asset_sha256("sha256:" + hex.substr(1)).empty() && asset_sha256("sha256:" + hex + "a").empty() &&
+              asset_sha256("sha256:" + std::string(63, 'a') + "g").empty() && asset_sha256("sha256:").empty() &&
+              asset_sha256("").empty() && asset_sha256(" sha256:" + hex.substr(1)).empty());
+
+    auto rel = [&](const wchar_t* tag, bool draft, bool pre) {
+        ListedRelease r;
+        r.tag = tag;
+        r.draft = draft;
+        r.prerelease = pre;
+        r.asset = true;
+        r.asset_state = "uploaded";
+        r.digest = "sha256:" + hex;
+        r.size = 1000;
+        return r;
+    };
+    check("an installer uploaded whole, of a believable size, with GitHub's SHA-256: downloaded",
+          installer_checkable(rel(L"v1", 0, 0)));
+    {
+        ListedRelease r = rel(L"v1", 0, 0);
+        r.digest.clear();
+        check("no digest: not downloaded, its size known or not", !installer_checkable(r));
+        r.digest = "sha1:" + std::string(40, 'a');
+        check("a digest of another algorithm: not downloaded", !installer_checkable(r));
+        r = rel(L"v1", 0, 0);
+        r.asset_state = "open";
+        check("an upload still running: not downloaded", !installer_checkable(r));
+        r.asset_state.clear();
+        check("no state at all: not downloaded", !installer_checkable(r));
+        r = rel(L"v1", 0, 0);
+        r.size = 0;
+        check("a size of 0: not downloaded", !installer_checkable(r));
+        r.size = kMaxSetupBytes;
+        check("the largest size believed: downloaded", installer_checkable(r));
+        r.size = kMaxSetupBytes + 1;
+        check("past it: not downloaded", !installer_checkable(r));
+        r = rel(L"v1", 0, 0);
+        r.asset = false;
+        check("no installer asset: nothing to download", !installer_checkable(r));
+    }
+
+    check("an empty list offers nothing", pick_release({}) == -1);
+    check("the highest version wins, wherever it is listed",
+          pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.10.0", 0, 0), rel(L"v0.9.0", 0, 0)}) == 1);
+    check("equal numbers: the one listed first (GitHub lists the newest first)",
+          pick_release({rel(L"v1.0.0", 0, 0), rel(L"1.0", 0, 0)}) == 0);
+    check("never a draft, even the highest", pick_release({rel(L"v0.8.0", 0, 0), rel(L"v0.9.0", 1, 0)}) == 0 &&
+                                                pick_release({rel(L"v0.9.0", 1, 0)}) == -1);
+    check("only pre-releases: the highest of them",
+          pick_release({rel(L"v0.7.0", 0, 1), rel(L"v0.8.0", 0, 1)}) == 1);
+    check("a full release listed: no pre-release, newer or not",
+          pick_release({rel(L"v1.1.0-beta", 0, 1), rel(L"v1.0.0", 0, 0)}) == 1 &&
+              pick_release({rel(L"v2.0.0", 0, 1), rel(L"v0.1.0", 0, 0), rel(L"v0.9.0", 0, 1)}) == 1);
+    check("a full release that is a draft does not hide the pre-releases",
+          pick_release({rel(L"v1.0.0", 1, 0), rel(L"v0.9.0", 0, 1)}) == 1);
+    check("a full release whose tag is no version does not hide them either",
+          pick_release({rel(L"nightly", 0, 0), rel(L"v0.9.0", 0, 1)}) == 1);
+    check("a tag that is no version is never offered", pick_release({rel(L"nightly", 0, 0)}) == -1);
+
+    check("a version as text: no v, no padding, no NUL",
+          plain_version(L"v0.9.0") == L"0.9.0" && plain_version(L"  0.9.0-preview   ") == L"0.9.0-preview" &&
+              plain_version(std::wstring(L"1.0\0", 4)) == L"1.0" && plain_version(L"   ").empty());
+
+    SetupFacts f;
+    f.size = 1000;
+    f.sha256 = hex;
+    f.product_version = L"0.9.0-preview   ";  // Inno Setup pads it
+    f.signature = Signature::kUnsigned;
+    const std::wstring v = L"0.9.0-preview";
+    check("unsigned build, unsigned installer of the release's size, SHA-256 and version: runs, said unsigned",
+          judge_setup(f, 1000, hex, v, L"") == SetupVerdict::kOkUnsigned && setup_runs(SetupVerdict::kOkUnsigned));
+    check("the version asked as the tag", judge_setup(f, 1000, hex, L"v0.9.0-preview", L"") ==
+                                              SetupVerdict::kOkUnsigned);
+    check("shorter or longer than the release's asset: refused",
+          judge_setup(f, 999, hex, v, L"") == SetupVerdict::kSize &&
+              judge_setup(f, 1001, hex, v, L"") == SetupVerdict::kSize && !setup_runs(SetupVerdict::kSize));
+    check("the size is judged first: a wrong size with a wrong SHA-256 says size",
+          judge_setup(f, 999, std::string(64, 'b'), v, L"") == SetupVerdict::kSize);
+    check("an asset of no size never matches", [&] {
+        SetupFacts e = f;
+        e.size = 0;
+        return judge_setup(e, 0, hex, v, L"") == SetupVerdict::kSize;
+    }());
+    check("another SHA-256: refused", judge_setup(f, 1000, std::string(64, 'b'), v, L"") == SetupVerdict::kDigest);
+    check("no SHA-256 to hold it to: refused", judge_setup(f, 1000, "", v, L"") == SetupVerdict::kDigest);
+    {
+        SetupFacts g = f;
+        g.product_version = L"0.8.0";
+        check("another version inside: refused", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        g.product_version = L"0.9.0";
+        check("the same numbers without the suffix: refused",
+              judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        g.product_version.clear();
+        check("no version inside: refused", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kVersion);
+        check("no version asked: refused", judge_setup(f, 1000, hex, L"", L"") == SetupVerdict::kVersion);
+        g = f;
+        g.signature = Signature::kInvalid;
+        check("a broken signature: refused, by a signed build or not",
+              judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kBadSignature &&
+                  judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kBadSignature);
+        g = f;
+        g.signature = Signature::kValid;
+        g.signer = L"CN=Win.apk | CN=CA";
+        check("signed, by an unsigned build: runs", judge_setup(g, 1000, hex, v, L"") == SetupVerdict::kOk);
+        check("signed by this build's signer: runs",
+              judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kOk);
+        check("the same name from another authority: refused",
+              judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=Other CA") == SetupVerdict::kSignerChanged);
+        check("signed by another: refused",
+              judge_setup(g, 1000, hex, v, L"CN=Someone else | CN=CA") == SetupVerdict::kSignerChanged);
+        check("a signed build, an unsigned installer: refused",
+              judge_setup(f, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kNotSigned);
+        g.product_version = L"0.8.0";
+        check("signed as it should be but another version inside: refused",
+              judge_setup(g, 1000, hex, v, L"CN=Win.apk | CN=CA") == SetupVerdict::kVersion);
+    }
+
+    std::printf("a download's body\n");
+    auto body = [](const wchar_t* length, const wchar_t* encoding = L"", const wchar_t* transfer = L"") {
+        return expected_body(length, encoding, transfer, true);
+    };
+    check("no Content-Length: any length is whole", body(L"").kind == BodyLength::kUnknown && body(L"").whole(5));
+    check("a Content-Length: exactly that many bytes",
+          body(L"1000").exact() && body(L"1000").bytes == 1000 && body(L"1000").whole(1000) &&
+              !body(L"1000").whole(999) && !body(L"1000").whole(1001));
+    check("past 4 GB", body(L"5000000000").exact() && body(L"5000000000").bytes == 5000000000ull);
+    check("a repeated header of one value counts; of two, the response is broken",
+          body(L"1000, 1000").exact() && body(L"1000, 1000").bytes == 1000 &&
+              body(L"1000, 999").kind == BodyLength::kBroken && !body(L"1000, 999").whole(1000));
+    check("a value that is no number, signed, empty in a list or too long: broken",
+          body(L"abc").kind == BodyLength::kBroken && body(L"-1").kind == BodyLength::kBroken &&
+              body(L"+1").kind == BodyLength::kBroken && body(L"1000,").kind == BodyLength::kBroken &&
+              body(L"12 34").kind == BodyLength::kBroken &&
+              body(L"99999999999999999999").kind == BodyLength::kBroken);
+    check("padding around it is not part of it", body(L" 1000 ").exact() && body(L" 1000 ").bytes == 1000);
+    check("an encoding the client inflates: the length counts for nothing",
+          body(L"1000", L"gzip").kind == BodyLength::kUnknown && body(L"1000", L"gzip").whole(3000));
+    check("identity is no encoding", body(L"1000", L"Identity").exact());
+    check("an encoding left as it came: the length holds",
+          expected_body(L"1000", L"gzip", L"", false).exact());
+    check("a Transfer-Encoding frames the body: the length is ignored, broken or not",
+          body(L"1000", L"", L"chunked").kind == BodyLength::kUnknown &&
+              body(L"1000, 5", L"", L"chunked").kind == BodyLength::kUnknown);
+}
+
+void test_store_setup() {
+    using namespace winapk::launcher;
+    using Step = StoreSetup::Step;
+    using Failure = StoreSetup::Failure;
+    std::printf("the Store's setup\n");
+    ListedRelease r;
+    r.tag = L"v1.4";
+    r.asset = true;
+    r.asset_state = "uploaded";
+    r.size = 1588099;
+    r.digest = "sha256:" + std::string(64, 'a');
+    check("an uploaded apk-store.apk with GitHub's SHA-256: checkable", store_asset_checkable(r));
+    ListedRelease bad = r;
+    bad.digest.clear();
+    check("no digest: not downloaded", !store_asset_checkable(bad));
+    bad = r;
+    bad.size = kMaxStoreBytes + 1;
+    check("an unbelievable size: not downloaded", !store_asset_checkable(bad));
+    bad = r;
+    bad.asset_state = "open";
+    check("still uploading: not downloaded", !store_asset_checkable(bad));
+    const std::string sha(64, 'a');
+    check("the release's size and SHA-256: kept", judge_store_file(1588099, sha, 1588099, sha) == StoreFile::kOk);
+    check("another size: refused before its hash",
+          judge_store_file(1588098, sha, 1588099, sha) == StoreFile::kWrongSize);
+    check("another SHA-256: refused",
+          judge_store_file(1588099, std::string(64, 'b'), 1588099, sha) == StoreFile::kWrongSha256);
+    check("an empty file: refused", judge_store_file(0, "", 0, "") == StoreFile::kWrongSize);
+
+    {
+        StoreSetup s;
+        check("first opening: the check starts", s.begin_check() && s.step() == Step::kChecking && s.busy());
+        check("one at a time", !s.begin_check());
+        check("a release, nothing installed: download", s.checked(true, true, false, false) &&
+                                                            s.step() == Step::kDownloading && s.percent() == 0);
+        s.progress(42);
+        check("its progress", s.percent() == 42);
+        check("checked, not running: install now", s.downloaded(true, true, false) && s.step() == Step::kInstalling);
+        check("an install's end out of order changes nothing", !s.begin_check());
+        s.installed(true);
+        check("installed: idle", s.step() == Step::kIdle && s.failure() == Failure::kNone && !s.busy());
+    }
+    {
+        StoreSetup s;
+        s.begin_check();
+        check("GitHub unreached, nothing installed: failed, unreached",
+              !s.checked(false, false, false, false) && s.step() == Step::kFailed &&
+                  s.failure() == Failure::kUnreached && !s.busy());
+        check("Try again: a new check", s.begin_check() && s.failure() == Failure::kNone);
+        check("no checkable release: failed, no release",
+              !s.checked(true, false, false, false) && s.failure() == Failure::kNoRelease);
+        s.begin_check();
+        s.checked(true, true, false, false);
+        check("a file that is not the release's: failed, never installed",
+              !s.downloaded(true, false, false) && s.step() == Step::kFailed && s.failure() == Failure::kUnverified);
+        s.begin_check();
+        s.checked(true, true, false, false);
+        check("a download that broke off: failed, unreached",
+              !s.downloaded(false, false, false) && s.failure() == Failure::kUnreached);
+        s.begin_check();
+        s.checked(true, true, false, false);
+        s.downloaded(true, true, false);
+        s.installed(false);
+        check("an install that failed: failed, install", s.step() == Step::kFailed && s.failure() == Failure::kInstall);
+    }
+    {
+        StoreSetup s;
+        s.begin_check();
+        check("the daily check, the installed copy is the release's: nothing to do",
+              !s.checked(true, true, true, true) && s.step() == Step::kIdle);
+        s.begin_check();
+        check("installed, GitHub unreached: the installed store stays, no failure shown",
+              !s.checked(false, false, false, true) && s.step() == Step::kIdle && s.failure() == Failure::kNone);
+        s.begin_check();
+        check("a newer release: download", s.checked(true, true, false, true));
+        check("checked while the store runs: it waits", !s.downloaded(true, true, true) && s.step() == Step::kWaiting);
+        check("still running: still waits", !s.may_install(true) && s.step() == Step::kWaiting && s.busy());
+        check("no check while it waits", !s.begin_check());
+        check("the store stopped: install now", s.may_install(false) && s.step() == Step::kInstalling);
+        s.installed(true);
+        check("updated", s.step() == Step::kIdle);
+        check("may_install with nothing waiting does nothing", !s.may_install(false) && s.step() == Step::kIdle);
+    }
+}
+
 void test_debug_threads() {
     using namespace winapk::launcher;
     namespace dbg = winapk::debug;
@@ -606,13 +867,162 @@ void test_debug_threads() {
     check("sorted by thread id, downwards", rows[0].tid == 300 && rows[5].tid == 0);
 }
 
+// The library's files (launcher/library_files.h), on real files in a scratch folder: a bundle kept as links
+// to its installed APKs, that step redone over what a cut-off one left, an update's set-aside, kept and
+// put back, and what counts as the app's entries.
+void test_library_files() {
+    using namespace winapk::launcher;
+    namespace fs = std::filesystem;
+    std::printf("the library's files\n");
+    std::error_code ec;
+    const fs::path root = fs::temp_directory_path() / ("winapk-library-test-" + std::to_string(std::rand()));
+    fs::remove_all(root, ec);
+    const fs::path library = root / "library", copy = root / "android" / "app" / "com.example-Qm";
+    fs::create_directories(library);
+    fs::create_directories(copy);
+    auto write = [](const fs::path& p, const std::string& s) { std::ofstream(p, std::ios::binary) << s; };
+    auto read = [](const fs::path& p) {
+        std::ifstream f(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    };
+    write(copy / "base.apk", "base v1");
+    write(copy / "split_config.arm64_v8a.apk", "abi v1");
+    write(copy / "split_config.xxhdpi.apk", "dpi v1");
+    write(copy / ".installed", "3 100:1700000000000\n");
+    const fs::path bundle = library / "App.xapk", apk = library / "App.apk", splits = library / "App.splits";
+    write(bundle, "the whole bundle");
+
+    check("bundles by extension, in any case", is_bundle_file("a.xapk") && is_bundle_file("a.APKM") &&
+                                                   is_bundle_file("a.apks") && !is_bundle_file("a.apk"));
+    check("stamp: same size and time", stamp_matches("3 100:1700000000000\n", 100, 1700000000000LL));
+    check("stamp: another time or size is not", !stamp_matches("3 100:1700000000000\n", 100, 1700000000001LL) &&
+                                                     !stamp_matches("3 100:1700000000000", 101, 1700000000000LL));
+    check("stamp: no stamp is not", !stamp_matches("", 0, 0) && !stamp_matches("garbage", 0, 0));
+
+    // Installed: the bundle becomes links to the installed APKs.
+    fs::path kept = keep_installed(bundle, copy);
+    check("kept as <name>.apk", kept == apk && fs::is_regular_file(apk, ec));
+    check("the bundle is gone", !fs::exists(bundle, ec));
+    check("<name>.apk is the installed base.apk", fs::equivalent(apk, copy / "base.apk", ec));
+    check("the splits are the installed ones", fs::equivalent(splits / "split_config.arm64_v8a.apk",
+                                                              copy / "split_config.arm64_v8a.apk", ec) &&
+                                                   fs::equivalent(splits / "split_config.xxhdpi.apk",
+                                                                  copy / "split_config.xxhdpi.apk", ec));
+    check("one copy: two names each", fs::hard_link_count(copy / "base.apk", ec) == 2 &&
+                                          fs::hard_link_count(copy / "split_config.xxhdpi.apk", ec) == 2);
+    check("nothing but the APKs in .splits",
+          std::distance(fs::directory_iterator(splits), fs::directory_iterator()) == 2);
+    check("nothing left half made", !fs::exists(library / "App.apk.new", ec) &&
+                                        !fs::exists(library / "App.splits.new", ec));
+
+    // Cut off before the bundle went, with a half-made attempt beside it: done again.
+    write(bundle, "the whole bundle");
+    write(library / "App.apk.new", "half");
+    fs::create_directory(library / "App.splits.new", ec);
+    kept = keep_installed(bundle, copy);
+    check("redone: the bundle goes", kept == apk && !fs::exists(bundle, ec) &&
+                                         !fs::exists(library / "App.apk.new", ec) &&
+                                         !fs::exists(library / "App.splits.new", ec));
+    check("redone: still one copy", fs::equivalent(apk, copy / "base.apk", ec) &&
+                                        fs::hard_link_count(copy / "base.apk", ec) == 2);
+
+    // No installed copy: the bundle stays.
+    write(library / "Other.xapk", "other");
+    check("no installed copy: the bundle stays", keep_installed(library / "Other.xapk", root / "nowhere").empty() &&
+                                                     fs::exists(library / "Other.xapk", ec));
+
+    // The app's entries, and only its own.
+    write(library / "App.extra.apk", "x");
+    write(library / "Apps.apk", "x");
+    write(library / "App.label", "x");
+    check("entries: the .apk and .splits only", app_entries(library, L"App", false).size() == 2);
+    check("entries: none set aside", app_entries(library, L"App", true).empty());
+    check("put back with nothing set aside: no", !put_back(library, L"App"));
+
+    // An update that goes through: the kept files set aside, never written, and dropped.
+    check("set aside", set_aside(library, L"App") && !fs::exists(apk, ec) && !fs::exists(splits, ec) &&
+                           fs::exists(library / "App.apk.previous", ec) &&
+                           fs::exists(library / "App.splits.previous", ec));
+    write(apk, "base v2");  // a plain APK's update
+    check("the installed copy was not written", read(copy / "base.apk") == "base v1");
+    drop_previous(library, L"App");
+    check("kept: the .previous ones go", app_entries(library, L"App", true).empty() && read(apk) == "base v2" &&
+                                             !fs::exists(splits, ec));
+    check("kept: the installed copy is no longer linked", fs::hard_link_count(copy / "base.apk", ec) == 1);
+
+    // An update that does not go through: what replaced the app goes, and the app is back.
+    fs::remove(apk, ec);
+    write(bundle, "bundle v1");
+    kept = keep_installed(bundle, copy);
+    check("set aside again", set_aside(library, L"App"));
+    write(library / "App.apks", "bundle v2, half copied");
+    check("put back", put_back(library, L"App"));
+    check("put back: the new file is gone", !fs::exists(library / "App.apks", ec));
+    check("put back: the kept files are back, still the installed copy",
+          fs::equivalent(apk, copy / "base.apk", ec) &&
+              fs::equivalent(splits / "split_config.xxhdpi.apk", copy / "split_config.xxhdpi.apk", ec) &&
+              app_entries(library, L"App", true).empty());
+
+    // A bundle of one APK: no .splits folder.
+    const fs::path single = root / "android" / "app" / "com.single-Qm";
+    fs::create_directories(single);
+    write(single / "base.apk", "single");
+    write(library / "Single.apkm", "bundle");
+    kept = keep_installed(library / "Single.apkm", single);
+    check("one APK: <name>.apk and no .splits", kept == library / "Single.apk" &&
+                                                    !fs::exists(library / "Single.splits", ec) &&
+                                                    !fs::exists(library / "Single.apkm", ec));
+    fs::remove_all(root, ec);
+}
+
 }  // namespace
+
+void test_maintenance() {
+    std::printf("background updates' maintenance window\n");
+    namespace mw = winapk::launcher::maintenance;
+    using D = mw::Decision;
+    mw::Conditions ok;
+    ok.setting_on = ok.apps_ready = ok.on_mains = ok.on_network = true;
+    const int64_t now = 1'800'000'000, hour = 3600;
+    check("never run: due at once (the launcher's start)", mw::decide(now, 0, ok) == D::kStart);
+    check("four hours after the last: due", mw::decide(now, now - 4 * hour, ok) == D::kStart);
+    check("a minute short of four hours: not due", mw::decide(now, now - 4 * hour + 60, ok) == D::kNotDue);
+    check("just run: not due", mw::decide(now, now, ok) == D::kNotDue);
+    check("the clock went back past the last: due", mw::decide(now, now + hour, ok) == D::kStart);
+    mw::Conditions c = ok;
+    c.setting_on = false;
+    check("setting off: nothing", mw::decide(now, 0, c) == D::kOff);
+    c = ok;
+    c.apps_ready = false;
+    check("Google's three apps not all installed: nothing", mw::decide(now, 0, c) == D::kOff);
+    c = ok;
+    c.window_running = true;
+    check("a window this launcher opened runs: not a second", mw::decide(now, 0, c) == D::kRunning);
+    c = ok;
+    c.broker_running = true;
+    check("a broker runs (an app's, another launcher's): not a second", mw::decide(now, 0, c) == D::kRunning);
+    c = ok;
+    c.on_mains = false;
+    check("on battery: wait", mw::decide(now, 0, c) == D::kWait);
+    check("on battery, not due: not due", mw::decide(now, now, c) == D::kNotDue);
+    c = ok;
+    c.on_network = false;
+    check("no network: wait", mw::decide(now, 0, c) == D::kWait);
+    c = ok;
+    c.app_starting = true;
+    check("an app starting: wait", mw::decide(now, 0, c) == D::kWait);
+    check("off wins over everything", mw::decide(now, 0, mw::Conditions{}) == D::kOff);
+}
 
 int main() {
     test_runs();
     test_installs();
     test_updates();
+    test_update_integrity();
+    test_store_setup();
     test_debug_threads();
+    test_library_files();
+    test_maintenance();
     std::printf("%d failed\n", g_failures);
     return g_failures ? 1 : 0;
 }

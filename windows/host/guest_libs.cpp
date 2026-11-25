@@ -29,6 +29,7 @@
 #include "native_sensor.h"
 #include "native_opensles.h"
 #include "native_window.h"
+#include "stub_hits.h"
 
 namespace {
 
@@ -55,16 +56,12 @@ bool is_guest_code(const void* addr) {
 
 // ---- system functions the shim does not have yet ----------------------------
 
-struct MissingTag {
-    std::string name;
-    std::atomic<bool> reported{false};  // two threads may meet in the same stub
-};
-
 // Called (Microsoft x64, from the tagged stub) by the guest; see
-// make_tagged_zero_stub. The guest gets 0.
+// make_tagged_zero_stub. The guest gets 0. Counted for the summary at exit
+// (stub_hits.h), logged the first time; two threads may meet in the same stub.
 void report_missing(void*, const void* tag) {
-    auto* t = static_cast<MissingTag*>(const_cast<void*>(tag));
-    if (t->reported.exchange(true)) return;
+    auto* t = static_cast<winapk::host::StubHit*>(const_cast<void*>(tag));
+    if (!winapk::host::stub_hit(t)) return;
     std::fprintf(stderr, "[win.apk] guest called a system function not implemented on Windows yet, returning 0: %s\n",
                  t->name.c_str());
     std::fflush(stderr);
@@ -76,7 +73,7 @@ void* missing_stub(const char* name) {
     std::lock_guard<std::mutex> hold(lock);
     auto it = stubs.find(name);
     if (it != stubs.end()) return it->second;
-    auto* tag = new MissingTag{name};
+    winapk::host::StubHit* tag = winapk::host::stub_hit_register(name, "system function");
     void* stub = winapk::make_tagged_zero_stub(reinterpret_cast<void*>(&report_missing), tag);
     stubs.emplace(name, stub);
     return stub;
@@ -91,6 +88,7 @@ void* missing_object(const char* name) {
     auto it = blocks.find(name);
     if (it != blocks.end()) return it->second;
     void* block = std::calloc(1, 4096);
+    if (!block) return nullptr;  // the linker then names it among the missing symbols instead of a null object
     blocks.emplace(name, block);
     std::fprintf(stderr, "[win.apk] guest uses a system variable not implemented on Windows yet, bound to zeroed memory: %s\n",
                  name);

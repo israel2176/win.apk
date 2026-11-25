@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
+#include <cwctype>
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
@@ -204,6 +206,32 @@ std::string stamp(const fs::path& p) {
 bool per_launch(const std::string& o) {
     if (starts(o, "-Djava.class.path=")) return false;
     return starts(o, "-D") || starts(o, "-XX:ErrorFile=") || starts(o, "-Xlog:");
+}
+
+std::string graphics_of(const std::vector<std::string>& opts) {
+    // One framework: AOSP's graphics, resources and views always come together now (aosp_gfx.h), whose
+    // jars the key has from the class path; the options no longer tell anything apart.
+    (void)opts;
+    return "aosp";
+}
+
+bool stale_archive_file(const std::wstring& name, const std::wstring& stem) {
+    const std::wstring prefix = L"framework-";
+    if (name.compare(0, prefix.size(), prefix) != 0 || name.compare(0, stem.size(), stem) == 0) return false;
+    // The archives of AOSP's resources and views while they were switches of their own
+    // (framework-aospres-..., framework-aospviews-...) and of Win.apk's deleted Java2D graphics
+    // (framework-java2d-...): no run makes them any more.
+    for (const wchar_t* gone : {L"framework-aospres-", L"framework-aospviews-", L"framework-java2d-"})
+        if (name.compare(0, std::wcslen(gone), gone) == 0) return true;
+    // This graphics' own prefix, the stem up to its key ("framework-aosp-"): another key's file.
+    const size_t dash = stem.rfind(L'-');
+    if (dash != std::wstring::npos && dash >= prefix.size() && name.compare(0, dash + 1, stem, 0, dash + 1) == 0)
+        return true;
+    // The naming from before the graphics were in it: framework-<16 hex digits>.<anything>.
+    if (name.size() < prefix.size() + 17 || name[prefix.size() + 16] != L'.') return false;
+    for (size_t i = prefix.size(); i < prefix.size() + 16; ++i)
+        if (!std::iswxdigit(name[i])) return false;
+    return true;
 }
 
 std::string merge_classlists(const std::vector<std::string>& lists) {

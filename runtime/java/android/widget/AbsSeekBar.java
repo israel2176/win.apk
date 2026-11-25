@@ -53,7 +53,7 @@ public abstract class AbsSeekBar extends ProgressBar {
      *  whose gate this shares). */
     private void macapkApplyStyledThumb(Context context, AttributeSet attrs,
                                         int defStyleAttr, int defStyleRes) {
-        if (!PROGRESS_STYLED_DRAWABLES || context == null) return;
+        if (context == null) return;
         android.content.res.TypedArray a = null;
         try {
             a = context.obtainStyledAttributes(attrs, MACAPK_STYLED_THUMB_ATTRS,

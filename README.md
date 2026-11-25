@@ -13,7 +13,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Sweep: 90 of 92 apps start](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
 
-**English** · [עברית](README.he.md)
+**English** · [עברית](README.he.md) · [Website](https://israel2176.github.io/win.apk/)
 
 Win.apk installs Android apps (`.apk`, `.apkm`, `.xapk`, `.apks`) and runs
 each one in its own window, with its own Start menu entry, taskbar icon and
@@ -21,7 +21,7 @@ Windows notifications. It is an unofficial Windows port of
 [Mac.apk](https://github.com/kksimp/Mac.apk).
 
 > [!NOTE]
-> **Public preview (v0.8).** Many apps run well; others run in part or not
+> **Version 1.0.** Many apps run well; others run in part or not
 > yet. Check [Compatibility](docs/APPS.md) before you rely on an app, and
 > please [report](docs/troubleshooting.md#reporting-a-problem) what you find.
 
@@ -32,8 +32,9 @@ Windows notifications. It is an unofficial Windows port of
 - **Apps are Windows programs.** Each app has its own resizable window, Start
   menu shortcut and taskbar icon; its notifications are Windows notifications.
 - **Install the way you expect.** Double-click or drag an `.apk` or a split
-  bundle (`.apkm`, `.xapk`, `.apks`), or install from the built-in
-  [F-Droid](https://f-droid.org) Store.
+  bundle (`.apkm`, `.xapk`, `.apks`), or install from the built-in Store:
+  Win.apk's own Play-style [store](https://github.com/israel2176/win.apk-store),
+  in the Win.apk window, that searches Google Play's catalogue.
 - **Your PC's hardware.** Webcams, the microphone, Windows location, Bluetooth
   devices you paired, Wi-Fi information, Xbox controllers, your Downloads and
   Pictures folders, and the clipboard.
@@ -44,9 +45,9 @@ Windows notifications. It is an unofficial Windows port of
 - **English and Hebrew,** light and dark; in Hebrew everything is laid out
   right to left.
 
-| The Store (F-Droid) | Dark theme | Apps from the automated sweep |
+| The Store | Dark theme | Apps from the automated sweep |
 |---|---|---|
-| ![The Store tab: F-Droid apps as cards with Install buttons](docs/images/store.png) | ![The library in the dark theme](docs/images/dark.png) | ![First screens drawn by six F-Droid apps: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5, Loop Habit Tracker](docs/images/apps.png) |
+| ![The Store: Win.apk's own store app in the Win.apk window, its home page with rows of apps](docs/images/store.png) | ![The library in the dark theme](docs/images/dark.png) | ![First screens drawn by six F-Droid apps: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5, Loop Habit Tracker](docs/images/apps.png) |
 
 ## How it differs from an emulator
 
@@ -73,9 +74,9 @@ The full table, checked against the code, is on
 |---|---|---|
 | Java and Kotlin apps | Apps with only arm64 native code: slower until translated | Apps with only 32-bit ARM code (`armeabi-v7a`) |
 | x86_64 native code | `MediaCodec`: H.264 with AAC/MP3 audio | Vulkan |
-| OpenGL ES 1.1-3.2 on Direct3D 11, `NativeActivity` games | Bluetooth: paired devices, RFCOMM, LE scans and GATT client | OpenSL ES (some native games are silent) |
-| Sound (AudioTrack, SoundPool, AAudio output), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
-| Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (they report a phone lying still) |
+| OpenGL ES 1.1-3.2 on Direct3D 11, `NativeActivity` games | Bluetooth: paired devices, RFCOMM, LE scans and GATT client | |
+| Sound (AudioTrack, SoundPool, AAudio output, OpenSL ES), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
+| Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (none is reported) |
 | WebView and Custom Tabs on WebView2 | Google's real Play services and Play Store (experimental) | In-app purchases, Play Integrity, the Maps SDK's map |
 | Webcam, location, clipboard, file pickers, Xbox controllers | Input: multi-touch from a touchscreen or a pen, pinch by Ctrl+wheel or the touchpad; no multi-touch from a mouse alone | |
 | Permissions, Google sign-in, push messages (FCM) | | |
@@ -101,7 +102,7 @@ administrator rights.
 1. Download **`Win.apk-Setup.exe`** from the
    [latest release](https://github.com/israel2176/win.apk/releases/latest)
    (or `Win.apk-windows-x64.zip` for a portable copy).
-2. Run it. **SmartScreen will warn** because the preview is not code-signed:
+2. Run it. **SmartScreen will warn** because Win.apk is not code-signed yet:
    click **More info**, then **Run anyway**.
 3. Open Win.apk and install an app from the **Store**, or double-click an APK.
 
@@ -138,7 +139,7 @@ Hebrew pages: [`docs/he/`](docs/he/).
 
 ## Status and limitations
 
-Win.apk is a preview. Expect apps that do not
+Win.apk does not run every app. Expect apps that do not
 start, missing features ([the list, by importance](docs/APPS.md#needs-improvement-by-importance))
 and changes between releases. Two things to know before you install apps:
 
@@ -174,11 +175,15 @@ app-specific code). Reports in Hebrew are welcome.
   [Microsoft Edge WebView2 SDK](https://www.nuget.org/packages/Microsoft.Web.WebView2)'s
   loader, [Bouncy Castle](https://www.bouncycastle.org/),
   [libwebp](https://chromium.googlesource.com/webm/libwebp),
+  [libvpx](https://chromium.googlesource.com/webm/libvpx),
+  [dav1d](https://code.videolan.org/videolan/dav1d),
+  [Opus](https://opus-codec.org/),
+  [libwebm](https://chromium.googlesource.com/webm/libwebm),
   [SQLite](https://sqlite.org/), [stb_vorbis](https://github.com/nothings/stb)
   and [zlib](https://zlib.net/). Each one's licence is in
   [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
-- **[F-Droid](https://f-droid.org)**, whose catalog the Store shows; the apps
-  belong to their authors.
+- **[F-Droid](https://f-droid.org)**, whose free apps the automated sweep and
+  the tests run; the apps belong to their authors.
 
 ## License
 

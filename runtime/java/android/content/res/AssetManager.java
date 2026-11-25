@@ -177,7 +177,7 @@ public final class AssetManager implements AutoCloseable {
     // On a device this is unconditional: /system/framework/framework-res.apk
     // always exists. Here it is the platform apk the build ships next to the
     // runtime's tools (v1.0.1589/1590: the FULL API-36 apk built from AOSP
-    // source, Apache-2.0, by scripts/build_framework_res.sh -- the only
+    // source, Apache-2.0, by upstream's scripts/build_framework_res.sh -- the only
     // shippable source, no Google binary), named by MACAPK_FW_RES_APK (which
     // main.cpp defaults to <binary_dir>/tools/framework-res.apk) or found
     // relative to this jar. It carries exactly the four framework assets a
@@ -207,11 +207,6 @@ public final class AssetManager implements AutoCloseable {
 
     private static java.io.File macapkFrameworkAssetApk() {
         try {
-            String env = System.getenv("MACAPK_FW_RES_APK");
-            if (env != null && !env.isEmpty()) {
-                java.io.File f = new java.io.File(env);
-                if (f.isFile()) return f;
-            }
             // The same apk the ResourceIndex resolves against, found relative
             // to the jar this class runs from (runtime/build/lib/ ->
             // ../bin/tools/, Contents/lib/ -> ../Resources/tools/). v1.0.1590:
@@ -299,6 +294,19 @@ public final class AssetManager implements AutoCloseable {
             if (e != null) return new Found(z, e);
         }
         return null;
+    }
+
+    /** The cookie of the mount that answers `zipPath` (the reverse-order search's), 0 when none
+     *  does: what AOSP's Resources.getValue reports in TypedValue.assetCookie for a file-backed
+     *  resource, and what AOSP's Font.Builder(Resources, int) opens the file with
+     *  (openNonAssetFd(cookie, path)). */
+    public int macapkCookieOf(String zipPath) {
+        zipPath = macapkEntryPath(zipPath);
+        ZipFile[] mounts = mApkAssets;
+        for (int i = mounts.length - 1; i >= 0; i--) {
+            if (mounts[i] != null && mounts[i].getEntry(zipPath) != null) return i + 1;
+        }
+        return 0;
     }
 
     /** Cookie-scoped resolve. AOSP cookies are 1-based indices into the
@@ -582,6 +590,28 @@ public final class AssetManager implements AutoCloseable {
      *  the app itself (excludes framework locales). Same single-default answer. */
     public String[] getNonSystemLocales() {
         return getLocales();
+    }
+
+    /** AOSP's hidden getAssignedPackageIdentifiers(): package id -> package name of
+     *  every table mounted. AOSP's own Typeface.Builder (the default graphics,
+     *  lib/aosp-graphics.jar) keys a font asset by it (createAssetUid), so
+     *  Typeface.createFromAsset threw NoSuchMethodError without it (PPSSPP).
+     *  The ids are the fixed ones: 0x01 the framework (every AssetManager has
+     *  it on a device), 0x7f the app. */
+    public android.util.SparseArray<String> getAssignedPackageIdentifiers() {
+        return getAssignedPackageIdentifiers(true, true);
+    }
+
+    public android.util.SparseArray<String> getAssignedPackageIdentifiers(boolean includeOverlays,
+            boolean includeLoaders) {
+        android.util.SparseArray<String> ids = new android.util.SparseArray<>();
+        ids.put(0x01, "android");
+        String pkg = null;
+        try { pkg = android.app.ActivityThread.currentPackageName(); } catch (Throwable ignored) { }
+        String[] paths = mApkAssetPaths;
+        if (pkg == null && paths != null && paths.length > 0) pkg = paths[paths.length - 1];
+        if (pkg != null) ids.put(0x7f, pkg);
+        return ids;
     }
 
     /** v1.0.110: nested class Glide's Downsampler does

@@ -83,12 +83,6 @@ import org.xml.sax.ext.LexicalHandler;
 
 public class MacApkExpatReader implements XMLReader {
 
-    /** The ONE read of the bisect gate. MACAPK_SAX_ANDROID_DEFAULTS=0 restores
-     *  the host JAXP SAX behaviour everywhere this class family is wired in:
-     *  SAXParserFactoryImpl forwards to the JDK factory and android.util.Xml
-     *  goes back to a namespace-aware Xerces reader with Xerces' own features. */
-    public static final boolean ANDROID_DEFAULTS =
-            !"0".equals(System.getenv("MACAPK_SAX_ANDROID_DEFAULTS"));
 
     /*
      * Read at every event by the Dispatch below, so they can be changed during

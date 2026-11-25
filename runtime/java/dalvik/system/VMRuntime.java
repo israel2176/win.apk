@@ -68,20 +68,14 @@ public final class VMRuntime {
         return INSTANCE;
     }
 
-    /** AOSP: true on a 64-bit ART. Stage 6 executes guest arm64 in-process, so
-     *  the dominant path is 64-bit. Overridable via the system property
-     *  "macapk.vm.is64bit" (set false for the arm32-lifter path). */
+    /** AOSP: true on a 64-bit ART, which this is. */
     public boolean is64Bit() {
-        return !"false".equals(System.getProperty("macapk.vm.is64bit"));
+        return true;
     }
 
-    /** AOSP: the primary ABI's instruction set ("arm64-v8a" / "armeabi-v7a").
-     *  Honest for Stage 6; overridable via "macapk.vm.instructionSet" for the
-     *  arm32-lifter path. */
+    /** AOSP: the primary ABI's instruction set. */
     public String vmInstructionSet() {
-        String p = System.getProperty("macapk.vm.instructionSet");
-        if (p != null && !p.isEmpty()) return p;
-        return is64Bit() ? android.os.Build.CPU_ABI : "armeabi-v7a";
+        return android.os.Build.CPU_ABI;
     }
 
     /** AOSP: the runtime backing library; on modern Android this is "libart.so". */
@@ -93,7 +87,7 @@ public final class VMRuntime {
      *  AOSP marks this synchronized (paired with setTargetSdkVersion). */
     public synchronized int getTargetSdkVersion() {
         if (!targetSdkVersionSet) {
-            int t = android.app.Application.macapkAppTargetSdk();
+            int t = com.macapk.loader.app.Apps.targetSdk();
             if (t > 0) {
                 targetSdkVersion = t;
                 targetSdkVersionSet = true;

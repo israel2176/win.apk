@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 
+#include "soft_codecs.h"
 #include "video_decode.h"
 #include "video_player.h"
 #include "winapk/mini_bionic.h"
@@ -76,11 +77,20 @@ std::wstring host_source_of(JNIEnv* env, jstring s) {
     return winapk::android_host_path(utf8_of(env, s).c_str());
 }
 
-// The picture as a Java int[] (ARGB, as Bitmap.setPixels takes it).
+// The picture as a Java int[] (ARGB, as Bitmap.setPixels takes it), converted straight into the
+// array: a software decoder's picture goes from its own planes to Java with no copy between.
 jintArray argb_array(JNIEnv* env, const vd::Frame& f) {
-    const jsize n = static_cast<jsize>(f.argb.size());
+    const jsize n = static_cast<jsize>(static_cast<size_t>(f.width) * f.height);
+    if (n <= 0) return nullptr;
     jintArray a = env->NewIntArray(n);
-    if (a) env->SetIntArrayRegion(a, 0, n, reinterpret_cast<const jint*>(f.argb.data()));
+    if (!a) return nullptr;
+    void* px = env->GetPrimitiveArrayCritical(a, nullptr);
+    const bool ok = px && vd::frame_to_argb(f, static_cast<uint32_t*>(px));
+    if (px) env->ReleasePrimitiveArrayCritical(a, px, 0);
+    if (!ok) {
+        env->DeleteLocalRef(a);
+        return nullptr;
+    }
     return a;
 }
 
@@ -99,8 +109,23 @@ jobjectArray JNICALL Vid_supportedMimes(JNIEnv* env, jclass) {
 }
 // The decoders used are the synchronous (software) MFTs; see video_decode.cpp.
 jboolean JNICALL Vid_isHardware(JNIEnv*, jclass, jstring) { return JNI_FALSE; }
-// No measured profile/level table: MediaCodecList keeps its declared ranges.
-jintArray JNICALL Vid_capabilities(JNIEnv*, jclass, jstring) { return nullptr; }
+// A mime a built-in software decoder serves gets AOSP's table for that same
+// decoder (soft_codecs.h), so that ExoPlayer sees its profiles; when Media
+// Foundation decodes it as well, the sizes are its (MediaCodecList's 4096,
+// 65536 blocks), the larger. No table for the rest: MediaCodecList keeps its
+// declared ranges.
+jintArray JNICALL Vid_capabilities(JNIEnv* env, jclass, jstring mime) {
+    const std::string m = utf8_of(env, mime);
+    std::vector<int> table = vd::soft::video_capabilities(m);
+    if (table.empty()) return nullptr;
+    if (vd::media_foundation_decodes(m)) {
+        table[0] = table[1] = 4096;
+        table[2] = 65536;
+    }
+    jintArray out = env->NewIntArray(static_cast<jsize>(table.size()));
+    if (out) env->SetIntArrayRegion(out, 0, static_cast<jsize>(table.size()), reinterpret_cast<const jint*>(table.data()));
+    return out;
+}
 
 jlong JNICALL Vid_open(JNIEnv* env, jclass, jstring mime, jint w, jint h, jbyteArray csd0, jbyteArray csd1, jboolean) {
     auto dec = vd::Decoder::open(utf8_of(env, mime), w, h, bytes_of(env, csd0), bytes_of(env, csd1));
@@ -193,10 +218,41 @@ jint JNICALL Vid_frameBgra(JNIEnv* env, jclass, jlong handle, jbyteArray out, ji
     if (!f || !out || !whs || env->GetArrayLength(whs) < 3) return -1;
     const jint dims[3] = {f->width, f->height, f->width * 4};
     env->SetIntArrayRegion(whs, 0, 3, dims);
-    const jsize need = static_cast<jsize>(f->argb.size() * 4);
-    if (env->GetArrayLength(out) < need) return -1;
-    env->SetByteArrayRegion(out, 0, need, reinterpret_cast<const jbyte*>(f->argb.data()));
-    return 0;
+    const jsize need = static_cast<jsize>(static_cast<size_t>(f->width) * f->height * 4);
+    if (need <= 0 || env->GetArrayLength(out) < need) return -1;
+    void* px = env->GetPrimitiveArrayCritical(out, nullptr);
+    const bool ok = px && vd::frame_to_argb(*f, static_cast<uint32_t*>(px));
+    if (px) env->ReleasePrimitiveArrayCritical(out, px, 0);
+    return ok ? 0 : -1;
+}
+
+// MediaCodec's ByteBuffer and Image output (NativeMedia.nativeVidFrameYuv): the picture in the
+// layout video_decode.h's YuvLayout describes, written straight into the app's direct buffer.
+jint JNICALL Vid_frameYuv(JNIEnv* env, jclass, jlong handle, jobject out, jint format, jintArray info) {
+    std::shared_ptr<vd::Frame> f = frame_of(handle);
+    if (!f || f->width <= 0 || f->height <= 0) return -1;
+    const vd::YuvLayout l = vd::YuvLayout::of(*f, format == 1 ? vd::YuvLayout::kP010 : vd::YuvLayout::kI420);
+    const vd::ColorAspects c = vd::frame_color(*f);
+    if (info && env->GetArrayLength(info) >= 9) {
+        const jint v[9] = {l.width, l.height, l.stride, l.slice_height, static_cast<jint>(l.format),
+                           c.standard, c.range, c.transfer, f->picture ? f->picture->bit_depth : 8};
+        env->SetIntArrayRegion(info, 0, 9, v);
+    }
+    const size_t need = l.size();
+    if (need > static_cast<size_t>(INT32_MAX)) return -1;
+    void* dst = out ? env->GetDirectBufferAddress(out) : nullptr;
+    if (!dst || env->GetDirectBufferCapacity(out) < static_cast<jlong>(need)) return static_cast<jint>(need);
+    return vd::frame_to_yuv(*f, l, static_cast<uint8_t*>(dst)) ? 0 : -1;
+}
+
+jbyteArray JNICALL Vid_frameHdr(JNIEnv* env, jclass, jlong handle) {
+    std::shared_ptr<vd::Frame> f = frame_of(handle);
+    if (!f) return nullptr;
+    const std::vector<uint8_t> hdr = vd::frame_color(*f).hdr_static_info;
+    if (hdr.empty()) return nullptr;
+    jbyteArray a = env->NewByteArray(static_cast<jsize>(hdr.size()));
+    if (a) env->SetByteArrayRegion(a, 0, static_cast<jsize>(hdr.size()), reinterpret_cast<const jbyte*>(hdr.data()));
+    return a;
 }
 
 void JNICALL Vid_flush(JNIEnv*, jclass, jlong h) {
@@ -246,6 +302,10 @@ jint JNICALL Dec_outChannels(JNIEnv*, jclass, jlong h) {
     return dec ? dec->channels() : 0;
 }
 
+void JNICALL Dec_flush(JNIEnv*, jclass, jlong h) {
+    if (auto dec = audio_decoder_of(h)) dec->flush();
+}
+
 void JNICALL Dec_close(JNIEnv*, jclass, jlong h) {
     std::lock_guard<std::mutex> hold(g_lock);
     g_audio_decoders.erase(h);
@@ -265,8 +325,10 @@ std::shared_ptr<vd::Player> player_of(jlong h) {
     return it == g_players.end() ? nullptr : it->second.player;
 }
 
-// VP8 and VP9 come from Media Foundation here, when its codec packs are
-// installed, not from a decoder built into the runtime.
+// False although libvpx is built in: upstream's answer lists VP8 and VP9 a
+// second time (MediaCodecList.LibvpxDecoders, with upstream's narrower
+// table), and here nativeVideoSupportedMimes already lists them, served by
+// Media Foundation or else by libvpx (video_decode.h's Decoder).
 jboolean JNICALL Hv_vpxBuiltIn(JNIEnv*, jclass) { return JNI_FALSE; }
 
 // A path or URL, else the bytes; 0 when it cannot be opened or has no video
@@ -381,6 +443,8 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kMedia, "nativeVidRender", "(JII)V", Vid_render),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidReleaseFrame", "(J)V", Vid_releaseFrame),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidFrameBgra", "(J[B[I)I", Vid_frameBgra),
+    WINAPK_HOST_NATIVE(kMedia, "nativeVidFrameYuv", "(JLjava/nio/ByteBuffer;I[I)I", Vid_frameYuv),
+    WINAPK_HOST_NATIVE(kMedia, "nativeVidFrameHdr", "(J)[B", Vid_frameHdr),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidFlush", "(J)V", Vid_flush),
     WINAPK_HOST_NATIVE(kMedia, "nativeVidClose", "(J)V", Vid_close),
     // Upstream decodes VP8 and VP9 with libvpx behind separate natives of
@@ -399,6 +463,7 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kMedia, "nativeDecDecode", "(J[BZ)[B", Dec_decode),
     WINAPK_HOST_NATIVE(kMedia, "nativeDecOutSampleRate", "(J)I", Dec_outSampleRate),
     WINAPK_HOST_NATIVE(kMedia, "nativeDecOutChannels", "(J)I", Dec_outChannels),
+    WINAPK_HOST_NATIVE(kMedia, "nativeDecFlush", "(J)V", Dec_flush),
     WINAPK_HOST_NATIVE(kMedia, "nativeDecClose", "(J)V", Dec_close),
     WINAPK_HOST_NATIVE(kHost, "nativeVpxBuiltIn", "()Z", Hv_vpxBuiltIn),
     WINAPK_HOST_NATIVE(kHost, "nativeOpen", "(Ljava/lang/String;[B)J", Hv_open),

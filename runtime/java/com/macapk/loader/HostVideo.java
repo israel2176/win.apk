@@ -15,12 +15,17 @@
 // its audio-only path, and vpxBuiltIn answers true, upstream's libvpx.
 package com.macapk.loader;
 
+import com.macapk.loader.gfx.GfxBackend;
+import com.macapk.loader.view.ViewHost;
+
 public final class HostVideo {
     private HostVideo() {}
 
-    /** Whether VP8/VP9 decoders are built into the runtime (upstream's
-     *  libvpx, always there) rather than the host's own, which
-     *  NativeMedia.nativeVideoSupportedMimes lists when present. */
+    /** Whether VP8/VP9 decoders are built into the runtime as upstream's
+     *  libvpx (always there, listed by MediaCodecList.LibvpxDecoders) rather
+     *  than listed by NativeMedia.nativeVideoSupportedMimes: on Windows the
+     *  latter, Media Foundation's decoders else the host's built-in libvpx
+     *  (windows/host/soft_codecs.h). */
     public static boolean vpxBuiltIn() {
         try {
             return nativeVpxBuiltIn();
@@ -34,9 +39,9 @@ public final class HostVideo {
      *  Surface was last built from (a TextureView), else the whole window, as
      *  a bare Surface shows on the Mac. */
     static boolean presentDecodedFrame(int[] argb, int width, int height) {
-        if (android.view.SurfaceView.macapkPresentVideoFrame(null, argb, width, height)) return true;
-        if (android.graphics.SurfaceTexture.macapkHasActiveVideoTarget()
-                && android.graphics.SurfaceTexture.macapkOfferDecodedFrame(argb, width, height, width)) {
+        if (ViewHost.get().presentVideoFrame(null, argb, width, height)) return true;
+        if (GfxBackend.get().hasActiveVideoTarget()
+                && GfxBackend.get().offerDecodedFrame(argb, width, height, width)) {
             return true;
         }
         NativeCocoa.presentBitmap(argb, width, height);
@@ -54,14 +59,14 @@ public final class HostVideo {
             recycler.accept(argb);
             return false;
         }
-        if (s.macapkGetOwnerSurfaceView() != null) {
-            boolean shown = android.view.SurfaceView.macapkPresentVideoFrame(s, argb, width, height);
+        if (ViewHost.get().ownerSurfaceView(s) != null) {
+            boolean shown = ViewHost.get().presentVideoFrame(s, argb, width, height);
             recycler.accept(argb);  // copied synchronously
             return shown;
         }
-        android.graphics.SurfaceTexture st = s.macapkGetSurfaceTexture();
+        android.graphics.SurfaceTexture st = ViewHost.get().surfaceTexture(s);
         if (st != null) {
-            st.macapkQueueProducerFrame(argb, width, height, width, null, recycler, false);
+            GfxBackend.get().queueProducerFrame(st, argb, width, height, width, null, recycler, false);
             return true;
         }
         NativeCocoa.presentBitmap(argb, width, height);
@@ -205,10 +210,10 @@ public final class HostVideo {
         private static int[] cropToSurface(android.view.Surface s, int[] px, int w, int h, int[] dims) {
             if (s == null) return null;
             int sw = 0, sh = 0;
-            android.view.SurfaceView sv = s.macapkGetOwnerSurfaceView();
-            android.graphics.SurfaceTexture st = s.macapkGetSurfaceTexture();
+            android.view.SurfaceView sv = ViewHost.get().ownerSurfaceView(s);
+            android.graphics.SurfaceTexture st = ViewHost.get().surfaceTexture(s);
             if (sv != null) { sw = sv.getWidth(); sh = sv.getHeight(); }
-            else if (st != null) { sw = st.macapkGetDefaultWidth(); sh = st.macapkGetDefaultHeight(); }
+            else if (st != null) { sw = GfxBackend.get().defaultWidth(st); sh = GfxBackend.get().defaultHeight(st); }
             if (sw <= 0 || sh <= 0) return null;
             int cw = w, ch = h;
             if ((long) w * sh > (long) h * sw) cw = (int) ((long) h * sw / sh);  // wider than the surface

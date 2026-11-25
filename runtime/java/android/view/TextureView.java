@@ -50,6 +50,7 @@
 // so do we -- null, not a second producer fighting over the stream.
 package android.view;
 
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Matrix;
@@ -72,29 +73,6 @@ public class TextureView extends View {
     private boolean mMatrixChanged;
     private int mSurfaceWidth, mSurfaceHeight;
 
-    /** AOSP TextureView sizes its SurfaceTexture's DEFAULT BUFFER to the view:
-     *  getTextureLayer() calls mSurface.setDefaultBufferSize(getWidth(),
-     *  getHeight()) before onSurfaceTextureAvailable, onSizeChanged calls it
-     *  before onSurfaceTextureSizeChanged, and an adopted texture
-     *  (setSurfaceTexture) gets the view size the next time the layer updates
-     *  (frameworks/base core/java/android/view/TextureView.java,
-     *  android14-release, :440-449 and :452-470). We never did, so a producer
-     *  that allocates against the default size -- an EGL window surface over
-     *  this texture, BufferQueueCore's 1x1 default when nobody set one
-     *  (frameworks/native libs/gui/BufferQueueCore.cpp mDefaultWidth(1),
-     *  mDefaultHeight(1)) -- rendered at 1x1 instead of the view size
-     *  (docs/telegram-intro-logo_2026-09-26.md §6). The camera path also reads
-     *  this size (CameraCaptureSessionImpl), so an app that never sets one now
-     *  asks for the view size, which the capture backend rounds to the
-     *  nearest-area format, as camera2 rounds a SurfaceTexture size on a
-     *  device. A view that collapses to 0 on one axis passes that 0 on, as AOSP
-     *  does; SurfaceTexture.setDefaultBufferSize then keeps the previous size,
-     *  as BufferQueueConsumer's BAD_VALUE does. BISECT GATE:
-     *  MACAPK_TEXTUREVIEW_BUFSIZE=0 restores the pre-change path (no
-     *  setDefaultBufferSize from this class at all, and SurfaceTexture stores
-     *  every value again). */
-    private static final boolean sSetDefaultBufferSize =
-        !"0".equals(System.getenv("MACAPK_TEXTUREVIEW_BUFSIZE"));
 
     /** Last latch generation this view has drawn, vs the SurfaceTexture's own
      *  counter -- how draw() tells "new frame" from "same frame redrawn". */
@@ -134,7 +112,11 @@ public class TextureView extends View {
     // TextureView renders only with hardware acceleration in AOSP. We do not
     // gate on that here.
     public boolean isOpaque() { return mOpaque; }
-    public void setOpaque(boolean opaque) { mOpaque = opaque; }
+    public void setOpaque(boolean opaque) {
+        if (opaque == mOpaque) return;
+        mOpaque = opaque;
+        invalidate();   // draw() paints black under an opaque view's frame
+    }
 
     // NOTE: View declares these hooks public in our framework (AOSP has them
     // protected), so the overrides must also be public to avoid narrowing.
@@ -158,7 +140,7 @@ public class TextureView extends View {
             // SurfaceTexture as the render target (harmless -- the frame
             // just latches into a Bitmap nobody draws -- but pointless work
             // and a misleading log if anyone traces it).
-            mSurfaceTexture.macapkUnregisterVideoTargetIfSelf();
+            GfxBackend.get().unregisterVideoTargetIfSelf(mSurfaceTexture);
         }
         if (mSurface != null) {
             try { mSurface.release(); } catch (Throwable ignored) {}
@@ -172,7 +154,7 @@ public class TextureView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         if (mAvailable && mSurfaceTexture != null) {
             // AOSP :444: the buffer follows the view before the listener hears.
-            if (sSetDefaultBufferSize) mSurfaceTexture.setDefaultBufferSize(w, h);
+            mSurfaceTexture.setDefaultBufferSize(w, h);
             if (mListener != null && (w != mSurfaceWidth || h != mSurfaceHeight)) {
                 mSurfaceWidth = w; mSurfaceHeight = h;
                 try { mListener.onSurfaceTextureSizeChanged(mSurfaceTexture, w, h); }
@@ -201,7 +183,7 @@ public class TextureView extends View {
         ensureSurfaceTexture();
         // AOSP :466: sized to the view BEFORE onSurfaceTextureAvailable, so a
         // producer the app connects from inside the callback sees w x h.
-        if (sSetDefaultBufferSize) mSurfaceTexture.setDefaultBufferSize(w, h);
+        mSurfaceTexture.setDefaultBufferSize(w, h);
         mSurfaceWidth = w; mSurfaceHeight = h;
         mAvailable = true;
         if (mListener != null) {
@@ -232,7 +214,7 @@ public class TextureView extends View {
             surfaceTexture.setOnFrameAvailableListener(mUpdateListener);
             // AOSP getTextureLayer's mUpdateSurface branch: an adopted texture
             // is set "to use the current view size" (:487).
-            if (sSetDefaultBufferSize && getWidth() > 0 && getHeight() > 0) {
+            if (getWidth() > 0 && getHeight() > 0) {
                 surfaceTexture.setDefaultBufferSize(getWidth(), getHeight());
             }
         }
@@ -306,15 +288,15 @@ public class TextureView extends View {
 
     public android.graphics.Canvas lockCanvas(android.graphics.Rect dirty) {
         if (!mAvailable || mLockedCanvas != null) return null;
-        if (mSurfaceTexture != null && mSurfaceTexture.macapkHasCameraSource()) return null;
+        if (mSurfaceTexture != null && GfxBackend.get().hasCameraSource(mSurfaceTexture)) return null;
         // Same rule for a connected EGL window surface (the GL producer): the
         // stream has ONE producer, and nativeLockCanvas cannot connect a second.
-        if (mSurfaceTexture != null && mSurfaceTexture.macapkHasProducer()) return null;
+        if (mSurfaceTexture != null && GfxBackend.get().hasProducer(mSurfaceTexture)) return null;
         int w = Math.max(1, getWidth());
         int h = Math.max(1, getHeight());
         if (mCanvasBitmap == null
                 || mCanvasBitmap.getWidth() != w || mCanvasBitmap.getHeight() != h) {
-            mCanvasBitmap = Bitmap.createBitmapWithCanvasBacking(w, h);
+            mCanvasBitmap = com.macapk.loader.gfx.GfxBackend.get().createFrameBitmap(w, h);
         }
         mLockedCanvas = new android.graphics.Canvas(mCanvasBitmap);
         return mLockedCanvas;
@@ -336,17 +318,27 @@ public class TextureView extends View {
         // the render thread composites the SurfaceTexture's latest image. Our
         // render thread IS the Canvas pipeline, so this draw performs the
         // consumer latch + composite: newest producer frame (camera) first,
-        // else the lockCanvas content, else nothing (a stream with no frames
-        // paints nothing, honestly).
+        // else the lockCanvas content, over black when opaque (below).
         Bitmap frame = null;
         boolean fresh = false;
         if (mSurfaceTexture != null) {
-            frame = mSurfaceTexture.macapkLatchBitmap();
-            int gen = mSurfaceTexture.macapkLatchGeneration();
+            frame = GfxBackend.get().latchBitmap(mSurfaceTexture);
+            int gen = GfxBackend.get().latchGeneration(mSurfaceTexture);
             fresh = gen != mDrawnGeneration;
             mDrawnGeneration = gen;
         }
         if (frame == null) frame = mCanvasContent;
+        if (mOpaque && canvas != null && getWidth() > 0 && getHeight() > 0) {
+            // What AOSP's own code paints on a software canvas, which ours is:
+            // getLayerType() is LAYER_TYPE_HARDWARE, so View.draw(Canvas, ViewGroup,
+            // long) draws the view through its drawing cache, built opaque (RGB_565,
+            // or ARGB_8888 with setHasAlpha(false)) when isOpaque() and never erased,
+            // and draw() puts nothing in it: an opaque TextureView reads black, a
+            // setOpaque(false) one transparent (android14 View.java buildDrawingCacheImpl,
+            // TextureView.java draw/getLayerType). Robolectric shows the same black
+            // (Gallery's activity_video_player). A frame then covers it.
+            canvas.drawRect(0, 0, getWidth(), getHeight(), opaqueBackdrop());
+        }
         if (frame != null && canvas != null) {
             mSrcRect.set(0, 0, frame.getWidth(), frame.getHeight());
             mDstRect.set(0, 0, getWidth(), getHeight());
@@ -354,6 +346,17 @@ public class TextureView extends View {
         }
         if (fresh) applyUpdate();
         mMatrixChanged = false;
+    }
+
+    private static android.graphics.Paint sOpaqueBackdrop;
+
+    private static android.graphics.Paint opaqueBackdrop() {
+        if (sOpaqueBackdrop == null) {
+            android.graphics.Paint p = new android.graphics.Paint();
+            p.setColor(0xFF000000);
+            sOpaqueBackdrop = p;
+        }
+        return sOpaqueBackdrop;
     }
 
     private void applyUpdate() {

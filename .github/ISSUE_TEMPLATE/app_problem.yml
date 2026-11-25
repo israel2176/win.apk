@@ -43,7 +43,7 @@ body:
     attributes:
       label: Where the APK came from
       options:
-        - The Store tab (F-Droid)
+        - The Store (Win.apk's built-in store)
         - f-droid.org, downloaded by hand
         - Aurora Store (Google Play)
         - The app's own site or GitHub release

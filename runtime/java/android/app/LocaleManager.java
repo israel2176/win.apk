@@ -4,6 +4,7 @@ package android.app;
 
 import android.os.LocaleList;
 
+import com.macapk.loader.res.ResBackend;
 import java.util.Locale;
 
 public class LocaleManager {
@@ -13,7 +14,7 @@ public class LocaleManager {
     public LocaleManager(android.content.Context context) { this.context = context; }
 
     private android.content.SharedPreferences preferences() {
-        android.content.Context owner = context != null ? context : Application.macapk_get();
+        android.content.Context owner = context != null ? context : com.macapk.loader.app.Apps.current();
         return com.macapk.loader.SharedPrefsImpl.macapkGet(owner, "macapk.application_locales");
     }
 
@@ -27,23 +28,20 @@ public class LocaleManager {
                 throw new IllegalStateException("Unable to persist application locales");
             }
         }
-        Runnable apply = () -> {
-            Application app = Application.macapk_get();
-            if (app == null || prefs != com.macapk.loader.SharedPrefsImpl.macapkGet(
-                    app, "macapk.application_locales")) return;
-            android.content.res.Configuration next = applyToResources(app.getResourcesDirect());
-            app.dispatchConfigurationChanged(new android.content.res.Configuration(next));
-            Activity top = com.macapk.loader.ActivityHost.peek();
-            if (top != null) com.macapk.loader.DisplayConfig.deliverToActivity(top, next);
-            android.view.ViewRootImpl.scheduleLayout();
-        };
-        android.os.Looper looper = android.os.Looper.getMainLooper();
-        if (Thread.currentThread() == looper.getThread()) apply.run();
-        else {
-            android.os.Handler handler = android.os.Looper.MACAPK_REAL_LOOPER
-                ? android.os.Handler.macapkCreateOwnerOnly(looper) : new android.os.Handler(looper);
-            handler.post(apply);
-        }
+        // LocaleManagerService's change: the app's configuration gets the new locales, which the
+        // activity task manager sends to the process and its activities (onConfigurationChanged, or
+        // a relaunch for an activity that does not declare locale).
+        com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+        Application app = com.macapk.loader.app.Apps.current();
+        if (host == null || !host.started() || app == null || prefs != com.macapk.loader.SharedPrefsImpl.macapkGet(
+                app, "macapk.application_locales")) return;
+        LocaleList effective = effectiveLocales();
+        android.content.res.Configuration next =
+                new android.content.res.Configuration(app.getResources().getConfiguration());
+        next.setLocales(effective);
+        Locale.setDefault(effective.get(0));
+        LocaleList.setDefault(effective);
+        host.configurationChanged(next);
     }
 
     public LocaleList getApplicationLocales() {
@@ -63,12 +61,12 @@ public class LocaleManager {
         LocaleList effective = effectiveLocales();
         android.content.res.Configuration next = new android.content.res.Configuration(res.getConfiguration());
         next.setLocales(effective);
-        Object index = android.content.res.Resources.macapkGetResourceIndex();
-        if (index instanceof com.macapk.loader.ResourceIndex
-                && ((com.macapk.loader.ResourceIndex) index).macapkSelectionChangesFor(next)) {
+        Object index = ResBackend.get().resourceIndex();
+        if (ResBackend.get().isIndex(index)
+                && ResBackend.get().indexSelectionChangesFor(index, next)) {
             Object built = com.macapk.loader.Boot.macapkNewResourceIndex(next);
             if (built == null) throw new IllegalStateException("Unable to select application locale resources");
-            android.content.res.Resources.macapkSetResourceIndex(built);
+            ResBackend.get().setResourceIndex(built);
         }
         Locale.setDefault(effective.get(0));
         LocaleList.setDefault(effective);

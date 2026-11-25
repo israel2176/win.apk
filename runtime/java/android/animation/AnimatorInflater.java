@@ -19,12 +19,14 @@
 //     a caller (AOSP:129-137, :173-179). We have no ConstantState on Animator, so
 //     we simply re-inflate per call. Observably identical -- AOSP goes out of its
 //     way to return a FRESH instance each time -- only the cost differs.
-//  2. No PathParser, so VALUE_TYPE_PATH (android:valueType="pathType") and the
-//     android:pathData / propertyXName / propertyYName path-along-a-curve mode
-//     (AOSP:508-550) are not built. Both are AnimatedVectorDrawable features.
-//     Fleet exposure measured 2026-08-09: 2 of 3689 valueType occurrences and
-//     1 of 3676 objectAnimators. Those degrade to a value-less animator rather
-//     than throwing, which is strictly better than today's total discard.
+//  2. No PathParser on the Java2D side, so there VALUE_TYPE_PATH
+//     (android:valueType="pathType") and the android:pathData / propertyXName /
+//     propertyYName path-along-a-curve mode (AOSP:508-550) are not built. Both are
+//     AnimatedVectorDrawable features. Fleet exposure measured 2026-08-09: 2 of
+//     3689 valueType occurrences and 1 of 3676 objectAnimators. Those degrade to
+//     a value-less animator rather than throwing. On AOSP's graphics (AOSP's
+//     PathParser and AnimatedVectorDrawable) both are built as AOSP builds them,
+//     through GfxBackend.pathDataValues / pathFromPathData.
 //  3. Animator.appendChangingConfigurations()/createConstantState() do not exist
 //     on our Animator, so the configuration-tracking calls are dropped.
 //
@@ -160,9 +162,6 @@ public class AnimatorInflater {
      *  createStateListAnimatorFromXml (AOSP:227). */
     private static final int ATTR_ANIMATION = 0x010101cd;
 
-    private static boolean inflateEnabled() {
-        return !"0".equals(System.getenv("MACAPK_ANIMATOR_INFLATE"));
-    }
 
     // ------------------------------------------------------------------
     // Public API
@@ -183,7 +182,6 @@ public class AnimatorInflater {
     /** AOSP:110-155, minus the ConfigurationBoundResourceCache (deviation 1). */
     public static Animator loadAnimator(Resources resources, Resources.Theme theme, int id,
             float pathErrorScale) throws Resources.NotFoundException {
-        if (!inflateEnabled()) return new ValueAnimator();
         XmlResourceParser parser = null;
         try {
             parser = resources.getAnimation(id);
@@ -201,7 +199,6 @@ public class AnimatorInflater {
     /** AOSP:157-203, minus the cache. */
     public static StateListAnimator loadStateListAnimator(Context context, int id)
             throws Resources.NotFoundException {
-        if (!inflateEnabled()) return new StateListAnimator();
         XmlResourceParser parser = null;
         try {
             parser = context.getResources().getAnimation(id);
@@ -424,6 +421,20 @@ public class AnimatorInflater {
             String propertyYName =
                     arrayObjectAnimator.getString(PropertyAnimator_propertyYName);
             if (propertyXName == null && propertyYName == null) return;
+            // AOSP:508-550 builds the x and y holders along the path; with the AOSP graphics (whose
+            // PathParser reads the path, and whose AnimatedVectorDrawable animates by them) so here.
+            android.graphics.Path path = com.macapk.loader.gfx.GfxBackend.get().pathFromPathData(pathData);
+            if (path != null) {
+                float error = 0.5f * pixelSize;
+                PropertyValuesHolder x = propertyXName == null ? null
+                        : PropertyValuesHolder.macapkOfPathCoordinate(propertyXName, path, error, true);
+                PropertyValuesHolder y = propertyYName == null ? null
+                        : PropertyValuesHolder.macapkOfPathCoordinate(propertyYName, path, error, false);
+                if (x == null) oa.setValues(y);
+                else if (y == null) oa.setValues(x);
+                else oa.setValues(x, y);
+                return;
+            }
             oa.setPropertyName(propertyXName != null ? propertyXName : propertyYName);
             return;
         }
@@ -594,7 +605,9 @@ public class AnimatorInflater {
                     break;
                 case VALUE_TYPE_COLOR:
                 case VALUE_TYPE_INT:
-                    keyframe = Keyframe.ofInt(fraction, a.getInt(Keyframe_value, 0));
+                    // AOSP reads it with getInt, whose answer for a colour is the colour (its data);
+                    // this TypedArray's getInt reads numbers only, so through intAt, as getPVH does.
+                    keyframe = Keyframe.ofInt(fraction, intAt(a, Keyframe_value, keyframeValue.type));
                     break;
                 default:
                     break;
@@ -629,7 +642,12 @@ public class AnimatorInflater {
             valueType = ((hasFrom && isColorType(fromType)) || (hasTo && isColorType(toType)))
                     ? VALUE_TYPE_COLOR : VALUE_TYPE_FLOAT;
         }
-        if (valueType == VALUE_TYPE_PATH) return null;   // deviation 2
+        if (valueType == VALUE_TYPE_PATH) {
+            // AOSP:290-330: the two paths as PathParser.PathData with its PathData evaluator, when the
+            // graphics are AOSP's (whose AnimatedVectorDrawable animates them).
+            return com.macapk.loader.gfx.GfxBackend.get().pathDataValues(propertyName,
+                    styledAttributes.getString(valueFromId), styledAttributes.getString(valueToId));
+        }
 
         boolean getFloats = (valueType == VALUE_TYPE_FLOAT);
         PropertyValuesHolder returnValue = null;

@@ -9,14 +9,14 @@
 [![רישיון AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![90 מתוך 92 אפליקציות עולות](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
 
-‏[English](README.md) · **עברית**
+‏[English](README.md) · **עברית** · [אתר האינטרנט](https://israel2176.github.io/win.apk/?lang=he)
 
 ‏Win.apk מתקין אפליקציות אנדרואיד (`.apk`, `.apkm`, `.xapk`, `.apks`) ומריץ כל
 אחת בחלון משלה, עם קיצור דרך בתפריט התחל, אייקון בשורת המשימות והתראות של
 Windows. זו הסבה לא רשמית של [Mac.apk](https://github.com/kksimp/Mac.apk)
 ל-Windows.
 
-> **גרסת תצוגה ציבורית (v0.8).** הרבה אפליקציות עובדות טוב, אחרות עובדות
+> **גרסה 1.0.** הרבה אפליקציות עובדות טוב, אחרות עובדות
 > חלקית או עדיין לא. לפני שסומכים על אפליקציה כדאי להציץ ב[טבלת התאימות](docs/APPS.md),
 > ונשמח ש[תדווחו](docs/he/troubleshooting.md#דיווח-על-בעיה) מה מצאתם.
 
@@ -28,8 +28,9 @@ Windows. זו הסבה לא רשמית של [Mac.apk](https://github.com/kksimp/
   דרך בתפריט התחל ואייקון בשורת המשימות. ההתראות שלה מגיעות כהתראות של
   Windows.
 - **התקנה כמו שמצפים.** לחיצה כפולה או גרירה של קובץ `.apk` או חבילה מפוצלת
-  (`.apkm`, `.xapk`, `.apks`), או התקנה מהחנות המובנית של
-  [F-Droid](https://f-droid.org).
+  (`.apkm`, `.xapk`, `.apks`), או התקנה מהחנות המובנית: ה[חנות](https://github.com/israel2176/win.apk-store)
+  של Win.apk בסגנון Google Play, בתוך החלון של Win.apk, שמחפשת בקטלוג של
+  Google Play.
 - **החומרה של המחשב.** מצלמת רשת, מיקרופון, המיקום של Windows, התקני Bluetooth
   שצימדתם, מידע על ה-Wi-Fi, בקרי Xbox, תיקיות ההורדות והתמונות שלכם, והלוח
   (העתק-הדבק).
@@ -39,9 +40,9 @@ Windows. זו הסבה לא רשמית של [Mac.apk](https://github.com/kksimp/
   וחנות Play המקוריים של Google.
 - **עברית ואנגלית,** מצב בהיר וכהה. בעברית הכול מימין לשמאל, כולל ההתקנה.
 
-| החנות (F-Droid) | ערכת נושא כהה | אפליקציות מההרצה האוטומטית |
+| החנות | ערכת נושא כהה | אפליקציות מההרצה האוטומטית |
 |---|---|---|
-| ![לשונית החנות: אפליקציות F-Droid ככרטיסים עם כפתור התקנה](docs/images/store.png) | ![הספרייה בערכת הנושא הכהה](docs/images/dark.png) | ![המסכים הראשונים של שש אפליקציות F-Droid](docs/images/apps.png) |
+| ![החנות של Win.apk בתוך החלון של Win.apk: דף הבית עם שורות של אפליקציות](docs/images/store.png) | ![הספרייה בערכת הנושא הכהה](docs/images/dark.png) | ![המסכים הראשונים של שש אפליקציות F-Droid](docs/images/apps.png) |
 
 ## במה זה שונה מאמולטור
 
@@ -68,9 +69,9 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 |---|---|---|
 | אפליקציות Java ו-Kotlin | אפליקציות עם קוד arm64 בלבד: איטיות עד שהתרגום מוכן | אפליקציות עם קוד ARM של 32 ביט בלבד (`armeabi-v7a`) |
 | קוד מקורי x86_64 | ‏`MediaCodec`: וידאו H.264 עם שמע AAC/MP3 | ‏Vulkan |
-| ‏OpenGL ES 1.1 עד 3.2 על Direct3D 11, משחקי `NativeActivity` | ‏Bluetooth: התקנים מצומדים, RFCOMM, סריקת LE ולקוח GATT | ‏OpenSL ES (חלק מהמשחקים שקטים) |
-| שמע (AudioTrack, SoundPool, פלט AAudio), מיקרופון | ‏Wi-Fi: מידע בלבד, בלי התחברות לרשת | ממשק המדיה של ה-NDK (`AMediaCodec`) |
-| וידאו (`MediaPlayer`, `VideoView`) על Media Foundation | התראות: בלי כפתורי פעולה | חיישנים אמיתיים (הם מדווחים על טלפון מונח ללא תנועה) |
+| ‏OpenGL ES 1.1 עד 3.2 על Direct3D 11, משחקי `NativeActivity` | ‏Bluetooth: התקנים מצומדים, RFCOMM, סריקת LE ולקוח GATT | |
+| שמע (AudioTrack, SoundPool, פלט AAudio, ‏OpenSL ES), מיקרופון | ‏Wi-Fi: מידע בלבד, בלי התחברות לרשת | ממשק המדיה של ה-NDK (`AMediaCodec`) |
+| וידאו (`MediaPlayer`, `VideoView`) על Media Foundation | התראות: בלי כפתורי פעולה | חיישנים אמיתיים (לא מדווח אף חיישן) |
 | ‏WebView ו-Custom Tabs על WebView2 | שירותי Google Play וחנות Play המקוריים (ניסיוני) | רכישות מתוך אפליקציה, Play Integrity, המפה של Maps SDK |
 | מצלמה, מיקום, לוח, בחירת קבצים, בקרי Xbox | קלט: אצבע אחת, בלי מגע מרובה | |
 | הרשאות, כניסה עם Google, הודעות Push ‏(FCM) | | |
@@ -94,7 +95,7 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 
 1. מורידים את **`Win.apk-Setup.exe`** מה[גרסה האחרונה](https://github.com/israel2176/win.apk/releases/latest)
    (או את `Win.apk-windows-x64.zip` לגרסה ניידת, בלי התקנה).
-2. מריצים. **SmartScreen יזהיר**, כי גרסת התצוגה עדיין לא חתומה דיגיטלית:
+2. מריצים. **SmartScreen יזהיר**, כי Win.apk עדיין לא חתום דיגיטלית:
    לוחצים **מידע נוסף** (More info) ואז **הפעל בכל זאת** (Run anyway).
 3. פותחים את Win.apk ומתקינים אפליקציה מה**חנות**, או לוחצים לחיצה כפולה על
    קובץ APK.
@@ -128,7 +129,7 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 
 ## מצב נוכחי ומגבלות
 
-‏Win.apk היא גרסת תצוגה. צפו לאפליקציות שלא עולות, ליכולות חסרות
+‏Win.apk לא מריץ כל אפליקציה. צפו לאפליקציות שלא עולות, ליכולות חסרות
 ([הרשימה, לפי חשיבות](docs/APPS.md#needs-improvement-by-importance)) ולשינויים
 בין גרסאות. שני דברים חשוב לדעת לפני שמתקינים אפליקציות:
 
@@ -163,11 +164,15 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
   [WebView2 SDK](https://www.nuget.org/packages/Microsoft.Web.WebView2) של
   Microsoft, ‏[Bouncy Castle](https://www.bouncycastle.org/),
   ‏[libwebp](https://chromium.googlesource.com/webm/libwebp),
+  ‏[libvpx](https://chromium.googlesource.com/webm/libvpx),
+  ‏[dav1d](https://code.videolan.org/videolan/dav1d),
+  ‏[Opus](https://opus-codec.org/),
+  ‏[libwebm](https://chromium.googlesource.com/webm/libwebm),
   ‏[SQLite](https://sqlite.org/), ‏[stb_vorbis](https://github.com/nothings/stb)
   ו-[zlib](https://zlib.net/). הרישיון של כל אחד מהם ב-
   [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
-- ‏**[F-Droid](https://f-droid.org),** שהקטלוג שלו מוצג בחנות. האפליקציות
-  שייכות למפתחים שלהן.
+- ‏**[F-Droid](https://f-droid.org),** שאת האפליקציות החופשיות שלו מריצות
+  ההרצה האוטומטית והבדיקות. האפליקציות שייכות למפתחים שלהן.
 
 ## רישיון
 

@@ -43,6 +43,29 @@ public final class MacApkTrustProvider extends Provider {
         put("TrustManagerFactory.PKIX", Factory.class.getName());
         put("Alg.Alias.TrustManagerFactory.X509", "PKIX");
         put("Alg.Alias.TrustManagerFactory.X.509", "PKIX");
+        // Conscrypt's KeyManagerFactory: "PKIX", alias "X509". The JDK names its
+        // own "SunX509" and "NewSunX509" (alias PKIX) only, so an app that loads
+        // its client certificate with getInstance("X509") (Cal) got
+        // NoSuchAlgorithmException and talked to its servers without it.
+        put("KeyManagerFactory.PKIX", KmFactory.class.getName());
+        put("Alg.Alias.KeyManagerFactory.X509", "PKIX");
+    }
+
+    /** The JDK's NewSunX509 (X509KeyManagerImpl: several keys, aliases chosen per
+     *  handshake), as Conscrypt's KeyManagerFactoryImpl is on Android. */
+    public static final class KmFactory extends javax.net.ssl.KeyManagerFactorySpi {
+        private final javax.net.ssl.KeyManagerFactory jdk;
+        public KmFactory() throws java.security.GeneralSecurityException {
+            jdk = javax.net.ssl.KeyManagerFactory.getInstance("NewSunX509", "SunJSSE");
+        }
+        @Override protected void engineInit(KeyStore ks, char[] password)
+                throws KeyStoreException, java.security.NoSuchAlgorithmException,
+                       java.security.UnrecoverableKeyException {
+            jdk.init(ks, password);
+        }
+        @Override protected void engineInit(ManagerFactoryParameters spec)
+                throws InvalidAlgorithmParameterException { jdk.init(spec); }
+        @Override protected javax.net.ssl.KeyManager[] engineGetKeyManagers() { return jdk.getKeyManagers(); }
     }
 
     /** First in the provider list, so an unqualified TrustManagerFactory

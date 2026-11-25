@@ -11,8 +11,8 @@ goals together:
 4. no work is done twice.
 
 Everything here was measured on Linux, a 4-vCPU cloud VM with 15 GB of RAM,
-using clang 20.1 and `winapk-aot` from `main`. Some tools are patched copies,
-and the scripts and patches are in [`aot-measurements/`](aot-measurements/).
+using clang 20.1 and `winapk-aot` from `main`. Some tools were patched copies,
+kept out of the tree once measured.
 Running real apps on Windows (part B, section 8) is still to do.
 
 Contents:
@@ -301,8 +301,7 @@ Part B of the plan, in the order that decides settings:
 
 1. **The bundled clang.** Repeat section 5's `-O1`, `-O2`, `-O2 -mllvm
    -fast-isel` rows with Win.apk's `clang\bin\clang.exe` on the same samples
-   (`aot-measurements/aot_flags_windows.ps1` does this with an installed
-   Win.apk). Switch
+   of an installed Win.apk). Switch
    `kAotCompileFlags` only if `-O2 -mllvm -fast-isel` stays at least as fast
    to compile as `-O1`.
 2. **Real speed, per app.**

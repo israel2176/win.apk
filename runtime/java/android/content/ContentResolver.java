@@ -432,9 +432,7 @@ public class ContentResolver {
         // file:// / android.resource:// keep the scheme special-cases of
         // openAssetFileDescriptor. MACAPK_LOADTHUMB_TYPED=0 restores the untyped open.
         android.content.res.AssetFileDescriptor afd;
-        String loadThumbTyped = System.getenv("MACAPK_LOADTHUMB_TYPED");
-        if (SCHEME_CONTENT.equals(uri.getScheme()) && (loadThumbTyped == null
-                || loadThumbTyped.isEmpty() || loadThumbTyped.charAt(0) != '0')) {
+        if (SCHEME_CONTENT.equals(uri.getScheme())) {
             Bundle thumbOpts = new Bundle();
             thumbOpts.putParcelable(EXTRA_SIZE, new android.graphics.Point(targetW, targetH));
             afd = openTypedAssetFileDescriptor(uri, "image/*", thumbOpts, signal);
@@ -580,8 +578,6 @@ public class ContentResolver {
     // callbacks never fired. v1.0.423.
     private static final java.util.List<Object[]> sObservers =
         new java.util.concurrent.CopyOnWriteArrayList<>();
-    static final boolean MACAPK_NOTIFY_SUBTREE =
-        !"0".equals(System.getenv("MACAPK_NOTIFY_SUBTREE"));
     private static void macapkNotify(Uri uri, ContentObserver self) {
         String u = uri != null ? uri.toString() : "";
         for (Object[] e : sObservers) {
@@ -598,7 +594,7 @@ public class ContentResolver {
             // TaskList.URI_WITH_COUNT, notified via TaskList.URI) never showed a
             // newly created list until the app restarted.
             // MACAPK_NOTIFY_SUBTREE=0 restores the old match.
-            final boolean subtree = MACAPK_NOTIFY_SUBTREE && !u.isEmpty()
+            final boolean subtree = !u.isEmpty()
                     && base.length() > u.length() && base.startsWith(u)
                     && (u.endsWith("/") || base.charAt(u.length()) == '/');
             if (base.isEmpty() || u.equals(base) || (desc && u.startsWith(base)) || subtree) {
@@ -739,17 +735,14 @@ public class ContentResolver {
     // both erase to java.util.List, so the descriptor an app links against is
     // unchanged.
     public void takePersistableUriPermission(Uri uri, int modeFlags) {
-        if (!MacApkUriGrants.ENABLED) return;
         java.util.Objects.requireNonNull(uri, "uri");
         MacApkUriGrants.takePersistable(uri, modeFlags);
     }
     public void releasePersistableUriPermission(Uri uri, int modeFlags) {
-        if (!MacApkUriGrants.ENABLED) return;
         java.util.Objects.requireNonNull(uri, "uri");
         MacApkUriGrants.releasePersistable(uri, modeFlags);
     }
     public List<UriPermission> getPersistedUriPermissions() {
-        if (!MacApkUriGrants.ENABLED) return Collections.emptyList();
         return MacApkUriGrants.persisted();
     }
     /** Grants FROM this app to another that the other app persisted. Mac.apk runs

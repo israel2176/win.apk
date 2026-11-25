@@ -49,7 +49,7 @@ final class DeviceCredentialHandler {
 
     static boolean handle(Intent outer, Intent real, SpecialAccessHandler.Cover cover) {
         if (!isCredentialIntent(real)) return false;
-        Activity.MacApkHostResult token = Activity.macapkClaimHostResult(outer);
+        com.macapk.loader.app.HostResult token = com.macapk.loader.app.HostResults.claim(outer);
         CharSequence title = real.getCharSequenceExtra(KeyguardManager.EXTRA_TITLE);
         CharSequence description = real.getCharSequenceExtra(KeyguardManager.EXTRA_DESCRIPTION);
         String reason = description != null && description.length() != 0 ? description.toString()

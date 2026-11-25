@@ -34,6 +34,12 @@ int pthread_create(pthread_t*, const void*, void* (*)(void*), void*);
 int pthread_join(pthread_t, void**);
 long strtol(const char*, char**, int);
 double strtod(const char*, char**);
+int vasprintf(char**, const char*, va_list);
+void android_set_abort_message(const char*);
+void openlog(const char*, int, int);
+void syslog(int, const char*, ...);
+void vsyslog(int, const char*, va_list);
+void closelog(void);
 
 #define EXPORT __attribute__((visibility("default")))
 
@@ -295,4 +301,214 @@ EXPORT int arm64_cleanup(void) {
     g_cleanup_sum = 0;
     if (pthread_create(&t, 0, cleanup_thread, 0) || pthread_join(t, &r)) return -1;
     return g_cleanup_sum * 10 + (int)(long)r;
+}
+
+// ---- libc++abi's abort_message, short of the abort ---------------------------------
+// What NDK libc++abi does before abort() when a C++ exception goes uncaught:
+// format the message, hand it to android_set_abort_message, then
+// openlog("libc++abi", 0, 0), syslog, closelog. The shim's no-op stood for
+// vsyslog too, so the bridge took openlog's third argument (0) for a va_list
+// and the host crashed reading 0x18 (Bank Leumi, under Bugsnag).
+static int abort_tail(const char* fmt, ...) {
+    char* buffer = 0;
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vasprintf(&buffer, fmt, ap);
+    va_end(ap);
+    if (n < 0 || !buffer) return -1;
+    android_set_abort_message(buffer);
+    openlog("libc++abi", 0, 0);
+    syslog(2, "%s", buffer);
+    va_start(ap, fmt);
+    vsyslog(2, fmt, ap);
+    va_end(ap);
+    closelog();
+    int ok = strcmp(buffer, "terminating due to uncaught exception of type E: what") == 0;
+    free(buffer);
+    return ok ? 1 : -2;
+}
+
+EXPORT int arm64_abort_tail(void) {
+    return abort_tail("terminating due to uncaught exception of type %s: %s", "E", "what");
+}
+
+// ---- raw system calls -------------------------------------------------------------
+// Protection libraries (Leumi's libe689.so) make their calls as raw SVCs, by
+// arm64's numbers, so that nothing hooking libc sees them; others go through
+// syscall(). Each check is one bit of the result, so the test names a failure.
+long syscall(long, ...);
+int getpid(void);
+int gettid(void);
+int getuid(void);
+struct a64_timespec { long tv_sec, tv_nsec; };
+struct a64_utsname { char sysname[65], nodename[65], release[65], version[65], machine[65], domainname[65]; };
+
+static long svc6(long nr, long a0, long a1, long a2, long a3, long a4, long a5) {
+    register long x8 __asm__("x8") = nr;
+    register long x0 __asm__("x0") = a0;
+    register long x1 __asm__("x1") = a1;
+    register long x2 __asm__("x2") = a2;
+    register long x3 __asm__("x3") = a3;
+    register long x4 __asm__("x4") = a4;
+    register long x5 __asm__("x5") = a5;
+    __asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory");
+    return x0;
+}
+
+EXPORT int arm64_raw_syscalls(void) {
+    int bits = 0;
+    // SVC 222 mmap (1 MB, read/write, MAP_PRIVATE | MAP_ANONYMOUS), 226 mprotect, 215 munmap.
+    char* p = (char*)svc6(222, 0, 1 << 20, 3, 0x22, -1, 0);
+    if (p && (unsigned long)p < (unsigned long)-4096L) {
+        p[0] = 1;
+        p[(1 << 20) - 1] = 2;
+        if (p[1 << 19] == 0) bits |= 1;
+        if (svc6(226, (long)p, 65536, 1, 0, 0, 0) == 0) bits |= 2;
+        if (svc6(215, (long)p, 1 << 20, 0, 0, 0, 0) == 0) bits |= 4;
+    }
+    // The same three through the syscall() import: six arguments, the sixth on the bridge's stack.
+    char* q = (char*)syscall(222, 0L, 65536L, 3L, 0x22L, -1L, 0L);
+    if (q && q != (char*)-1) {
+        q[65535] = 5;
+        if (syscall(226, q, 65536L, 1L) == 0 && syscall(215, q, 65536L) == 0) bits |= 8;
+    }
+    if (svc6(172, 0, 0, 0, 0, 0, 0) == getpid() && svc6(178, 0, 0, 0, 0, 0, 0) == gettid()) bits |= 16;
+    if (svc6(174, 0, 0, 0, 0, 0, 0) == getuid()) bits |= 32;
+    struct a64_timespec ts = {0, 1000000};
+    if (svc6(101, (long)&ts, 0, 0, 0, 0, 0) == 0) bits |= 64;
+    struct a64_utsname u;
+    if (svc6(160, (long)&u, 0, 0, 0, 0, 0) == 0 && strcmp(u.sysname, "Linux") == 0) bits |= 128;
+    // A call the shim does not have: -ENOSYS in x0, as a kernel without it answers.
+    if (svc6(9999, 0, 0, 0, 0, 0, 0) == -38) bits |= 256;
+    return bits;
+}
+
+// The raw table's further calls and the stubs that misreported, each by the kernel's convention as its man
+// page gives it (getcwd(2), getpriority(2), clock_nanosleep(2), rt_sigaction(2), mremap(2), ptrace(2)...).
+struct a64_ksigaction { void* handler; unsigned long flags; void* restorer; unsigned long mask; };
+struct a64_epoll_event { unsigned events; unsigned long data; };  // 16 bytes on arm64
+struct a64_rlimit { unsigned long cur, max; };
+static void a64_handler(int sig) { (void)sig; }
+
+EXPORT int arm64_raw_syscalls2(const char* dir) {
+    int bits = 0;
+    // getcwd 17: the length with its NUL, not the pointer.
+    char cwd[1024];
+    long n = svc6(17, (long)cwd, sizeof cwd, 0, 0, 0, 0);
+    if (n > 1 && n == (long)strlen(cwd) + 1) bits |= 1;
+    // rt_sigaction 134 / rt_sigprocmask 135: the kernel's struct, read back; a wrong sigsetsize is EINVAL.
+    struct a64_ksigaction act = {(void*)a64_handler, 0x10000000 /* SA_RESTART */, 0, 1UL << 9};
+    struct a64_ksigaction old = {0, 0, 0, 0};
+    if (svc6(134, 10 /* SIGUSR1 */, (long)&act, 0, 8, 0, 0) == 0 &&
+        svc6(134, 10, 0, (long)&old, 8, 0, 0) == 0 && old.handler == (void*)a64_handler &&
+        old.flags == 0x10000000 && old.mask == (1UL << 9) && svc6(134, 10, 0, (long)&old, 4, 0, 0) == -22) {
+        bits |= 2;
+    }
+    act.handler = 0;  // SIG_DFL again
+    act.flags = 0;
+    act.mask = 0;
+    svc6(134, 10, (long)&act, 0, 8, 0, 0);
+    unsigned long set = 1UL << 11, prev = 0, now = 0;  // SIGUSR2
+    if (svc6(135, 0 /* SIG_BLOCK */, (long)&set, (long)&prev, 8, 0, 0) == 0 &&
+        svc6(135, 0, 0, (long)&now, 8, 0, 0) == 0 && (now & (1UL << 11)) &&
+        svc6(135, 2 /* SIG_SETMASK */, (long)&prev, 0, 8, 0, 0) == 0) {
+        bits |= 4;
+    }
+    // getpriority 141 returns 20 - nice; setpriority 140 sets the calling thread's.
+    if (svc6(140, 0, 0, 10, 0, 0, 0) == 0 && svc6(141, 0, 0, 0, 0, 0, 0) == 10 &&
+        svc6(140, 0, 0, 0, 0, 0, 0) == 0 && svc6(141, 0, 0, 0, 0, 0, 0) == 20) {
+        bits |= 8;
+    }
+    // clock_nanosleep 115 with a bad timespec: -EINVAL (it was +22).
+    struct a64_timespec bad = {0, 2000000000L};
+    if (svc6(115, 1, 0, (long)&bad, 0, 0, 0) == -22) bits |= 16;
+    // openat 56 relative to a directory descriptor, O_DIRECTORY by arm64's value (040000).
+    long dfd = svc6(56, -100, (long)dir, 040000, 0, 0, 0);
+    if (dfd >= 0) {
+        long fd = svc6(56, dfd, (long)"raw_openat.txt", 0101 /* O_WRONLY | O_CREAT */, 0644, 0, 0);
+        if (fd >= 0 && svc6(64, fd, (long)"x", 1, 0, 0, 0) == 1 && svc6(83, fd, 0, 0, 0, 0, 0) == 0 &&
+            svc6(32, fd, 2 /* LOCK_EX */, 0, 0, 0, 0) == 0 && svc6(32, fd, 8 /* LOCK_UN */, 0, 0, 0, 0) == 0 &&
+            svc6(57, fd, 0, 0, 0, 0, 0) == 0 &&
+            svc6(38, dfd, (long)"raw_openat.txt", dfd, (long)"raw_renamed.txt", 0, 0) == 0 &&
+            svc6(35, dfd, (long)"raw_renamed.txt", 0, 0, 0, 0) == 0) {
+            bits |= 32;
+        }
+        // O_DIRECTORY on a file is ENOTDIR (as x86_64's O_DIRECT it was ignored).
+        long f2 = svc6(56, dfd, (long)"raw_file.txt", 0101, 0644, 0, 0);
+        if (f2 >= 0) svc6(57, f2, 0, 0, 0, 0, 0);
+        if (svc6(56, dfd, (long)"raw_file.txt", 040000, 0, 0, 0) == -20) bits |= 64;
+        svc6(35, dfd, (long)"raw_file.txt", 0, 0, 0, 0);
+        svc6(57, dfd, 0, 0, 0, 0, 0);
+    }
+    // epoll 20/21/22 with arm64's 16-byte event, on an eventfd 19 made readable.
+    long ep = svc6(20, 0, 0, 0, 0, 0, 0), ev = svc6(19, 0, 0, 0, 0, 0, 0);
+    if (ep >= 0 && ev >= 0) {
+        struct a64_epoll_event in = {1 /* EPOLLIN */, 0x1122334455667788UL}, out[2] = {{0, 0}, {0, 0}};
+        unsigned long one = 1;
+        if (svc6(21, ep, 1 /* ADD */, ev, (long)&in, 0, 0) == 0 && svc6(64, ev, (long)&one, 8, 0, 0, 0) == 8 &&
+            svc6(22, ep, (long)out, 2, 1000, 0, 8) == 1 && out[0].data == 0x1122334455667788UL) {
+            bits |= 128;
+        }
+        svc6(57, ev, 0, 0, 0, 0, 0);
+        svc6(57, ep, 0, 0, 0, 0, 0);
+    }
+    // getrlimit 163, getcpu 168, timerfd 85/87, memfd_create 279, mlock 228/229, mlockall 230 = ENOMEM.
+    struct a64_rlimit rl = {0, 0};
+    unsigned cpu = 0xffffffffu, node = 0xffffffffu;
+    if (svc6(163, 7 /* RLIMIT_NOFILE */, (long)&rl, 0, 0, 0, 0) == 0 && rl.cur > 0 &&
+        svc6(168, (long)&cpu, (long)&node, 0, 0, 0, 0) == 0 && cpu < 4096 && node < 64) {
+        bits |= 256;
+    }
+    long tfd = svc6(85, 1 /* CLOCK_MONOTONIC */, 0, 0, 0, 0, 0);
+    struct a64_timespec its[2];
+    if (tfd >= 0 && svc6(87, tfd, (long)its, 0, 0, 0, 0) == 0) bits |= 512;
+    if (tfd >= 0) svc6(57, tfd, 0, 0, 0, 0, 0);
+    long mfd = svc6(279, (long)"raw", 0, 0, 0, 0, 0);
+    if (mfd >= 0 && svc6(46, mfd, 8192, 0, 0, 0, 0) == 0) bits |= 1024;
+    if (mfd >= 0) svc6(57, mfd, 0, 0, 0, 0, 0);
+    char* page = (char*)svc6(222, 0, 65536, 3, 0x22, -1, 0);
+    if ((unsigned long)page < (unsigned long)-4096L) {
+        page[0] = 1;
+        if (svc6(228, (long)page, 4096, 0, 0, 0, 0) == 0 && svc6(229, (long)page, 4096, 0, 0, 0, 0) == 0 &&
+            svc6(284, (long)page, 4096, 2, 0, 0, 0) == -22 && svc6(230, 1, 0, 0, 0, 0, 0) == -12 &&
+            svc6(231, 0, 0, 0, 0, 0, 0) == 0) {
+            bits |= 2048;
+        }
+        // mincore 232: the touched page is resident; an address off a page is EINVAL.
+        unsigned char vec[16];
+        if (svc6(232, (long)page, 4096, (long)vec, 0, 0, 0) == 0 && vec[0] == 1 &&
+            svc6(232, (long)page + 1, 4096, (long)vec, 0, 0, 0) == -22) {
+            bits |= 4096;
+        }
+        // mremap 216: moved (MREMAP_MAYMOVE) with its bytes, the old range gone.
+        page[4095] = 7;
+        char* moved = (char*)svc6(216, (long)page, 65536, 4 * 65536 + 4096, 1, 0, 0);
+        if ((unsigned long)moved < (unsigned long)-4096L && moved[0] == 1 && moved[4095] == 7) {
+            moved[4 * 65536] = 9;
+            bits |= 8192;
+            svc6(215, (long)moved, 4 * 65536 + 4096, 0, 0, 0, 0);
+        } else {
+            svc6(215, (long)page, 65536, 0, 0, 0, 0);
+        }
+    }
+    // ptrace 117: PTRACE_TRACEME is refused as on a device (EACCES), a tracee it does not have is ESRCH.
+    if (svc6(117, 0, 0, 0, 0, 0, 0) == -13 && svc6(117, 2 /* PEEKDATA */, 12345, 0, 0, 0, 0) == -3) bits |= 16384;
+    // xattrs 5-16: ENOTSUP from a file system without them, not ENOSYS.
+    if (svc6(8, (long)dir, (long)"user.x", 0, 0, 0, 0) == -95) bits |= 32768;
+    return bits;
+}
+
+// set_tid_address 96: the word is cleared when the thread ends.
+static volatile int g_clear_tid_word = 0;
+static void* tid_thread(void* arg) {
+    (void)arg;
+    g_clear_tid_word = 1234;
+    long tid = svc6(96, (long)&g_clear_tid_word, 0, 0, 0, 0, 0);
+    return (void*)(tid > 0 ? 1L : 0L);
+}
+EXPORT int arm64_set_tid_address(void) {
+    pthread_t t;
+    void* r = 0;
+    if (pthread_create(&t, 0, tid_thread, 0) || pthread_join(t, &r)) return -1;
+    return (r == (void*)1L ? 1 : 0) + (g_clear_tid_word == 0 ? 2 : 0);
 }

@@ -27,4 +27,9 @@ if [ -z "$run" ]; then
   echo "no build of $branch: main's"
 fi
 echo "runtime-stage of run $run ($(gh run view "$run" -R "$GITHUB_REPOSITORY" --json headSha,headBranch -q '.headBranch + " " + .headSha'))"
-gh run download "$run" -R "$GITHUB_REPOSITORY" -n runtime-stage -D "$out"
+# An artifact listed the moment its upload ends can still answer 404 for a short while: try again.
+for attempt in 1 2 3 4 5 6; do
+  gh run download "$run" -R "$GITHUB_REPOSITORY" -n runtime-stage -D "$out" && break
+  [ "$attempt" = 6 ] && exit 1
+  echo "download failed (attempt $attempt), again in 20 s"; rm -rf "$out"; sleep 20
+done

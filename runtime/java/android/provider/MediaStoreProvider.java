@@ -4,7 +4,7 @@
 // Files, Downloads).
 //
 // THE GAP THIS FILLS: ContentProviderRegistry (android.content) is populated
-// exactly one way -- com.macapk.loader.Boot.installAutoInitProviders() walks
+// exactly one way -- ActivityThread.installContentProviders (Boot.appProviders lists them) walks
 // the APK's manifest <provider> declarations and registers each one under
 // its android:authorities. "media" is never declared by any app manifest
 // (on real Android it is baked into the system image by
@@ -432,7 +432,7 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
     // index doesn't collide with any real app's per-package data dir.
     private static File dbFile() {
         String root = System.getProperty("macapk.android.root");
-        if (root == null || root.isEmpty()) root = System.getenv("MACAPK_ANDROID_ROOT");
+        if (root == null || root.isEmpty()) root = null;
         if (root == null || root.isEmpty()) {
             // Last-ditch dev default; inert in every real run because the
             // runtime always sets -Dmacapk.android.root. Kept in step with
@@ -2231,10 +2231,6 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
     // queries does not pay the walk once per query; small trees are walked on
     // every query exactly as before.
 
-    static boolean hostScanEnabled() {
-        String e = System.getenv("MACAPK_MEDIASTORE_HOSTSCAN");
-        return e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
 
     /** Folder extensions macOS presents as a single document (LaunchServices
      *  packages): the media libraries and the bundle types a user's Pictures /
@@ -2278,7 +2274,6 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
      *  images under Download/Documents, same as AOSP (AccessChecker filters by
      *  MEDIA TYPE, never by folder). */
     static void walkVolume(File root, List<File> out, int a) {
-        if (!hostScanEnabled()) { walk(root, root, out); return; }
         File[] children = root.listFiles();
         if (children == null) return;
         for (File f : children) {
@@ -2386,7 +2381,7 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
     // (default ON) restores the old index-wide answer.
 
     static boolean accessGateEnabled() {
-        String e = System.getenv("MACAPK_MEDIASTORE_ACCESS");
+        String e = null;
         return e == null || e.isEmpty() || e.charAt(0) != '0';
     }
 
@@ -2498,7 +2493,7 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
     private static void walk(File dir, File root, List<File> out) {
         File[] children = dir.listFiles();
         if (children == null) return;
-        final boolean host = hostScanEnabled();
+        final boolean host = true;
         for (File f : children) {
             String name = f.getName();
             if (name.startsWith(".")) continue;
@@ -2576,14 +2571,14 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
 
     /** MACAPK_PHOTOKIT, default ON. */
     static boolean photosEnabled() {
-        String e = System.getenv("MACAPK_PHOTOKIT");
+        String e = null;
         return e == null || e.isEmpty() || e.charAt(0) != '0';
     }
 
     /** The diagnostic directory backend, or null for PhotoKit. */
     static File photosSourceDir() {
         String d = System.getProperty("macapk.photokit.source.dir");
-        if (d == null || d.isEmpty()) d = System.getenv("MACAPK_PHOTOKIT_SOURCE_DIR");
+        if (d == null || d.isEmpty()) d = null;
         return (d == null || d.isEmpty()) ? null : new File(d);
     }
 
@@ -2838,21 +2833,13 @@ public final class MediaStoreProvider extends android.content.ContentProvider {
     }
 
     private static int[] photosImageSize(File f) {
-        // Header-only read through the JDK's ImageIO readers: no pixels, no AWT
-        // toolkit. HEIC has no JDK reader and answers 0x0, an honest "unknown".
-        try (javax.imageio.stream.ImageInputStream in = javax.imageio.ImageIO.createImageInputStream(f)) {
-            if (in != null) {
-                java.util.Iterator<javax.imageio.ImageReader> it = javax.imageio.ImageIO.getImageReaders(in);
-                if (it.hasNext()) {
-                    javax.imageio.ImageReader r = it.next();
-                    try {
-                        r.setInput(in);
-                        return new int[]{r.getWidth(0), r.getHeight(0)};
-                    } finally {
-                        r.dispose();
-                    }
-                }
-            }
+        // Header-only: BitmapFactory's bounds decode, no pixels (Skia's codecs on AOSP's graphics,
+        // the default). A format it has no codec for (HEIC) answers 0x0, an honest "unknown".
+        try {
+            android.graphics.BitmapFactory.Options o = new android.graphics.BitmapFactory.Options();
+            o.inJustDecodeBounds = true;
+            android.graphics.BitmapFactory.decodeFile(f.getPath(), o);
+            if (o.outWidth > 0 && o.outHeight > 0) return new int[]{o.outWidth, o.outHeight};
         } catch (Throwable ignored) {}
         return new int[]{0, 0};
     }

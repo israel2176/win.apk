@@ -15,17 +15,28 @@
 //   flag: that start runs without CDS, and says so.
 //
 //   The framework archive: one static archive of the JDK's and the framework's
-//   classes, shared by every app, <data>\cds\framework-<key>.jsa. The release
+//   classes, shared by every app, <data>\cds\framework-<graphics>-<key>.jsa: "aosp"
+//   (lib\aosp-graphics.jar first on the class path), or "aospres" / "aospviews" with AOSP's
+//   resources or views on (cds_util.h, graphics_of), so no one's dump deletes another's;
+//   the JVMs with no app (install, --gms, --verify-apk, --system) take the framework an
+//   app's run would, and so map its archive. The release
 //   ships the class list (lib\winapk-framework.classlist, the classes at least
-//   three of the smoke apps load); the first app start without an archive also
-//   records the classes it loads, and 10 s after its first frame (or at its exit) a background
-//   `winapk-runtime --cds-dump` runs `java -Xshare:dump` over both lists.
-//   Every later start of every app maps it. `--cds-prepare` builds it at once.
+//   three of the smoke apps load), and the archive is made from it before any app starts, as
+//   Android compiles its framework at an update and an app at its install: by Win.apk's
+//   installer (`--cds-prepare`, winapk.iss), else in the background from the first app install on
+//   (cds_dump_at_install; an app start meanwhile waits for it). Only when neither made it does an
+//   app start without an archive record
+//   the classes it loads, and 10 s after its first frame (or at its exit) a background
+//   `winapk-runtime --cds-dump` runs `java -Xshare:dump` over both lists: a second JVM of about
+//   200 MB beside the app (measured on windows-latest: a first start's peak was twice the
+//   second's, all of it the dump), which is why it is the last resort. Every later start of
+//   every app maps it. `--cds-prepare` builds the one an app's start would map, at once. The
+//   dump's JVM has a heap of its own (cds::kDumpHeapOptions), not the app's.
 //
-// <key> hashes what the archive depends on: the JRE (its version, lib\modules,
+// <key> hashes what the archive depends on: the graphics, the JRE (its version, lib\modules,
 // its own classes.jsa), the framework jars and the shipped class list (size
 // and time: a new Win.apk changes them), and the JVM options that are not per
-// launch. A new key dumps a new archive and deletes the old ones. The app's own
+// launch. A new key dumps a new archive and deletes its graphics' old ones. The app's own
 // classes are never archived: HotSpot verifies every class it dumps, and
 // dex-converted code often does not verify (docs/research/startup-cds.md).
 //
@@ -33,16 +44,14 @@
 // checking its header, the JRE and the class path, and otherwise runs without
 // it (-Xshare:auto). A new archive is mapped the first time with
 // -XX:+VerifySharedSpaces (a CRC of its content: a damaged file is refused,
-// not crashed on); once it mapped whole, framework-<key>.ok marks it. A start
+// not crashed on); once it mapped whole, framework-<graphics>-<key>.ok marks it. A start
 // whose archive did not map logs why, deletes it and counts the failure; after
 // two for the same key the archive is not made again for it.
 //
-// WINAPK_CDS=0 turns both layers off (the old flags); WINAPK_CDS=base keeps
-// only the JRE's archive. WINAPK_CDS_DIR moves the framework archive (tests
-// share one between data folders), WINAPK_CDS_CLASSLIST names another shipped
-// list ("" for none), WINAPK_CDS_RECORD_DIR=<dir> records each start's loaded
-// classes to <dir>\<app>.classlist (to make the shipped list), and
-// WINAPK_CDS_DUMP_DELAY_MS (default 10000) is the wait after the first frame.
+// For CI: WINAPK_CDS_DIR moves the framework archive (tests share one between
+// data folders), and WINAPK_CDS_RECORD_DIR=<dir> records each start's loaded
+// classes to <dir>\<app>.classlist (to make the shipped list). The dump waits
+// 10 s after the first frame.
 
 #pragma once
 
@@ -78,6 +87,15 @@ void cds_before_exit();
 // winapk-runtime --cds-prepare: dumps the framework archive for the options
 // cds_apply last saw, now and in this process's wait. 0 when an archive is there.
 int cds_prepare();
+
+// An install (--install-only), once cds_apply has seen its options: when this Win.apk has no
+// framework archive yet, its dump starts now in a process of its own, in the background and at
+// below-normal priority, beside the install's own work, and the install does not wait for it:
+// Android compiles before an app's first start rather than during it, but does not hold the
+// install up for it either. An app start that finds no archive while that dump runs waits for it
+// (cds_apply, kDumpWaitMs) and maps it, so no app start owes the dump (a second JVM of 200+ MB
+// beside the app). Nothing when the archive is there, off, or failed twice.
+void cds_dump_at_install();
 
 // winapk-runtime --cds-dump ...: the background dump (cds.cpp, spawn_dump).
 int cds_dump_main(int argc, wchar_t** argv);

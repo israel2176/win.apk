@@ -11,35 +11,25 @@
 //      tilt/AR games that feed us their own data get the correct
 //      result. (URL in repo CLAUDE.md reading list.)
 //
-//  (2) The instance side hands back real Sensor objects and actually
-//      delivers events. With no hardware we synthesize a quiescent
-//      "device lying flat, not moving" stream: the accelerometer (and
-//      gravity) report (0, 0, g) [STALE since v1.0.1042: they report the
-//      1g UPRIGHT pose, turned into device axes by the display rotation --
-//      see POSE_ACCEL_* and macapkFillPose]; the magnetometer reports a nominal
-//      earth field; gyroscope/linear-accel report zero; light reports
-//      a typical indoor lux; proximity reports far; rotation vector
-//      reports identity. A single daemon timer ticks all registered
-//      listeners at their requested-ish rate. This keeps tilt-control
-//      games alive (they read a stable gravity vector) instead of
-//      seeing "no sensors" and disabling input. No per-APK code -- the
-//      synthesized stream is the honest "flat, still" device state.
-//      Only sensors a Mac can actually stand behind are synthesized:
-//      there is no pedometer on this hardware, so TYPE_STEP_COUNTER /
-//      TYPE_STEP_DETECTOR are absent from the catalog exactly as they
-//      are on an Android device with no step-counter HAL (feature
-//      detection via getDefaultSensor(...) != null must see null, not
-//      a counter frozen at zero forever).
+//  (2) The instance side hands back real Sensor objects for the sensors
+//      this device has, and delivers their events. A PC has none of a
+//      phone's motion or environment sensors, so the catalog is EMPTY: no
+//      accelerometer and nothing fused from one (gravity, linear
+//      acceleration, rotation vectors, orientation), no gyroscope, no
+//      magnetometer, light, proximity or step counter. The owner's decisions
+//      of November 2026 removed the synthetic "phone held upright" pose and
+//      then the gyroscope that reported 0,0,0. getDefaultSensor returns null for every type not in
+//      the catalog and PackageManager's sensor features are derived from it,
+//      the answer an Android device without the hardware gives.
+//      A single daemon timer ticks all registered listeners at their
+//      requested-ish rate.
 //
 //      The timer thread only SYNTHESIZES; it never calls back into the
 //      app directly. AOSP resolves one delivery Looper per listener
 //      (SystemSensorManager.registerListenerImpl: `Looper looper =
 //      (handler != null) ? handler.getLooper() : mMainLooper;`), so the
 //      callbacks land on the supplied Handler's thread, or the MAIN
-//      thread when none was supplied. Apps depend on that: a tilt
-//      handler mutates view/game state inside onSensorChanged with no
-//      synchronization because the platform guarantees serialization
-//      with the main thread.
+//      thread when none was supplied.
 package android.hardware;
 
 import java.util.ArrayList;
@@ -145,29 +135,18 @@ public class SensorManager {
     //     found no reachable ALS service on this machine, so there is nothing to
     //     wire yet. Absent is the truthful answer until there is; see
     //     docs/future_implementations.md.
-    //   * GYROSCOPE STAYS, reporting 0,0,0. For a laptop sitting on a desk that
-    //     is not a fabrication, it is the correct reading.
-    //   * The MOTION family (ACCELEROMETER, GRAVITY, LINEAR_ACCELERATION,
-    //     ROTATION_VECTOR, GAME_ROTATION_VECTOR, ORIENTATION) stays PRESENT and
-    //     reports A DEVICE AT REST: the 1g gravity vector on ACCELEROMETER and
-    //     GRAVITY, and genuine zeros on LINEAR_ACCELERATION and GYROSCOPE, which
-    //     at rest are not fabrications at all.
-    //     ⚠ The owner asked for the accelerometer to be zeroed too, and v1.0.1041
-    //     did that. It was reverted at v1.0.1042 because (0,0,0) is FREE FALL, a
-    //     less plausible fabrication than gravity, and because it measurably broke
-    //     an app (mastodon 91.14 -> 83.74). MACAPK_SENSOR_ZERO_MOTION=1 restores
-    //     the literal zeros. Full reasoning at the RESTORED note in makeEvent.
-    //     Advertising a pose at all is knowingly a fabrication -- CLAUDE.md's decision
-    //     ladder calls advertising a capability we cannot honour the forbidden
-    //     fourth rung -- and it is kept deliberately, because the alternative
-    //     (returning null) makes a tilt-steered game REFUSE TO START rather than
-    //     merely be unplayable, and because the real fix is already designed:
-    //     a KEYBOARD-DRIVEN accelerometer, which turns these values into genuine
-    //     user input the way KeyBindProfiles already turns keys into real touch
-    //     events. LANDED 2026-10-02 as Controls -> Tilt Control
-    //     (com.macapk.loader.TiltControl + macapkTiltEvent below,
-    //     docs/tilt-control_2026-10-02.md): with it on, these values ARE user
-    //     input. With it off, this comment remains the honesty the owner asked for.
+    //   * GYROSCOPE STAYED upstream, reporting 0,0,0 ("a laptop on a desk does
+    //     not turn"). Win.apk, November 2026: GONE as
+    //     well. A PC has no gyroscope, and a gyroscope that can only report
+    //     zero is a made-up sensor; Android without one returns null.
+    //   * Win.apk, November 2026: the MOTION family
+    //     (ACCELEROMETER, GRAVITY, LINEAR_ACCELERATION, ROTATION_VECTOR,
+    //     GAME_ROTATION_VECTOR, ORIENTATION) is GONE too. It reported a
+    //     made-up "phone held upright" gravity vector (upstream's
+    //     POSE_ACCEL_*), which a tilt game or a level app takes as a reading.
+    //     A PC has no accelerometer, so none is reported, as on an Android
+    //     device without one. Windows' own sensor API (the accelerometer of
+    //     some 2-in-1s) is not wired yet.
     //
     // Do not "improve" the zeros back into plausible values. A plausible lie is
     // strictly worse than an obvious one: it is what let the fabricated pressure
@@ -182,27 +161,11 @@ public class SensorManager {
     protected SensorManager() {
         // Synthesize the "device still" sensor set. Continuous sensors carry a
         // 10000us (100Hz) minDelay like a typical phone.
-        mSensors.add(new Sensor(Sensor.TYPE_ACCELEROMETER, "Mac.apk Accelerometer",
-            Sensor.STRING_TYPE_ACCELEROMETER, 2f * STANDARD_GRAVITY, 0.01f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
-        mSensors.add(new Sensor(Sensor.TYPE_GYROSCOPE, "Mac.apk Gyroscope",
-            Sensor.STRING_TYPE_GYROSCOPE, 8.7f, 0.001f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
-        mSensors.add(new Sensor(Sensor.TYPE_GRAVITY, "Mac.apk Gravity",
-            Sensor.STRING_TYPE_GRAVITY, 2f * STANDARD_GRAVITY, 0.01f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
-        mSensors.add(new Sensor(Sensor.TYPE_LINEAR_ACCELERATION, "Mac.apk Linear Acceleration",
-            Sensor.STRING_TYPE_LINEAR_ACCELERATION, 2f * STANDARD_GRAVITY, 0.01f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
-        mSensors.add(new Sensor(Sensor.TYPE_ROTATION_VECTOR, "Mac.apk Rotation Vector",
-            Sensor.STRING_TYPE_ROTATION_VECTOR, 1f, 0.0001f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
-        mSensors.add(new Sensor(Sensor.TYPE_GAME_ROTATION_VECTOR, "Mac.apk Game Rotation Vector",
-            Sensor.STRING_TYPE_GAME_ROTATION_VECTOR, 1f, 0.0001f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
-        mSensors.add(new Sensor(Sensor.TYPE_ORIENTATION, "Mac.apk Orientation",
-            Sensor.STRING_TYPE_ORIENTATION, 360f, 0.1f, 0.1f,
-            10000, Sensor.REPORTING_MODE_CONTINUOUS));
+        // No sensor at all: see makeEvent and the header. A PC has no
+        // accelerometer (and so nothing fused from one), no gyroscope, no
+        // magnetometer, light or proximity sensor. When Windows' own sensor
+        // API is wired (a 2-in-1's real accelerometer), its sensors are added
+        // here and to MACAPK_CATALOG_TYPES together.
         // No TYPE_STEP_COUNTER / TYPE_STEP_DETECTOR: a Mac has no pedometer.
         // getDefaultSensor(TYPE_STEP_COUNTER) is THE feature-detection idiom
         // ("non-null means this device counts steps"), and an Android device
@@ -362,15 +325,7 @@ public class SensorManager {
     /** The one place the catalog's membership is written down. The instance
      *  constructor builds its Sensor objects from these same types, so adding or
      *  removing a sensor moves BOTH the catalog and the advertised features. */
-    static final int[] MACAPK_CATALOG_TYPES = {
-        Sensor.TYPE_ACCELEROMETER,
-        Sensor.TYPE_GYROSCOPE,
-        Sensor.TYPE_GRAVITY,
-        Sensor.TYPE_LINEAR_ACCELERATION,
-        Sensor.TYPE_ROTATION_VECTOR,
-        Sensor.TYPE_GAME_ROTATION_VECTOR,
-        Sensor.TYPE_ORIENTATION,
-    };
+    static final int[] MACAPK_CATALOG_TYPES = {};
 
     // ---- the ORIGINAL (API 1) SensorListener API -------------------------
     //
@@ -630,425 +585,38 @@ public class SensorManager {
         }
     }
 
-    // The POSE the synthetic device is in: HELD UPRIGHT in portrait, facing the
-    // user, tilted back about 5 degrees. NOT lying on a table.
+    // Build an event for the given sensor. The catalog is empty, so there is
+    // no sensor behind any type and none gets an event.
     //
-    // WHY NOT (0, 0, +g). A Mac.apk window is something the user is looking AT,
-    // head on, so the honest analogue of the host's physical situation is a phone
-    // held up in front of you. (0, 0, +g) is the face-up-on-a-desk pose, and it is
-    // DEGENERATE: both pitch and roll come out exactly zero, so every app that
-    // derives an attitude from gravity is told the screen is horizontal and gets
-    // the MIDPOINT of whatever range it drives.
-    //
-    // Measured consequence, mastodon 2.13.1's splash. Its parallax art
-    // (org.joinmastodon.android.ui.InterpolatingMotionEffect) positions each of 5
-    // layers with setTranslationY(lerp(minY, maxY, (roll+1)/2)) where
-    // roll = atan2(y, hypot(x,z))/PI*2. With roll == 0 every layer parks at its
-    // midpoint; the reference AVD reports roll == +0.947 and every layer parks
-    // near the bottom of its range. That difference, times the splash's own
-    // 808/720 container scale, is 10.6px for the cloud layer and 31.9px for the
-    // hill layers, which is the whole of the "splash art sits 38px too high"
-    // divergence less the 6px our 48px status bar owes the emulator's 60px one.
-    //
-    // The numbers are the reference AVD's own default accelerometer output, and
-    // they were RECOVERED FROM THE RENDERED PIXELS rather than assumed: solving
-    // the parallax for the observed per-layer offsets on three layers with three
-    // DIFFERENT ranges gives one consistent roll of 0.945 to 0.947 of full scale,
-    // i.e. gravity 85.2 degrees off the device Y axis. A forward model of the
-    // drawable independently predicted the horizontal extents to 1px, and x is
-    // unchanged on both sides because pitch stays 0.
-    //
-    // The invariant that must hold: an accelerometer at rest reports exactly 1g in
-    // SOME direction. |(0, 9.7726, 0.8159)| == STANDARD_GRAVITY, and TYPE_GRAVITY
-    // shares the vector by definition.
-    //
-    // ⚠ TYPE_ORIENTATION and TYPE_ROTATION_VECTOR below still synthesise the FLAT
-    // pose and are now inconsistent with this. getRotationMatrix + getOrientation
-    // derive from accelerometer + magnetometer so those stay coherent; only the
-    // two standalone synths drift. Left alone deliberately -- a quaternion is a
-    // second guess-risk and this change is meant to be one falsifiable thing.
-    // SETTLED 2026-08-24 -- the 1g pose is the OWNER-APPROVED default. Do not
-    // re-litigate this; it has now been argued in three places.
-    //
-    // History: the owner first asked to "fabricate the accelerometer to zero and
-    // just be honest in our documentation" (v1.0.1041). That was implemented, cost
-    // mastodon 91.14 -> 83.74, and was reverted at v1.0.1042 with the reasoning in
-    // makeEvent. On review the owner approved gravity as the default, verbatim:
-    // "I approve of fabricating it to show the gravity. Make it default. Especially
-    // since it's technically true of what it's experiencing." That last clause is
-    // the actual justification and it is a better one than ours: a Mac really is
-    // sitting in a 1g field, so this is the ONE synthesized value on this device
-    // that is not a fabrication at all -- only its DIRECTION is chosen.
-    //
-    // MACAPK_SENSOR_ZERO_MOTION=1 still forces the zeros. Kept deliberately: it is
-    // a one-env-var bisect for "is this app's layout driven by the accelerometer",
-    // which is exactly the question that took a 178-class jar bisect to answer.
-    private static final boolean ZERO_MOTION =
-        "1".equals(System.getenv("MACAPK_SENSOR_ZERO_MOTION"));
-
-    private static final float POSE_ACCEL_X = 0f;
-    private static final float POSE_ACCEL_Y = 9.7726f;
-    private static final float POSE_ACCEL_Z = 0.8159f;
-
-    // ---- the pose follows the DISPLAY ROTATION (wave 5, 2026-09-26) ---------
-    //
-    // The pose above is SCREEN-relative: "the screen stands upright in front of
-    // the user". Sensor axes are not. AOSP SensorEvent.java (android14-release,
-    // class javadoc :33-35): "The coordinate-system is defined relative to the
-    // screen of the phone in its default orientation. The axes are not swapped
-    // when the device's screen orientation changes."
-    //
-    // We report Surface.ROTATION_90 for every landscape window (Display.
-    // getRotation, the committed display), and AOSP Display.java:970-975 defines
-    // what that claims physically: "if the device is rotated 90 degrees
-    // counter-clockwise, to compensate rendering will be rotated by 90 degrees
-    // clockwise and thus the returned value here will be ROTATION_90". Turn a
-    // phone 90 degrees counter-clockwise and its +X axis points UP, so a device
-    // at rest in that pose reads (+g_up, 0, z) -- not (0, +g_up, z). Emitting the
-    // portrait vector next to ROTATION_90 described a device lying on its side in
-    // a window that says it is upright; no physical device reports that pair.
-    //
-    // Measured consequence (docs/fleet-widget-apps-mastodon-fossify-pianoli_
-    // 2026-09-26.md, M4): Mastodon's splash parallax (ui.w.onSensorChanged)
-    // remaps by getRotation() the textbook way, so on a landscape window it
-    // derived a full sideways tilt and translated its art layers (+126,+126)px
-    // away from the tablet emulator's. Every tilt-steered landscape game reads
-    // the same fabricated lateral tilt.
-    //
-    // So rotate the SCREEN-relative pose into DEVICE axes by the current
-    // rotation. After this, the canonical screen remap every app applies
-    //   ROTATION_90:  screenX = -values[1], screenY = values[0]
-    // hands back (0, 9.7726) in every orientation, which is the invariant: the
-    // user is looking at an upright screen whichever way the window is shaped.
-    // ROTATION_0 is untouched by construction, so the portrait phone fleet --
-    // every pair the pose above was fitted against -- cannot move.
-    //
-    // The Z component is unchanged: a rotation about the screen normal leaves the
-    // 5-degree lean-back where it was. TYPE_ORIENTATION and the ROTATION_VECTOR
-    // family need nothing: they synthesise the flat pose, and turning a flat
-    // device about its screen normal changes only the azimuth, which with no
-    // magnetometer in the catalog is an arbitrary reference anyway.
-    //
-    // The LEGACY SensorListener API needed no change of its own: LegacySensorManager
-    // already remaps by the same rotation (AOSP mapSensorDataToWindow), so with a
-    // device-axes vector here it now reports the SAME screen-relative gravity in
-    // landscape as in portrait, where before it reported a sideways device too.
-    //
-    // Bisect gate: MACAPK_SENSOR_POSE_ROTATE=0 emits the portrait vector for
-    // every rotation, exactly as before. Offline gate: debug/w5sensorsjobs_gate.sh.
-    private static final boolean POSE_ROTATE =
-        !"0".equals(System.getenv("MACAPK_SENSOR_POSE_ROTATE"));
-
-    /** The display rotation the pose is expressed against. Asks the SAME object
-     *  an app asks (android.view.Display.getRotation, which reads the committed
-     *  display), so the two can never disagree. Read per event, not cached: the
-     *  window can change shape (Cmd+R, setRequestedOrientation) while a listener
-     *  is registered. Headless or before the display is known this throws out of
-     *  the native canvas read, and ROTATION_0 is AOSP's own answer for a caller
-     *  that cannot reach the window service (LegacySensorManager does the same). */
-    private static int macapkPoseRotation() {
-        try {
-            android.view.Display d = sRotationDisplay;
-            if (d == null) sRotationDisplay = d = new android.view.Display();
-            return d.getRotation();
-        } catch (Throwable t) {
-            return android.view.Surface.ROTATION_0;
-        }
-    }
-    /** Stateless: Display.getRotation reads static committed-display state, so
-     *  one instance answers for every thread. A race creating two is harmless. */
-    private static volatile android.view.Display sRotationDisplay;
-
-    /** Fill values[0..2] with the at-rest gravity reaction for the current
-     *  rotation. The screen-relative pose is (POSE_ACCEL_X, POSE_ACCEL_Y); the
-     *  device axes are that vector turned by the rotation (see the block above).
-     *  0f - v rather than -v keeps a 0 component +0.0: an app's atan2 would
-     *  otherwise see -0.0, which is not what a device reports at rest. */
-    private static void macapkFillPose(float[] values) {
-        float sx = POSE_ACCEL_X, sy = POSE_ACCEL_Y;
-        float dx = sx, dy = sy;
-        if (POSE_ROTATE) {
-            switch (macapkPoseRotation()) {
-                case android.view.Surface.ROTATION_90:  dx = sy;      dy = 0f - sx; break;
-                case android.view.Surface.ROTATION_180: dx = 0f - sx; dy = 0f - sy; break;
-                case android.view.Surface.ROTATION_270: dx = 0f - sy; dy = sx;      break;
-                default: break;   // ROTATION_0: the pose as fitted
-            }
-        }
-        values[0] = dx;
-        values[1] = dy;
-        values[2] = POSE_ACCEL_Z;
-    }
-
-    // Build a "still" event for the given sensor type, for a device at rest in the
-    // POSE above. Android's sensor frame is defined relative to the screen in its
-    // natural orientation: +X right, +Y up, +Z out of the screen (AOSP SensorEvent
-    // docs), and an accelerometer reports the reaction to gravity, so an upright
-    // phone reads a large +Y.
+    // Win.apk (November 2026): no synthetic accelerometer. The
+    // made-up "phone held upright" gravity vector this file used to report
+    // (and the gravity, linear-acceleration, rotation-vector and orientation
+    // sensors derived from it) is gone. A PC has no accelerometer, so this
+    // device reports none, as an Android device without one does:
+    // getDefaultSensor(TYPE_ACCELEROMETER) is null, the list has none, and
+    // PackageManager has no android.hardware.sensor.accelerometer (derived from
+    // the catalog). The
+    // gyroscope that reported 0,0,0 went the same way (November
+    // 2026): a PC has none.
     private SensorEvent makeEvent(Sensor s, long nowNanos) {
-        // Tilt Control ON: the motion family is derived from the user-driven
-        // orientation (macapkTiltEvent). OFF, or a type it does not own: null,
-        // and the at-rest synthesis below runs exactly as before.
-        SensorEvent ev = com.macapk.loader.TiltControl.isEnabled()
-                ? macapkTiltEvent(s.getType(), nowNanos) : null;
-        if (ev == null) switch (s.getType()) {
-            case Sensor.TYPE_ACCELEROMETER:
-            case Sensor.TYPE_GRAVITY:
-                ev = SensorEvent.macapkNew(3);
-                // RESTORED 2026-08-23 (v1.0.1042) after a measured regression.
-                //
-                // v1.0.1041 replaced this vector with all-zero, under the owner's
-                // "fabricate the accelerometer to zero and just be honest in our
-                // documentation". That change cost mastodon 91.14% -> 83.74% on the
-                // Canvas pair set, bisected to these three lines and nothing else
-                // (framework-jar A/B, four classes, then this case). It is restored
-                // because BOTH of the reasons given for zeroing it are wrong:
-                //
-                //  1. The deleted comment claimed POSE_ACCEL_* "reads as a device
-                //     lying flat". It does not. The block 40 lines above says in its
-                //     first sentence "HELD UPRIGHT in portrait ... NOT lying on a
-                //     table", and explains at length WHY NOT (0, 0, +g) -- the
-                //     face-up pose is the DEGENERATE one. The pose was deleted on a
-                //     misreading of the comment that sat directly above it.
-                //  2. Zero is not the honest answer, it is a DIFFERENT and less
-                //     plausible fabrication: an accelerometer reading (0,0,0) is a
-                //     device in FREE FALL. v1.0.1041's own comment said so. There is
-                //     no configuration of a Mac on a desk in which this reading is
-                //     true, whereas "a screen standing upright in Earth's gravity"
-                //     is simply what the host physically is.
-                //
-                // And the pose is not a guess: POSE_ACCEL_* was RECOVERED FROM
-                // RENDERED PIXELS (see the derivation above it) and matches the
-                // reference AVD's own default output. Zeroing it drove
-                // roll = atan2(y, hypot(x,z)) to 0, which parks every layer of
-                // mastodon's splash parallax at its range midpoint instead of the
-                // AVD's roll=+0.947 -- the uniform 12px shift that was measured.
-                //
-                // The honesty the owner asked for belongs in the class header and in
-                // docs/, not in a value that apps compute geometry from. TYPE_
-                // LINEAR_ACCELERATION and TYPE_GYROSCOPE below stay ZERO, and that
-                // IS honest: a device at rest has no linear acceleration and no
-                // rotation rate. Only the gravity vector must be 1g.
-                //
-                // INVARIANT: |(x,y,z)| == STANDARD_GRAVITY. Do not zero this again
-                // without re-running debug/recap_mac.sh on mastodon first.
-                //
-                // The vector is expressed in DEVICE axes for the current display
-                // rotation (macapkFillPose; gate MACAPK_SENSOR_POSE_ROTATE), so the
-                // invariant holds and ROTATION_0 still emits exactly the fitted pose.
-                if (ZERO_MOTION) {
-                    ev.values[0] = 0f;
-                    ev.values[1] = 0f;
-                    ev.values[2] = 0f;
-                } else {
-                    macapkFillPose(ev.values);
-                }
-                break;
-            case Sensor.TYPE_LINEAR_ACCELERATION:
-            case Sensor.TYPE_GYROSCOPE:
-                ev = SensorEvent.macapkNew(3);
-                ev.values[0] = 0f; ev.values[1] = 0f; ev.values[2] = 0f;
-                break;
-            case Sensor.TYPE_ORIENTATION:
-                // azimuth/pitch/roll degrees for a flat, north-facing device.
-                ev = SensorEvent.macapkNew(3);
-                ev.values[0] = 0f; ev.values[1] = 0f; ev.values[2] = 0f;
-                break;
-            case Sensor.TYPE_ROTATION_VECTOR:
-            case Sensor.TYPE_GAME_ROTATION_VECTOR:
-            case Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR:
-                // Identity quaternion (x=y=z=0, w=1) plus heading-accuracy.
-                ev = SensorEvent.macapkNew(5);
-                ev.values[0] = 0f; ev.values[1] = 0f; ev.values[2] = 0f;
-                ev.values[3] = 1f; ev.values[4] = 0f;
-                break;
-            default:
-                return null; // sensors we deliberately keep quiescent
-        }
+        float[] values = readingOf(s);
+        if (values == null) return null;
+        SensorEvent ev = SensorEvent.macapkNew(values.length);
+        System.arraycopy(values, 0, ev.values, 0, values.length);
         ev.sensor = s;
         ev.accuracy = SENSOR_STATUS_ACCURACY_HIGH;
         // AOSP frameworks/base/core/java/android/hardware/SensorEvent.java :834-836:
         // "the time in nanoseconds ... in the same time base as
-        // SystemClock#elapsedRealtimeNanos()". Under MACAPK_GUEST_CLOCK_NANOTIME
-        // (default ON) that is CLOCK_BOOTTIME, not System.nanoTime() -- stamping
-        // with nowNanos (System.nanoTime(), used above only for the 60 Hz rate
-        // gate) would leave `elapsedRealtimeNanos() - event.timestamp` off by the
-        // host uptime, same shape of bug this lane fixed elsewhere. Under =0 keep
-        // nowNanos unchanged (byte-identical old path; elapsedRealtimeNanos() was
-        // itself process-relative there, so the two already agreed).
-        ev.timestamp = android.os.SystemClock.AOSP_CLOCKS
-                ? android.os.SystemClock.elapsedRealtimeNanos() : nowNanos;
+        // SystemClock#elapsedRealtimeNanos()".
+        ev.timestamp = android.os.SystemClock.elapsedRealtimeNanos();
         return ev;
     }
 
-    // ---- Tilt Control: ONE orientation, every motion sensor derived from it ----
-    //
-    // When the user turns on Controls -> Tilt Control (com.macapk.loader.
-    // TiltControl), the arrow keys -- or any other transducer feeding
-    // TiltControl.setTarget / setPose -- tilt the virtual device, and every
-    // motion sensor is computed from that ONE pose so they can never disagree:
-    //
-    //   T = Rz(roll) * Rx(pitch), applied in SCREEN axes to the resting pose
-    //       (roll > 0 = right edge down, pitch > 0 = top edge away from the user;
-    //       docs/tilt-control_2026-10-02.md derives the signs).
-    //   ACCELEROMETER = GRAVITY = T * (POSE_ACCEL_X, POSE_ACCEL_Y, POSE_ACCEL_Z),
-    //       so |v| stays STANDARD_GRAVITY and roll = pitch = 0 is bit-for-bit the
-    //       at-rest vector (cos 0 = 1, sin 0 = 0 exactly).
-    //   LINEAR_ACCELERATION = accelerometer - gravity = 0, AOSP
-    //       LinearAccelerationSensor.cpp's definition. A slewing tilt is a pure
-    //       rotation about the device, so this is the honest value, not a stub.
-    //   ROTATION_VECTOR / GAME_ROTATION_VECTOR = the unit quaternion of R, the
-    //       device->world matrix whose rows are the world East / North / Up axes
-    //       in device coordinates (the layout SensorManager.getRotationMatrix
-    //       produces), chosen so the AOSP-verbatim getRotationMatrixFromVector
-    //       below gives back R. World North is the direction the BACK of the
-    //       device faces at rest (horizontal): there is no magnetometer, so the
-    //       heading reference is arbitrary, as it is for GAME_ROTATION_VECTOR.
-    //   ORIENTATION = AOSP sensorservice OrientationSensor.cpp (android14-release)
-    //       verbatim on the same matrix: azimuth = atan2(-R[1][0], R[0][0]),
-    //       pitch = atan2(-R[2][1], R[2][2]), roll = asin(R[2][0]), degrees,
-    //       azimuth wrapped to [0, 360). Fusion's mat33 is column-major and maps
-    //       world -> device (GravitySensor.cpp reads gravity as R[2]), so its
-    //       R[a][b] is element a*3+b of our row-major device->world matrix.
-    //   GYROSCOPE = the body angular velocity of the slew, zero once settled. With
-    //       the device rotated by Rx(-pitch) then Rz(-roll) in its own frame,
-    //       omega = (-pitch' cos roll, -pitch' sin roll, -roll') in screen axes.
-    //
-    // Screen axes become DEVICE axes by the display rotation, the same turn
-    // macapkFillPose applies (gate MACAPK_SENSOR_POSE_ROTATE).
-    // Gate: debug/tilt_gate.sh.
-    private static SensorEvent macapkTiltEvent(int type, long nowNanos) {
-        switch (type) {
-            case Sensor.TYPE_ACCELEROMETER:
-            case Sensor.TYPE_GRAVITY:
-            case Sensor.TYPE_LINEAR_ACCELERATION:
-            case Sensor.TYPE_GYROSCOPE:
-            case Sensor.TYPE_ORIENTATION:
-            case Sensor.TYPE_ROTATION_VECTOR:
-            case Sensor.TYPE_GAME_ROTATION_VECTOR:
-                break;
-            default:
-                return null;
-        }
-        float[] st = new float[4];
-        com.macapk.loader.TiltControl.sample(nowNanos, st);
-        double roll = Math.toRadians(st[0]), pitch = Math.toRadians(st[1]);
-        double cr = Math.cos(roll), sr = Math.sin(roll);
-        double cp = Math.cos(pitch), sp = Math.sin(pitch);
-        int rot = POSE_ROTATE ? macapkPoseRotation() : android.view.Surface.ROTATION_0;
-        SensorEvent ev;
-        switch (type) {
-            case Sensor.TYPE_ACCELEROMETER:
-            case Sensor.TYPE_GRAVITY: {
-                ev = SensorEvent.macapkNew(3);
-                macapkTilt(cr, sr, cp, sp, POSE_ACCEL_X, POSE_ACCEL_Y, POSE_ACCEL_Z, rot, ev.values, 0);
-                break;
-            }
-            case Sensor.TYPE_LINEAR_ACCELERATION:
-                ev = SensorEvent.macapkNew(3);
-                ev.values[0] = 0f; ev.values[1] = 0f; ev.values[2] = 0f;
-                break;
-            case Sensor.TYPE_GYROSCOPE: {
-                ev = SensorEvent.macapkNew(3);
-                double rd = Math.toRadians(st[2]), pd = Math.toRadians(st[3]);
-                // A zero rate must read +0.0, as the at-rest gyro does.
-                macapkToDevice(0.0 - pd * cr, 0.0 - pd * sr, 0.0 - rd, rot, ev.values, 0);
-                break;
-            }
-            default: {
-                float[] r = new float[9];
-                macapkTiltRotationMatrix(cr, sr, cp, sp, rot, r);
-                if (type == Sensor.TYPE_ORIENTATION) {
-                    ev = SensorEvent.macapkNew(3);
-                    final float rad2deg = (float) (180 / Math.PI);
-                    float az = (float) Math.atan2(-r[3], r[0]) * rad2deg;
-                    if (az < 0) az += 360;
-                    ev.values[0] = az;
-                    ev.values[1] = (float) Math.atan2(-r[7], r[8]) * rad2deg;
-                    ev.values[2] = (float) Math.asin(r[6]) * rad2deg;
-                } else {
-                    ev = SensorEvent.macapkNew(5);
-                    macapkQuaternionFromMatrix(r, ev.values);
-                    ev.values[4] = 0f;   // heading accuracy: as the at-rest stream reports
-                }
-                break;
-            }
-        }
-        return ev;   // makeEvent fills sensor / accuracy / timestamp
-    }
-
-    /** out[off..off+2] = T * (x, y, z) in DEVICE axes, T = Rz(roll) * Rx(pitch). */
-    private static void macapkTilt(double cr, double sr, double cp, double sp,
-                                   double x, double y, double z, int rot, float[] out, int off) {
-        // Rx(pitch): y' = y cp - z sp, z' = y sp + z cp
-        double y1 = y * cp - z * sp, z1 = y * sp + z * cp;
-        // Rz(roll): x' = x cr - y sr, y' = x sr + y cr
-        double x2 = x * cr - y1 * sr, y2 = x * sr + y1 * cr;
-        macapkToDevice(x2, y2, z1, rot, out, off);
-    }
-
-    /** Screen axes -> device axes for the display rotation, macapkFillPose's
-     *  turn (0f - v keeps a zero component +0.0). */
-    private static void macapkToDevice(double sx, double sy, double sz, int rot, float[] out, int off) {
-        float fx = (float) sx, fy = (float) sy;
-        float dx = fx, dy = fy;
-        switch (rot) {
-            case android.view.Surface.ROTATION_90:  dx = fy;      dy = 0f - fx; break;
-            case android.view.Surface.ROTATION_180: dx = 0f - fx; dy = 0f - fy; break;
-            case android.view.Surface.ROTATION_270: dx = 0f - fy; dy = fx;      break;
-            default: break;
-        }
-        out[off] = dx;
-        out[off + 1] = dy;
-        out[off + 2] = (float) sz;
-    }
-
-    /** Row-major device->world matrix for the tilted pose: rows are the world
-     *  East, North and Up axes expressed in device coordinates, the layout
-     *  getRotationMatrix fills. Up is the at-rest gravity reaction, North the
-     *  horizontal direction the back of the screen faces at rest, East = N x U. */
-    private static void macapkTiltRotationMatrix(double cr, double sr, double cp, double sp,
-                                                 int rot, float[] r) {
-        double gx = POSE_ACCEL_X, gy = POSE_ACCEL_Y, gz = POSE_ACCEL_Z;
-        double gn = Math.sqrt(gx * gx + gy * gy + gz * gz);
-        double ux = gx / gn, uy = gy / gn, uz = gz / gn;
-        // North: the back of the device, (0, 0, -1), minus its Up component.
-        double d = -uz;
-        double nx = 0 - d * ux, ny = 0 - d * uy, nz = -1 - d * uz;
-        double nn = Math.sqrt(nx * nx + ny * ny + nz * nz);
-        nx /= nn; ny /= nn; nz /= nn;
-        // East = North x Up.
-        double ex = ny * uz - nz * uy, ey = nz * ux - nx * uz, ez = nx * uy - ny * ux;
-        macapkTilt(cr, sr, cp, sp, ex, ey, ez, rot, r, 0);
-        macapkTilt(cr, sr, cp, sp, nx, ny, nz, rot, r, 3);
-        macapkTilt(cr, sr, cp, sp, ux, uy, uz, rot, r, 6);
-    }
-
-    /** The inverse of getRotationMatrixFromVector (below, AOSP verbatim): the
-     *  unit quaternion (x, y, z, w) whose matrix is r, with w >= 0 (the rotation
-     *  vector's values[3] is cos(theta/2)). Shepperd's method, branching on the
-     *  largest diagonal term so no square root is taken of a small number. */
-    private static void macapkQuaternionFromMatrix(float[] r, float[] q) {
-        double m00 = r[0], m01 = r[1], m02 = r[2];
-        double m10 = r[3], m11 = r[4], m12 = r[5];
-        double m20 = r[6], m21 = r[7], m22 = r[8];
-        double tr = m00 + m11 + m22, x, y, z, w;
-        if (tr > 0) {
-            double s = Math.sqrt(tr + 1.0) * 2;
-            w = 0.25 * s; x = (m21 - m12) / s; y = (m02 - m20) / s; z = (m10 - m01) / s;
-        } else if (m00 > m11 && m00 > m22) {
-            double s = Math.sqrt(1.0 + m00 - m11 - m22) * 2;
-            w = (m21 - m12) / s; x = 0.25 * s; y = (m01 + m10) / s; z = (m02 + m20) / s;
-        } else if (m11 > m22) {
-            double s = Math.sqrt(1.0 + m11 - m00 - m22) * 2;
-            w = (m02 - m20) / s; x = (m01 + m10) / s; y = 0.25 * s; z = (m12 + m21) / s;
-        } else {
-            double s = Math.sqrt(1.0 + m22 - m00 - m11) * 2;
-            w = (m10 - m01) / s; x = (m02 + m20) / s; y = (m12 + m21) / s; z = 0.25 * s;
-        }
-        double n = Math.sqrt(x * x + y * y + z * z + w * w);
-        if (w < 0) n = -n;
-        q[0] = (float) (x / n); q[1] = (float) (y / n); q[2] = (float) (z / n); q[3] = (float) (w / n);
+    /** The sensor's current reading, or null when nothing measures it. Every
+     *  type is null now: the catalog is empty. A sensor backed by Windows'
+     *  sensor API answers here with what the hardware reads. */
+    private static float[] readingOf(Sensor s) {
+        return null;
     }
 
     // --- TriggerEventListener (one-shot sensors) -------------------------

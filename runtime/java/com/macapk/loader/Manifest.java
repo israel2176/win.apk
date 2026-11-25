@@ -50,29 +50,6 @@ public final class Manifest {
     }
     private static final String TAG = "Mac.apk.Manifest";
 
-    /** MACAPK_TARGETSDK_ZERO (default ON). A manifest with NO <uses-sdk>
-     *  reports targetSdkVersion 0, AOSP's DEFAULT_TARGET_SDK_VERSION, instead
-     *  of the 1 this parser used to synthesise; and a process whose manifest
-     *  says 0 treats a 0 read as that REAL value rather than as "not resolved
-     *  yet" (android.app.Application.macapkTargetSdkKnown). =0 restores the
-     *  pre-change path exactly: the old synthesis below, and every guard back
-     *  to its plain `> 0` test. Research, the per-site audit and the corpus
-     *  reach: docs/targetsdk-zero-default-and-guard-audit_2026-09-26.md. */
-    public static final boolean TARGETSDK_ZERO =
-        !"0".equals(System.getenv("MACAPK_TARGETSDK_ZERO"));
-    /** MACAPK_MANIFEST_EXPORTED_DEFAULT (v1.0.1652, default ON): an activity /
-     *  alias / receiver with no android:exported is exported iff it has an
-     *  intent-filter, as AOSP ParsedActivityUtils :486-498. See parseActivityLike;
-     *  docs/cross-app-launch-and-implicit-start-design_2026-09-26.md stage 0. */
-    static final boolean EXPORTED_DEFAULT =
-        !"0".equals(System.getenv("MACAPK_MANIFEST_EXPORTED_DEFAULT"));
-    /** A <provider> with no android:exported is exported iff the app targets
-     *  API 16 or lower (ParsedProviderUtils, android14 :86-93:
-     *  `sa.getBoolean(..._exported, targetSdkVersion < JELLY_BEAN_MR1)`).
-     *  =0 restores the old answer (absent -> not exported) for every app.
-     *  v1.0.1653. */
-    static final boolean PROVIDER_EXPORTED_LEGACY =
-        !"0".equals(System.getenv("MACAPK_MANIFEST_PROVIDER_EXPORTED_LEGACY"));
     /** MACAPK_MANIFEST_FEATURE_SPLITS (default ON): the components a FEATURE
      *  split declares (`<manifest android:isFeatureSplit="true" split="...">`)
      *  belong to the package, as AOSP ParsingPackageUtils.parseSplitApplication
@@ -81,10 +58,10 @@ public final class Manifest {
      *  only 3 activities in base.apk; ChromeTabbedActivity and its
      *  MAIN/LAUNCHER alias `com.google.android.apps.chrome.Main` live in
      *  split_chrome.apk, so without the merge the package had no launchable
-     *  activity. Config splits carry no components and are skipped. =0 reads
-     *  the base manifest alone, as before. */
-    static final boolean FEATURE_SPLITS =
-        !"0".equals(System.getenv("MACAPK_MANIFEST_FEATURE_SPLITS"));
+     *  activity. Config splits carry no components and are skipped. (Its
+     *  switch back to the base manifest alone, MACAPK_MANIFEST_FEATURE_SPLITS=0,
+     *  is gone: Win.apk has no switches.) */
+    static final boolean FEATURE_SPLITS = true;
     /** The split-application child tags AOSP parseSplitApplication keeps. */
     private static final java.util.Set<String> SPLIT_COMPONENT_TAGS =
         new java.util.HashSet<>(java.util.Arrays.asList(
@@ -256,7 +233,7 @@ public final class Manifest {
          *  `component.setEnabled(array.getBoolean(enabledAttr, true))`), and
          *  ServiceEntry/ActivityEntry have carried it for a long time --
          *  ProviderEntry was simply the one that never got it, which is why
-         *  Boot.installAutoInitProviders had no boolean to test and constructed
+         *  Boot.appProviders had no boolean to test and constructed
          *  providers a device never constructs. NOT a tri-state: AOSP's default
          *  is a plain getBoolean(attr, true), so "absent" and "true" are the
          *  same answer.
@@ -362,7 +339,7 @@ public final class Manifest {
             String raw = authorities;
             if (raw == null || !raw.startsWith("@")) return raw;
             if (res == null) {
-                android.app.Application app = android.app.Application.getInstance();
+                android.app.Application app = com.macapk.loader.app.Apps.current();
                 res = app != null ? app.getResources() : null;
                 if (res == null) return raw;
             }
@@ -1620,7 +1597,7 @@ public final class Manifest {
                             if (vt != null && !vt.isEmpty()) svcMetaTypes.put(mname, vt);
                         }
                     }
-                    if (!svcSetExported && EXPORTED_DEFAULT) exportedSvc = !svcFilters.isEmpty();
+                    if (!svcSetExported) exportedSvc = !svcFilters.isEmpty();
                     ServiceEntry svc = new ServiceEntry(
                         name, enabled, exportedSvc, svcMeta, svcMetaTypes,
                         svcFilters);
@@ -1865,67 +1842,45 @@ public final class Manifest {
         }
         // <uses-sdk android:minSdkVersion="..." android:targetSdkVersion="..." />
         boolean usesSdkPresent;
-        if (TARGETSDK_ZERO) {
-            // AOSP android14 ParsingPackageUtils.parseUsesSdk (:1532-1606),
-            // reached from parseBaseApkTag (:997) for a DIRECT child of
-            // <manifest> only, once per element (so the LAST one wins):
-            //     int minVers = ParsingUtils.DEFAULT_MIN_SDK_VERSION;      // 1
-            //     int targetVers = ParsingUtils.DEFAULT_TARGET_SDK_VERSION; // 0
-            //     ... minSdkVersion present -> minVers = val.data;
-            //     val = sa.peekValue(..._targetSdkVersion);
-            //     if (val != null) { ... targetVers = val.data; }
-            //     else { targetVers = minVers; targetCode = minCode; }
-            //     pkg.setMinSdkVersion(minSdkVersion).setTargetSdkVersion(targetSdkVersion);
-            // With NO <uses-sdk> none of that runs and the package keeps
-            // PackageImpl's initialisers, min 1 / target 0 (:353, :367). The
-            // old code below applied "target falls back to min" even when the
-            // element was absent, which is how RVTest read 1 here while the
-            // emulator refused its install with "found 0". Our C++ reader
-            // (window_traits.cpp, has_uses_sdk) already had this right.
-            // AOSP takes val.data whatever the INTEGER type is, and our
-            // BinaryXmlParser renders TYPE_INT_HEX as "0x..", which a plain
-            // Integer.parseInt rejects; attrInt (the helper written for the
-            // same bug on android:priority) reads both forms. A codename
-            // (non-integer) value is not modelled: attrInt answers the default,
-            // so a codename target keeps the min fallback, as before.
-            minSdk = DEFAULT_MIN_SDK_VERSION;
-            target = DEFAULT_TARGET_SDK_VERSION;
-            usesSdkPresent = false;
-            for (Node n = root.getFirstChild(); n != null; n = n.getNextSibling()) {
-                if (!(n instanceof Element)) continue;
-                Element sdk = (Element) n;
-                String tag = sdk.getLocalName() != null ? sdk.getLocalName() : sdk.getTagName();
-                if (!"uses-sdk".equals(tag)) continue;
-                usesSdkPresent = true;
-                int minVers = attrInt(sdk, "minSdkVersion", DEFAULT_MIN_SDK_VERSION);
-                // Absent (or unparseable) target -> minVers: parseUsesSdk's
-                // `else { targetVers = minVers; }`.
-                int targetVers = attrInt(sdk, "targetSdkVersion", minVers);
-                minSdk = minVers;
-                target = targetVers;
-            }
-        } else {
-            // PRE-CHANGE PATH, verbatim (MACAPK_TARGETSDK_ZERO=0).
-            NodeList sdks = root.getElementsByTagName("uses-sdk");
-            usesSdkPresent = sdks.getLength() > 0;
-            if (sdks.getLength() > 0) {
-                Element sdk = (Element) sdks.item(0);
-                String t = sdk.getAttributeNS(ANDROID_NS, "targetSdkVersion");
-                if (t != null && !t.isEmpty()) {
-                    try { target = Integer.parseInt(t); } catch (NumberFormatException ignored) {}
-                }
-                String mn = sdk.getAttributeNS(ANDROID_NS, "minSdkVersion");
-                if (mn != null && !mn.isEmpty()) {
-                    try { minSdk = Integer.parseInt(mn); } catch (NumberFormatException ignored) {}
-                }
-            }
-            // AOSP PackageParser: targetSdkVersion defaults to minSdkVersion when
-            // <uses-sdk> omits it; minSdkVersion defaults to 1. Mirror that so a
-            // manifest declaring only one still yields sane non-zero values.
-            if (target == 0) target = minSdk > 0 ? minSdk : 1;
-            if (minSdk == 0) minSdk = 1;
+        // AOSP android14 ParsingPackageUtils.parseUsesSdk (:1532-1606),
+        // reached from parseBaseApkTag (:997) for a DIRECT child of
+        // <manifest> only, once per element (so the LAST one wins):
+        //     int minVers = ParsingUtils.DEFAULT_MIN_SDK_VERSION;      // 1
+        //     int targetVers = ParsingUtils.DEFAULT_TARGET_SDK_VERSION; // 0
+        //     ... minSdkVersion present -> minVers = val.data;
+        //     val = sa.peekValue(..._targetSdkVersion);
+        //     if (val != null) { ... targetVers = val.data; }
+        //     else { targetVers = minVers; targetCode = minCode; }
+        //     pkg.setMinSdkVersion(minSdkVersion).setTargetSdkVersion(targetSdkVersion);
+        // With NO <uses-sdk> none of that runs and the package keeps
+        // PackageImpl's initialisers, min 1 / target 0 (:353, :367). The
+        // old code below applied "target falls back to min" even when the
+        // element was absent, which is how RVTest read 1 here while the
+        // emulator refused its install with "found 0". Our C++ reader
+        // (window_traits.cpp, has_uses_sdk) already had this right.
+        // AOSP takes val.data whatever the INTEGER type is, and our
+        // BinaryXmlParser renders TYPE_INT_HEX as "0x..", which a plain
+        // Integer.parseInt rejects; attrInt (the helper written for the
+        // same bug on android:priority) reads both forms. A codename
+        // (non-integer) value is not modelled: attrInt answers the default,
+        // so a codename target keeps the min fallback, as before.
+        minSdk = DEFAULT_MIN_SDK_VERSION;
+        target = DEFAULT_TARGET_SDK_VERSION;
+        usesSdkPresent = false;
+        for (Node n = root.getFirstChild(); n != null; n = n.getNextSibling()) {
+            if (!(n instanceof Element)) continue;
+            Element sdk = (Element) n;
+            String tag = sdk.getLocalName() != null ? sdk.getLocalName() : sdk.getTagName();
+            if (!"uses-sdk".equals(tag)) continue;
+            usesSdkPresent = true;
+            int minVers = attrInt(sdk, "minSdkVersion", DEFAULT_MIN_SDK_VERSION);
+            // Absent (or unparseable) target -> minVers: parseUsesSdk's
+            // `else { targetVers = minVers; }`.
+            int targetVers = attrInt(sdk, "targetSdkVersion", minVers);
+            minSdk = minVers;
+            target = targetVers;
         }
-        if (PROVIDER_EXPORTED_LEGACY && target < 17 /* JELLY_BEAN_MR1 */) {
+        if (target < 17 /* JELLY_BEAN_MR1 */) {
             for (int i : provExportedUnset) providers.set(i, providers.get(i).withExported(true));
         }
 
@@ -2321,7 +2276,7 @@ public final class Manifest {
                 filters.add(parseIntentFilter(e));
             }
         }
-        if (!setExported && EXPORTED_DEFAULT) exported = !filters.isEmpty();
+        if (!setExported) exported = !filters.isEmpty();
 
         return new ActivityEntry(name, target, parent,
             attrOrNull(child, "permission"),

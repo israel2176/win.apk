@@ -428,166 +428,22 @@ public final class PrintManager {
                 return;
             }
 
-            String destination = System.getenv("MACAPK_PRINT_DESTINATION");
 
-            if ("none".equalsIgnoreCase(destination)) {
-                info.setPrinterName("none");
-                failJob("printing disabled by MACAPK_PRINT_DESTINATION=none; the "
-                        + size + "-byte document is at " + mFile.getAbsolutePath(), null);
-                return;
-            }
 
-            if (destination == null || destination.isEmpty()) {
-                // AOSP's built-in save-to-file destination.
-                info.setPrinterName(SAVE_AS_PDF);
-                info.setState(PrintJobInfo.STATE_COMPLETED);
-                info.setStatus("Saved to " + mFile.getAbsolutePath());
-                logi("print job \"" + info.getLabel() + "\" saved " + size
-                        + " bytes to " + mFile.getAbsolutePath()
-                        + " (set MACAPK_PRINT_DESTINATION=<cups queue> to spool it instead)");
-                finish();
-                return;
-            }
-
-            spool(destination, size);
+            // AOSP's built-in save-to-file destination.
+            info.setPrinterName(SAVE_AS_PDF);
+            info.setState(PrintJobInfo.STATE_COMPLETED);
+            info.setStatus("Saved to " + mFile.getAbsolutePath());
+            logi("print job \"" + info.getLabel() + "\" saved " + size
+                    + " bytes to " + mFile.getAbsolutePath()
+                    + " (set MACAPK_PRINT_DESTINATION=<cups queue> to spool it instead)");
+            finish();
+            return;
         }
 
-        /** Hands the document to macOS's own CUPS via /usr/bin/lp. */
-        private void spool(String destination, long size) {
-            String queue = destination;
-            if ("default".equalsIgnoreCase(destination)) {
-                queue = cupsDefaultQueue();
-                if (queue == null) {
-                    failJob("MACAPK_PRINT_DESTINATION=default but the host has no CUPS "
-                            + "default queue (lpstat -d); the document is at "
-                            + mFile.getAbsolutePath(), null);
-                    return;
-                }
-            }
-            info.setPrinterName(queue);
 
-            List<String> cmd = new ArrayList<String>();
-            cmd.add("/usr/bin/lp");
-            cmd.add("-d");
-            cmd.add(queue);
-            cmd.add("-t");
-            cmd.add(info.getLabel());
-            if (info.getCopies() > 1) {
-                cmd.add("-n");
-                cmd.add(Integer.toString(info.getCopies()));
-            }
-            PrintAttributes attrs = info.getAttributes();
-            if (attrs != null) {
-                // IPP option names, which is what CUPS speaks. The media keyword
-                // is the PWG name; the AOSP id is close enough for the standard
-                // sizes and CUPS resolves unknown names to the queue default
-                // rather than failing.
-                PrintAttributes.MediaSize media = attrs.getMediaSize();
-                if (media != null) {
-                    String spec = cupsMediaSpec(media);
-                    if (spec != null) { cmd.add("-o"); cmd.add("media=" + spec); }
-                }
-                switch (attrs.getDuplexMode()) {
-                    case PrintAttributes.DUPLEX_MODE_LONG_EDGE:
-                        cmd.add("-o"); cmd.add("sides=two-sided-long-edge"); break;
-                    case PrintAttributes.DUPLEX_MODE_SHORT_EDGE:
-                        cmd.add("-o"); cmd.add("sides=two-sided-short-edge"); break;
-                    case PrintAttributes.DUPLEX_MODE_NONE:
-                        cmd.add("-o"); cmd.add("sides=one-sided"); break;
-                    default: break;
-                }
-                switch (attrs.getColorMode()) {
-                    case PrintAttributes.COLOR_MODE_MONOCHROME:
-                        cmd.add("-o"); cmd.add("print-color-mode=monochrome"); break;
-                    case PrintAttributes.COLOR_MODE_COLOR:
-                        cmd.add("-o"); cmd.add("print-color-mode=color"); break;
-                    default: break;
-                }
-            }
-            cmd.add(mFile.getAbsolutePath());
 
-            info.setState(PrintJobInfo.STATE_QUEUED);
-            String output;
-            int rc;
-            try {
-                ProcessBuilder pb = new ProcessBuilder(cmd);
-                pb.redirectErrorStream(true);
-                Process proc = pb.start();
-                output = readAll(proc.getInputStream());
-                rc = proc.waitFor();
-            } catch (Throwable t) {
-                // ONLY the lp invocation is inside the try. An earlier revision
-                // wrapped the success path too, so a throw from the LOG call
-                // after a successful spool was reported as "could not run lp"
-                // and turned a completed job into a failed one.
-                failJob("could not run /usr/bin/lp: " + t
-                        + "; the document is at " + mFile.getAbsolutePath(), t);
-                return;
-            }
 
-            if (rc == 0) {
-                info.setState(PrintJobInfo.STATE_COMPLETED);
-                info.setStatus(output.trim().isEmpty() ? "queued" : output.trim());
-                logi("print job \"" + info.getLabel() + "\" spooled " + size
-                        + " bytes to CUPS queue \"" + queue + "\": " + output.trim());
-                finish();
-            } else {
-                failJob("lp exited " + rc + ": " + output.trim()
-                        + "; the document is at " + mFile.getAbsolutePath(), null);
-            }
-        }
-
-        private static String cupsDefaultQueue() {
-            try {
-                ProcessBuilder pb = new ProcessBuilder("/usr/bin/lpstat", "-d");
-                pb.redirectErrorStream(true);
-                Process proc = pb.start();
-                String out = readAll(proc.getInputStream());
-                proc.waitFor();
-                // "system default destination: <name>" or "no system default destination"
-                int colon = out.indexOf(':');
-                if (colon >= 0) {
-                    String name = out.substring(colon + 1).trim();
-                    if (!name.isEmpty()) return name;
-                }
-            } catch (Throwable ignored) {
-            }
-            return null;
-        }
-
-        /**
-         * The CUPS -o media= value for a MediaSize.
-         *
-         * We pass EXPLICIT DIMENSIONS (CUPS's documented
-         * "Custom.WIDTHxHEIGHTunits" form) rather than a media NAME, and that is
-         * a deliberate choice: mapping AOSP's media ids onto PWG/CUPS media
-         * names needs a name table we have no authoritative source for, and a
-         * name that is subtly wrong does not fail -- it silently prints at the
-         * wrong page geometry, which is the exact failure this whole file is
-         * written to avoid. Dimensions taken straight from the AOSP mils cannot
-         * be wrong that way. If a queue cannot do custom sizes it substitutes
-         * its own default, and the PDF the app produced still carries the right
-         * page box because PrintedPdfDocument sized it from these same mils.
-         *
-         * Returns null for the orientation-only UNKNOWN_* sizes (whose
-         * dimensions are 1 x Integer.MAX_VALUE and are documented as not to be
-         * used), leaving the queue's default in place.
-         */
-        private static String cupsMediaSpec(PrintAttributes.MediaSize media) {
-            int w = media.getWidthMils();
-            int h = media.getHeightMils();
-            // No real medium is over 200 inches; that range is the UNKNOWN_*
-            // sentinels, which AOSP itself says carry no usable dimensions.
-            if (w <= 0 || h <= 0 || w > 200000 || h > 200000) return null;
-            return "Custom." + milsToInches(w) + "x" + milsToInches(h) + "in";
-        }
-
-        /** Mils to a trimmed decimal inch string; exact, no rounding beyond 3dp. */
-        private static String milsToInches(int mils) {
-            String s = java.math.BigDecimal.valueOf(mils, 3)
-                    .stripTrailingZeros().toPlainString();
-            return s;
-        }
 
         private File newDocumentFile() throws java.io.IOException {
             File base = null;
@@ -681,12 +537,5 @@ public final class PrintManager {
             } catch (Throwable ignored) { }
         }
 
-        private static String readAll(java.io.InputStream in) throws java.io.IOException {
-            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[4096];
-            int n;
-            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
-            return out.toString("UTF-8");
-        }
     }
 }

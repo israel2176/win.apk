@@ -15,9 +15,11 @@
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --verify-apk <app>   (the launcher's Google services setup: package and signer, below)
-//   winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]   (internal: run_java)
-//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system   (the system broker, below)
+//   winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] [--jvm-option <opt>]... <class> [args...]
+//                  (internal: run_java)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]   (the system broker, below)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare   (the framework archive now, cds.h)
+//   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --java-test <class path> <class> [args...]   (tests)
 //   winapk-runtime --cds-dump ...   (internal: the framework archive's background dump)
 //
 // --system runs upstream's system broker (com.macapk.loader.SystemServer: how
@@ -25,7 +27,10 @@
 // when Settings > Google account > "Use Google services" is on). It is started
 // by the first app that needs it (com.macapk.loader.WindowsBroker), is alone per
 // user session (the Local\WinApk-system mutex, then its pipe name), and exits
-// when no app has been open for a while.
+// when no app has been open for a while. With --maintenance it is a maintenance
+// window the launcher opens every few hours while it runs (launcher/maintenance.h,
+// when no broker runs): it runs the apps' jobs that are due, the Play Store's update
+// check among them, and exits a few minutes after the last.
 //
 // One runtime runs an app at a time, as on the Mac, where the app's stub holds
 // a lock and a second launch brings the running app forward: a second start
@@ -36,7 +41,7 @@
 // icon and name in <app dir>/icon.png and label.txt (com.winapk.tools.AppMeta,
 // in a JVM with the host natives but no app running), which is what the
 // launcher (launcher/) runs when an APK is added to the library. The metadata
-// is written before the code is converted, so the launcher shows the app's
+// is written while the code is converted, so the launcher shows the app's
 // own icon and name while the long step runs.
 //
 // App data lives under %LOCALAPPDATA%\Win.apk unless --data says otherwise.
@@ -53,17 +58,21 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "aosp_gfx.h"
+#include "hwui_host.h"
 #include "aot_guard.h"
 #include "cds.h"
 #include "crash_report.h"
 #include "debug_agent.h"
 #include "guest_libs.h"
 #include "host_natives.h"
+#include "machine_load.h"
 #include "unix_socket_dir.h"
 #include "user_folders.h"
 #include "win32_window.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -80,6 +89,7 @@
 #include <jvmti.h>
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 #include "winapk/aot_files.h"
 #include "winapk/aot_stamp.h"
@@ -102,8 +112,17 @@ struct Options {
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
+    bool maintenance = false;  // --maintenance (with --system): a maintenance window, the launcher's
     bool cds_prepare = false;  // --cds-prepare: make the framework archive (cds.h) and stop
     bool verify = false;  // --verify-apk <app>: com.winapk.tools.ApkCheck on `apk`, no app run
+    // --java-test <class path> <class> [args...]: <class>.main in a JVM made as --gms makes it (the
+    // framework on AOSP's graphics, the host natives bound) with <class path> after the framework's:
+    // CI's tests of framework code that draws, which a plain java.exe cannot run since the framework
+    // has no graphics of its own. The exit code is 0, or 1 when main throws, or System.exit's.
+    bool java_test = false;
+    std::wstring java_test_cp;
+    std::string java_test_class;  // binary name with '/'
+    std::vector<std::wstring> java_test_args;
 };
 
 std::string utf8(const std::wstring& w) {
@@ -126,6 +145,15 @@ bool google_services_setting() {
     DWORD value = 0, size = sizeof value;
     return RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"GoogleServices", RRF_RT_REG_DWORD, nullptr,
                         &value, &size) == ERROR_SUCCESS &&
+           value != 0;
+}
+
+// HKCU\Software\Win.apk PlayInstaller (absent = 1): the launcher's switch
+// Settings > Apps > "Report Google Play as the installer".
+bool play_installer_setting() {
+    DWORD value = 1, size = sizeof value;
+    return RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"PlayInstaller", RRF_RT_REG_DWORD, nullptr,
+                        &value, &size) != ERROR_SUCCESS ||
            value != 0;
 }
 
@@ -223,7 +251,9 @@ using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
 // own exceptions and the unhandled-exception filter never sees it.
 void JNICALL jvm_abort_hook() { winapk::host::crash_report_fatal("the JVM's fatal error handler"); }
 
-bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env) {
+// `exit_hook`, when given, is HotSpot's "exit" hook: System.exit ends there rather than in the CRT's exit.
+bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env,
+               void(JNICALL* exit_hook)(jint) = nullptr) {
     auto create = reinterpret_cast<CreateVmFn>(GetProcAddress(jvm, "JNI_CreateJavaVM"));
     if (!create) return false;
     std::vector<JavaVMOption> jopts(opts.size());
@@ -233,6 +263,8 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
     }
     static char abort_option[] = "abort";
     jopts.push_back({abort_option, reinterpret_cast<void*>(&jvm_abort_hook)});
+    static char exit_option[] = "exit";
+    if (exit_hook) jopts.push_back({exit_option, reinterpret_cast<void*>(exit_hook)});
     JavaVMInitArgs args{};
     args.version = JNI_VERSION_21;
     args.nOptions = static_cast<jint>(jopts.size());
@@ -268,6 +300,7 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
         else if (a == L"--system") o->system = true;
+        else if (a == L"--maintenance") o->maintenance = true;
         else if (a == L"--cds-prepare") o->cds_prepare = true;
         else if (a == L"--verify-apk") {
             o->verify = true;
@@ -279,16 +312,24 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
             o->gms = true;
             for (int j = i + 1; j < argc; ++j) o->gms_args.emplace_back(argv[j]);
             break;
+        } else if (a == L"--java-test") {
+            if (i + 2 >= argc) return false;
+            o->java_test = true;
+            o->java_test_cp = argv[i + 1];
+            o->java_test_class = utf8(argv[i + 2]);
+            std::replace(o->java_test_class.begin(), o->java_test_class.end(), '.', '/');
+            for (int j = i + 3; j < argc; ++j) o->java_test_args.emplace_back(argv[j]);
+            break;
         } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty() || o->gms || o->system || o->cds_prepare;
+    return !o->apk.empty() || o->gms || o->system || o->cds_prepare || o->java_test;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    if (!o->gms && !o->system && !o->cds_prepare) {
+    if (!o->gms && !o->system && !o->cds_prepare && !o->java_test) {
         o->apk = fs::absolute(o->apk, ec);
         if (!fs::is_regular_file(o->apk, ec)) {
             std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
@@ -303,8 +344,7 @@ bool resolve_paths(Options* o) {
         return false;
     }
     if (o->jdk.empty()) {
-        if (!env_var(L"WINAPK_JAVA_HOME").empty()) o->jdk = env_var(L"WINAPK_JAVA_HOME");
-        else if (fs::exists(root / "jre" / "bin" / "server" / "jvm.dll", ec)) o->jdk = root / "jre";
+        if (fs::exists(root / "jre" / "bin" / "server" / "jvm.dll", ec)) o->jdk = root / "jre";
         else o->jdk = env_var(L"JAVA_HOME");
     }
     if (!fs::exists(o->jdk / "bin" / "server" / "jvm.dll", ec)) {
@@ -330,20 +370,31 @@ bool resolve_paths(Options* o) {
 // arguments in the ANSI code page, so under a folder with characters outside
 // it it stopped at "could not find java.dll", and an argument such as the
 // data folder reached Java as "?". The child gets the arguments as UTF-16
-// Java strings, and its own default heap, as java.exe did: the DEX converter
-// needs more than the app's 1 GiB for large apps.
-int run_java(const Options& o, const fs::path& jar, const wchar_t* main_class, const std::vector<std::wstring>& args) {
+// Java strings, and the JVM's default heap (a quarter of the RAM) unless
+// `max_heap_mb` sets one. The exit code is kJavaMainOutOfMemory when the Java
+// heap ran out at any point, also where the program caught the error and went
+// on: the DEX converter's workers do, leaving that class out of a jar it then
+// calls a success. `jvm_opts` are further JVM options (the DEX converter's JIT: dex_jit_options).
+constexpr int kJavaMainOutOfMemory = 77;  // none of a Java tool's own codes, and under 256 for any shell
+int run_java(const Options& o, const fs::path& jar, const wchar_t* main_class, const std::vector<std::wstring>& args,
+             unsigned max_heap_mb = 0, const std::vector<std::wstring>& jvm_opts = {}) {
     wchar_t self[32768];
     const DWORD n = GetModuleFileNameW(nullptr, self, 32768);
     if (n == 0 || n >= 32768) return -1;
     std::wstring cmdline = quoted(std::wstring(self, n)) + L" --java-main --jdk " + quoted(o.jdk) + L" --cp " +
-                           quoted(jar) + L" " + main_class;
+                           quoted(jar) + L" ";
+    if (max_heap_mb) cmdline += L"--max-heap-mb " + std::to_wstring(max_heap_mb) + L" ";
+    for (const std::wstring& j : jvm_opts) cmdline += L"--jvm-option " + quoted(j) + L" ";
+    cmdline += main_class;
     for (const std::wstring& a : args) cmdline += L" " + quoted(a);
     std::fflush(stderr);  // our lines first, then the child's
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
     if (!CreateProcessW(self, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        // The caller only sees -1 ("exit code -1"): the cause is here.
+        const DWORD err = GetLastError();
+        std::fprintf(stderr, "[win.apk] cannot start the Java tool %s (error %lu)\n", utf8(main_class).c_str(), err);
         return -1;
     }
     WaitForSingleObject(pi.hProcess, INFINITE);
@@ -361,7 +412,11 @@ int run_process(std::wstring cmdline) {
     STARTUPINFOW si{};
     si.cb = sizeof(si);
     PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) return -1;
+    if (!CreateProcessW(nullptr, &cmdline[0], nullptr, nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+        const DWORD err = GetLastError();
+        std::fprintf(stderr, "[win.apk] cannot start %s (error %lu)\n", utf8(cmdline).c_str(), err);
+        return -1;
+    }
     WaitForSingleObject(pi.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
@@ -496,6 +551,85 @@ bool write_dex_stamp(const fs::path& path, const DexStamp& s) {
     return !ec;
 }
 
+// True when `path` is a whole zip: its end-of-central-directory record is
+// there. The converter writes the jar under a temporary name and renames it
+// when done, but an exit code alone was not enough to trust it: under Wine a
+// converter the system killed for memory reported 0 and left no file.
+bool complete_zip(const fs::path& path) {
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return false;
+    // The record is 22 bytes plus a comment of up to 64 KiB, at the very end.
+    std::vector<unsigned char> tail(22 + 65535);
+    bool ok = false;
+    if (_fseeki64(f, 0, SEEK_END) == 0) {
+        const long long size = _ftelli64(f);
+        const long long n = std::min<long long>(size, static_cast<long long>(tail.size()));
+        if (n >= 22 && _fseeki64(f, size - n, SEEK_SET) == 0 &&
+            std::fread(tail.data(), 1, static_cast<size_t>(n), f) == static_cast<size_t>(n)) {
+            for (long long i = n - 22; i >= 0 && !ok; --i) {
+                ok = tail[i] == 'P' && tail[i + 1] == 'K' && tail[i + 2] == 5 && tail[i + 3] == 6;
+            }
+        }
+    }
+    std::fclose(f);
+    return ok;
+}
+
+// The converter's heap. Measured with the largest apps at hand (8 workers,
+// which is what the converter runs on any heap below 2.25 GB): Leumi's 81 MB
+// of DEX (73,765 classes) peaks at about 300 MB live and converts in 384 MB
+// with nine full collections, in 768 MB with none; Mercantile's and Waze's
+// 60-72 MB about 315 and 265 MB. 1 GB is three times the largest; the JVM's
+// default, a quarter of the RAM, grew the heap to 2.2 GB on a 16 GB PC for
+// the same work. An app that still runs out is converted once more on the
+// larger of 2 GB and the default (dex_retry_heap_mb).
+unsigned dex_heap_mb() { return 1024; }
+unsigned dex_retry_heap_mb() {
+    MEMORYSTATUSEX m{};
+    m.dwLength = sizeof(m);
+    const unsigned long long quarter = GlobalMemoryStatusEx(&m) ? m.ullTotalPhys / 4 / (1024 * 1024) : 0;
+    return static_cast<unsigned>(std::max<unsigned long long>(2048, quarter));
+}
+
+// The DEX in an installed app: the uncompressed size of base.apk's classes*.dex and its splits' (a feature
+// split may carry code), from the central directories.
+unsigned long long dex_bytes(const fs::path& base) {
+    std::vector<fs::path> apks{base};
+    std::error_code ec;
+    for (fs::directory_iterator it(base.parent_path(), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::wstring n = it->path().filename().wstring();
+        if (n.rfind(L"split_", 0) == 0 && it->path().extension() == L".apk") apks.push_back(it->path());
+    }
+    unsigned long long total = 0;
+    for (const fs::path& apk : apks) {
+        std::vector<std::string> rows;  // "<name> <length> <CRC-32>"
+        if (!jar_entries(apk, "classes", &rows)) continue;
+        for (const std::string& r : rows) {
+            const size_t a = r.find(' '), b = r.rfind(' ');
+            if (a == std::string::npos || a < 4 || a == b || r.compare(a - 4, 4, ".dex") != 0) continue;
+            total += std::strtoull(r.c_str() + a + 1, nullptr, 10);
+        }
+    }
+    return total;
+}
+
+// The converter's JIT. The converter is a short job, and most of its time was HotSpot's warm-up, not
+// the conversion: C2 compiling the converter's own hot methods kept the cores busy while the workers ran
+// slow code (Jerboa's 10.5 MB of DEX: 17 s of CPU for 6.6 s with one worker, and four workers barely
+// faster). With C1 alone (-XX:TieredStopAtLevel=1) the same conversion takes half the time: Jerboa
+// 4.6 -> 2.3 s, Jellyfin 4.8 -> 2.6, Jitsi 3.3 -> 1.4, Fossify Notes 3.0 -> 1.4 (JDK on Linux, 4 cores),
+// Jerboa under Wine with the shipped Temurin 21 11.2 -> 7.4 s. C2's code is faster once compiled (1.45 s
+// against 2.15 s per Jerboa of DEX in a warm JVM), so it wins back its warm-up only past about five
+// Jerboas, ~55 MB of DEX: above kDexC2Above the converter keeps the default tiered JIT. The cut sits
+// below that break-even, at 40 MB, as a margin: the break-even comes from one app on one machine, and
+// near it either choice costs about the same, while far above it C1 alone would be the slow one. The
+// output is the same either way (the converter's bytes do not depend on the JIT).
+constexpr unsigned long long kDexC2Above = 40ull << 20;
+std::vector<std::wstring> dex_jit_options(const fs::path& apk) {
+    if (dex_bytes(apk) > kDexC2Above) return {};
+    return {L"-XX:TieredStopAtLevel=1"};
+}
+
 // Step 2. Exit codes are com.macapk.dex.Main's: 0 converted, 3 no DEX in the
 // APK (a valid case: the app then has no classes.jar). A failed conversion
 // keeps the cached jar when only the converter changed: the app then runs as
@@ -525,14 +659,37 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     if (!why) return true;
     std::fprintf(stderr, "[win.apk] converting the app's code (%s)...\n", why);
     const fs::path tmp = app_dir / "classes.jar.tmp";
+    // The jar and what the converter writes on its way to it (its own temporary name, its "parsed"
+    // marker): a converter that was killed leaves them behind.
+    auto discard = [&] {
+        for (const wchar_t* suffix : {L"", L".tmp", L".parsed"}) fs::remove(tmp.wstring() + suffix, ec);
+    };
+    discard();
     std::vector<std::wstring> args;
     if (with_framework) args = {L"--classpath", framework.wstring()};
     args.push_back(o.apk.wstring());
     args.push_back(tmp.wstring());
-    const int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args);
+    const unsigned heap = dex_heap_mb();
+    const std::vector<std::wstring> jit = dex_jit_options(o.apk);
+    int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args, heap, jit);
+    if (rc == kJavaMainOutOfMemory) {
+        const unsigned retry = std::max(dex_retry_heap_mb(), heap);
+        std::fprintf(stderr, "[win.apk] the DEX converter ran out of its %u MB heap; converting again with %u MB\n",
+                     heap, retry);
+        discard();
+        rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args, retry, jit);
+    }
     if (rc == 3) {
         jar->clear();
         return true;
+    }
+    if (rc == 0 && !complete_zip(tmp)) {
+        std::fprintf(stderr, "[win.apk] DEX conversion failed: the converter exited with 0 but %s %s (was it "
+                             "stopped, or out of memory?)\n",
+                     utf8(tmp.wstring()).c_str(), fs::exists(tmp, ec) ? "is not a whole jar" : "does not exist");
+        rc = -2;  // said why
+    } else if (rc == kJavaMainOutOfMemory) {
+        std::fprintf(stderr, "[win.apk] DEX conversion failed: out of memory on the larger heap too\n");
     }
     if (rc == 0) {
         fs::rename(tmp, *jar, ec);
@@ -545,10 +702,10 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
         }
         std::fprintf(stderr, "[win.apk] DEX conversion failed: cannot replace %s (%s)\n", utf8(jar->wstring()).c_str(),
                      ec.message().c_str());
-        fs::remove(tmp, ec);
-    } else {
+    } else if (rc != -2 && rc != kJavaMainOutOfMemory) {  // those said why above
         std::fprintf(stderr, "[win.apk] DEX conversion failed (exit code %d)\n", rc);
     }
+    discard();
     const bool same_apk = cached && (stamped ? have.apk == want.apk
                                              : fs::last_write_time(*jar, ec) >= fs::last_write_time(o.apk, ec));
     if (!same_apk) return false;
@@ -565,18 +722,12 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
 // (com.winapk.tools.AppInstall). Done once per input file; a small record next
 // to the installs names the result. Afterwards the app is the installed
 // base.apk.
-//
-// WINAPK_ABIS overrides the ABI list (WINAPK_ABIS=arm64-v8a runs an app's
-// arm64 build although it has an x86_64 one, for comparing the two); an
-// override gets its own install.
 bool install_app(Options* o, const fs::path& android_root) {
     std::error_code ec;
     const fs::path apps = android_root / "data" / "app";
     fs::create_directories(apps, ec);
-    std::wstring abis = env_var(L"WINAPK_ABIS");
-    const std::wstring tag = abis.empty() ? L"" : L"." + abis;
-    if (abis.empty()) abis = L"x86_64,arm64-v8a";
-    const fs::path record = apps / (L"." + o->apk.stem().wstring() + tag + L".installed");
+    const std::wstring abis = L"x86_64,arm64-v8a";
+    const fs::path record = apps / (L"." + o->apk.stem().wstring() + L".installed");
     auto installed = [&]() -> fs::path {
         if (!fs::exists(record, ec) || fs::last_write_time(record, ec) < fs::last_write_time(o->apk, ec)) return {};
         FILE* f = _wfopen(record.c_str(), L"rb");
@@ -614,6 +765,9 @@ bool install_app(Options* o, const fs::path& android_root) {
 // library whole took most of an hour (libwaze.so, 1.5M instructions), and the
 // app waited for it. Now nothing waits: the app starts on the JIT while a
 // background process (this program, --aot-translate) does the work.
+// A library the app has never run code in (no profile yet) is not translated
+// at all (aot_stamp.h, aot_stamp_needs_work): installing an app must not keep
+// clang busy for libraries it may never load.
 // A library of up to kAotFullBelow instructions (1 million: about a quarter
 // of an hour of one core, once, then shared) is translated whole;
 // a larger one only where its profile says code ran (arm64_aot.h,
@@ -634,8 +788,10 @@ bool install_app(Options* o, const fs::path& android_root) {
 //     core had made a few huge ones.
 //   - AotGovernor decides, every couple of seconds, how many clang run at
 //     once: up to half the logical processors while the user is away, one
-//     while the user is active, none on battery saver or under a full-screen
-//     program, never so many that free memory falls below kAotReserve, and
+//     while the user is active or an app of Win.apk runs (another
+//     winapk-runtime.exe: its memory comes first, as Android leaves its
+//     background compiling to when the device is idle; clang beside Open
+//     Sudoku made its second start's peak 597 MB, measured on windows-latest), none on battery saver or under a full-screen program, never so many that free memory falls below kAotReserve, and
 //     no new one while the whole machine is above 80% busy.
 //   - The worker and everything it starts run at idle priority, in
 //     background mode (low I/O and memory priority) and as EcoQoS, in a job
@@ -670,8 +826,8 @@ bool install_app(Options* o, const fs::path& android_root) {
 // another build of the library is no stamp, and a DLL under it must be sealed.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
-// SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
-// do, a whole translation is kept in <data>\aot-cache under a key of the
+// SQLite, ...). As Windows on ARM's own translation cache does, a whole
+// translation is kept in <data>\aot-cache under a key of the
 // library's code (the text hash the loader checks), winapk-aot and clang
 // (each by size and date), the flags and the CPU, and an app with the same
 // library links it (a second name for the same file, aot_link_or_copy)
@@ -876,6 +1032,19 @@ void background_child(HANDLE process) {
     SetProcessInformation(process, ProcessMemoryPriority, &memory, sizeof memory);
 }
 
+// Whether a winapk-runtime.exe other than this one runs: an app (or its archive's dump, an install).
+bool other_runtime_running() {
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W e{};
+    e.dwSize = sizeof e;
+    bool found = false;
+    for (BOOL more = Process32FirstW(snap, &e); more && !found; more = Process32NextW(snap, &e))
+        found = e.th32ProcessID != GetCurrentProcessId() && _wcsicmp(e.szExeFile, L"winapk-runtime.exe") == 0;
+    CloseHandle(snap);
+    return found;
+}
+
 // How many compilers may run at once, decided again each time one is about
 // to start (see the top of this section for the policy).
 class AotGovernor {
@@ -917,6 +1086,10 @@ public:
         if (fixed == 0 && n > 1 && GetLastInputInfo(&li) && GetTickCount() - li.dwTime < 2 * 60 * 1000) {
             n = 1;
             why = "the user is active";
+        }
+        if (fixed == 0 && n > 1 && other_runtime_running()) {
+            n = 1;
+            why = "an app runs";
         }
         if (running > 0 && busy > 0.80 && n > running) {
             n = running;
@@ -1051,8 +1224,7 @@ std::string aot_cache_key(const fs::path& so, const fs::path& clang) {
     while (!hash.empty() && std::isspace(static_cast<unsigned char>(hash.back()))) hash.pop_back();
     // -march=native: the CPU too, for a data folder that moves to another PC.
     const std::string id = hash + "|" + file_id(exe_dir() / "winapk-aot.exe") + "|" + file_id(clang) + "|" +
-                           utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS")) + "|" +
-                           hex64(winapk::arm64::aot_cpu_signature());
+                           utf8(kAotCompileFlags) + "|" + hex64(winapk::arm64::aot_cpu_signature());
     return hex64(fnv1a(id));
 }
 
@@ -1151,7 +1323,7 @@ void aot_translate_one(const fs::path& so, const fs::path& clang, const fs::path
         // Each part's object is named by its C and how it is compiled, so a
         // part compiled before the pass was stopped is not compiled again.
         const std::string how =
-            file_id(clang) + "|" + utf8(kAotCompileFlags) + "|" + utf8(env_var(L"WINAPK_AOT_MAX_INSNS"));
+            file_id(clang) + "|" + utf8(kAotCompileFlags);
         std::vector<Compile> compiles;
         for (int i = 0;; ++i) {
             const fs::path src = i == 0 ? c : fs::path(c.wstring() + L"." + std::to_wstring(i) + L".c");
@@ -1404,11 +1576,6 @@ void prepare_arm64(const Options& o, const fs::path& app_dir) {
     std::error_code ec;
     const fs::path libs = arm64_libs(o.apk);
     if (!fs::is_directory(libs, ec) || !fs::exists(exe_dir() / "winapk-aot.exe", ec)) return;
-    if (env_var(L"WINAPK_AOT") == L"0") {
-        winapk::arm64::aot_disable();
-        std::fprintf(stderr, "[win.apk] arm64 AOT: off (WINAPK_AOT=0); the JIT runs the app's arm64 code\n");
-        return;
-    }
     // Translation off for this start if the app crashed twice in a row with
     // translated code loaded (aot_guard.h). Then nothing is translated either:
     // the worker would only make what is not loaded.
@@ -1476,14 +1643,35 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     const Options& o = b.options;
     std::error_code ec;
     std::vector<std::string> v;
-    v.push_back("-Djava.class.path=" + jvm_path(o.lib / "android-framework.jar") + ";" +
+    // AOSP's graphics (aosp_gfx.h): their classes before the framework's, which has no
+    // android.graphics of its own (aosp_gfx_prepare in main made sure they are there).
+    const winapk::host::AospGfxFiles* aosp = winapk::host::aosp_gfx_files();
+    // AOSP's resources (aosp_gfx.h, always: Win.apk's own are not shipped) before them: that jar's
+    // com.android.internal.R matches its framework table, for the graphics' classes too.
+    // --java-test leaves both out: the framework tests exercise Win.apk's own views and resources,
+    // which their class path brings back (the build's whole android-framework.jar), on AOSP's graphics.
+    const winapk::host::AospResFiles* aosp_res = o.java_test ? nullptr : winapk::host::aosp_res_files();
+    // AOSP's views (aosp_gfx.h, always likewise) before both: android.view and android.widget.
+    const std::filesystem::path* aosp_views = o.java_test ? nullptr : winapk::host::aosp_views_jar();
+    // AOSP's app layer (aosp_gfx.h, always) before all three: android.app's lifecycle. --java-test
+    // too: the framework has no Activity or Application of its own.
+    const std::filesystem::path* aosp_app = winapk::host::aosp_app_jar();
+    v.push_back("-Djava.class.path=" + (aosp_app ? jvm_path(*aosp_app) + ";" : std::string()) +
+                (aosp_views ? jvm_path(*aosp_views) + ";" : std::string()) +
+                (aosp_res ? jvm_path(aosp_res->jar) + ";" : std::string()) +
+                (aosp ? jvm_path(aosp->jar) + ";" : std::string()) +
+                jvm_path(o.lib / "android-framework.jar") + ";" +
                 jvm_path(o.lib / "macapk-loader.jar") + ";" + jvm_path(o.lib / "bcprov-jdk18on-1.79.jar") +
-                (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()));
+                (o.install_only || o.verify ? ";" + jvm_path(o.lib / "winapk-tools.jar") : std::string()) +
+                (o.java_test ? ";" + utf8(o.java_test_cp) : std::string()));
     // Upstream's set (runtime/src/jvm_loader.cpp), minus the Mac-only parts.
     v.push_back("-Xrs");
     v.push_back("-Djava.library.path=");
     v.push_back("-XX:+UseSerialGC");
     v.push_back("-Xms128m");
+    // 1 GB, upstream's: twice a high-end phone's largeHeap. Apps size their caches by what
+    // ActivityManager reports, at most 512 MB (getLargeMemoryClass, clamped there as on a
+    // phone), so the framework's own objects keep room above that.
     v.push_back("-Xmx1g");
     v.push_back("-Xss16m");
     v.push_back("-XX:+UnlockDiagnosticVMOptions");
@@ -1520,6 +1708,12 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     v.push_back("--add-opens=java.base/jdk.internal.loader=ALL-UNNAMED");
     v.push_back("--add-exports=java.base/sun.net.www.protocol.http=ALL-UNNAMED");
     v.push_back("--add-exports=java.base/sun.net.www.protocol.https=ALL-UNNAMED");
+    // Windows' proxy, as a phone's apps follow the one its network settings name: java.net's default
+    // ProxySelector (HttpURLConnection, OkHttp and whatever else asks it) asks WinHTTP for each address, which
+    // answers from Settings > Network & internet > Proxy: a proxy server with its exceptions, a setup script
+    // (PAC) or automatic detection (WPAD). Without it the JDK goes direct. An app's own choice
+    // (ProxySelector.setDefault, http.proxyHost) still comes first, as on Android.
+    v.push_back("-Djava.net.useSystemProxies=true");
     if (fs::is_directory(o.lib / "java_base_patch", ec))
         v.push_back("--patch-module=java.base=" + jvm_path(o.lib / "java_base_patch"));
     if (fs::is_directory(o.lib / "jdk_unsupported_patch", ec))
@@ -1565,9 +1759,47 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
     // Win.apk's own language, for the screens it draws itself (the Google
     // account chooser): its setting can differ from the Windows locale the app sees.
     v.push_back(std::string("-Dwinapk.ui.lang=") + (winapk::host::ui_hebrew() ? "he" : "en"));
+    // WINAPK_LOCALES=he-IL[,en-US]: the device's system languages, ranked, as a phone's Settings >
+    // System > Languages sets them, instead of Windows' locale (headless runs and tests). The first is
+    // the process's default locale (user.language/script/country: Locale.getDefault), as a device
+    // makes its first system language; the list is LocaleList's and Configuration.getLocales()'s
+    // (-Dwinapk.locales, android.os.LocaleList), and ICU's starting locale (aosp_gfx_locale).
+    const std::wstring locales = env_var(L"WINAPK_LOCALES");
+    if (!locales.empty()) {
+        const std::string list = utf8(locales);
+        v.push_back("-Dwinapk.locales=" + list);
+        std::string first = list.substr(0, list.find(','));
+        for (char& c : first) if (c == '_') c = '-';
+        std::string lang, script, region;
+        size_t start = 0;
+        for (int part = 0; start <= first.size(); ++part) {
+            const size_t end = std::min(first.find('-', start), first.size());
+            const std::string sub = first.substr(start, end - start);
+            if (part == 0) lang = sub;
+            else if (sub.size() == 4 && script.empty() && region.empty()) script = sub;
+            else if ((sub.size() == 2 || sub.size() == 3) && region.empty()) region = sub;
+            start = end + 1;
+        }
+        if (!lang.empty()) v.push_back("-Duser.language=" + lang);
+        v.push_back("-Duser.script=" + script);
+        v.push_back("-Duser.country=" + region);
+    }
     v.push_back("-Dmacapk.bundle.apk=" + jvm_path(o.apk));
     v.push_back("-Dmacapk.display.density=" + std::to_string(display_density_dpi()));
     v.push_back("-XX:ErrorFile=" + jvm_path(logs) + "\\hs_err_pid%p.log");
+    if (aosp) {
+        // What the DLL's JNI_OnLoad reads (ICU's data and its starting locale), and where the
+        // framework finds Android's fonts and hyphenation patterns.
+        v.push_back("-Dicu.data.path=" + jvm_path(aosp->icu_data));
+        v.push_back("-Dicu.locale.default=" + winapk::host::aosp_gfx_locale());
+        v.push_back("-Dwinapk.aosp.fonts=" + jvm_path(aosp->fonts));
+        if (!aosp->hyphen.empty()) v.push_back("-Dwinapk.aosp.hyphen=" + jvm_path(aosp->hyphen));
+    }
+    if (aosp_res) {
+        v.push_back("-Dwinapk.aosp.res=1");
+        v.push_back("-Dwinapk.aosp.res.framework=" + jvm_path(aosp_res->framework));
+    }
+    if (aosp_views) v.push_back("-Dwinapk.aosp.views=1");
     // Extra options, space-separated, as upstream reads them.
     const std::string extra = utf8(env_var(L"MACAPK_JVM_OPTS"));
     for (size_t i = 0; i < extra.size();) {
@@ -1576,7 +1808,8 @@ std::vector<std::string> jvm_options(const BootArgs& b) {
         i = j + 1;
     }
     // Class-data sharing (cds.h): last, so its key sees MACAPK_JVM_OPTS too.
-    // Only an app's own start records the classes it loads.
+    // Only an app's own start records the classes it loads. AOSP's resources and views have
+    // archives of their own (cds_util.h, graphics_of), so a run with either keeps the other's.
     winapk::host::cds_apply(&v, o.jdk, o.lib, o.data,
                             o.install_only ? std::wstring() : b.app_dir.filename().wstring());
     return v;
@@ -1611,14 +1844,46 @@ void report_path_encoding(JNIEnv* env) {
     std::fprintf(stderr, "[win.apk] ANSI code page %u; the JVM takes file names in %s\n", GetACP(), jnu.c_str());
 }
 
-// winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]
+// winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] [--jvm-option <opt>]... <class> [args...]
 //
-// `java -cp <jar> <class> args...` for run_java: creates a JVM with the
-// default options (heap and all) and calls <class>.main with the arguments
-// as UTF-16 Java strings. A System.exit in main ends the process with its
-// code; otherwise the exit code is 0, or 1 when main throws, as with java.exe.
+// `java -cp <jar> [-Xmx<n>m] [<opt>...] <class> args...` for run_java: creates a JVM with
+// the default options (and the heap limit and options, if given) and calls <class>.main
+// with the arguments as UTF-16 Java strings. A System.exit in main ends the
+// process with its code; otherwise the exit code is 0, or 1 when main throws,
+// as with java.exe. Either way it is kJavaMainOutOfMemory instead once the
+// Java heap ran out (JVMTI's ResourceExhausted), caught or not.
+std::atomic<bool> g_java_main_oom{false};
+
+void JNICALL java_main_exhausted(jvmtiEnv*, JNIEnv*, jint flags, const void*, const char*) {
+    if (flags & JVMTI_RESOURCE_EXHAUSTED_JAVA_HEAP) g_java_main_oom = true;
+}
+
+void JNICALL java_main_exit(jint code) {
+    std::fflush(stdout);
+    std::fflush(stderr);
+    ExitProcess(g_java_main_oom ? kJavaMainOutOfMemory : static_cast<UINT>(code));
+}
+
+// Asks the VM for its heap's ResourceExhausted events (a capability HotSpot
+// always has). Without them the exit codes are the program's own.
+void watch_java_heap(JavaVM* vm) {
+    jvmtiEnv* ti = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&ti), JVMTI_VERSION_1_2) != JNI_OK || !ti) return;
+    jvmtiCapabilities caps{};
+    caps.can_generate_resource_exhaustion_heap_events = 1;
+    jvmtiEventCallbacks cb{};
+    cb.ResourceExhausted = &java_main_exhausted;
+    if (ti->AddCapabilities(&caps) != JVMTI_ERROR_NONE ||
+        ti->SetEventCallbacks(&cb, static_cast<jint>(sizeof(cb))) != JVMTI_ERROR_NONE ||
+        ti->SetEventNotificationMode(JVMTI_ENABLE, JVMTI_EVENT_RESOURCE_EXHAUSTED, nullptr) != JVMTI_ERROR_NONE) {
+        std::fprintf(stderr, "[win.apk] warning: no JVMTI heap events; an out-of-memory error is not told apart\n");
+    }
+}
+
 struct JavaMainArgs {
     fs::path jdk, cp;
+    unsigned max_heap_mb = 0;
+    std::vector<std::string> jvm_opts;
     std::string main_class;  // binary name with '/', "com/macapk/dex/Main"
     std::vector<std::wstring> args;
     int result = 1;
@@ -1629,9 +1894,12 @@ DWORD WINAPI java_main_thread(void* param) {
     HMODULE jvm = load_jvm(a->jdk);
     if (!jvm) return 1;
     std::vector<std::string> opts{"-Djava.class.path=" + jvm_path(a->cp)};
+    if (a->max_heap_mb) opts.push_back("-Xmx" + std::to_string(a->max_heap_mb) + "m");
+    opts.insert(opts.end(), a->jvm_opts.begin(), a->jvm_opts.end());
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
-    if (!create_vm(jvm, opts, &vm, &env)) return 1;
+    if (!create_vm(jvm, opts, &vm, &env, &java_main_exit)) return 1;
+    watch_java_heap(vm);
     jclass cls = env->FindClass(a->main_class.c_str());
     jmethodID main = cls ? env->GetStaticMethodID(cls, "main", "([Ljava/lang/String;)V") : nullptr;
     if (!main) {
@@ -1660,7 +1928,7 @@ DWORD WINAPI java_main_thread(void* param) {
         env->ExceptionClear();
     }
     vm->DestroyJavaVM();  // waits for the program's other threads, as java.exe does
-    a->result = threw ? 1 : 0;
+    a->result = g_java_main_oom ? kJavaMainOutOfMemory : threw ? 1 : 0;
     return 0;
 }
 
@@ -1671,10 +1939,13 @@ int java_main(int argc, wchar_t** argv) {
         const std::wstring k = argv[i];
         if (k == L"--jdk") a.jdk = argv[i + 1];
         else if (k == L"--cp") a.cp = argv[i + 1];
+        else if (k == L"--max-heap-mb") a.max_heap_mb = static_cast<unsigned>(std::wcstoul(argv[i + 1], nullptr, 10));
+        else if (k == L"--jvm-option") a.jvm_opts.push_back(utf8(argv[i + 1]));
         else break;
     }
     if (a.jdk.empty() || a.cp.empty() || i >= argc) {
-        std::fprintf(stderr, "usage: winapk-runtime --java-main --jdk <dir> --cp <jar> <class> [args...]\n");
+        std::fprintf(stderr, "usage: winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] "
+                             "[--jvm-option <opt>]... <class> [args...]\n");
         return 2;
     }
     a.main_class = utf8(argv[i++]);
@@ -1731,6 +2002,32 @@ DWORD WINAPI gms_thread(void* param) {
     }
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
+    if (!winapk::host::aosp_gfx_load(vm, env)) return 1;  // as boot_thread: it said why
+
+    if (o.java_test) {
+        jclass cls = env->FindClass(o.java_test_class.c_str());
+        jmethodID main = cls ? env->GetStaticMethodID(cls, "main", "([Ljava/lang/String;)V") : nullptr;
+        if (!main) {
+            check_exception(env, "the test class's main lookup");
+            std::fprintf(stderr, "[win.apk] no main method in %s\n", o.java_test_class.c_str());
+            std::fflush(stderr);
+            TerminateProcess(GetCurrentProcess(), 1);
+        }
+        jobjectArray args = env->NewObjectArray(static_cast<jsize>(o.java_test_args.size()),
+                                                env->FindClass("java/lang/String"), nullptr);
+        for (size_t i = 0; i < o.java_test_args.size(); ++i) {
+            env->SetObjectArrayElement(args, static_cast<jsize>(i), jstring_of(env, o.java_test_args[i]));
+        }
+        env->CallStaticVoidMethod(cls, main, args);
+        const bool threw = env->ExceptionCheck();
+        if (threw) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
+        std::fflush(stdout);
+        std::fflush(stderr);
+        TerminateProcess(GetCurrentProcess(), threw ? 1 : 0);
+    }
 
     // --verify-apk is the same shape: com.winapk.tools.ApkCheck.run(String[])int, on the one file.
     const char* cls_name = o.verify ? "com/winapk/tools/ApkCheck" : "com/macapk/gms/GmsCli";
@@ -1786,6 +2083,7 @@ DWORD WINAPI system_thread(void* param) {
     }
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
+    if (!winapk::host::aosp_gfx_load(vm, env)) return 1;  // as boot_thread: it said why
     jclass server = env->FindClass("com/macapk/loader/SystemServer");
     jmethodID main = server ? env->GetStaticMethodID(server, "main", "([Ljava/lang/String;)V") : nullptr;
     if (!main) {
@@ -1811,6 +2109,8 @@ DWORD WINAPI boot_thread(void* param) {
     HMODULE jvm = load_jvm(o.jdk);
     if (!jvm) return 1;
     std::vector<std::string> opts = jvm_options(*b);
+    // An install on a Win.apk with no framework archive yet starts its dump now, in the background (cds.h).
+    if (o.install_only) winapk::host::cds_dump_at_install();
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
     if (!create_vm(jvm, opts, &vm, &env)) return 1;
@@ -1836,6 +2136,15 @@ DWORD WINAPI boot_thread(void* param) {
     // Upstream's own NativeSqlite bridge replaces those stubs (see CMakeLists).
     macapk::sqlite::RegisterNativeSqliteMethods(env);
     check_exception(env, "RegisterNativeSqliteMethods");
+    // AOSP's graphics (aosp_gfx.h): Skia and the rest onto AOSP's classes, after Win.apk's own natives so
+    // that those it keeps (SQLite's, Surface's) stay bound as they are. Without them nothing draws, so
+    // the run stops here (aosp_gfx_load logged why) rather than show a window that stays empty.
+    if (!winapk::host::aosp_gfx_load(vm, env)) return 1;
+    // Its compositor shows the app's windows (hwui_host.h): composed on the GPU into the window.
+    if (!winapk::host::hwui_attach()) {
+        std::fprintf(stderr, "[win.apk] error: AOSP graphics: the graphics DLL has no compositor\n");
+        return 1;
+    }
 
     auto jstr = [&](const fs::path& p) { return jstring_of(env, p.wstring()); };
 
@@ -1884,7 +2193,6 @@ DWORD WINAPI boot_thread(void* param) {
 // lower-cased), held until the process exits; a mutex left by a process that
 // died counts as free (WAIT_ABANDONED). Next to it, a named mapping holds the
 // holder's process id, so a second start can find the holder's window.
-// WINAPK_ALLOW_SECOND_INSTANCE=1 turns the check off.
 std::wstring instance_key(const fs::path& app_dir) {
     std::error_code ec;
     std::wstring key = fs::absolute(app_dir, ec).lexically_normal().wstring();
@@ -1907,7 +2215,6 @@ std::wstring instance_key(const fs::path& app_dir) {
 constexpr DWORD kHolderServiceHost = 1;
 
 bool claim_single_instance(const std::wstring& key) {
-    if (!env_var(L"WINAPK_ALLOW_SECOND_INSTANCE").empty()) return true;
     HANDLE m = CreateMutexW(nullptr, FALSE, key.c_str());
     if (!m) return true;  // no lock to be had: do not block the start
     const DWORD w = WaitForSingleObject(m, 0);
@@ -2014,23 +2321,17 @@ void aot_app_exiting() {
 // The volume's Download, Pictures, Documents, Music and Movies are the user's
 // Windows folders (user_folders.h). Only for the user's own library: a run
 // with --data (tests, the compat sweep, CI) must never touch real folders.
-// MACAPK_USER_FOLDERS decides when set (=0 changes nothing, as upstream);
-// otherwise the launcher's Settings switch (UserFolders, default on), whose
-// off undoes the junctions so it visibly does what it says.
+// The launcher's Settings switch (UserFolders, default on) decides; its off
+// undoes the junctions so it visibly does what it says.
 void map_shared_folders(const Options& o) {
     if (!o.default_data) return;
     using winapk::host::UserFolderMode;
     UserFolderMode mode = UserFolderMode::kMap;
-    const std::wstring forced = env_var(L"MACAPK_USER_FOLDERS");
-    if (!forced.empty()) {
-        if (forced[0] == L'0') mode = UserFolderMode::kKeep;
-    } else {
-        DWORD on = 1, size = sizeof on;
-        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"UserFolders", RRF_RT_REG_DWORD, nullptr, &on,
-                         &size) == ERROR_SUCCESS &&
-            on == 0) {
-            mode = UserFolderMode::kUnmap;
-        }
+    DWORD on = 1, size = sizeof on;
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\Win.apk", L"UserFolders", RRF_RT_REG_DWORD, nullptr, &on,
+                     &size) == ERROR_SUCCESS &&
+        on == 0) {
+        mode = UserFolderMode::kUnmap;
     }
     const fs::path android_root = o.data / "android";
     const auto mapped =
@@ -2105,19 +2406,35 @@ int wmain(int argc, wchar_t** argv) {
         }
         return aot_translate_main(argv[2], cache, delay_s);
     }
+    winapk::host::machine_load::mark();  // the machine's CPU now, against its first frame (machine_load.h)
     BootArgs b;
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "
                      "[--install-only] [--package-to <file>]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --gms <subcommand> [args]\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]\n"
                      "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <app>\n"
-                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare\n");
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare\n"
+                     "       winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --java-test <class path> <class> "
+                     "[args...]\n");
         return 2;
     }
     if (!resolve_paths(&b.options)) return 2;
+    // AOSP's graphics (aosp_gfx.h), for every JVM with the framework this runtime makes: an app's run,
+    // --cds-prepare's key, the install's icon (AppMeta), --gms, --verify-apk and --system. The framework
+    // has no other graphics, so a file missing or a DLL that does not load stops all of them here, with
+    // the line aosp_gfx_prepare logged; only --package-to (AppInstall, no framework) goes on.
+    if (!winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir()) && b.options.package_to.empty()) {
+        std::fprintf(stderr, "[win.apk] cannot start: AOSP's graphics are not usable (the error above)\n");
+        return 1;
+    }
+    // AOSP's resources and views (aosp_gfx.h), for the same JVMs: the only ones the stage has.
+    winapk::host::aosp_res_prepare(b.options.lib, exe_dir());
+    winapk::host::aosp_views_prepare(b.options.lib);
+    winapk::host::aosp_app_prepare(b.options.lib);
     if (b.options.cds_prepare) {
-        jvm_options(b);  // the options, and with them the archive's key, an app's start would have
+        // The options, and with them the archive's key, an app's start would have: its graphics too.
+        jvm_options(b);
         return winapk::host::cds_prepare();
     }
     // A crash from here on also leaves logs\crash-<app>-<time>.dmp.
@@ -2158,6 +2475,11 @@ int wmain(int argc, wchar_t** argv) {
         // MACAPK_BROKER, when set, wins either way.
         if (env_var(L"MACAPK_BROKER").empty() && google_services_setting())
             SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
+        // Settings > Apps > "Report Google Play as the installer" (PlayInstaller, absent = 1): an app the
+        // user installed names Google Play as its installer (InstallerOfRecord.reported). Set either way
+        // so the Java side reads one variable; WINAPK_PLAY_INSTALLER, when set, wins.
+        if (env_var(L"WINAPK_PLAY_INSTALLER").empty())
+            SetEnvironmentVariableW(L"WINAPK_PLAY_INSTALLER", play_installer_setting() ? L"1" : L"0");
     }
 
     // --system: the broker. One per user session: a second one exits at once.
@@ -2169,6 +2491,9 @@ int wmain(int argc, wchar_t** argv) {
         }
         SetEnvironmentVariableW(L"MACAPK_BROKER", L"1");
         SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);  // the app that started it, not the broker's
+        // A maintenance window: no app is open; the broker runs the jobs that are due and stops a few minutes
+        // after the last (SystemServer.MAINTENANCE, BrokerJobs).
+        SetEnvironmentVariableW(L"MACAPK_BROKER_MAINTENANCE", b.options.maintenance ? L"1" : nullptr);
         if (env_var(L"MACAPK_BROKER_LOGDIR").empty()) {
             std::error_code lec;
             fs::create_directories(b.options.data / L"logs" / L"services", lec);
@@ -2183,8 +2508,8 @@ int wmain(int argc, wchar_t** argv) {
     }
 
     // --gms: a JVM, the GMS classes and no app. Before anything APK-shaped.
-    // --verify-apk too: it only reads the file.
-    if (b.options.gms || b.options.verify) {
+    // --verify-apk too: it only reads the file; and --java-test, a test's main.
+    if (b.options.gms || b.options.verify || b.options.java_test) {
         SetEnvironmentVariableW(L"MACAPK_APK_PATH", nullptr);
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, gms_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
@@ -2199,8 +2524,8 @@ int wmain(int argc, wchar_t** argv) {
     // the launcher's permission dialogs (Win.apk.exe runtime-permission,
     // special-access, app-details), which sign the answer into
     // <data>\appops\app-ops.json for SpecialAccessStore, as
-    // macapk-installhelper does on the Mac. MACAPK_ALLFILES_HONEST=0 still
-    // restores the old answer: every app holds all files access.
+    // macapk-installhelper does on the Mac. (Upstream's MACAPK_ALLFILES_HONEST=0,
+    // every app holding all files access, is gone.)
 
     if (!b.options.install_only) map_shared_folders(b.options);
 
@@ -2234,21 +2559,27 @@ int wmain(int argc, wchar_t** argv) {
     // starting Play services for an app) names another app.
     SetEnvironmentVariableW(L"MACAPK_APK_PATH", b.options.apk.c_str());
     if (b.options.install_only) {
-        // The app's icon and name first (AppMeta, on boot_thread), then the long part, converting its code:
-        // the launcher shows the real icon and name while an install runs, as Android's installer does,
-        // instead of at its very end. Neither needs the other: the icon comes from the APK's resources.
+        // The app's code is converted (its child JVM) while this process's JVM writes the app's icon and
+        // name (AppMeta, on boot_thread): neither needs the other (the icon comes from the APK's
+        // resources), and one after the other the install took the sum of the two. The icon is still
+        // there long before the code, so the launcher shows the real icon and name while an install
+        // runs, as Android's installer does, instead of at its very end.
+        bool converted = false;
+        std::thread convert([&b, &converted] {
+            prepare_arm64(b.options, b.app_dir);
+            converted = convert_dex(b.options, b.app_dir, &b.app_jar);
+        });
         HANDLE t = CreateThread(nullptr, 64 * 1024 * 1024, boot_thread, &b, STACK_SIZE_PARAM_IS_A_RESERVATION,
                                 nullptr);
-        if (!t) return 1;
-        WaitForSingleObject(t, INFINITE);
-        CloseHandle(t);
-        int code = b.result;
-        if (code == 0) {
-            prepare_arm64(b.options, b.app_dir);
-            if (!convert_dex(b.options, b.app_dir, &b.app_jar)) code = 1;
+        if (t) {
+            WaitForSingleObject(t, INFINITE);
+            CloseHandle(t);
         }
+        convert.join();
+        const int code = t && b.result == 0 && converted ? 0 : 1;
         // Not a return: the JVM is still up, and framework threads the icon render started must not keep
-        // the process alive.
+        // the process alive. A framework archive's dump this install started (cds_dump_at_install) is a
+        // process of its own and goes on.
         std::fflush(stderr);
         TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     }

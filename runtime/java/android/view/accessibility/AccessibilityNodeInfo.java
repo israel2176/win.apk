@@ -591,7 +591,19 @@ public class AccessibilityNodeInfo implements android.os.Parcelable {
     }
 
     // ---- actions ---------------------------------------------------------
-    public void addAction(int action) { mActions |= action; }
+    /** AOSP addAction(int) -> addStandardActions: each bit of the legacy mask is its standard
+     *  AccessibilityAction in the action list, as a screen reader reads it (getActionList). */
+    public void addAction(int action) {
+        mActions |= action;
+        int remaining = action;
+        while (remaining != 0) {
+            final int bit = Integer.lowestOneBit(remaining);
+            remaining &= ~bit;
+            boolean have = false;
+            for (int i = 0; i < mActionList.size() && !have; i++) have = mActionList.get(i).getId() == bit;
+            if (!have) mActionList.add(new AccessibilityAction(bit, null));
+        }
+    }
 
     public void addAction(AccessibilityAction action) {
         if (action == null) return;

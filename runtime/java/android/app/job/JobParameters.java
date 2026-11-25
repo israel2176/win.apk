@@ -55,24 +55,6 @@ public class JobParameters implements android.os.Parcelable {
     public static final int STOP_REASON_SYSTEM_PROCESSING = 14;
     public static final int STOP_REASON_ESTIMATED_APP_LAUNCH_TIME_CHANGED = 15;
 
-    /** MACAPK_JOB_AUTOFINISH_ON_DRAIN (default ON; lane fdroid-install-gridlayout,
-     *  review issue 1, 2026-09-28): auto-finish a JobWorkItem-based job when
-     *  dequeueWork() drains its queue with nothing still outstanding, exactly
-     *  as AOSP's JobServiceContext.doDequeueWork does -- see the javadoc on
-     *  dequeueWork() below for the cited source and the full mechanism.
-     *  =0 restores the pre-fix path byte-for-byte: dequeueWork() still
-     *  returns null the same way, but nothing calls jobFinished for it, so
-     *  MacApkJobScheduler.JobRecord.running (and .live) are never cleared by
-     *  draining alone -- the bug this lane fixes: a JobIntentService-shaped
-     *  service (androidx.core.app.JobIntentService, whose compat
-     *  JobServiceEngineImpl never calls jobFinished itself) leaves the
-     *  record "running" forever after its first execution, so
-     *  MacApkJobScheduler.scheduleInternal's "if (!rec.running)
-     *  armLocked(...)" never re-arms a later enqueue() in the same process --
-     *  every Install after the first download of an F-Droid session enqueued
-     *  work that was never dispatched. */
-    private static final boolean AUTOFINISH_ON_DRAIN =
-            !"0".equals(System.getenv("MACAPK_JOB_AUTOFINISH_ON_DRAIN"));
 
     private final JobInfo job;
 
@@ -210,7 +192,7 @@ public class JobParameters implements android.os.Parcelable {
     public android.app.job.JobWorkItem dequeueWork() {
         if (record == null) return null;
         android.app.job.JobWorkItem w = record.dequeueWork();
-        if (AUTOFINISH_ON_DRAIN && w == null && !record.hasExecutingWork()) {
+        if (w == null && !record.hasExecutingWork()) {
             record.owner.jobFinished(this, false);
         }
         return w;

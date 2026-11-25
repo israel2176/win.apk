@@ -20,8 +20,16 @@
 // ContentObserver / notifyChange cross processes through the broker by
 // authority (SystemClient.observeRemote / notifyRemote).
 //
-// LIMITS (stated): a Cursor is a snapshot, not a live window; permission enforcement is the
-// broker's android:exported check plus the provider's own.
+// PERMISSIONS. Opening the provider is the broker's ContentProviderHelper check
+// (GET_PROVIDER); every operation is then checked here as AOSP's ContentProvider.Transport
+// checks it (enforceReadPermission for query and a file opened for reading,
+// enforceWritePermission for insert, bulkInsert, update, delete and a file opened with 'w';
+// getType and call are the provider's own business), the decision the system broker's
+// (CHECK_PROVIDER: the caller by the pid the OS gives this pipe, its permissions, the
+// provider's path-permissions and the URI grants). A denial is AOSP's SecurityException;
+// a provider-wide allow is remembered for that process.
+//
+// LIMITS (stated): a Cursor is a snapshot, not a live window.
 package com.macapk.loader;
 
 import android.content.ContentProvider;
@@ -117,13 +125,46 @@ public final class RemoteProviders {
     /** A local provider, served to other processes. */
     static final class Transport extends Binder {
         private final ContentProvider p;
+        /** Calling processes allowed provider-wide: "pid:start time:r|w". */
+        private final java.util.Set<String> allowed = java.util.concurrent.ConcurrentHashMap.newKeySet();
         Transport(ContentProvider p) { super(DESCRIPTOR); this.p = p; }
+
+        /** ContentProvider.Transport.enforceReadPermission / enforceWritePermission for the calling
+         *  process, the broker deciding; throws AOSP's SecurityException. */
+        private void enforce(Uri uri, boolean write) {
+            int pid = Binder.getCallingPid();
+            if (pid == (int) ProcessHandle.current().pid()) return;
+            long started;
+            try { started = WinProcesses.startTime(pid); } catch (Throwable t) { started = 0; }
+            String key = pid + ":" + started + ":" + (write ? "w" : "r");
+            if (started != 0 && allowed.contains(key)) return;
+            Object[] a = SystemClient.checkProvider(pid, uri, write);
+            int answer = (Integer) a[0];
+            if (answer == BrokerPermissions.OP_ALLOWED) {
+                if (started != 0) allowed.add(key);
+                return;
+            }
+            if (answer == BrokerPermissions.OP_ALLOWED_URI) return;
+            throw new SecurityException("Permission Denial: " + (write ? "writing " : "reading ")
+                    + p.getClass().getName() + " uri " + uri + " from pid=" + pid + ", uid="
+                    + Binder.getCallingUid() + a[1]);
+        }
 
         @Override protected boolean onTransact(int code, Parcel d, Parcel r, int flags)
                 throws RemoteException {
             if (code < TX_QUERY || code > TX_BULK_INSERT) return super.onTransact(code, d, r, flags);
             d.enforceInterface(DESCRIPTOR);
             Uri uri = readUri(d);
+            try {
+                switch (code) {
+                    case TX_QUERY: enforce(uri, false); break;
+                    case TX_INSERT: case TX_BULK_INSERT: case TX_UPDATE: case TX_DELETE: enforce(uri, true); break;
+                    default: break;   // getType, call: unchecked, as AOSP's Transport; openFile below
+                }
+            } catch (SecurityException e) {
+                r.writeException(e);
+                return true;
+            }
             switch (code) {
                 case TX_QUERY: {
                     String[] proj = d.createStringArray();
@@ -179,6 +220,13 @@ public final class RemoteProviders {
                 }
                 case TX_OPEN_FILE: {
                     String mode = d.readString();
+                    try {
+                        // ContentProvider.Transport.enforceFilePermission.
+                        enforce(uri, mode != null && mode.indexOf('w') != -1);
+                    } catch (SecurityException e) {
+                        r.writeException(e);
+                        return true;
+                    }
                     ParcelFileDescriptor pfd;
                     try {
                         pfd = p.openFile(uri, mode);

@@ -25,7 +25,6 @@
 // broadcast aimed at a component in another process -- including another process
 // of THIS package -- goes through the broker, exactly as one aimed at another
 // app does. hostsHere() is the one question every in-process path asks first.
-// MACAPK_PROCESS_SPLIT=0 puts a package back in one process (the old behaviour).
 //
 // ENABLED by Settings > Google services > "Use Google GMS" (the file
 // useGoogleGmsFile) or MACAPK_BROKER=1; default off. A service host (MACAPK_SERVICE_HOST=1, set by the
@@ -33,7 +32,6 @@
 package com.macapk.loader;
 
 import android.app.Application;
-import android.app.ServiceRegistry;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
@@ -103,21 +101,14 @@ public final class SystemClient {
 
     public static boolean isServiceHost() { return "1".equals(System.getenv("MACAPK_SERVICE_HOST")); }
 
-    /** MACAPK_PROCESS_SPLIT=0: keep a package's android:process components in
-     *  ONE process, named after the package (the behaviour before processes were
-     *  split). Anything else, including unset, splits. The broker reads the same
-     *  variable and passes it to every process it spawns. */
-    static boolean splitOff() { return "0".equals(System.getenv("MACAPK_PROCESS_SPLIT")); }
-
-    /** The broker is on and not told to collapse packages: android:process
-     *  components get their own processes. A pure function of the environment, so
+    /** The broker is on: android:process components get their own processes. A pure function of the environment, so
      *  it is the same answer before and after attach (provider install runs
      *  before attach). */
     static boolean splitConfigured() {
         // Decided once per process: Boot names the process from it, attach routes by
         // it, and the two must agree for the whole run (enabled() stats a file).
         Boolean b = sSplitConfigured;
-        if (b == null) { b = enabled() && !splitOff(); sSplitConfigured = b; }
+        if (b == null) { b = enabled(); sSplitConfigured = b; }
         return b;
     }
     private static volatile Boolean sSplitConfigured;
@@ -135,10 +126,18 @@ public final class SystemClient {
                     catch (Throwable t) { sBroker = null; }
                     // Win.apk: no launchd starts the broker on a lookup; the
                     // first app that needs it starts it (WindowsBroker).
-                    if (sBroker == null && enabled() && WinProcesses.available()) {
+                    // A broker of another install or build holds the name: no broker of ours can
+                    // take it while it runs, so there is nothing to wait for.
+                    int foreign = sBroker == null ? WinProcesses.foreignServerOf(systemName()) : 0;
+                    if (foreign > 0) {
+                        NativeLog.w(TAG, "broker " + systemName() + " is held by pid " + foreign
+                                + ", which is not this Win.apk's runtime (another install or build)");
+                    }
+                    if (sBroker == null && foreign == 0 && enabled() && WinProcesses.available()) {
                         WindowsBroker.start();
                         long deadline = System.currentTimeMillis() + WindowsBroker.START_WAIT_MS;
-                        while (sBroker == null && System.currentTimeMillis() < deadline) {
+                        while (sBroker == null && System.currentTimeMillis() < deadline
+                                && WinProcesses.foreignServerOf(systemName()) == 0) {
                             try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                             try { sBroker = MacApkBinderTransport.lookUp(systemName()); }
                             catch (Throwable t) { sBroker = null; }
@@ -278,14 +277,15 @@ public final class SystemClient {
                 data.enforceInterface(SystemServer.THREAD_DESCRIPTOR);
                 final Intent intent = data.readTypedObject(Intent.CREATOR);
                 final boolean fromSystem = data.readInt() != 0;
+                // The app that sent it (the broker's record of its process): the receivers'
+                // required permissions are checked against it.
+                final String sender = data.dataAvail() > 0 ? data.readString() : null;
                 // ActivityThread.handleReceiver / the receiver dispatcher: on
                 // this app's main looper, to its own receivers only.
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    android.content.Context.MACAPK_FROM_OTHER_APP.set(!fromSystem);
-                    try { sApp.macapkDeliverLocal(intent); }
-                    catch (Throwable t) { NativeLog.w(TAG, "broadcast " + intent + " threw " + t); }
-                    finally { android.content.Context.MACAPK_FROM_OTHER_APP.set(Boolean.FALSE); }
-                });
+                try {
+                    com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+                    if (host != null) host.deliverBroadcast(intent, !fromSystem, sender);
+                } catch (Throwable t) { NativeLog.w(TAG, "broadcast " + intent + " threw " + t); }
                 return true;
             }
             if (code == SystemServer.TX_SCHEDULE_NOTIFY) {
@@ -304,7 +304,7 @@ public final class SystemClient {
                 // ActivityThread.handleServiceArgs: on the main looper; the
                 // broker does not wait for onStartCommand.
                 new Handler(Looper.getMainLooper()).post(() -> {
-                    try { ServiceRegistry.start(sApp, intent, false); }
+                    try { sApp.startService(intent); }
                     catch (Throwable t) { NativeLog.w(TAG, "start " + intent + " threw " + t); }
                 });
                 reply.writeNoException();
@@ -315,7 +315,7 @@ public final class SystemClient {
                 final Intent intent = data.readTypedObject(Intent.CREATOR);
                 // Context.stopService in the process that hosts the service.
                 boolean stopped = false;
-                try { stopped = ServiceRegistry.stop(intent); }
+                try { stopped = sApp.stopService(intent); }
                 catch (Throwable t) { NativeLog.w(TAG, "stop " + intent + " threw " + t); }
                 reply.writeNoException();
                 reply.writeInt(stopped ? 1 : 0);
@@ -333,11 +333,16 @@ public final class SystemClient {
             final AtomicReference<Throwable> err = new AtomicReference<>();
             final CountDownLatch done = new CountDownLatch(1);
             // ActivityThread.handleBindService: on the main looper.
-            new Handler(Looper.getMainLooper()).post(() -> {
-                try { out.set(ServiceRegistry.bind(sApp, intent)); }
+            // ActivityThread.handleBindService through the activity manager, which waits for the
+            // service's binder (this is the broker's binder thread, not the main one).
+            new Thread(() -> {
+                try {
+                    com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+                    out.set(host != null ? host.bindServiceNow(intent) : null);
+                }
                 catch (Throwable t) { err.set(t); }
                 finally { done.countDown(); }
-            });
+            }, "broker-bind").start();
             try {
                 if (!done.await(60, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("bind of " + intent.getComponent() + " timed out on the main looper");
@@ -379,6 +384,16 @@ public final class SystemClient {
                     android.app.job.JobWorkItem work = data.readTypedObject(android.app.job.JobWorkItem.CREATOR);
                     reply.writeNoException();
                     reply.writeInt(js.enqueue(info, work));
+                    return;
+                }
+                case SystemServer.JOB_RUN: {
+                    // A job the broker held while no process of ours was alive, due now
+                    // (BrokerJobs): run it at once.
+                    android.app.job.JobInfo info = data.readTypedObject(android.app.job.JobInfo.CREATOR);
+                    int rc = js.macapkRunNow(info);
+                    NativeLog.i(TAG, "job " + info.getId() + " handed over by the system broker (due); rc=" + rc);
+                    reply.writeNoException();
+                    reply.writeInt(rc);
                     return;
                 }
                 case SystemServer.JOB_CANCEL:
@@ -460,9 +475,10 @@ public final class SystemClient {
         } finally { d.recycle(); r.recycle(); }
     }
 
-    /** The app's pending jobs held by its OTHER processes (id < 0: all of them). */
+    /** The app's pending jobs held by its OTHER processes, and by the broker for a
+     *  process of ours that died (id < 0: all of them). */
     public static java.util.List<android.app.job.JobInfo> pendingJobsElsewhere(int jobId) {
-        if (IN_BROKER_JOB.get() != null || !hasSiblingProcesses()) return java.util.Collections.emptyList();
+        if (IN_BROKER_JOB.get() != null || sSystem == null) return java.util.Collections.emptyList();
         Parcel d = Parcel.obtain(), r = Parcel.obtain();
         try {
             d.writeInterfaceToken(SystemServer.DESCRIPTOR);
@@ -477,6 +493,72 @@ public final class SystemClient {
         } catch (Throwable t) {
             NativeLog.w(TAG, "remote pending jobs failed: " + t);
             return java.util.Collections.emptyList();
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** What the app's scheduler tells the broker about the jobs it holds (BrokerJobs):
+     *  scheduled or re-armed with the next run time, running or not, removed. */
+    public static final int JOB_REPORT_PUT = 0, JOB_REPORT_REMOVE = 1, JOB_REPORT_REMOVE_ALL = 2,
+            JOB_REPORT_RUNNING = 3;
+    /** JOB_REPORT_PUT flags: work is enqueued on it / it waits on a content change. */
+    public static final int JOB_FLAG_WORK = 1, JOB_FLAG_CONTENT_TRIGGER = 2;
+
+    /** One thread, so the broker hears a job's reports in the order they happened, and
+     *  the scheduler never waits on a binder call under its lock. */
+    private static final java.util.concurrent.ExecutorService sJobReports =
+            java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "job-reports");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** JobSchedulerService's view of this process's jobs (android.app.job.MacApkJobScheduler
+     *  calls it): the broker keeps a job when the process that held it dies, and starts
+     *  the process again when the job is due. `value`: the next run (wall-clock ms) for
+     *  PUT, 1/0 for RUNNING. Nothing happens without an attached broker. */
+    public static void reportJob(int op, android.app.job.JobInfo info, int jobId, long value, int flags) {
+        final IBinder sys = sSystem;
+        if (sys == null) return;
+        final String pkg = sPackage, proc = sProcess;
+        try {
+            sJobReports.execute(() -> {
+                Parcel d = Parcel.obtain();
+                try {
+                    d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+                    d.writeString(pkg);
+                    d.writeString(proc);
+                    d.writeInt(op);
+                    d.writeInt(jobId);
+                    d.writeLong(value);
+                    d.writeInt(flags);
+                    d.writeTypedObject(op == JOB_REPORT_PUT ? info : null, 0);
+                    sys.transact(SystemServer.TX_JOB_REPORT, d, null, IBinder.FLAG_ONEWAY);
+                } catch (Throwable t) {
+                    NativeLog.w(TAG, "job report " + op + " for " + jobId + " failed: " + t);
+                } finally { d.recycle(); }
+            });
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "job report " + op + " for " + jobId + " not queued: " + t);
+        }
+    }
+
+    /** Whether `pkg` has a process the user opened (an activity on screen: its window),
+     *  only a process the system started for it (a service or a job, headless), or none:
+     *  SystemServer.APP_*. APP_UNKNOWN with no broker. What InstallConstraints'
+     *  "app not foreground / not interacting / not top visible" ask of ActivityManager. */
+    public static int appState(String pkg) {
+        IBinder sys = broker();
+        if (sys == null || pkg == null) return SystemServer.APP_UNKNOWN;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(pkg);
+            sys.transact(SystemServer.TX_APP_STATE, d, r, 0);
+            r.readException();
+            return r.readInt();
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "app state of " + pkg + " failed: " + t);
+            return SystemServer.APP_UNKNOWN;
         } finally { d.recycle(); r.recycle(); }
     }
 
@@ -517,6 +599,8 @@ public final class SystemClient {
             sSystem.transact(SystemServer.TX_STOP, d, r, 0);
             r.readException();
             return r.readInt() != 0;
+        } catch (SecurityException e) {
+            throw e;   // ContextImpl.stopServiceCommon: "Not allowed to stop service"
         } catch (Throwable t) {
             NativeLog.w(TAG, "remote stop " + intent + " failed: " + t);
             return false;
@@ -626,9 +710,9 @@ public final class SystemClient {
             return false;
         } finally { rd.recycle(); rr.recycle(); }
         if (answer == SystemServer.RESOLVE_NONE) return false;
-        if (answer == SystemServer.RESOLVE_NOT_EXPORTED) {
-            ComponentName cn = intent.getComponent();
-            throw new SecurityException("Not allowed to bind to service " + (cn != null ? cn : intent));
+        if (answer == SystemServer.RESOLVE_NOT_EXPORTED || answer == SystemServer.RESOLVE_NO_PERMISSION) {
+            // ContextImpl.bindServiceCommon: AMS answered -1 (not exported, or a permission the caller lacks).
+            throw new SecurityException("Not allowed to bind to service " + intent);
         }
         final Intent fi = new Intent(intent);
         final Handler main = new Handler(Looper.getMainLooper());
@@ -706,6 +790,10 @@ public final class SystemClient {
             sys.transact(SystemServer.TX_GET_PROVIDER, d, r, 0);
             r.readException();
             b = r.readStrongBinder();
+        } catch (SecurityException e) {
+            // ContentProviderHelper's denial reaches the caller (ContentResolver throws it), and is
+            // not remembered: a URI grant may open the provider later.
+            throw e;
         } catch (Throwable t) {
             NativeLog.w(TAG, "broker GET_PROVIDER " + authority + " failed: " + t);
         } finally { d.recycle(); r.recycle(); }
@@ -734,6 +822,11 @@ public final class SystemClient {
             rr.readException();
             answer = rr.readInt();
             cn = rr.readTypedObject(ComponentName.CREATOR);
+            if (answer == SystemServer.RESOLVE_NO_PERMISSION) {
+                // ContextImpl.startServiceCommon's message for ActiveServices' "!" answer.
+                throw new SecurityException("Not allowed to start service " + intent + " without permission "
+                        + rr.readString());
+            }
         } catch (RemoteException e) {
             return null;
         } finally { rd.recycle(); rr.recycle(); }
@@ -761,7 +854,11 @@ public final class SystemClient {
 
     /** sendBroadcast's cross-app half: hand the broadcast to the broker
      *  (oneway), unless it is aimed at this package or the broker is off. */
-    public static void forwardBroadcast(Intent intent) {
+    public static void forwardBroadcast(Intent intent) { forwardBroadcast(intent, null); }
+
+    /** forwardBroadcast with the sender's required permissions (sendBroadcast's receiverPermission),
+     *  which the broker checks against each receiving app. */
+    public static void forwardBroadcast(Intent intent, String[] requiredPermissions) {
         IBinder sys = sSystem;
         if (sys == null || intent == null) return;
         String target = intent.getComponent() != null ? intent.getComponent().getPackageName()
@@ -776,10 +873,127 @@ public final class SystemClient {
             d.writeString(sPackage);
             d.writeTypedObject(intent, 0);
             d.writeString(sProcess);
+            d.writeStringArray(requiredPermissions);
             sys.transact(SystemServer.TX_BROADCAST, d, null, IBinder.FLAG_ONEWAY);
         } catch (Throwable t) {
             NativeLog.w(TAG, "broadcast forward failed: " + t);
         } finally { d.recycle(); }
+    }
+
+    // ---- permissions the system decides (Win.apk: the broker's BrokerPermissions) -----------
+
+    /** ContentProvider.Transport's check of a caller from another process, asked of the broker:
+     *  {BrokerPermissions.OP_*, the denial's tail}. With no broker no other app reaches this process,
+     *  and the answer is the provider-wide allow. */
+    static Object[] checkProvider(int callingPid, android.net.Uri uri, boolean write) {
+        IBinder sys = sSystem;
+        if (sys == null) return new Object[] { BrokerPermissions.OP_ALLOWED, null };
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeInt(callingPid);
+            d.writeString(uri != null ? uri.toString() : null);
+            d.writeInt(write ? 1 : 0);
+            sys.transact(SystemServer.TX_CHECK_PROVIDER, d, r, 0);
+            r.readException();
+            return new Object[] { r.readInt(), r.readString() };
+        } catch (Throwable t) {
+            // The system cannot answer: refused, as a device fails closed.
+            return new Object[] { BrokerPermissions.OP_DENIED, " (the system did not answer: " + t + ")" };
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** PackageManager.checkPermission(permission, pkg) for another package, the broker's answer:
+     *  whether the app that sent a broadcast holds what a receiver here requires. */
+    public static boolean senderHolds(String permission, String pkg) {
+        IBinder sys = sSystem;
+        if (sys == null || permission == null || pkg == null) return false;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(permission);
+            d.writeString(pkg);
+            sys.transact(SystemServer.TX_CHECK_PERMISSION, d, r, 0);
+            r.readException();
+            return r.readInt() != 0;
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker CHECK_PERMISSION " + permission + " of " + pkg + " failed: " + t);
+            return false;
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.checkPermission(permission, pid, uid) for another app's process, the broker's answer
+     *  for the package that process is: 1 granted, 0 not, -1 no broker (the caller keeps its rule). */
+    public static int checkPermissionOfPid(String permission, int pid) {
+        IBinder sys = sSystem;
+        if (sys == null || permission == null) return -1;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(permission);
+            d.writeInt(pid);
+            sys.transact(SystemServer.TX_CHECK_PERMISSION_PID, d, r, 0);
+            r.readException();
+            return r.readInt() != 0 ? 1 : 0;
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker CHECK_PERMISSION_PID " + permission + " of pid " + pid + " failed: " + t);
+            return 0;
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.grantUriPermission(target, uri, mode) to another package; the broker's refusal is a
+     *  SecurityException, as UriGrantsManagerService throws it. */
+    public static void grantUri(String target, android.net.Uri uri, int mode) {
+        IBinder sys = sSystem;
+        if (sys == null || target == null || uri == null || target.equals(sPackage)) return;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(target);
+            d.writeString(uri.toString());
+            d.writeInt(mode);
+            sys.transact(SystemServer.TX_GRANT_URI, d, r, 0);
+            r.readException();
+        } catch (RemoteException e) {
+            NativeLog.w(TAG, "broker GRANT_URI " + uri + " failed: " + e);
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.revokeUriPermission([target,] uri, mode): the grants of a uri of this app's providers. */
+    public static void revokeUri(String target, android.net.Uri uri, int mode) {
+        IBinder sys = sSystem;
+        if (sys == null || uri == null) return;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeString(target);
+            d.writeString(uri.toString());
+            d.writeInt(mode);
+            sys.transact(SystemServer.TX_REVOKE_URI, d, r, 0);
+            r.readException();
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker REVOKE_URI " + uri + " failed: " + t);
+        } finally { d.recycle(); r.recycle(); }
+    }
+
+    /** Context.checkUriPermission(uri, pid, uid, mode) as the broker answers it: SystemServer.URI_*,
+     *  or -1 when there is no broker. */
+    public static int checkUri(int pid, android.net.Uri uri, int mode) {
+        IBinder sys = sSystem;
+        if (sys == null || uri == null) return -1;
+        Parcel d = Parcel.obtain(), r = Parcel.obtain();
+        try {
+            d.writeInterfaceToken(SystemServer.DESCRIPTOR);
+            d.writeInt(pid);
+            d.writeString(uri.toString());
+            d.writeInt(mode);
+            sys.transact(SystemServer.TX_CHECK_URI, d, r, 0);
+            r.readException();
+            return r.readInt();
+        } catch (Throwable t) {
+            NativeLog.w(TAG, "broker CHECK_URI " + uri + " failed: " + t);
+            return SystemServer.URI_DENIED;
+        } finally { d.recycle(); r.recycle(); }
     }
 
     /** unbindService for a remote connection; true when it was one. */

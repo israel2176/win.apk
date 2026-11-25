@@ -16,6 +16,7 @@
 #include "bionic_internal.h"
 
 #include "winapk/mini_bionic.h"
+#include "winapk/arm64_guest.h"
 #include "winapk/elf_tls.h"
 #include "winapk/fs_tls_patch.h"
 
@@ -433,6 +434,7 @@ struct Thread {
     void* result = nullptr;
     std::atomic<bool> detached{false};
     bool guest_created = false;
+    size_t stack_size = 0;  // what pthread_create was asked for
 };
 
 thread_local Thread* t_self = nullptr;
@@ -510,6 +512,7 @@ DWORD WINAPI thread_main(void* p) {
     t_self = t;
     commit_guest_stack_for_current_thread();  // the stack a Linux thread would have mapped
     signal_altstack_for_current_thread();     // and its alternate signal stack, as Bionic's
+    arm64::set_stack_request(t->stack_size);  // an arm64 start routine runs on a guest stack of its own
     finish_thread(t, t->start(t->arg));
 }
 
@@ -574,6 +577,7 @@ WINAPK_GUEST_ABI int g_create(Thread** out, const GuestAttr* attr, GuestStart st
     t->guest_created = true;
     t->detached = attr && (attr->flags & kAttrDetached);
     const size_t stack = attr && attr->stack_size ? attr->stack_size : kDefaultStack;
+    t->stack_size = stack;
     t->handle = CreateThread(nullptr, stack, thread_main, t, CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION,
                              &t->tid);
     if (!t->handle) {
@@ -652,12 +656,21 @@ WINAPK_GUEST_ABI int g_getname_np(Thread*, char* buf, size_t n) {
     return 0;
 }
 
-// The calling thread's stack, which ART, V8 and Mono read to size their own
-// guard regions.
+// The calling thread's stack, which ART, V8, Mono and Dart read to size their
+// own guard regions and check their sp against: the stack the caller runs on,
+// as Bionic's is. arm64 code runs on a guest stack of its own, not the host
+// thread's (Dart's OSThread aborted on HasStackHeadroom() when told the host
+// stack); x86_64 code on the host thread's.
 WINAPK_GUEST_ABI int g_getattr_np(Thread* t, GuestAttr* a) {
     g_attr_init(a);
     if (t && t->detached.load()) a->flags |= kAttrDetached;
     if (t == t_self || !t) {
+        uint64_t glo = 0, ghi = 0;
+        if (arm64::current_guest_stack(&glo, &ghi)) {
+            a->stack_base = reinterpret_cast<void*>(glo);
+            a->stack_size = ghi - glo;
+            return 0;
+        }
         ULONG_PTR lo = 0, hi = 0;
         GetCurrentThreadStackLimits(&lo, &hi);
         a->stack_base = reinterpret_cast<void*>(lo);
@@ -833,6 +846,42 @@ ShimTable pthread_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 }  // namespace winapk::bionic
 
 namespace winapk {
+
+namespace {
+
+// set_tid_address(2)'s clear_child_tid: when the thread ends, the kernel writes 0 there and wakes one
+// futex waiter on it (mm_release), so that another thread waiting on it knows the thread is gone. A
+// fiber-local slot, whose callback Windows runs as each thread that set one ends, does the same. Not
+// at process exit (ntdll's shutdown, the C runtime's exit()): the other threads are gone then, as after
+// Linux's exit_group, and nobody waits. The word is written only while it is still writable memory:
+// the kernel's put_user ignores a fault there.
+void WINAPI clear_child_tid(void* p) {
+    if (!p) return;
+    using ShutdownFn = BOOLEAN(NTAPI*)();
+    static const auto shutdown = reinterpret_cast<ShutdownFn>(
+        reinterpret_cast<void*>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlDllShutdownInProgress")));
+    if (shutdown && shutdown()) return;
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(p, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT || (mbi.Protect & PAGE_GUARD) ||
+        !(mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY))) {
+        return;
+    }
+    reinterpret_cast<std::atomic<uint32_t>*>(p)->store(0, std::memory_order_release);
+    WakeByAddressSingle(p);  // the shim's futex waits are WaitOnAddress on the word
+}
+
+DWORD clear_tid_slot() {
+    static const DWORD slot = FlsAlloc(clear_child_tid);
+    return slot;
+}
+
+}  // namespace
+
+int64_t set_tid_address(uint32_t* clear_child_tid_word) {
+    const DWORD slot = clear_tid_slot();
+    if (slot != FLS_OUT_OF_INDEXES) FlsSetValue(slot, clear_child_tid_word);
+    return static_cast<int64_t>(GetCurrentThreadId());
+}
 
 size_t guest_threads(GuestThread* out, size_t max) {
     AcquireSRWLockShared(&bionic::g_started_lock);

@@ -1,6 +1,8 @@
 package android.widget;
+import com.macapk.loader.gfx.GfxBackend;
 import android.content.Context;
 import android.view.View;
+import com.macapk.loader.res.ResBackend;
 // AOSP: `public class TextView extends View implements
 // ViewTreeObserver.OnPreDrawListener`
 // (frameworks/base/core/java/android/widget/TextView.java). Free: onPreDraw() is
@@ -15,8 +17,6 @@ public class TextView extends View
     // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
     // "subsequent calls to putenv/setenv from C will not be visible from Java
     // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_TEXT_SP = System.getenv("MACAPK_TEXT_SP");
 
     /** The RAW text, AOSP's `mText`. getText()/getEditableText()/length() and
      *  every input path read and write THIS. Never drawn directly -- see
@@ -44,45 +44,7 @@ public class TextView extends View
      *  preserve it. */
     private CharSequence mTransformed = "";
 
-    /** THE TEXT CARET (cluster E, docs/widget-fidelity-cluster_2026-09-25.md).
-     *  Bisect gate, default ON: MACAPK_TEXT_CARET=0 restores the pre-caret
-     *  TextView exactly -- no Editor is ever created, isCursorVisible() answers
-     *  a constant true, setCursorVisible() discards, getOffsetForPosition()
-     *  answers -1, getTotalPaddingTop/Bottom exclude the gravity offset,
-     *  getLayout() ignores includeFontPadding, wraps a singleLine field and
-     *  drops metric spans, a keystroke appends at the END whatever the caret,
-     *  and a style span set on getText() before the first edit is not painted
-     *  (getLayout's header, macapkEditAtSelection, spanChange's appearance
-     *  arm). Measured victims: OpenCalculator
-     *  (emulator draws a 2dp #4bb6e8 caret at the end of its display EditText,
-     *  x=784..787; ours drew none and a tap could not move it -- fleet step 2
-     *  EMU-ONLY) and every other focused editable field. Offline gate:
-     *  debug/caret_gate.sh (its positive control runs with this gate at 0). */
-    static final boolean MACAPK_TEXT_CARET =
-        !"0".equals(System.getenv("MACAPK_TEXT_CARET"));
 
-    /** AOSP TextView.onCheckIsTextEditor (android14-release TextView.java:9698-9700):
-     *      return mEditor != null && mEditor.mInputType != EditorInfo.TYPE_NULL;
-     *  i.e. a PLAIN TextView carrying an inputType is a text editor. Ours
-     *  inherited View's constant false, so Google Calculator's formula
-     *  (CalculatorFormula, a TextView whose style sets
-     *  android:inputType=textNoSuggestions) could never show the caret the
-     *  emulator draws (emu_2, a 2dp #445e91 bar at x=762..765).
-     *
-     *  ⚠ DEFAULT OFF, deliberately, and ONLY this piece of the caret work. The
-     *  same answer makes the focused formula an IME target
-     *  (InputMethodManager.macapkStartInput's IS_TEXT_EDITOR gate), the app's
-     *  own onCreateInputConnection returns null, and macapkFallbackConnection
-     *  then SUBSTITUTES a MacApkEditorInputConnection -- which a real device
-     *  never does -- so TouchDispatcher would commitText() every printable
-     *  Mac keystroke straight into the formula text before
-     *  com.android.calculator2.Calculator.dispatchKeyEvent (the app's own
-     *  hardware-key handler) ever saw it. That is a typing regression this lane
-     *  could not measure (no launch), so it stays behind a flip until the IMM
-     *  fallback stops overriding an app's explicit null connection.
-     *  MACAPK_TEXT_EDITOR_AOSP=1 turns it on. */
-    static final boolean MACAPK_TEXT_EDITOR_AOSP =
-        "1".equals(System.getenv("MACAPK_TEXT_EDITOR_AOSP"));
 
     /** AOSP TextView.VERY_WIDE (:457). */
     static final int VERY_WIDE = 1024 * 1024; // XXX should be much larger
@@ -94,7 +56,6 @@ public class TextView extends View
 
     /** AOSP createEditorIfNeeded (:15376-15380). */
     private void createEditorIfNeeded() {
-        if (!MACAPK_TEXT_CARET) return;
         if (mEditor == null) mEditor = new Editor(this);
     }
 
@@ -134,7 +95,6 @@ public class TextView extends View
                 macapkSelectHandleRightAttr = macapkNonEmpty(a.macapkAttributeText(MACAPK_ANDROID_NS, "textSelectHandleRight"));
             } catch (Throwable ignored) {}
         }
-        if (!MACAPK_TEXT_CARET) return;
         boolean editableAttrFalse = false;
         if (a != null) {
             try {
@@ -219,9 +179,9 @@ public class TextView extends View
                 // the attribute, where it is the difference between visible text and
                 // none. The fleet regressions in v1.0.867 are the nav-bar height
                 // change, not this.
-                int col = t.resolveAttrColor("android:textColor", 0);
-                if (col == 0) col = t.resolveAttrColor("android:textColorPrimary", 0);
-                if (col == 0) col = t.resolveAttrColor("textColorPrimary", 0);
+                int col = ResBackend.get().resolveAttrColor(t, "android:textColor", 0);
+                if (col == 0) col = ResBackend.get().resolveAttrColor(t, "android:textColorPrimary", 0);
+                if (col == 0) col = ResBackend.get().resolveAttrColor(t, "textColorPrimary", 0);
                 // Store the LIST as well as the int. AOSP's equivalent step is
                 // `setTextColor(attributes.mTextColor)` (:4350-4351), which writes
                 // both, so getTextColors() and getCurrentTextColor() always agree.
@@ -248,8 +208,8 @@ public class TextView extends View
             // actually declares it (an app whose theme is silent keeps AOSP's
             // documented mHintTextColor == null fallback to the text colour).
             if ((have & 2) == 0) {
-                int hc = t.resolveAttrColor("android:textColorHint", 0);
-                if (hc == 0) hc = t.resolveAttrColor("textColorHint", 0);
+                int hc = ResBackend.get().resolveAttrColor(t, "android:textColorHint", 0);
+                if (hc == 0) hc = ResBackend.get().resolveAttrColor(t, "textColorHint", 0);
                 if (hc != 0) {
                     this.hintTextColors = android.content.res.ColorStateList.valueOf(hc);
                     this.hintColor = hc;
@@ -262,8 +222,8 @@ public class TextView extends View
             // ClickableSpan.updateDrawState, which paints TextPaint.linkColor: without
             // it every link drew in TextPaint's placeholder default.
             if ((have & 4) == 0) {
-                int lc = t.resolveAttrColor("android:textColorLink", 0);
-                if (lc == 0) lc = t.resolveAttrColor("textColorLink", 0);
+                int lc = ResBackend.get().resolveAttrColor(t, "android:textColorLink", 0);
+                if (lc == 0) lc = ResBackend.get().resolveAttrColor(t, "textColorLink", 0);
                 if (lc != 0) {
                     this.mLinkTextColor = android.content.res.ColorStateList.valueOf(lc);
                     stored = true;
@@ -290,41 +250,16 @@ public class TextView extends View
         macapkCtorTail(c, a, s, 0);
     }
 
-    /** The shared constructor body. With MACAPK_TEXTVIEW_CTOR_APPEARANCE=0 it
-     *  is the pre-B3 sequence exactly (macapkApplyInputTypeAttrs(null), which
-     *  the one-arg constructor used to skip, returns at its first line).
-     *
-     *  SEED LAST (MACAPK_TEXTVIEW_CTOR_SEED_LAST, default on; only meaningful
-     *  with the constructor read on). The theme-derived colour seed
-     *  (macapkInitDefaultTextColor) exists for the colours NO tier supplies: AOSP
-     *  seeds black (:1180-1181) and a null hint / link (TextAppearanceAttributes
-     *  :4089-4090) and lets the read fill them, and our read now does. Seeding first and then overwriting cost
-     *  up to seven theme walks per TextView whose answers were thrown away
-     *  (measured 16% of a construction by JFR, the seed's
-     *  Theme.resolveAttrColor chain). So with the read on, the seed runs AFTER
-     *  it, only for the colours it left unset, and then re-resolves the current
-     *  colours exactly as the read's own setters would have (updateTextColors,
-     *  which also lands the link colour on a paint the read already created).
-     *  Every final colour list and current colour is the one the seed-first
-     *  order produced: a colour the read supplies overwrote the seed there, and
-     *  one it does not is the seed's either way. =0 restores seed-first. */
-    static final boolean MACAPK_TEXTVIEW_CTOR_SEED_LAST =
-        !"0".equals(System.getenv("MACAPK_TEXTVIEW_CTOR_SEED_LAST"));
 
     private void macapkCtorTail(Context c, android.util.AttributeSet a,
                                 int defStyleAttr, int defStyleRes) {
-        if (MACAPK_TEXTVIEW_CTOR_APPEARANCE && MACAPK_TEXTVIEW_CTOR_SEED_LAST) {
-            macapkInitDefaultTextSizeOnly(c);
-            final android.content.res.ColorStateList unseededText = textColors;
-            macapkCtorTextAppearance(c, a, defStyleAttr, defStyleRes);
-            int have = (textColors != unseededText ? 1 : 0)
-                     | (hintTextColors != null ? 2 : 0)
-                     | (mLinkTextColor != null ? 4 : 0);
-            if (have != 7 && macapkInitDefaultTextColor(c, have)) updateTextColors();
-        } else {
-            macapkInitDefaultTextSize(c);
-            macapkCtorTextAppearance(c, a, defStyleAttr, defStyleRes);
-        }
+        macapkInitDefaultTextSizeOnly(c);
+        final android.content.res.ColorStateList unseededText = textColors;
+        macapkCtorTextAppearance(c, a, defStyleAttr, defStyleRes);
+        int have = (textColors != unseededText ? 1 : 0)
+                 | (hintTextColors != null ? 2 : 0)
+                 | (mLinkTextColor != null ? 4 : 0);
+        if (have != 7 && macapkInitDefaultTextColor(c, have)) updateTextColors();
         macapkCtorDefaultStyleLayout(c, a, defStyleAttr, defStyleRes);
         macapkCtorSizeAttrs(c, a, defStyleAttr, defStyleRes);
         macapkApplyInputTypeAttrs(a);
@@ -381,9 +316,6 @@ public class TextView extends View
     //
     // Bisect gate MACAPK_TEXTVIEW_CTOR_APPEARANCE, default ON; =0 restores the
     // exact pre-change constructor (nothing read, macapkTypefaceIndex never set).
-    // ------------------------------------------------------------------
-    static final boolean MACAPK_TEXTVIEW_CTOR_APPEARANCE =
-        !"0".equals(System.getenv("MACAPK_TEXTVIEW_CTOR_APPEARANCE"));
 
     /** R.styleable.TextViewAppearance: {textAppearance} (attrs.xml
      *  <declare-styleable name="TextViewAppearance">). Id from public-final.xml:
@@ -529,14 +461,14 @@ public class TextView extends View
         0x01010218, // 9  lineSpacingMultiplier
         0x01010156, // 10 minLines
         0x010104b6, // 11 letterSpacing
+        0x010104dd, // 12 breakStrategy
+        0x010104de, // 13 hyphenationFrequency
+        0x01010567, // 14 justificationMode
+        0x0101066e, // 15 lineBreakStyle
+        0x0101066f, // 16 lineBreakWordStyle
     };
 
-    /** How large the text block may be, over all the tiers AOSP's constructor reads them
-     *  from: the element, its style=, the default style, the theme. The inflater applies
-     *  only some of these and only from the element, so android:maxWidth, android:ems or
-     *  android:width on a TextView did nothing (a wrap_content label ran to the width of
-     *  its parent, uiprobe lib_text_lines #i), and a widget style's includeFontPadding or
-     *  line spacing (Material's Chip) never arrived. */
+
     private void macapkCtorSizeAttrs(Context context, android.util.AttributeSet attrs,
                                      int defStyleAttr, int defStyleRes) {
         if (context == null) return;
@@ -553,15 +485,28 @@ public class TextView extends View
                 if (a.hasValue(4)) { int v = a.getInt(4, -1); if (v >= 0) setEms(v); }
                 if (a.hasValue(5)) { int v = a.getInt(5, -1); if (v >= 0) setMaxEms(v); }
                 if (a.hasValue(6)) { int v = a.getInt(6, -1); if (v >= 0) setMinEms(v); }
-                // includeFontPadding (7) is left to the inflater: a line of Hebrew, drawn in a
-                // fallback font, is taller than the main font's ascent on Android, and without
-                // the font padding this layout does not yet give it that room (a Hebrew chip's
-                // baseline came out 2dp high).
+                // AOSP: TextView_includeFontPadding -> setIncludeFontPadding. A line drawn
+                // in a fallback font (Hebrew in a Latin font) still gets that font's room
+                // through macapkFallbackVertical. MACAPK_IGNORE_INCLUDE_FONT_PADDING=1 skips it.
+                if (a.hasValue(7)) {
+                    setIncludeFontPadding(a.getBoolean(7, true));
+                }
                 if (a.hasValue(8) || a.hasValue(9)) {
                     setLineSpacing(a.getDimensionPixelSize(8, 0), a.getFloat(9, 1.0f));
                 }
                 if (a.hasValue(10)) { int v = a.getInt(10, -1); if (v >= 0) setMinLines(v); }
                 if (a.hasValue(11)) setLetterSpacing(a.getFloat(11, 0f));
+                // How AOSP's line breaker breaks (:1537-1556): Widget.TextView says
+                // high_quality, Widget.EditText simple. Only AOSP's StaticLayout reads them,
+                // so only the AOSP graphics path takes them; the Java2D path's own wrap never
+                // consulted them and its getters keep answering the field defaults.
+                if (AOSP_TEXT_LAYOUT) {
+                    if (a.hasValue(12)) mBreakStrategy = a.getInt(12, mBreakStrategy);
+                    if (a.hasValue(13)) mHyphenationFrequency = a.getInt(13, mHyphenationFrequency);
+                    if (a.hasValue(14)) mJustificationMode = a.getInt(14, mJustificationMode);
+                    if (a.hasValue(15)) mLineBreakStyle = a.getInt(15, mLineBreakStyle);
+                    if (a.hasValue(16)) mLineBreakWordStyle = a.getInt(16, mLineBreakWordStyle);
+                }
             } finally {
                 a.recycle();
             }
@@ -618,7 +563,7 @@ public class TextView extends View
      *  could not be read. */
     private void macapkCtorTextAppearance(Context context, android.util.AttributeSet attrs,
                                           int defStyleAttr, int defStyleRes) {
-        if (!MACAPK_TEXTVIEW_CTOR_APPEARANCE || context == null) return;
+        if (context == null) return;
         try {
             final android.content.res.Resources.Theme theme = context.getTheme();
             if (theme == null) return;
@@ -653,10 +598,20 @@ public class TextView extends View
             if (macapkIsPasswordAttrs(attrs)) attributes.typefaceIndex = MACAPK_TF_MONOSPACE;
 
             macapkApplyTextAppearance(attributes);
+            macapkCtorTypefaceRead = true;
         } catch (Throwable ignored) {
             // Keep whatever the defaults and any partial application left.
         }
     }
+
+    /** The constructor read textStyle, fontFamily, typeface and textFontWeight
+     *  from every tier, the element's own included, as AOSP's constructor does
+     *  (setTypefaceFromAttrs, before a subclass's constructor body runs). The
+     *  inflater then leaves them alone: applying them again after construction
+     *  replaced a typeface the subclass set in its constructor with the default
+     *  family (Mercantile's DiscountFontTextView, ~490 labels in the wrong font). */
+    private boolean macapkCtorTypefaceRead;
+    public boolean macapkCtorTypefaceRead() { return macapkCtorTypefaceRead; }
 
     /** AOSP readTextAppearance (:4221-4347), for the attributes in
      *  MACAPK_APPEARANCE_ATTRS. AOSP walks getIndexCount()/getIndex(), i.e. only
@@ -698,7 +653,7 @@ public class TextView extends View
                 // is a real value and still goes through.
                 // macapkPeekRecord, not peekValue: peekValue is null for every
                 // TYPE_NULL slot (AOSP), and this test needs the @empty data.
-                android.util.TypedValue rec = appearance.macapkPeekRecord(attr);
+                android.util.TypedValue rec = ResBackend.get().peekRecord(appearance, attr);
                 if (rec.type == android.util.TypedValue.TYPE_NULL
                         && rec.data != 1 /* TypedValue.DATA_NULL_EMPTY */) {
                     continue;
@@ -958,23 +913,8 @@ public class TextView extends View
         return d;
     }
 
-    /** v1.0.121: AOSP TextView's default text-appearance has
-     *  textSize=14sp. Without scaling by displayMetrics.density,
-     *  TextView's `textSizePx=14f` raw-px default ends up *smaller*
-     *  than any layout XML that explicitly sets textSize="13sp"
-     *  (which LayoutInflater.parseDimensionPx scales to 13*density
-     *  = 26px on xhdpi). F-Droid's Podcini.X card summary was
-     *  drawing BIGGER than the name because of this inversion. The
-     *  fix: scale the default to the equivalent of 14sp on the
-     *  current density, matching AOSP TypedValue.applyDimension. */
-    private void macapkInitDefaultTextSize(Context c) {
-        macapkInitDefaultTextColor(c, 0);
-        macapkInitDefaultTextSizeOnly(c);
-    }
     private void macapkInitDefaultTextSizeOnly(Context c) {
         // v1.0.121: env-gate the density default. Setting MACAPK_TEXT_SP=0
-        // reverts to the static 14f raw-px default so we can A/B this fix.
-        if ("0".equals(ENV_MACAPK_TEXT_SP)) return;
         try {
             android.util.DisplayMetrics dm =
                 c != null && c.getResources() != null
@@ -1093,23 +1033,21 @@ public class TextView extends View
             // stand in for, since ours is only ever set explicitly. An explicit
             // android:ellipsize is applied by the inflater after construction
             // and still wins.
-            if (MACAPK_TEXT_LINES_AOSP) {
-                String sl = a.macapkAttributeText(MACAPK_ANDROID_NS, "singleLine");
-                String el = a.macapkAttributeText(MACAPK_ANDROID_NS, "ellipsize");
-                if (("true".equals(sl) || "1".equals(sl))
-                        && el == null
-                        && getKeyListener() == null && !getDefaultEditable() && mInputType == 0) {
-                    mEllipsize = android.text.TextUtils.TruncateAt.END;
-                }
-                // The ctor's ELLIPSIZE_MARQUEE case (:1797-1806): with
-                // config_ui_enableFadingMarquee=false it sets
-                // mMarqueeFadeMode = MARQUEE_FADE_SWITCH_SHOW_ELLIPSIS, which is
-                // what later turns the layout's MARQUEE into END_SMALL. "4" is
-                // the attrs.xml enum value, for a binary AttributeSet that did
-                // not round-trip the symbolic name. A style-sourced marquee
-                // reaches macapkSetXmlMarquee through LayoutInflater instead.
-                if ("marquee".equals(el) || "4".equals(el)) mMarqueeShowEllipsis = true;
+            String sl = a.macapkAttributeText(MACAPK_ANDROID_NS, "singleLine");
+            String el = a.macapkAttributeText(MACAPK_ANDROID_NS, "ellipsize");
+            if (("true".equals(sl) || "1".equals(sl))
+                    && el == null
+                    && getKeyListener() == null && !getDefaultEditable() && mInputType == 0) {
+                mEllipsize = android.text.TextUtils.TruncateAt.END;
             }
+            // The ctor's ELLIPSIZE_MARQUEE case (:1797-1806): with
+            // config_ui_enableFadingMarquee=false it sets
+            // mMarqueeFadeMode = MARQUEE_FADE_SWITCH_SHOW_ELLIPSIS, which is
+            // what later turns the layout's MARQUEE into END_SMALL. "4" is
+            // the attrs.xml enum value, for a binary AttributeSet that did
+            // not round-trip the symbolic name. A style-sourced marquee
+            // reaches macapkSetXmlMarquee through LayoutInflater instead.
+            if ("marquee".equals(el) || "4".equals(el)) mMarqueeShowEllipsis = true;
         } catch (Throwable ignored) {
             // An attribute we cannot parse must never break inflation.
         }
@@ -1196,8 +1134,6 @@ public class TextView extends View
      *  password back: the screen shows dots, getText() hands over the real
      *  characters. Do not "fix" this to return the displayed text. */
     public CharSequence getText() { return text; }
-    static final boolean MACAPK_TEXT_WATCHER_EDITABLE =
-        !"0".equals(System.getenv("MACAPK_TEXT_WATCHER_EDITABLE"));
     /** AOSP TextView.setText(CharSequence) (android14, `final`): `setText(text,
      *  mBufferType)`. Every setText reaches the 2-arg overload, because that is
      *  the one subclasses override (SmartTube's MarqueeTextViewCompat mirrors its
@@ -1211,7 +1147,7 @@ public class TextView extends View
         setText(t, mBufferType);
     }
     /** The last BufferType setText was called with (AOSP mBufferType). */
-    private BufferType mBufferType = BufferType.NORMAL;
+    /* package: TextViewAospLayout */ BufferType mBufferType = BufferType.NORMAL;
     private void macapkSetTextImpl(CharSequence t) {
         // AOSP routes EVERY programmatic setText through the TextWatcher
         // before/on/after-TextChanged notifications + requestLayout/invalidate
@@ -1224,7 +1160,7 @@ public class TextView extends View
         // TruncateAt.MARQUEE span switches the view to MARQUEE with the
         // SWITCH_SHOW_ELLIPSIS fade mode (config_ui_enableFadingMarquee=false),
         // the one non-XML path that makes a MARQUEE layout END_SMALL.
-        if (MACAPK_TEXT_LINES_AOSP && n instanceof android.text.Spanned) {
+        if (n instanceof android.text.Spanned) {
             try {
                 if (((android.text.Spanned) n).getSpanStart(
                         android.text.TextUtils.TruncateAt.MARQUEE) >= 0) {
@@ -1239,11 +1175,6 @@ public class TextView extends View
         n = macapkApplyFilters(n);
         n = macapkApplyBufferType(n);
         CharSequence old = this.text;
-        if (TW_TRACE && getClass().getSimpleName().contains("CalculatorResult")) {
-            com.macapk.loader.NativeLog.i("Mac.apk.TW",
-                "CalculatorResult.setText('" + com.macapk.loader.KeyLogPolicy.viewText(this, n)
-                + "') vis=" + getVisibility());
-        }
         if (textWatchers != null && !textWatchers.isEmpty() && !firingWatchers) {
             firingWatchers = true;
             try {
@@ -1261,15 +1192,11 @@ public class TextView extends View
                 // drawn full size over the field's value (ytdlnis download
                 // sheet, issue #5, 2026-10-19). MACAPK_TEXT_WATCHER_EDITABLE=0
                 // restores the old store.
-                if (MACAPK_TEXT_WATCHER_EDITABLE && !(n instanceof android.text.Editable)) {
+                if (!(n instanceof android.text.Editable)) {
                     n = android.text.Editable.Factory.getInstance().newEditable(n);
                 }
                 macapkSetTextInternal(n);
                 macapkInitializeMovement();
-                if (TW_TRACE) com.macapk.loader.NativeLog.i("Mac.apk.TW",
-                    "setText fired " + textWatchers.size() + " watcher(s) on "
-                    + getClass().getSimpleName() + " text='"
-                    + com.macapk.loader.KeyLogPolicy.viewText(this, n) + "'");
                 for (android.text.TextWatcher w : textWatchers) {
                     try { w.onTextChanged(n, 0, oldLen, n.length()); } catch (Throwable ignored) {}
                 }
@@ -1290,34 +1217,9 @@ public class TextView extends View
         // sendOnTextChanged (:7182) / sendAfterTextChanged (:7196). Both
         // branches above do it right after the text lands, so a formatter
         // watcher's own setText + setSelection(len) is not undone afterwards.
-        if (MACAPK_TEXT_CHECK_RELAYOUT) {
-            macapkCheckForRelayout();
-        } else {
-            requestLayout();
-            invalidate();
-        }
+        macapkCheckForRelayout();
     }
 
-    /** Labelled bisect gate (wave 5, 2026-09-26): AOSP setText ends
-     *      if (mLayout != null) { checkForRelayout(); }
-     *  (android14-release TextView.java:7178-7179), and checkForRelayout
-     *  (:11246-11298) only INVALIDATES a view whose width is static and whose
-     *  text height is unchanged (or whose height is fixed); it requests a new
-     *  layout only when the height changed under a dynamic height, the width is
-     *  dynamic, or the view is MARQUEE. Ours ended every setText with
-     *  requestLayout(), so each tick of a timer, score or HUD label scheduled a
-     *  whole-tree measure+layout traversal (and our View.measure has no
-     *  spec-unchanged skip, View.java's compat header, so that traversal
-     *  re-measures every view). MEASURED victim: org.bobstuff.bobball's
-     *  updateStatus does four setText calls on two weight-1, 0-width HUD
-     *  TextViews every 10th frame: ~6 whole-tree traversals a second during
-     *  play where AOSP schedules none
-     *  (docs/fleet-misc-shatteredpd-retrowars-bobball-bouncy-unciv_2026-09-26.md,
-     *  E2). MACAPK_TEXT_CHECK_RELAYOUT=0 restores the unconditional
-     *  requestLayout(); invalidate(). Offline gate: debug/w5widgets_gate.sh
-     *  (rows tv-*). */
-    static final boolean MACAPK_TEXT_CHECK_RELAYOUT =
-        !"0".equals(System.getenv("MACAPK_TEXT_CHECK_RELAYOUT"));
 
     // What the last onMeasure measured the text WITH, and what it got. This is
     // our stand-in for AOSP's mLayout / mHintLayout: we have no persistent
@@ -1366,7 +1268,7 @@ public class TextView extends View
      *  pair counts, or a wrap view would be called static while it is not. */
     private boolean macapkWidthLimitsFixed() {
         if (mMaxEms >= 0 || mMinEms >= 0) return mMaxEms >= 0 && mMaxEms == mMinEms;
-        return MACAPK_TEXT_LINES_AOSP && mMaxWidthPx == mMinWidthPx;
+        return mMaxWidthPx == mMinWidthPx;
     }
 
     /** AOSP TextView.checkForRelayout (android14-release :11246-11298):
@@ -1405,6 +1307,11 @@ public class TextView extends View
      *     new layout at `want` and compare it with the old one, so we keep the
      *     pre-change requestLayout(). */
     private void macapkCheckForRelayout() {
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) {
+            aosp.checkForRelayout();
+            return;
+        }
         final android.view.ViewGroup.LayoutParams lp = getLayoutParams();
         if (!mMacapkRelayoutValid || lp == null || isLayoutRequested()) {
             requestLayout();
@@ -1699,22 +1606,6 @@ public class TextView extends View
             ? android.util.TypedValue.applyDimension(unit, size, dm)
             : size;
         macapkSyncPaintTextSize();
-        if (TW_TRACE) {
-            String cn = getClass().getSimpleName();
-            if (cn.contains("CalculatorFormula") || cn.contains("CalculatorResult")) {
-                com.macapk.loader.NativeLog.i("Mac.apk.TS",
-                    cn + ".setTextSize unit=" + unit + " size=" + size + " -> px="
-                    + this.textSizePx + " w=" + getWidth() + " mw=" + getMeasuredWidth()
-                    + " h=" + getHeight());
-                if (cn.contains("CalculatorResult") && this.textSizePx > 150f) {
-                    StringBuilder sb = new StringBuilder("  caller: ");
-                    StackTraceElement[] st = new Throwable().getStackTrace();
-                    for (int i = 1; i < Math.min(st.length, 8); i++)
-                        sb.append(st[i].getClassName()).append('.').append(st[i].getMethodName()).append(" <- ");
-                    com.macapk.loader.NativeLog.i("Mac.apk.TS", sb.toString());
-                }
-            }
-        }
     }
     public float getTextSize() { return textSizePx; }
     public void setTextColor(int color) {
@@ -1737,8 +1628,7 @@ public class TextView extends View
         // MACAPK_REAL_LOOPER=0 escape hatch stays byte-identical.
         this.textColors = colors;
         if (colors != null) {
-            if (android.os.Looper.MACAPK_REAL_LOOPER) updateTextColors();
-            else this.textColor = colors.getDefaultColor();
+            updateTextColors();
         }
     }
     /** AOSP TextView.updateTextColors: re-resolve the current colour from the
@@ -1802,7 +1692,6 @@ public class TextView extends View
         macapkForwardCompoundState(mDrawableTop);
         macapkForwardCompoundState(mDrawableRight);
         macapkForwardCompoundState(mDrawableBottom);
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) return;
         if ((textColors != null && textColors.isStateful())
                 || (hintTextColors != null && hintTextColors.isStateful())) {
             updateTextColors();
@@ -1857,16 +1746,16 @@ public class TextView extends View
     // stay consistent with the framework's existing text layout (which
     // ignores view padding -- these used to return a flat 0); honoring
     // padding here would shift every TextView in every app.
-    private android.graphics.drawable.Drawable mDrawableLeft, mDrawableTop,
+    /* package: TextViewAospLayout */ android.graphics.drawable.Drawable mDrawableLeft, mDrawableTop,
         mDrawableRight, mDrawableBottom;
     private int compoundDrawablePadding = 0;
-    private static int macapkDrawableW(android.graphics.drawable.Drawable d) {
+    static int macapkDrawableW(android.graphics.drawable.Drawable d) {
         if (d == null) return 0;
         int w = d.getBounds().width();
         if (w <= 0) w = Math.max(0, d.getIntrinsicWidth());
         return w;
     }
-    private static int macapkDrawableH(android.graphics.drawable.Drawable d) {
+    static int macapkDrawableH(android.graphics.drawable.Drawable d) {
         if (d == null) return 0;
         int h = d.getBounds().height();
         if (h <= 0) h = Math.max(0, d.getIntrinsicHeight());
@@ -2193,8 +2082,8 @@ public class TextView extends View
                 android.content.pm.ApplicationInfo ai = (c != null) ? c.getApplicationInfo() : null;
                 // A REAL 0 (no <uses-sdk>) is below P and latches false, as on
                 // AOSP; only an unresolved read keeps the modern default
-                // (android.app.Application.macapkTargetSdkKnown, MACAPK_TARGETSDK_ZERO).
-                if (ai != null && android.app.Application.macapkTargetSdkKnown(ai.targetSdkVersion)) {
+                // (com.macapk.loader.app.Apps.targetSdkKnown, MACAPK_TARGETSDK_ZERO).
+                if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
                     sUseFallbackLineSpacing = ai.targetSdkVersion >= android.os.Build.VERSION_CODES.P;
                     sFallbackLineSpacingDone = true;
                 }
@@ -2220,7 +2109,7 @@ public class TextView extends View
         if (v == null) {
             try {
                 java.awt.font.LineMetrics lm =
-                    sized.getLineMetrics("Ag", android.graphics.MacApkFont.textFrc());
+                    sized.getLineMetrics("Ag", GfxBackend.get().textFontRenderContext());
                 v = new int[] { Math.round(-lm.getAscent()), Math.round(lm.getDescent()) };
             } catch (Throwable t) { return null; }
             sFallbackVerticalCache.put(sized, v);
@@ -2269,7 +2158,7 @@ public class TextView extends View
             return base;
         }
         java.awt.Font primary;
-        try { primary = paint.macapkResolvedFont(); } catch (Throwable t) { return base; }
+        try { primary = GfxBackend.get().resolvedFont(paint); } catch (Throwable t) { return base; }
         if (primary == null) return base;
         int asc = base[0], desc = base[1], top = base[2], bottom = base[3];
         boolean widened = false;
@@ -2279,12 +2168,12 @@ public class TextView extends View
             i += Character.charCount(cp);
             if (cp < 0x20) continue; // control chars: never a glyph, never a fallback trigger
             java.awt.Font fb;
-            try { fb = android.graphics.MacApkFont.fallbackBaseFor(cp, primary); }
+            try { fb = GfxBackend.get().fallbackFontFor(cp, primary); }
             catch (Throwable t) { continue; }
             if (fb == null) continue;
             java.awt.Font sized;
             try {
-                sized = android.graphics.MacApkFont.getFrom(fb, primary.getSize2D(), primary.getStyle());
+                sized = GfxBackend.get().deriveFont(fb, primary.getSize2D(), primary.getStyle());
             } catch (Throwable t) { continue; }
             int[] fv = macapkFallbackFontVertical(sized);
             if (fv == null) continue;
@@ -2516,17 +2405,14 @@ public class TextView extends View
     // Layout behaviour for this whole change set (these limits, the
     // ellipsisMayBeApplied cut in Layout, the ellipsis-only-when-asked draw
     // and the hanging trailing space in the line breaker). Text layout touches
-    // every app, so the switch exists to A/B any fleet movement in one run.
-    static final boolean MACAPK_TEXT_LINES_AOSP =
-        !"0".equals(System.getenv("MACAPK_TEXT_LINES_AOSP"));
-    private int mMaximum = Integer.MAX_VALUE, mMinimum = 0;
-    private boolean mMaxModeLines = true, mMinModeLines = true;
-    private int mMaxWidthPx = Integer.MAX_VALUE, mMinWidthPx = 0;
+    /* package: TextViewAospLayout */ int mMaximum = Integer.MAX_VALUE, mMinimum = 0;
+    /* package: TextViewAospLayout */ boolean mMaxModeLines = true, mMinModeLines = true;
+    /* package: TextViewAospLayout */ int mMaxWidthPx = Integer.MAX_VALUE, mMinWidthPx = 0;
     /** AOSP's setters all end `requestLayout(); invalidate();`. Only when the
      *  value actually moves here, so an app that re-applies the same limit
      *  from inside its own onMeasure/onBind does not schedule a pass per call. */
     private void macapkLimitChanged(boolean changed) {
-        if (changed && MACAPK_TEXT_LINES_AOSP) { requestLayout(); invalidate(); }
+        if (changed) { requestLayout(); invalidate(); }
     }
     private void macapkSetMax(int v, boolean lines) {
         boolean ch = mMaximum != v || mMaxModeLines != lines;
@@ -2564,13 +2450,10 @@ public class TextView extends View
         // AOSP's setMinHeight writes mMinimum only; View's own mMinHeight is a
         // separate attribute the View constructor reads from XML. Mirroring
         // into setMinimumHeight made a later setMinLines unable to replace the
-        // pixel minimum, which AOSP's single mMinimum slot does.
-        if (!MACAPK_TEXT_LINES_AOSP) setMinimumHeight(h);
         macapkSetMin(h, false);
     }
     public void setMinWidth(int w)  {
         this.explicitMinWidth  = w; mMinEms = -1;
-        if (!MACAPK_TEXT_LINES_AOSP) setMinimumWidth(w);
         boolean ch = mMinWidthPx != w;
         mMinWidthPx = w;
         macapkLimitChanged(ch);
@@ -2588,7 +2471,6 @@ public class TextView extends View
      *  Gate OFF: the old `maxLines` field, which only setMaxLines and
      *  setSingleLine wrote. */
     private int macapkMaxLines() {
-        if (!MACAPK_TEXT_LINES_AOSP) return (maxLines > 0) ? maxLines : Integer.MAX_VALUE;
         return (mMaxModeLines && mMaximum > 0) ? mMaximum : Integer.MAX_VALUE;
     }
     /** AOSP applySingleLine(true) sets setHorizontallyScrolling(true) and
@@ -2596,8 +2478,8 @@ public class TextView extends View
      *  at the view edge. setInputType only sets the flag (see there), so the
      *  line limit is checked too, keeping those EditTexts on the wrap path
      *  they have always used. */
-    private boolean macapkHorizontallyScrolling() {
-        return MACAPK_TEXT_LINES_AOSP && macapkSingleLine && macapkMaxLines() == 1;
+    boolean macapkHorizontallyScrolling() {
+        return macapkSingleLine && macapkMaxLines() == 1;
     }
     /** The ellipsize mode TextView actually hands its layout
      *  (makeNewLayout, :10559-10566):
@@ -2615,7 +2497,7 @@ public class TextView extends View
      *  StaticLayout's ellipsisMayBeApplied excludes it): the full text, clipped.
      *  mMarqueeShowEllipsis is that fade mode. We never run the marquee
      *  animation, so an XML MARQUEE view stays in its not-selected state. */
-    private android.text.TextUtils.TruncateAt macapkEffectiveEllipsize() {
+    android.text.TextUtils.TruncateAt macapkEffectiveEllipsize() {
         if (mEllipsize == null || getKeyListener() != null) return null;
         if (mEllipsize == android.text.TextUtils.TruncateAt.MARQUEE)
             return mMarqueeShowEllipsis ? android.text.TextUtils.TruncateAt.END_SMALL
@@ -2866,13 +2748,10 @@ public class TextView extends View
         macapkInputContentType = true;
         this.editorActionListener = l;
     }
-    static final boolean TW_TRACE = System.getenv("MACAPK_TW_TRACE") != null;
     public void addTextChangedListener(android.text.TextWatcher w) {
         if (w == null) return;
         if (textWatchers == null) textWatchers = new java.util.ArrayList<>();
         if (!textWatchers.contains(w)) textWatchers.add(w);
-        if (TW_TRACE) com.macapk.loader.NativeLog.i("Mac.apk.TW",
-            "addTextChangedListener on " + getClass().getSimpleName() + " watcher=" + w.getClass().getName());
     }
     public void removeTextChangedListener(android.text.TextWatcher w) {
         if (textWatchers != null) textWatchers.remove(w);
@@ -2990,7 +2869,6 @@ public class TextView extends View
      *  observes, not where the caret or the glyphs are. */
     void spanChange(android.text.Spanned buf, Object what,
                     int oldStart, int newStart, int oldEnd, int newEnd) {
-        if (!MACAPK_TEXT_CARET) return;
         boolean selChanged = false;
         if (what == android.text.Selection.SELECTION_END) {
             selChanged = true;
@@ -3043,7 +2921,6 @@ public class TextView extends View
      *      if (curs >= 0) { mHighlightPathBogus = true; mEditor.makeBlink(); }
      *  An edit restarts the blink even when it did not move the caret. */
     private void macapkUpdateAfterEdit() {
-        if (!MACAPK_TEXT_CARET) return;
         if (getSelectionStart() >= 0) {
             mHighlightPathBogus = true;
             if (mEditor != null) mEditor.makeBlink();
@@ -3106,11 +2983,7 @@ public class TextView extends View
         if (backspace) {
             // Gate MACAPK_TEXT_CARET: at the SELECTION, not at the end (see
             // macapkEditAtSelection). KEYCODE_FORWARD_DEL deletes forward.
-            if (MACAPK_TEXT_CARET) {
-                macapkDeleteAtSelection(keyCode == 112);
-                return true;
-            }
-            if (cur.length() > 0) macapkSetTextAndNotify(cur.substring(0, cur.length() - 1));
+            macapkDeleteAtSelection(keyCode == 112);
             return true;
         }
         if (enter) {
@@ -3158,19 +3031,14 @@ public class TextView extends View
                     : new android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN,
                                                 android.view.KeyEvent.KEYCODE_ENTER);
                 if (editorActionListener == null || !macapkEditorActionConsumes(kev)) {
-                    if (MACAPK_TEXT_CARET) {
-                        macapkInsertAtSelection("\n");
-                    } else {
-                        CharSequence ins = macapkFilterInsertion("\n", cur.length(), cur.length());
-                        if (ins != null && ins.length() > 0) macapkSetTextAndNotify(cur + ins);
-                    }
+                    macapkInsertAtSelection("\n");
                 }
                 return true;
             }
             // Soft-input route (no KeyEvent) == the IME's action button, which
             // AOSP delivers as onEditorAction(actionId): listener first, then the
             // NEXT/PREVIOUS/DONE defaults, and a subclass override runs too.
-            if (ev == null && MACAPK_EDITOR_ACTION_DEFAULTS) {
+            if (ev == null) {
                 // A throw here (AOSP's IllegalStateException for a focus search
                 // that returns an unfocusable view) is caught like the
                 // listener's was: a gap in OUR focus finder must not kill the
@@ -3197,18 +3065,7 @@ public class TextView extends View
             return true;
         }
         if (unicodeChar >= 32 && unicodeChar != 127) {
-            if (MACAPK_TEXT_CARET) {
-                macapkInsertAtSelection(new String(Character.toChars(unicodeChar)));
-                return true;
-            }
-            // AOSP inserts through Editable.replace, which consults the
-            // InputFilters with dest=current buffer and dstart==dend==caret.
-            // A filter may shorten (LengthFilter at the cap) or transform
-            // (AllCaps) the inserted slice, or reject it entirely ("").
-            CharSequence ins = macapkFilterInsertion(
-                new String(Character.toChars(unicodeChar)), cur.length(), cur.length());
-            if (ins == null || ins.length() == 0) return true;  // consumed, filtered out
-            macapkSetTextAndNotify(cur + ins);
+            macapkInsertAtSelection(new String(Character.toChars(unicodeChar)));
             return true;
         }
         return false;   // non-text key (arrows, etc.) -> let the game handle it
@@ -3379,48 +3236,7 @@ public class TextView extends View
         return onCheckIsTextEditor() && isEnabled();
     }
 
-    /** AOSP TextView.onKeyDown -> doKeyDown: a TextView that is a text editor
-     *  consumes the keystroke THROUGH ITS KEY LISTENER and edits the Editable
-     *  directly. No IME is involved:
-     *
-     *      if (mEditor != null && mEditor.mKeyListener != null) {
-     *          ...
-     *          final boolean handled = mEditor.mKeyListener.onKeyDown(this,
-     *                  (Editable) mText, keyCode, event);
-     *          if (handled) return KEY_DOWN_HANDLED_BY_KEY_LISTENER;
-     *      }
-     *   (frameworks/base core/java/android/widget/TextView.java, android14-release:
-     *    onKeyDown -> doKeyDown:9372, the mKeyListener branch)
-     *
-     *  That is why a hardware keyboard types into a focused EditText on a real
-     *  device with the soft keyboard hidden. We had NO override, so
-     *  View.onKeyDown's `return false` dropped every character, and the only way
-     *  text ever reached a field was InputMethodManager.macapkActiveInput --
-     *  which is set when an app SHOWS the soft keyboard. A field the app focuses
-     *  programmatically therefore ignored the keyboard entirely.
-     *
-     *  Measured 2026-08-12 on F-Droid's search screen, whose EditText
-     *  auto-focuses when the search Activity opens: six characters reached
-     *  TouchDispatcher.dispatchKey with the correct unicode, Activity dispatch
-     *  routed them to the focused view, every one returned false, and the field
-     *  stayed text=''. On macOS the physical keyboard is THE text input method,
-     *  so this was not an edge case -- it was every search box in every app.
-     *
-     *  Our KeyListener chain (MetaKeyKeyListener and below) returns false from
-     *  onKeyDown today, so the AOSP call is made first and insertion falls
-     *  through to macapkHandleSoftKey -- the SAME routine the soft-input path
-     *  uses. One insertion path, so InputFilters, TextWatchers and the editor
-     *  action behave identically however the character arrived, and there is no
-     *  third path to keep in step. If a real listener lands later its `true`
-     *  wins automatically, exactly as AOSP specifies. */
-    private static final boolean sTraceIme = "1".equals(System.getenv("MACAPK_TRACE_IME"));
     @Override public boolean onKeyDown(int keyCode, android.view.KeyEvent ev) {
-        if (sTraceIme) {
-            System.err.println("[Mac.apk.IME] TextView.onKeyDown " + getClass().getName()
-                + " editor=" + macapkIsTextEditor()
-                + " enabled=" + isEnabled() + " checkIsEditor=" + onCheckIsTextEditor()
-                + " focused=" + isFocused() + " focusableInTouchMode=" + isFocusableInTouchMode());
-        }
         if (macapkIsTextEditor()) {
             android.text.method.KeyListener kl = mKeyListener;
             if (kl != null) {
@@ -3488,91 +3304,67 @@ public class TextView extends View
      *  a layout of one empty line and a baseline; one never measured has neither. */
     private boolean macapkMeasuredOnce;
 
+    // ---- AOSP graphics: the text laid out by AOSP's own Layout classes ----------------------
+    // THE ONE BRANCH POINT. With WINAPK_AOSP_GFX=1 (GfxBackend.isAosp()) android.text's Layout,
+    // StaticLayout, BoringLayout and DynamicLayout are android-all 14's, and this view measures,
+    // lays out, draws, answers its baseline, line count, getLayout() and hit tests through one
+    // of them, built as AOSP 14's TextView builds it (TextViewAospLayout). Every method below
+    // that starts with `if (macapkAosp() != null)` hands over to it; the rest of this file's
+    // line arithmetic (macapkLineTops, macapkMeasureContent, the draw memo...) is the Java2D
+    // path's. When the views layer moves to AOSP's TextView, this and that class go.
+    private static final boolean AOSP_TEXT_LAYOUT = com.macapk.loader.gfx.GfxBackend.isAosp();
+    private TextViewAospLayout mAospLayout;
+
+    /** The AOSP layout path, or null with the switch off. Made on first use: View's
+     *  constructor can call into a TextView before this class's field initializers ran. */
+    private TextViewAospLayout macapkAosp() {
+        if (!AOSP_TEXT_LAYOUT) return null;
+        if (mAospLayout == null) mAospLayout = new TextViewAospLayout(this);
+        return mAospLayout;
+    }
+
+    /** AOSP's mTextPaint as the layouts read it: the view's paint with its size and style. */
+    android.text.TextPaint macapkAospPaint() {
+        final android.text.TextPaint p = getPaint();
+        p.setTextSize(textSizePx);
+        applyTextStyleToPaint(p);
+        return p;
+    }
+
+    /** AOSP's mTransformed. */
+    CharSequence macapkAospTransformed() {
+        return macapkDisplayText();
+    }
+
+    /** AOSP's mUseFallbackLineSpacing (:1621-1629, setFallbackLineSpacing :4797-4818): 2
+     *  (FALLBACK_LINE_SPACING_ALL) for an app targeting API 33 or later
+     *  (BORINGLAYOUT_FALLBACK_LINESPACING), 1 (STATIC_LAYOUT_ONLY) for 28 to 32, 0 below or
+     *  after setFallbackLineSpacing(false). */
+    int macapkFallbackLineSpacingMode() {
+        if (!mUseFallbackLineSpacing || !macapkUseFallbackLineSpacing()) return 0;
+        int target = android.os.Build.VERSION_CODES.TIRAMISU;
+        try {
+            final android.content.pm.ApplicationInfo ai = getContext().getApplicationInfo();
+            if (ai != null && com.macapk.loader.app.Apps.targetSdkKnown(ai.targetSdkVersion)) {
+                target = ai.targetSdkVersion;
+            }
+        } catch (Throwable ignored) { }
+        return target >= android.os.Build.VERSION_CODES.TIRAMISU ? 2 : 1;
+    }
+
+    int macapkSuggestedMinimumWidth() { return getSuggestedMinimumWidth(); }
+    int macapkSuggestedMinimumHeight() { return getSuggestedMinimumHeight(); }
+
     @Override
     protected void onMeasure(int wSpec, int hSpec) {
         macapkMeasuredOnce = true;
-        if (MACAPK_TEXT_LINES_AOSP) { macapkOnMeasureAosp(wSpec, hSpec); return; }
-        int wMode = android.view.View.MeasureSpec.getMode(wSpec);
-        int wSize = android.view.View.MeasureSpec.getSize(wSpec);
-        int hMode = android.view.View.MeasureSpec.getMode(hSpec);
-        int hSize = android.view.View.MeasureSpec.getSize(hSpec);
-
-        // Compute desired content dimensions from the text.
-        // MEASURE THE TRANSFORMED TEXT, not the raw text. AOSP measures via
-        // the Layout, which is built over mTransformed (makeSingleLayout,
-        // TextView.java:9529-9530; the autosize path spells it out at
-        // TextView.java:9885-9887: `final CharSequence text = mTransformed !=
-        // null ? mTransformed : getText();`). For a password field the two
-        // differ in GLYPH WIDTH even though the lengths match, so measuring the
-        // raw text would size the view to the real characters' advance and leak
-        // the password's shape through the layout.
-        final CharSequence dispM = macapkDisplayText();
-        int[] macapkTextSize = macapkMeasureContent(dispM, wMode, wSize);
-        int textW = macapkTextSize[0];
-        int textH = macapkTextSize[1];
-        // THE HINT PARTICIPATES IN MEASUREMENT, and unconditionally -- not only
-        // when the text is empty. AOSP onMeasure widens the width to the hint
-        // (`if (hintWidth > width) { width = hintWidth; }`,
-        // TextView.java:11385-11387) and getDesiredHeight takes
-        // `Math.max(getDesiredHeight(mLayout, true), getDesiredHeight(mHintLayout, ...))`
-        // (:11597-11601). This is what gives an EMPTY search field its size: with
-        // no text and an unmeasured hint the content box is one blank line wide
-        // by one line tall, so even a correctly painted hint would be clipped to
-        // nothing. Measured through macapkMeasureContent so the wrap, the
-        // fallback-font widening and the block-height rules are identical to the
-        // text path.
-        int macapkHintH = -1;
-        if (mHint != null && mHint.length() > 0) {
-            int[] macapkHintSize = macapkMeasureContent(mHint, wMode, wSize);
-            macapkHintH = macapkHintSize[1];
-            if (macapkHintSize[0] > textW) textW = macapkHintSize[0];
-            if (macapkHintSize[1] > textH) textH = macapkHintSize[1];
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) {
+            final int[] wh = aosp.onMeasure(wSpec, hSpec);
+            setMeasuredDimension(wh[0], wh[1]);
+            return;
         }
-        // setText's checkForRelayout (MACAPK_TEXT_CHECK_RELAYOUT) re-runs this
-        // exact text measure over the new text; record its inputs and result.
-        macapkRecordRelayoutInputs(false, wMode, wSize, 0, false, macapkTextSize, macapkHintH);
-        // AOSP fits LEFT/RIGHT compound drawables vertically: the measured
-        // height accounts for their heights (TextView tracks
-        // mDrawableHeightLeft/Right and takes the max against the text
-        // height). The other half of the icon-only ActionMenuItemView fix.
-        int macapkDrawH = Math.max(
-            mDrawableLeft  != null ? macapkDrawableH(mDrawableLeft)  : 0,
-            mDrawableRight != null ? macapkDrawableH(mDrawableRight) : 0);
-        if (macapkDrawH > textH) textH = macapkDrawH;
-        // Add compound padding for AOSP-correctness (text bounds vs
-        // padded view bounds).
-        textW += getCompoundPaddingLeft() + getCompoundPaddingRight();
-        textH += getCompoundPaddingTop()  + getCompoundPaddingBottom();
-
-        int finalW, finalH;
-        if (wMode == android.view.View.MeasureSpec.EXACTLY)      finalW = wSize;
-        else if (wMode == android.view.View.MeasureSpec.AT_MOST) finalW = Math.min(wSize, textW);
-        else /* UNSPECIFIED */                                    finalW = textW;
-        if (hMode == android.view.View.MeasureSpec.EXACTLY)      finalH = hSize;
-        else if (hMode == android.view.View.MeasureSpec.AT_MOST) finalH = Math.min(hSize, textH);
-        else /* UNSPECIFIED */                                    finalH = textH;
-        // AOSP TextView.onMeasure clamps to the suggested minimum (android:minWidth/
-        // minHeight, background min). Without this a MaterialButton with a 40dp
-        // minHeight collapsed to its text height (~28px). Only the non-EXACTLY axes
-        // grow (EXACTLY is a hard spec); minimums are usually 0 so other views are
-        // unaffected.
-        // AOSP onMeasure applies an ems-expressed min/max width as
-        // `ems * getLineHeight()` px (TextView treats the line height as the
-        // em box) and only on a non-EXACTLY width spec. Guarded on "was
-        // setEms/setMaxEms/setMinEms actually called" (-1 = unset) so every
-        // view that never uses ems measures exactly as before.
-        if (wMode != android.view.View.MeasureSpec.EXACTLY
-                && (mMaxEms >= 0 || mMinEms >= 0)) {
-            int em = getLineHeight();
-            if (mMaxEms >= 0) finalW = Math.min(finalW, mMaxEms * em);
-            if (mMinEms >= 0) finalW = Math.max(finalW, mMinEms * em);
-        }
-        if (wMode != android.view.View.MeasureSpec.EXACTLY)
-            finalW = Math.max(finalW, getSuggestedMinimumWidth());
-        if (hMode != android.view.View.MeasureSpec.EXACTLY)
-            finalH = Math.max(finalH, getSuggestedMinimumHeight());
-        mMacapkRelayoutMeasuredW = finalW;
-        setMeasuredDimension(finalW, finalH);
+        macapkOnMeasureAosp(wSpec, hSpec); return;
     }
 
     /** AOSP TextView.onMeasure (android14-release TextView.java:10881-11028)
@@ -3753,8 +3545,7 @@ public class TextView extends View
                         // MACAPK_TEXTVIEW_SPAN_LINES: the same span-aware line geometry onDraw
                         // paints with, so a size-span paragraph is measured as tall as it draws
                         // (AOSP getDesiredHeight is layout.getLineTop(lineCount)).
-                        final float[][] spanGeomM = MACAPK_TEXTVIEW_SPAN_LINES
-                            ? macapkSpanLineGeometry(dispM, getPaint(), avail, wr, lines) : null;
+                        final float[][] spanGeomM = macapkSpanLineGeometry(dispM, getPaint(), avail, wr, lines);
                         textH = (int) Math.ceil(spanGeomM != null ? spanGeomM[0][lines]
                             : macapkBlockHeight(fm, lines, wl, p));
                         // Width: the widest wrapped line (AT_MOST shrinks to it;
@@ -3860,6 +3651,11 @@ public class TextView extends View
         // its insertion point. Draws nothing, and so marks no ink, on the off
         // half of the blink or when no caret applies.
         if (mEditor != null) macapkDrawCursor(canvas);
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) {
+            aosp.drawText(canvas);
+            return;
+        }
         // THE PIXELS COME FROM mTransformed, NEVER FROM mText. AOSP's onDraw
         // hands mLayout.draw(canvas) the layout it built over mTransformed
         // (TextView.java:9529-9530). Reading `text` here is exactly the bug
@@ -3919,8 +3715,7 @@ public class TextView extends View
         // mLayout (see macapkDrawGeomMemo). Gate OFF, or text whose widths a
         // memo cannot vouch for (a custom or replacement metric span): derived
         // afresh on every draw, exactly as before.
-        MacapkDrawGeom geom = MACAPK_TEXT_DRAW_MEMO
-            ? macapkDrawGeomMemo(disp, s, p, viewW0, viewH) : null;
+        MacapkDrawGeom geom = macapkDrawGeomMemo(disp, s, p, viewW0, viewH);
         final android.text.Spanned styled;
         if (geom != null) {
             // This draw's own answer, from the span walk the memo check made.
@@ -3935,7 +3730,7 @@ public class TextView extends View
         final android.graphics.Paint.FontMetricsInt fm = geom.fm;
         final boolean spannedD = geom.spannedD;
         final int viewW = geom.viewW;
-        if (!geom.quick && MACAPK_TEXT_LINES_AOSP) {
+        if (!geom.quick) {
             // A memo hit whose wrap memo was built under THIS geometry: its
             // lines, widths and tops are still exact, so only gravity and the
             // glyphs remain (macapkPaintWrapped). Only ever true under the gate.
@@ -3960,7 +3755,7 @@ public class TextView extends View
             // (`canvas.clipRect(clipLeft, clipTop, clipRight, clipBottom)`,
             // clipLeft/Right = the compound padding, TextView.java:9017-9031).
             // Only this case needs it: every other line fits its box.
-            final boolean clip = MACAPK_TEXT_LINES_AOSP && geom.textW > viewW;
+            final boolean clip = geom.textW > viewW;
             if (clip) {
                 canvas.save();
                 canvas.clipRect((float) padL, 0f, (float) (padL + viewW), (float) getHeight());
@@ -4109,9 +3904,6 @@ public class TextView extends View
     // own state -- so their geometry is derived on every draw as before.
     //
     // MACAPK_TEXT_DRAW_MEMO=0 derives everything on every draw, the
-    // pre-change path.
-    static final boolean MACAPK_TEXT_DRAW_MEMO =
-        !"0".equals(System.getenv("MACAPK_TEXT_DRAW_MEMO"));
 
     /** What onDraw derives from the text, the paint and the box, plus the key
      *  it was derived under. The value half is exactly the locals the per-draw
@@ -4228,38 +4020,32 @@ public class TextView extends View
         // on its own no longer lands here: AOSP still word-wraps that layout
         // and shows its first line, ellipsized only when mEllipsize asks
         // (StaticLayout.generate :873-898, out() :1063-1081).
-        final boolean quick = MACAPK_TEXT_LINES_AOSP
-            ? (macapkHorizontallyScrolling() || (fullW <= viewW && s.indexOf('\n') < 0))
-            : (fullW <= viewW || maxLines == 1);
+        final boolean quick = (macapkHorizontallyScrolling() || (fullW <= viewW && s.indexOf('\n') < 0));
         g.spannedD = spannedD;
         g.viewW = viewW;
         g.quick = quick;
         if (!quick) return g;
         String drawStr = s;
         int qSrc = -1;   // chars of drawStr that map to the source; -1 = derive below
-        if (MACAPK_TEXT_LINES_AOSP) {
-            // AOSP draws an ellipsis only through the layout's ellipsize
-            // mode; with none, the line is simply clipped at the edge. A
-            // MARQUEE that reaches the layout as MARQUEE (programmatic
-            // setEllipsize, see macapkEffectiveEllipsize) is never
-            // ellipsized either: BoringLayout.init treats it like null.
-            final android.text.TextUtils.TruncateAt eff = macapkEffectiveEllipsize();
-            if (fullW > viewW && eff != null
-                    && eff != android.text.TextUtils.TruncateAt.MARQUEE) {
-                if (eff == android.text.TextUtils.TruncateAt.START
-                        || eff == android.text.TextUtils.TruncateAt.MIDDLE) {
-                    CharSequence e = android.text.TextUtils.ellipsize(s, p, viewW, eff);
-                    drawStr = (e == null) ? "" : e.toString();
-                    qSrc = 0;    // the kept runs no longer start at offset 0
-                } else {
-                    int keep = macapkEndEllipsisKeep(disp, s, 0, s.length(), p, workD,
-                        spannedD, viewW, macapkEllipsisString(eff));
-                    drawStr = s.substring(0, keep) + macapkEllipsisString(eff);
-                    qSrc = keep;
-                }
+        // AOSP draws an ellipsis only through the layout's ellipsize
+        // mode; with none, the line is simply clipped at the edge. A
+        // MARQUEE that reaches the layout as MARQUEE (programmatic
+        // setEllipsize, see macapkEffectiveEllipsize) is never
+        // ellipsized either: BoringLayout.init treats it like null.
+        final android.text.TextUtils.TruncateAt eff = macapkEffectiveEllipsize();
+        if (fullW > viewW && eff != null
+                && eff != android.text.TextUtils.TruncateAt.MARQUEE) {
+            if (eff == android.text.TextUtils.TruncateAt.START
+                    || eff == android.text.TextUtils.TruncateAt.MIDDLE) {
+                CharSequence e = android.text.TextUtils.ellipsize(s, p, viewW, eff);
+                drawStr = (e == null) ? "" : e.toString();
+                qSrc = 0;    // the kept runs no longer start at offset 0
+            } else {
+                int keep = macapkEndEllipsisKeep(disp, s, 0, s.length(), p, workD,
+                    spannedD, viewW, macapkEllipsisString(eff));
+                drawStr = s.substring(0, keep) + macapkEllipsisString(eff);
+                qSrc = keep;
             }
-        } else if (fullW > viewW && maxLines == 1) {
-            drawStr = ellipsize(s, viewW, p);
         }
         // Single line's own height, under the current includeFontPadding
         // flag AND widened for a fallback-font glyph in drawStr, exactly
@@ -4279,7 +4065,7 @@ public class TextView extends View
         // right/centre-aligned bold or size-spanned line short of its edge,
         // so the caret and the glyphs disagreed by the span's delta.
         // Unspanned text: fullW IS p.measureText(s) (macapkRunWidth's header).
-        g.textW = (MACAPK_TEXT_CARET && drawStr == s) ? fullW : p.measureText(drawStr);
+        g.textW = (drawStr == s) ? fullW : p.measureText(drawStr);
         // srcCount = how many leading chars of drawStr map back to the
         // source text; the ellipsize() tail ("…") has no source offset.
         g.srcCount = (qSrc >= 0) ? qSrc
@@ -4591,8 +4377,7 @@ public class TextView extends View
         mDrawCacheLines = lines;
         mDrawCacheSrcCounts = srcCounts;
         mDrawCacheLineW = lineW;
-        float[][] spanGeom = MACAPK_TEXTVIEW_SPAN_LINES
-            ? macapkSpanLineGeometry(disp, p, viewW, ranges, nLines) : null;
+        float[][] spanGeom = macapkSpanLineGeometry(disp, p, viewW, ranges, nLines);
         if (spanGeom != null) {
             mDrawCacheTops = spanGeom[0];
             mDrawCacheAbove = spanGeom[1];
@@ -4606,14 +4391,6 @@ public class TextView extends View
         macapkPaintWrapped(canvas, styled, p, fm, padL, padT, viewW, viewH);
     }
 
-    /** MACAPK_TEXTVIEW_SPAN_LINES (default ON, 2026-10-01; =0 = the span-blind
-     *  line positions below, byte-identical): a wrapped TextView whose text
-     *  carries a MetricAffectingSpan or LineHeightSpan takes each line's TOP
-     *  and BASELINE from android.text.Layout, which already applies both the
-     *  AOSP way (macapkSpanVertical, applyLineHeightSpans), instead of from
-     *  the BASE paint's metrics. */
-    static final boolean MACAPK_TEXTVIEW_SPAN_LINES =
-        !"0".equals(System.getenv("MACAPK_TEXTVIEW_SPAN_LINES"));
 
     /** {tops[nLines + 1], above[nLines]} for the wrapped lines `ranges`, from a
      *  StaticLayout over the same text, paint and width; null when the text has
@@ -4748,7 +4525,7 @@ public class TextView extends View
                                  String line, int srcStart, int srcCount,
                                  float x, float baselineY, android.text.TextPaint p) {
         if (sp == null) {
-            if (android.text.MacApkBidi.hasRtl(line, 0, line.length())) {
+            if (GfxBackend.get().hasRtl(line, 0, line.length())) {
                 boolean paraRtl;
                 try { paraRtl = macapkParagraphRtl(macapkShownText(), srcStart); }
                 catch (Throwable t) { paraRtl = macapkParagraphRtl(line, 0); }
@@ -4764,7 +4541,7 @@ public class TextView extends View
         final int end = Math.min(srcStart + srcCount, sp.length());
         android.text.style.MetricAffectingSpan drawnRep = null;
         final int visLen = Math.max(0, Math.min(line.length(), Math.min(srcCount, end - srcStart)));
-        if (visLen > 0 && android.text.MacApkBidi.hasRtl(line, 0, visLen)) {
+        if (visLen > 0 && GfxBackend.get().hasRtl(line, 0, visLen)) {
             // Cut at every style run and every bidi level change, then paint the
             // pieces in visual order, each with its own direction (AOSP TextLine).
             int[] bounds = new int[line.length() + 1];
@@ -4775,7 +4552,7 @@ public class TextView extends View
                 bounds[nb++] = re - srcStart;
                 rs = re;
             }
-            int[] pieces = android.text.MacApkBidi.visualPieces(line.substring(0, visLen), bounds, nb,
+            int[] pieces = GfxBackend.get().bidiVisualPieces(line.substring(0, visLen), bounds, nb,
                     macapkParagraphRtl(sp, srcStart));
             for (int k = 0; k < pieces.length; k += 3) {
                 int rs = srcStart + pieces[k], re = srcStart + pieces[k + 1];
@@ -4792,13 +4569,13 @@ public class TextView extends View
                 // Replaced runs are painted by their span here too (AOSP
                 // TextLine.handleReplacement), once per span across bidi pieces.
                 android.text.style.MetricAffectingSpan bidiRepSpan =
-                        android.text.MacApkReplacement.covering(sp, rs, re);
+                        GfxBackend.get().replacementCovering(sp, rs, re);
                 if (bidiRepSpan != null) {
                     if (bidiRepSpan != drawnRep) {
                         drawnRep = bidiRepSpan;
                         int r0 = Math.max(sp.getSpanStart(bidiRepSpan), srcStart);
                         int r1 = Math.min(sp.getSpanEnd(bidiRepSpan), end);
-                        cx += android.text.MacApkReplacement.draw(canvas,
+                        cx += GfxBackend.get().drawReplacement(canvas,
                                 (android.text.style.ReplacementSpan) bidiRepSpan.getUnderlying(),
                                 sp, r0, r1, cx, baselineY, p);
                     }
@@ -4841,7 +4618,7 @@ public class TextView extends View
             // A ReplacementSpan's run is painted by the span, never as text
             // (AOSP TextLine.handleReplacement); see android.text.MacApkReplacement.
             android.text.style.MetricAffectingSpan repSpan =
-                    android.text.MacApkReplacement.covering(sp, runStart, runEnd);
+                    GfxBackend.get().replacementCovering(sp, runStart, runEnd);
             if (repSpan != null) {
                 // A style transition inside the replaced range splits it into
                 // several runs; the span paints once, on the first of them.
@@ -4849,7 +4626,7 @@ public class TextView extends View
                     drawnRep = repSpan;
                     int r0 = Math.max(sp.getSpanStart(repSpan), srcStart);
                     int r1 = Math.min(sp.getSpanEnd(repSpan), end);
-                    cx += android.text.MacApkReplacement.draw(canvas,
+                    cx += GfxBackend.get().drawReplacement(canvas,
                             (android.text.style.ReplacementSpan) repSpan.getUnderlying(),
                             sp, r0, r1, cx, baselineY, p);
                 }
@@ -4901,11 +4678,11 @@ public class TextView extends View
         switch (getTextDirection()) {
             case TEXT_DIRECTION_LTR: return false;
             case TEXT_DIRECTION_RTL: return true;
-            case TEXT_DIRECTION_FIRST_STRONG_LTR: return android.text.MacApkBidi.isRtlParagraph(s, pos, false);
-            case TEXT_DIRECTION_FIRST_STRONG_RTL: return android.text.MacApkBidi.isRtlParagraph(s, pos, true);
+            case TEXT_DIRECTION_FIRST_STRONG_LTR: return GfxBackend.get().isRtlParagraph(s, pos, false);
+            case TEXT_DIRECTION_FIRST_STRONG_RTL: return GfxBackend.get().isRtlParagraph(s, pos, true);
             case TEXT_DIRECTION_ANY_RTL:
-                return s != null && android.text.MacApkBidi.hasRtl(s, 0, s.length());
-            default: return android.text.MacApkBidi.isRtlParagraph(s, pos, isLayoutRtl());
+                return s != null && GfxBackend.get().hasRtl(s, 0, s.length());
+            default: return GfxBackend.get().isRtlParagraph(s, pos, isLayoutRtl());
         }
     }
     private float horizontalGravityOffset(int availW, float contentW) {
@@ -4974,14 +4751,6 @@ public class TextView extends View
         return sum;
     }
 
-    /** Greedy word-wrap. Splits `s` into a list of lines each fitting
-     *  within `widthPx` per `paint.measureText`. Stops at maxLines (or
-     *  unbounded if maxLines <= 0). */
-    private static java.util.ArrayList<String> wrapText(String s, int widthPx, android.graphics.Paint p, int maxLines) {
-        java.util.ArrayList<String> lines = new java.util.ArrayList<>();
-        for (int[] r : wrapRanges(s, widthPx, p, maxLines)) lines.add(s.substring(r[0], r[1]));
-        return lines;
-    }
 
     // ---- span-aware measurement, TextView side -------------------------
     //
@@ -5017,7 +4786,7 @@ public class TextView extends View
                                         android.text.TextPaint work, boolean spanned) {
         if (spanned && p instanceof android.text.TextPaint) {
             try {
-                return android.text.Layout.macapkMeasureSpanned(src, start, end,
+                return GfxBackend.get().measureSpanned(src, start, end,
                            (android.text.TextPaint) p, work);
             } catch (Throwable ignored) { }
         }
@@ -5062,7 +4831,7 @@ public class TextView extends View
                 // line-ending space, that space goes away"), so a space never
                 // makes a line overflow on its own. Counting it broke F-Droid's
                 // 'Encrypted container' (228px of ink) out of a 236px column.
-                if (w > widthPx && !(MACAPK_TEXT_LINES_AOSP && macapkIsLineEndSpace(c))) {
+                if (w > widthPx && !(macapkIsLineEndSpace(c))) {
                     // Doesn't fit. Break at last space if any.
                     if (lastSpace > lineStart) {
                         lineEnd = lastSpace;
@@ -5171,8 +4940,10 @@ public class TextView extends View
         // what isSingleLine() -- and therefore macapkActionIdForEnterEvent() --
         // needs to answer correctly, and it is also the value AOSP's
         // onCreateDrawableState reads for state_multiline.
+        final boolean wasSingleLine = macapkSingleLine;
         macapkSingleLine = !macapkIsMultilineInputType(type);
         final boolean isPassword = macapkIsPasswordInputType(type);
+        boolean forceUpdate = false;
         if (isPassword) {
             setTransformationMethod(
                 android.text.method.PasswordTransformationMethod.getInstance());
@@ -5180,6 +4951,29 @@ public class TextView extends View
                 && mTransformationMethod
                     == android.text.method.PasswordTransformationMethod.getInstance()) {
             setTransformationMethod(null);
+            forceUpdate = true;
+        }
+        // The AOSP graphics path lays the field out as AOSP does, so it takes the layout half
+        // of applySingleLine(singleLine, !isPassword, true, true) too (:7486-7491,
+        // :11918-11960): one line, scrolling sideways, newlines shown as spaces.
+        if (macapkAosp() != null && (wasSingleLine != macapkSingleLine || forceUpdate)) {
+            final android.text.method.TransformationMethod sl =
+                android.text.method.SingleLineTransformationMethod.getInstance();
+            if (macapkSingleLine) {
+                setLines(1);
+                setHorizontallyScrolling(true);
+                if (!isPassword) {
+                    setTransformationMethod(sl);
+                    mMacapkSingleLineTransform = true;
+                }
+            } else {
+                setMaxLines(Integer.MAX_VALUE);
+                setHorizontallyScrolling(false);
+                if (!isPassword) {
+                    mMacapkSingleLineTransform = false;
+                    setTransformationMethod(null);
+                }
+            }
         }
     }
     public int  getInputType() { return mInputType; }
@@ -5269,6 +5063,7 @@ public class TextView extends View
      *  setInputType for why). */
     public void setSingleLine(boolean s) {
         macapkSingleLine = s;
+        mHorizontallyScrolling = s;
         if (s) maxLines = 1;
         if (s) { macapkSetMin(1, true); macapkSetMax(1, true); }
         else   { macapkSetMax(Integer.MAX_VALUE, true); }
@@ -5286,31 +5081,27 @@ public class TextView extends View
         // the flag alone, see setInputType), and an app transformation such as
         // a password mask is left in place. MACAPK_SINGLELINE_TRANSFORM=0
         // restores the old behaviour.
-        if (MACAPK_SINGLELINE_TRANSFORM) {
-            final android.text.method.TransformationMethod sl =
-                android.text.method.SingleLineTransformationMethod.getInstance();
-            if (s) {
-                // Replace whatever is installed, as AOSP does -- AppCompat's
-                // setTransformationMethod override re-wraps it in emoji2's
-                // EmojiTransformationMethod, which every AppCompatTextView
-                // already carries -- except a password mask: our inflater
-                // applies XML singleLine AFTER the constructor chain, where
-                // AOSP's applySingleLine runs before setInputType installs it.
-                if (!(mTransformationMethod instanceof android.text.method.PasswordTransformationMethod)) {
-                    setTransformationMethod(sl);
-                    mMacapkSingleLineTransform = true;
-                }
-            } else if (mMacapkSingleLineTransform) {
-                // AOSP's applySingleLine(false, ...) clears the transformation.
-                // Only undo one this method installed, so a field that was
-                // never set single-line here keeps its own.
-                mMacapkSingleLineTransform = false;
-                setTransformationMethod(null);
+        final android.text.method.TransformationMethod sl =
+            android.text.method.SingleLineTransformationMethod.getInstance();
+        if (s) {
+            // Replace whatever is installed, as AOSP does -- AppCompat's
+            // setTransformationMethod override re-wraps it in emoji2's
+            // EmojiTransformationMethod, which every AppCompatTextView
+            // already carries -- except a password mask: our inflater
+            // applies XML singleLine AFTER the constructor chain, where
+            // AOSP's applySingleLine runs before setInputType installs it.
+            if (!(mTransformationMethod instanceof android.text.method.PasswordTransformationMethod)) {
+                setTransformationMethod(sl);
+                mMacapkSingleLineTransform = true;
             }
+        } else if (mMacapkSingleLineTransform) {
+            // AOSP's applySingleLine(false, ...) clears the transformation.
+            // Only undo one this method installed, so a field that was
+            // never set single-line here keeps its own.
+            mMacapkSingleLineTransform = false;
+            setTransformationMethod(null);
         }
     }
-    static final boolean MACAPK_SINGLELINE_TRANSFORM =
-        !"0".equals(System.getenv("MACAPK_SINGLELINE_TRANSFORM"));
     /** setSingleLine(true) installed SingleLineTransformationMethod (possibly
      *  re-wrapped by an AppCompat subclass, so not comparable by identity). */
     private boolean mMacapkSingleLineTransform;
@@ -5394,7 +5185,19 @@ public class TextView extends View
     public void setHintTextColor(int color) {
         setHintTextColor(android.content.res.ColorStateList.valueOf(color));
     }
-    public void setHorizontallyScrolling(boolean h) {}
+    /** AOSP mHorizontallyScrolling (:5706-5716; applySingleLine sets it with the single-line
+     *  mode). Only the AOSP graphics path lays out by it (TextViewAospLayout: a VERY_WIDE
+     *  layout); the Java2D path keeps macapkHorizontallyScrolling's rule. */
+    /* package: TextViewAospLayout */ boolean mHorizontallyScrolling;
+    public void setHorizontallyScrolling(boolean h) {
+        if (mHorizontallyScrolling != h) {
+            mHorizontallyScrolling = h;
+            if (macapkAosp() != null) {
+                requestLayout();
+                invalidate();
+            }
+        }
+    }
     /** AOSP TextView.setFilters (frameworks/base core/java/android/widget/
      *  TextView.java:8538) rejects null and stores the array; getFilters
      *  (:8586) hands it back (the field starts at NO_FILTERS). The array used
@@ -5470,15 +5273,12 @@ public class TextView extends View
      *  bound was last expressed in the OTHER unit -- there is no line count
      *  for a pixel limit and no pixel value for a line limit. */
     public int  getMaxLines() {
-        if (!MACAPK_TEXT_LINES_AOSP) return maxLines > 0 ? maxLines : Integer.MAX_VALUE;
         return mMaxModeLines ? mMaximum : -1;
     }
     public int  getMinHeight() {
-        if (!MACAPK_TEXT_LINES_AOSP) return 0;
         return mMinModeLines ? -1 : mMinimum;
     }
     public int  getMinWidth() {
-        if (!MACAPK_TEXT_LINES_AOSP) return 0;
         return mMinEms >= 0 ? -1 : mMinWidthPx;
     }
     public int  getBaseline() {
@@ -5498,6 +5298,8 @@ public class TextView extends View
         // "Measured" and not "has a width": an empty wrap_content label is 0 wide and still
         // has its line, and a row that aligns on baselines counts it (uiprobe lib_list: a
         // row's empty end label answered -1 where Android has the first line's baseline).
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) return aosp.getBaseline();
         if (!macapkMeasuredOnce && getWidth() <= 0 && getMeasuredWidth() <= 0) return -1;
         android.graphics.Paint p = new android.graphics.Paint();
         p.setTextSize(textSizePx);
@@ -5510,8 +5312,19 @@ public class TextView extends View
         // (LinearLayout by default, RelativeLayout's alignBaseline,
         // ConstraintLayout's baseline constraints) set them at different
         // heights (uiprobe: 17 where Android has 30 for a 48dp centred line).
-        return getCompoundPaddingTop() + getVerticalOffset(true)
-             + (int) Math.ceil(macapkLineAscent(p.getFontMetricsInt()));
+        // The first line's own "above", as onDraw places it (macapkLineTopAbove): a
+        // line drawn in a fallback font (Hebrew in a Latin face) has that font's
+        // ascent, which is what Android's line metrics fold in. With font padding
+        // the top hid the difference; without it the baseline came out 2dp high
+        // (uiprobe lib_text_lines #j, Material chips). The first paragraph stands
+        // for the first line, which is a prefix of it.
+        CharSequence t = getText();
+        String first = t == null ? "" : t.toString();
+        int nl = first.indexOf('\n');
+        if (nl >= 0) first = first.substring(0, nl);
+        float above = macapkLineTopAbove(p.getFontMetricsInt(), 0,
+            java.util.Collections.singletonList(first), p);
+        return getCompoundPaddingTop() + getVerticalOffset(true) + (int) Math.ceil(-above);
     }
     // AOSP TextView.getBreakStrategy/setBreakStrategy and
     // getHyphenationFrequency/setHyphenationFrequency were `{}` / hardcoded 0
@@ -5572,7 +5385,7 @@ public class TextView extends View
      *  in "em" units and flip the width mode to EMS; onMeasure then treats it
      *  as `ems * getLineHeight()` px. -1 means "this bound is not expressed in
      *  ems", which is exactly what AOSP's getMaxEms/getMinEms return then. */
-    private int mMaxEms = -1, mMinEms = -1;
+    /* package: TextViewAospLayout */ int mMaxEms = -1, mMinEms = -1;
     public void setMaxEms(int maxEms) {
         mMaxEms = maxEms; requestLayout(); invalidate();
     }
@@ -5608,7 +5421,6 @@ public class TextView extends View
      *  through it got "no layout". The inverse of the caret placement by
      *  construction: both go through getLayout() and the same paddings. */
     public int getOffsetForPosition(float x, float y) {
-        if (!MACAPK_TEXT_CARET) return -1;
         if (getLayout() == null) return -1;
         final int line = getLineAtCoordinate(y);
         return getOffsetAtCoordinate(line, x);
@@ -5622,6 +5434,8 @@ public class TextView extends View
         x = Math.max(0.0f, x);
         x = Math.min(getWidth() - getTotalPaddingRight() - 1, x);
         x += getScrollX();
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) x += aosp.textScrollX();
         return x;
     }
 
@@ -5654,6 +5468,8 @@ public class TextView extends View
      *  looks this method up by reflection as getVerticalOffset(boolean). There
      *  is no separate hint Layout here, so both values use the text layout. */
     int getVerticalOffset(boolean forceNormal) {
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) return aosp.getVerticalOffset(forceNormal);
         return macapkVerticalOffset(getLayout());
     }
 
@@ -5689,6 +5505,8 @@ public class TextView extends View
 
     /** AOSP getBottomVerticalOffset(boolean) (:8292-8314), same rule. */
     private int getBottomVerticalOffset(boolean forceNormal) {
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) return aosp.getBottomVerticalOffset(forceNormal);
         final android.text.Layout l = getLayout();
         if (l == null) return 0;
         final int g = gravity & android.view.Gravity.VERTICAL_GRAVITY_MASK;
@@ -5758,7 +5576,13 @@ public class TextView extends View
         final int saved = canvas.save();
         try {
             canvas.clipRect(clipLeft, clipTop, clipRight, clipBottom);
-            canvas.translate(cpl, cpt + macapkVerticalOffset(layout));
+            final TextViewAospLayout aosp = macapkAosp();
+            if (aosp != null) {
+                final int[] origin = aosp.textOrigin(true);
+                canvas.translate(origin[0], origin[1]);
+            } else {
+                canvas.translate(cpl, cpt + macapkVerticalOffset(layout));
+            }
             ed.loadCursorDrawable();
             if (ed.mDrawableForCursor != null) {
                 ed.updateCursorPosition(layout);
@@ -5958,11 +5782,11 @@ public class TextView extends View
      *  compound padding stands in for the extended one because the text paint
      *  path positions from it (they agree unless maxLines clips the layout). */
     public int  getTotalPaddingTop() {
-        if (!MACAPK_TEXT_CARET) return getCompoundPaddingTop();
+        if (macapkAosp() != null) return getExtendedPaddingTop() + getVerticalOffset(true);
         return getCompoundPaddingTop() + getVerticalOffset(true);
     }
     public int  getTotalPaddingBottom() {
-        if (!MACAPK_TEXT_CARET) return getCompoundPaddingBottom();
+        if (macapkAosp() != null) return getExtendedPaddingBottom() + getBottomVerticalOffset(true);
         return getCompoundPaddingBottom() + getBottomVerticalOffset(true);
     }
     public void setCompoundDrawablePadding(int pad) {
@@ -6373,6 +6197,8 @@ public class TextView extends View
     private String macapkCachedLayoutText;
     private String macapkCachedLayoutSpans;
     public android.text.Layout getLayout() {
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) return aosp.getLayout();
         final CharSequence disp = macapkDisplayText();
         int avail = getWidth() - getCompoundPaddingLeft() - getCompoundPaddingRight();
         if (avail <= 0) {
@@ -6424,9 +6250,9 @@ public class TextView extends View
         // the EFFECTIVE ellipsize (MARQUEE -> END_SMALL, none with a key
         // listener), makeSingleLayout :10747-10762. setLines(n) used to reach
         // neither, so getLineCount() and the drawn text disagreed.
-        final int layoutMaxLines = MACAPK_TEXT_LINES_AOSP ? macapkMaxLines() : maxLines;
+        final int layoutMaxLines = macapkMaxLines();
         final android.text.TextUtils.TruncateAt layoutEllipsize =
-            MACAPK_TEXT_LINES_AOSP ? macapkEffectiveEllipsize() : mEllipsize;
+            macapkEffectiveEllipsize();
         // Gate MACAPK_TEXT_CARET: the layout also carries includeFontPadding and
         // fallback line spacing, as AOSP makeSingleLayout's builder does
         // (`.setIncludePad(mIncludePad)` and
@@ -6435,36 +6261,10 @@ public class TextView extends View
         // padded ones, 11px taller than the text actually painted by a view with
         // includeFontPadding=false (80px text, measured offline), and the caret --
         // which is placed from these line boxes -- sat below its glyphs.
-        final boolean layoutIncludePad = !MACAPK_TEXT_CARET || mIncludePad;
-        final boolean layoutFallback = MACAPK_TEXT_CARET && macapkUseFallbackLineSpacing();
-        if (MACAPK_TEXT_CARET) {
-            return macapkCaretLayout(disp, avail, align, layoutMaxLines, layoutEllipsize,
-                                     layoutIncludePad, layoutFallback);
-        }
-        // Gate OFF: the pre-caret body, unchanged.
-        final String dispStr = disp.toString();
-        final String key = avail + "|" + textSizePx + "|" + macapkTextStyle + "|"
-            + align + "|" + layoutMaxLines + "|" + layoutEllipsize + "|" + mSpacingMult + "|"
-            + mSpacingAdd + "|" + layoutIncludePad + "|" + layoutFallback + "|" + dispStr;
-        if (macapkCachedLayout != null && key.equals(macapkCachedLayoutKey))
-            return macapkCachedLayout;
-        // The layout gets its OWN TextPaint: getPaint() is the shared draw
-        // paint this file mutates constantly, and Layout breaks lines lazily,
-        // so capturing the shared instance would wrap with whatever state the
-        // paint happens to hold at first query.
-        android.text.TextPaint lp = new android.text.TextPaint(getPaint());
-        lp.setTextSize(textSizePx);
-        applyTextStyleToPaint(lp);
-        android.text.StaticLayout.Builder b = android.text.StaticLayout.Builder
-            .obtain(dispStr, 0, dispStr.length(), lp, avail)
-            .setAlignment(align)
-            .setTextDirection(getTextDirectionHeuristic())
-            .setLineSpacing(mSpacingAdd, mSpacingMult);
-        if (layoutMaxLines > 0 && layoutMaxLines != Integer.MAX_VALUE) b.setMaxLines(layoutMaxLines);
-        if (layoutEllipsize != null) b.setEllipsize(layoutEllipsize);
-        macapkCachedLayout = b.build();
-        macapkCachedLayoutKey = key;
-        return macapkCachedLayout;
+        final boolean layoutIncludePad = mIncludePad;
+        final boolean layoutFallback = macapkUseFallbackLineSpacing();
+        return macapkCaretLayout(disp, avail, align, layoutMaxLines, layoutEllipsize,
+                                 layoutIncludePad, layoutFallback);
     }
 
     /** getLayout() under MACAPK_TEXT_CARET: see getLayout's header for the
@@ -6575,7 +6375,7 @@ public class TextView extends View
             if (en < 0) en = n;
             if (en > st) {
                 final float w = spanned
-                    ? android.text.Layout.macapkMeasureSpanned(src, st, en, lp, work)
+                    ? GfxBackend.get().measureSpanned(src, st, en, lp, work)
                     : lp.measureText(s, st, en);
                 if (w > max) max = w;
             }
@@ -6668,9 +6468,30 @@ public class TextView extends View
         }
     }
 
-    // First / last baseline (API 28+).
-    public void setFirstBaselineToTopHeight(int firstBaselineToTopHeight) {}
-    public void setLastBaselineToBottomHeight(int lastBaselineToBottomHeight) {}
+    // First / last baseline (API 28+), AOSP android-14 TextView.java: the distance
+    // asked for is made by moving the top (bottom) padding, from the font's top or
+    // ascent (bottom or descent) as includeFontPadding says, and only when it is
+    // more than the font's own. They did nothing, so AppCompat's
+    // firstBaselineToTopHeight / lastBaselineToBottomHeight (TextViewCompat calls
+    // these) and Material's type styles left the text where the font put it.
+    public void setFirstBaselineToTopHeight(int firstBaselineToTopHeight) {
+        if (firstBaselineToTopHeight < 0) throw new IllegalArgumentException("must be non-negative");
+        final android.graphics.Paint.FontMetricsInt fm = getPaint().getFontMetricsInt();
+        final int fontMetricsTop = getIncludeFontPadding() ? fm.top : fm.ascent;
+        if (firstBaselineToTopHeight > Math.abs(fontMetricsTop)) {
+            final int paddingTop = firstBaselineToTopHeight - (-fontMetricsTop);
+            setPadding(getPaddingLeft(), paddingTop, getPaddingRight(), getPaddingBottom());
+        }
+    }
+    public void setLastBaselineToBottomHeight(int lastBaselineToBottomHeight) {
+        if (lastBaselineToBottomHeight < 0) throw new IllegalArgumentException("must be non-negative");
+        final android.graphics.Paint.FontMetricsInt fm = getPaint().getFontMetricsInt();
+        final int fontMetricsBottom = getIncludeFontPadding() ? fm.bottom : fm.descent;
+        if (lastBaselineToBottomHeight > Math.abs(fontMetricsBottom)) {
+            final int paddingBottom = lastBaselineToBottomHeight - fontMetricsBottom;
+            setPadding(getPaddingLeft(), getPaddingTop(), getPaddingRight(), paddingBottom);
+        }
+    }
 
     // Font variation (API 26+).
     // AOSP TextView.setFontVariationSettings/getFontVariationSettings: the
@@ -6723,7 +6544,7 @@ public class TextView extends View
                     && !(text instanceof android.text.Spannable)) {
                 // Win.apk: the text it already holds becomes a Spannable too, which is what
                 // AOSP's setText(mText) here does to it (see macapkApplyBufferType).
-                if (MACAPK_TEXT_BUFFER_TYPE && text != null) {
+                if (text != null) {
                     try { text = android.text.Spannable.Factory.getInstance().newSpannable(text); }
                     catch (Throwable ignored) {}
                 }
@@ -6985,24 +6806,13 @@ public class TextView extends View
         if (type != null) mBufferType = type;
         macapkSetTextImpl(t);
     }
-    /** AOSP mBufferType: the type of the LAST setText(text, type); the
-     *  one-argument setText reuses it (setText(text) -> setText(text,
-     *  mBufferType)), and a SPANNABLE buffer is stored as a Spannable
-     *  (mSpannableFactory.newSpannable, :7069-7071). We kept the caller's
-     *  String, so `setText(s, SPANNABLE); ((Spannable) getText()).setSpan(..)`
-     *  -- a common way to style part of a label -- threw ClassCastException
-     *  (Paz Yellow's TwoBoldNumbersPriceView constructor, 2026-10-28). EDITABLE
-     *  keeps this tree's own editable path. MACAPK_TEXT_BUFFER_TYPE=0 restores
-     *  storing the text as given. */
-    static final boolean MACAPK_TEXT_BUFFER_TYPE =
-        !"0".equals(System.getenv("MACAPK_TEXT_BUFFER_TYPE"));
     private CharSequence macapkApplyBufferType(CharSequence n) {
         // Win.apk: and under a movement method. AOSP's test is `type == SPANNABLE ||
         // mMovement != null` (:7069): a view with LinkMovementMethod holds a Spannable
         // whatever it was given, and code styles its links through getText(). Snapchat's
         // sign-in link view casts it in its constructor; the ClassCastException left a
         // FrameLayout in its place and the splash page's own cast then ended the page.
-        if (MACAPK_TEXT_BUFFER_TYPE && (mBufferType == BufferType.SPANNABLE || movementMethod != null)
+        if ((mBufferType == BufferType.SPANNABLE || movementMethod != null)
                 && !(n instanceof android.text.Spannable)) {
             try { return android.text.Spannable.Factory.getInstance().newSpannable(n); }
             catch (Throwable ignored) {}
@@ -7053,25 +6863,11 @@ public class TextView extends View
     public void onConfigurationChanged(android.content.res.Configuration newConfig) {}
     protected void onTextChanged(CharSequence text, int start, int lengthBefore, int lengthAfter) {}
 
-    /** AOSP calls the overridable onTextChanged hook on EVERY text change, with
-     *  or without TextWatchers: setText (TextView.java:7182-7183,
-     *  sendOnTextChanged then onTextChanged), the constructor's initial
-     *  setText(text, bufferType), and in-place edits via
-     *  ChangeWatcher -> handleTextChanged (:10840-10845). This tree declared the
-     *  hook but never called it, so a custom field that keeps its state there
-     *  never saw a change. Measured 2026-10-28 on Paz Yellow's SMS code screen:
-     *  com.chaos.view.PinView caches its display string only in onTextChanged,
-     *  so it stayed null, every onDraw threw NPE (no boxes drawn) and typed
-     *  digits never appeared. MACAPK_TEXT_SELF_ON_CHANGED=0 restores the old
-     *  behaviour. */
-    static final boolean MACAPK_TEXT_SELF_ON_CHANGED =
-        !"0".equals(System.getenv("MACAPK_TEXT_SELF_ON_CHANGED"));
     /** >0 while an explicit edit path (append, keystroke) mutates the buffer
      *  in place: it calls the hook itself afterwards, so the buffer's
      *  ChangeWatcher must not call it a second time for the same edit. */
     private int mSelfChangeSuppress;
     private void macapkSelfOnTextChanged(CharSequence t, int start, int before, int after) {
-        if (!MACAPK_TEXT_SELF_ON_CHANGED) return;
         try { onTextChanged(t, start, before, after); } catch (Throwable ignored) {}
     }
 
@@ -7170,6 +6966,8 @@ public class TextView extends View
      *  returns the baseline. We render a single line, so line 0 is
      *  the whole text. */
     public int getLineBounds(int line, android.graphics.Rect outBounds) {
+        final TextViewAospLayout aosp = macapkAosp();
+        if (aosp != null) return aosp.getLineBounds(line, outBounds);
         if (outBounds != null) outBounds.set(0, 0, getWidth(), getHeight());
         return (int) textSizePx;
     }
@@ -7179,7 +6977,6 @@ public class TextView extends View
     public void setLinksClickable(boolean clickable) { this.linksClickable = clickable; }
 
     public int getMinLines() {
-        if (!MACAPK_TEXT_LINES_AOSP) return minLines;
         return mMinModeLines ? mMinimum : -1;
     }
     // AOSP: the max/min width in ems, or -1 when the bound was set in px
@@ -7230,7 +7027,6 @@ public class TextView extends View
      *  created just to hold it. mImeIsConsumingInput is always false here (no
      *  IME ever consumes input in place), so the attr value is the value. */
     public void setCursorVisible(boolean visible) {
-        if (!MACAPK_TEXT_CARET) return;
         mCursorVisibleFromAttr = visible;
         updateCursorVisibleInternal();
     }
@@ -7245,7 +7041,6 @@ public class TextView extends View
         }
     }
     public boolean isCursorVisible() {
-        if (!MACAPK_TEXT_CARET) return true;
         // "true is the default value" (:12142)
         return mEditor == null ? true : mEditor.mCursorVisible;
     }
@@ -7261,9 +7056,7 @@ public class TextView extends View
 
     /** See MACAPK_TEXT_EDITOR_AOSP for why this is behind a default-OFF flip. */
     @Override public boolean onCheckIsTextEditor() {
-        if (!MACAPK_TEXT_EDITOR_AOSP) return super.onCheckIsTextEditor();
-        return mEditor != null && (mInputType != android.text.InputType.TYPE_NULL
-                                   || macapkEditableClassText);
+        return super.onCheckIsTextEditor();
     }
 
     // ---- caret lifecycle: AOSP forwards each to the Editor (:8494-8524,
@@ -7458,7 +7251,7 @@ public class TextView extends View
      *  the 1px path caret in the text colour). Resolved lazily here, once, so a
      *  TextView that never draws a caret never pays for the theme walk. */
     public android.graphics.drawable.Drawable getTextCursorDrawable() {
-        if (MACAPK_TEXT_CARET && mCursorDrawable == null) {
+        if (mCursorDrawable == null) {
             if (mCursorDrawableRes != 0) {
                 try { mCursorDrawable = getContext().getDrawable(mCursorDrawableRes); }
                 catch (Throwable ignored) {}
@@ -7490,7 +7283,7 @@ public class TextView extends View
         if (c == null) return null;
         if (ref == null) {
             android.content.res.Resources.Theme t = c.getTheme();
-            if (t != null) ref = t.resolveAttrRaw(themeAttr);
+            if (t != null) ref = ResBackend.get().resolveAttrRaw(t, themeAttr);
         }
         if (ref == null) return null;
         ref = ref.trim();
@@ -7536,7 +7329,7 @@ public class TextView extends View
         // was inflated with, not of the application's.
         try {
             android.content.res.Resources.Theme th = getContext() != null ? getContext().getTheme() : null;
-            d = res.macapkFrameworkDrawableByName(name, th);
+            d = ResBackend.get().frameworkDrawableByName(res, name, th);
         } catch (Throwable ignored) {}
         return d;
     }
@@ -7572,10 +7365,10 @@ public class TextView extends View
         try {
             android.content.res.Resources.Theme t = c.getTheme();
             if (t != null) {
-                tint = t.resolveAttrColor("android:colorControlActivated", 0);
-                if (tint == 0) tint = t.resolveAttrColor("colorControlActivated", 0);
-                if (tint == 0) tint = t.resolveAttrColor("android:colorAccent", 0);
-                if (tint == 0) tint = t.resolveAttrColor("colorAccent", 0);
+                tint = ResBackend.get().resolveAttrColor(t, "android:colorControlActivated", 0);
+                if (tint == 0) tint = ResBackend.get().resolveAttrColor(t, "colorControlActivated", 0);
+                if (tint == 0) tint = ResBackend.get().resolveAttrColor(t, "android:colorAccent", 0);
+                if (tint == 0) tint = ResBackend.get().resolveAttrColor(t, "colorAccent", 0);
             }
         } catch (Throwable ignored) {}
         if (tint == 0) tint = 0xFF009688;
@@ -7587,11 +7380,6 @@ public class TextView extends View
         return new android.graphics.drawable.InsetDrawable(shape, inset);
     }
 
-    /** Gate MACAPK_EDITOR_ACTION_DEFAULTS (default ON; =0 restores the old
-     *  soft-route ENTER, which only called the OnEditorActionListener, and the
-     *  old empty onEditorAction(int)). */
-    static final boolean MACAPK_EDITOR_ACTION_DEFAULTS =
-        !"0".equals(System.getenv("MACAPK_EDITOR_ACTION_DEFAULTS"));
 
     /** AOSP TextView.onEditorAction(int) (android14-release TextView.java:7963):
      *
@@ -7623,7 +7411,7 @@ public class TextView extends View
      *  SCOPED DELTA, unchanged: the trailing FLAG_EDITOR_ACTION ENTER key
      *  re-dispatch is not modelled (the caller consumes the key, as before). */
     public void onEditorAction(int actionCode) {
-        if (!MACAPK_EDITOR_ACTION_DEFAULTS) return;   // =0: the old empty method
+           // =0: the old empty method
         if (!macapkInputContentType) return;
         if (editorActionListener != null) {
             if (editorActionListener.onEditorAction(this, actionCode, null)) return;
@@ -7706,11 +7494,21 @@ public class TextView extends View
         // view moves the caret to the tapped offset via
         // Editor.onTouchUpEvent -> getOffsetForPosition -> Selection.setSelection.
         // The AOSP guard's `mText instanceof Spannable` is carried by
-        // getEditableText() here. The showSoftInput half is left to the IME path.
+        // getEditableText() here. Its showSoftInput half: the tapped editor is
+        // served again even when the app hid the soft input before (a hide here
+        // unbinds it, where on a device the editor stays served and only the
+        // keyboard goes), and Windows' touch keyboard stands for the soft
+        // keyboard (Win.apk's WindowsTextInput). Not InputMethodManager.showSoftInput,
+        // whose soft-key route would take the field off its InputConnection.
         if (ed != null && ev != null
                 && ev.getActionMasked() == android.view.MotionEvent.ACTION_UP
                 && isFocused() && isEnabled() && getLayout() != null && isTextEditable()) {
             try { ed.onTouchUpEvent(ev); } catch (Throwable ignored) {}
+            if (getShowSoftInputOnFocus()) {
+                android.view.inputmethod.InputMethodManager.macapkClearHideSuppressed();
+                android.view.inputmethod.InputMethodManager.macapkOnViewFocusChanged(this, true);
+                com.macapk.loader.WindowsTextInput.softInput(true);
+            }
             handled = true;
         }
         return handled;
@@ -7747,8 +7545,14 @@ public class TextView extends View
     protected boolean drawChild(android.graphics.Canvas canvas, android.view.View child, long drawingTime) { return false; }
     public int getCompoundPaddingStart() { return getCompoundPaddingLeft(); }
     public int getCompoundPaddingEnd() { return getCompoundPaddingRight(); }
-    public int getExtendedPaddingTop() { return getPaddingTop(); }
-    public int getExtendedPaddingBottom() { return getPaddingBottom(); }
+    public int getExtendedPaddingTop() {
+        final TextViewAospLayout aosp = macapkAosp();
+        return aosp != null ? aosp.getExtendedPaddingTop() : getPaddingTop();
+    }
+    public int getExtendedPaddingBottom() {
+        final TextViewAospLayout aosp = macapkAosp();
+        return aosp != null ? aosp.getExtendedPaddingBottom() : getPaddingBottom();
+    }
     public int getTotalPaddingStart() { return getCompoundPaddingStart(); }
     public int getTotalPaddingEnd() { return getCompoundPaddingEnd(); }
     // AOSP TextView.getLineBreakWordStyle/setLineBreakWordStyle was
@@ -7919,13 +7723,12 @@ public class TextView extends View
     public int getMaxHeight() {
         // Gate ON reads AOSP's shared slot, so setHeight(px) answers px here
         // too (AOSP: `mMaxMode == PIXELS ? mMaximum : -1`).
-        if (MACAPK_TEXT_LINES_AOSP) return mMaxModeLines ? -1 : mMaximum;
-        return mMaxHeightInPixels ? explicitMaxHeight : -1;
+        return mMaxModeLines ? -1 : mMaximum;
     }
     /** AOSP mMaxMode -- LINES by default, so an untouched TextView answers -1
      *  from getMaxHeight(), NOT its internal Integer.MAX_VALUE. */
     private boolean mMaxHeightInPixels;
-    public int getMaxWidth() { return mMaxEms >= 0 ? -1 : (MACAPK_TEXT_LINES_AOSP ? mMaxWidthPx : explicitMaxWidth); }
+    public int getMaxWidth() { return mMaxEms >= 0 ? -1 : mMaxWidthPx; }
 
     // ---- paint-backed properties ---------------------------------------
     /** AOSP :4573 / :5146 / :4888 -- all three read or write the TEXT PAINT,
@@ -7993,14 +7796,8 @@ public class TextView extends View
     /** AOSP :3901 / :3912 -- pure reads: the first baseline sits
      *  |fontMetrics.top| below the top padding, the last sits
      *  fontMetrics.bottom above the bottom padding. Exact, and safe.
-     *  ⚠ THE MATCHING SETTERS ARE NOT WIRED. AOSP's
-     *  setFirstBaselineToTopHeight/setLastBaselineToBottomHeight work by CALLING
-     *  setPadding() to make the requested distance come out; this file's two
-     *  setters (a few hundred lines up) are inert, and wiring them would change
-     *  padding and therefore measurement -- which this lane is explicitly not
-     *  touching. So these getters answer the view's ACTUAL baseline distance
-     *  (which is AOSP's definition) but will not reflect a preceding
-     *  setFirstBaselineToTopHeight() call. Reported as a known, deliberate gap. */
+     *  The setters (above) move the padding, so a preceding
+     *  setFirstBaselineToTopHeight() shows here, as on AOSP. */
     public int getFirstBaselineToTopHeight() {
         return getPaddingTop() - getPaint().getFontMetricsInt().top;
     }
@@ -8251,5 +8048,64 @@ public class TextView extends View
             output += "mText=NULL";
         }
         android.util.Log.d("View", output);
+    }
+
+    // ---- Accessibility: AOSP TextView (android-14), the part a screen reader reads
+    //      (HostAccessibility): the text as shown (a password's dots), the hint while it shows,
+    //      an editor's ACTION_SET_TEXT. ----
+
+    @Override
+    public void onInitializeAccessibilityNodeInfoInternal(android.view.accessibility.AccessibilityNodeInfo info) {
+        super.onInitializeAccessibilityNodeInfoInternal(info);
+        final boolean isPassword =
+                getTransformationMethod() instanceof android.text.method.PasswordTransformationMethod;
+        info.setPassword(isPassword);
+        info.setText(getTextForAccessibility());
+        info.setHintText(getHint());
+        info.setShowingHintText(android.text.TextUtils.isEmpty(getText()) && !android.text.TextUtils.isEmpty(getHint()));
+        if (macapkEditableForAccessibility()) {
+            info.setEditable(true);
+            if (isEnabled()) info.addAction(android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT);
+            info.setInputType(getInputType());
+            info.setMultiLine(macapkIsMultilineInputType(getInputType()));
+        }
+    }
+
+    /** AOSP TextView.getTextForAccessibility: the hint when there is no text, else the text as
+     *  it is shown (its transformation: a password's dots). */
+    public CharSequence getTextForAccessibility() {
+        CharSequence t = getText();
+        if (android.text.TextUtils.isEmpty(t)) return getHint();
+        android.text.method.TransformationMethod tm = getTransformationMethod();
+        if (tm != null) {
+            try {
+                CharSequence shown = tm.getTransformation(t, this);
+                if (shown != null) t = shown;
+            } catch (RuntimeException ignored) {
+                // The raw text, as before a transformation.
+            }
+        }
+        return t;
+    }
+
+    /** AOSP's `mBufferType == BufferType.EDITABLE`: an EditText, or a TextView made an editor. */
+    private boolean macapkEditableForAccessibility() {
+        return getDefaultEditable() || onCheckIsTextEditor();
+    }
+
+    @Override
+    public boolean performAccessibilityActionInternal(int action, android.os.Bundle arguments) {
+        if (action == android.view.accessibility.AccessibilityNodeInfo.AccessibilityAction.ACTION_SET_TEXT.getId()) {
+            if (!isEnabled() || !macapkEditableForAccessibility()) return false;
+            CharSequence text = arguments != null
+                    ? arguments.getCharSequence("ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE") : null;
+            setText(text);
+            CharSequence now = getText();
+            if (now != null && now.length() > 0 && now instanceof android.text.Spannable) {
+                android.text.Selection.setSelection((android.text.Spannable) now, now.length());
+            }
+            return true;
+        }
+        return super.performAccessibilityActionInternal(action, arguments);
     }
 }

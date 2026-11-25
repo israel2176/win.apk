@@ -39,7 +39,7 @@ public final class NativeAssetBridge {
      */
     public static byte[] openAsset(String name) {
         if (name == null || name.isEmpty()) return null;
-        Application app = Application.getInstance();
+        Application app = com.macapk.loader.app.Apps.current();
         if (app == null) {
             NativeLog.w(TAG, "openAsset(" + name + "): no Application instance");
             return null;
@@ -66,7 +66,7 @@ public final class NativeAssetBridge {
      */
     public static boolean hasAsset(String name) {
         if (name == null || name.isEmpty()) return false;
-        Application app = Application.getInstance();
+        Application app = com.macapk.loader.app.Apps.current();
         if (app == null) return false;
         try (InputStream is = app.getAssets().open(name)) {
             return is != null;

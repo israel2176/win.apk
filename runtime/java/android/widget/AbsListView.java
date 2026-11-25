@@ -93,27 +93,6 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
     private int mTouchSlop = 8;
     private int mMotionPosition = INVALID_POSITION;
 
-    /** MACAPK_LIST_ITEMCLICK_AOSP, default ON (2026-09-29). AOSP AbsListView
-     *  never touches a row's own click listeners: a TAP on a row that did not
-     *  consume the touch is turned into performItemClick by the LIST's own
-     *  onTouchEvent (android14 AbsListView.java onTouchDown / CheckForTap /
-     *  onTouchUp :4188-4260 / PerformClick :3259-3282 / CheckForLongPress
-     *  :3284-3320). This tree instead called row.setOnClickListener(ours) and
-     *  row.setOnLongClickListener(ours) on every row AFTER adapter.getView had
-     *  run, which OVERWROTE any listener the adapter had put on its own row --
-     *  the common "adapter row is its own OnClickListener" idiom. Measured
-     *  2026-09-29 on com.best.deskclock 2.31: its city picker adapter (fm) sets
-     *  row.setOnClickListener(this) and toggles the row's checkbox in onClick;
-     *  our listener replaced it (View: performClick ... listener=
-     *  android.widget.AbsListView$1), the city was never selected, and
-     *  number_of_cities stayed 0 ("Cannot add a new clock"). It also made every
-     *  row long-clickable, which AOSP never does (only the LIST becomes
-     *  long-clickable, in AdapterView.setOnItemLongClickListener). With the gate
-     *  on, rows are left exactly as the adapter built them and the list runs the
-     *  AOSP tap / long-press state machine itself. =0 restores the per-row
-     *  listeners exactly. */
-    static final boolean ITEMCLICK_AOSP =
-        !"0".equals(System.getenv("MACAPK_LIST_ITEMCLICK_AOSP"));
     // AOSP mTouchMode values this path uses (AbsListView.TOUCH_MODE_*).
     private static final int TOUCH_MODE_REST = -1;
     private static final int TOUCH_MODE_DOWN = 0;
@@ -503,7 +482,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
         // showed just "Manual" over an empty box. Whole rows only (AOSP can
         // leave a partial row at the top); MACAPK_LIST_CORRECT_TOO_HIGH=0
         // restores the old fill.
-        if (MACAPK_LIST_CORRECT_TOO_HIGH && !mMacapkCorrectingTooHigh
+        if (!mMacapkCorrectingTooHigh
                 && pos >= count && y < bottomEdge && mFirstPosition > 0) {
             int space = bottomEdge - y;
             int newFirst = mFirstPosition;
@@ -529,8 +508,6 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
         mDataChanged = false;
         fireScroll();
     }
-    static final boolean MACAPK_LIST_CORRECT_TOO_HIGH =
-        !"0".equals(System.getenv("MACAPK_LIST_CORRECT_TOO_HIGH"));
     private boolean mMacapkCorrectingTooHigh;
 
     private int safeType(int pos) {
@@ -555,28 +532,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
     }
 
     private void bindClick(final View row, final int position) {
-        if (ITEMCLICK_AOSP) return;  // the list's own onTouchEvent clicks rows (see ITEMCLICK_AOSP)
-        final long id = mAdapter.getItemId(position);
-        row.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) {
-                // The choice-mode check state moves inside performItemClick,
-                // where AOSP keeps it (see the override above).
-                performItemClick(row, position, id);
-            }
-        });
-        // AOSP AbsListView.performLongPress routes a row's long press into
-        // AdapterView's OnItemLongClickListener. That listener was STORED
-        // (AdapterView.java:21,105-106) and invoked from NOWHERE in the tree, so
-        // long-press on a list row -- the single most common long-press idiom in
-        // Android -- was dead in every app. Now that View.onTouchEvent actually
-        // schedules a long press (see View.checkForLongClick), the row only needs
-        // to be long-clickable and to have a listener.
-        row.setLongClickable(true);
-        row.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override public boolean onLongClick(View v) {
-                return performItemLongClick(row, position, id);
-            }
-        });
+        return;  // the list's own onTouchEvent clicks rows (see ITEMCLICK_AOSP)
     }
 
     /** AOSP AbsListView.performLongPress (frameworks/base core/java/android/
@@ -624,8 +580,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
      *  nothing, so "at the edge" is read as "the anchor did not move".
      *  WheelScroll.VIEWS=0: not handled. */
     @Override public boolean onGenericMotionEvent(MotionEvent event) {
-        if (com.macapk.loader.WheelScroll.VIEWS
-                && event.getAction() == MotionEvent.ACTION_SCROLL) {
+        if (event.getAction() == MotionEvent.ACTION_SCROLL) {
             final float axisValue;
             if (event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)) {
                 axisValue = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
@@ -670,7 +625,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
             case MotionEvent.ACTION_DOWN:
                 mLastMotionY = ev.getY();
                 mIsBeingDragged = false;
-                if (ITEMCLICK_AOSP) onItemTouchDown(ev);
+                onItemTouchDown(ev);
                 return true;
             case MotionEvent.ACTION_MOVE: {
                 float y = ev.getY();
@@ -679,7 +634,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
                     mIsBeingDragged = true;
                     // AOSP startScrollIfNeeded: a scroll cancels the pending
                     // tap / long press and un-presses the row.
-                    if (ITEMCLICK_AOSP) cancelItemTouch();
+                    cancelItemTouch();
                 }
                 if (mIsBeingDragged) {
                     mLastMotionY = y;
@@ -688,12 +643,12 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
                 return true;
             }
             case MotionEvent.ACTION_UP:
-                if (ITEMCLICK_AOSP && !mIsBeingDragged) onItemTouchUp(ev);
-                else if (ITEMCLICK_AOSP) cancelItemTouch();
+                if (!mIsBeingDragged) onItemTouchUp(ev);
+                else cancelItemTouch();
                 mIsBeingDragged = false;
                 return true;
             case MotionEvent.ACTION_CANCEL:
-                if (ITEMCLICK_AOSP) cancelItemTouch();
+                cancelItemTouch();
                 mIsBeingDragged = false;
                 return true;
         }
@@ -1007,11 +962,8 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof AbsListView.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
     /** AOSP AbsListView.generateLayoutParams(ViewGroup.LayoutParams). */
     @Override
     protected android.view.ViewGroup.LayoutParams generateLayoutParams(android.view.ViewGroup.LayoutParams p) {
@@ -1045,7 +997,7 @@ public abstract class AbsListView extends AdapterView<ListAdapter>
      *  performClickAt) sees a list "in flux" forever and never clicks a cell.
      *  Called from every exit of GridView.layoutGrid. */
     void macapkGridLayoutDone() {
-        if (!ITEMCLICK_AOSP) return;  // =0: the pre-change grid never touched the flag
+          // =0: the pre-change grid never touched the flag
         if (mDataChanged) handleDataChanged();
         mDataChanged = false;
     }

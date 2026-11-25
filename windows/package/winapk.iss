@@ -1,6 +1,6 @@
 ﻿; winapk.iss -- the Win.apk installer (Inno Setup 6).
 ;
-;   iscc /DSourceDir=<staged folder with jre> /DAppVersion=0.1.0-preview windows\package\winapk.iss
+;   iscc /DSourceDir=<staged folder with jre> /DAppVersion=1.0.0 windows\package\winapk.iss
 ;
 ; Installs per user (no administrator rights) to %LOCALAPPDATA%\Programs\Win.apk,
 ; adds Win.apk to the Start menu (and the desktop if asked), opens .apk files
@@ -20,7 +20,7 @@
 #ifndef AppVersion
   #define AppVersion "0.1.0"
 #endif
-; The numeric part (0.2.0 of 0.2.0-preview), for the file's version resource.
+; The numeric part (1.1.0 of 1.1.0-rc1), for the file's version resource.
 #ifndef AppNumber
   #define AppNumber "0.1.0"
 #endif
@@ -32,6 +32,9 @@ AppVersion={#AppVersion}
 AppVerName=Win.apk {#AppVersion}
 AppPublisher=Win.apk
 VersionInfoVersion={#AppNumber}
+; The full version (1.1.0-rc1) as the installer's ProductVersion: the launcher's updater runs a downloaded
+; installer only when this is the release's version (launcher/updates.h judge_setup).
+VersionInfoProductTextVersion={#AppVersion}
 DefaultDirName={localappdata}\Programs\Win.apk
 DisableProgramGroupPage=yes
 DisableDirPage=yes
@@ -66,6 +69,8 @@ english.FileTypeName=Android app
 hebrew.FileTypeName=אפליקציית Android
 english.OpenWinApk=Open Win.apk
 hebrew.OpenWinApk=פתיחת Win.apk
+english.Optimizing=Preparing the Android framework for faster app starts...
+hebrew.Optimizing=מכין את מסגרת Android להפעלה מהירה של אפליקציות...
 
 [Tasks]
 Name: desktopicon; Description: "{cm:DesktopIcon}"
@@ -74,6 +79,9 @@ Name: desktopicon; Description: "{cm:DesktopIcon}"
 ; The Java runtime is replaced whole: files an older one had and this one has
 ; not (other modules' DLLs, a second CDS archive) would otherwise stay.
 Type: filesandordirs; Name: "{app}\jre"
+; Win.apk's own API-36 platform table, which earlier builds shipped: AOSP's resources read
+; bin\aosp\framework-res-34.apk now, and nothing reads this one (22.9 MB).
+Type: files; Name: "{app}\bin\tools\framework-res.apk"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion createallsubdirs
@@ -87,13 +95,31 @@ Root: HKCU; Subkey: "Software\Classes\.apk"; ValueType: string; ValueData: "WinA
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package"; ValueType: string; ValueData: "{cm:FileTypeName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package\DefaultIcon"; ValueType: string; ValueData: """{app}\Win.apk.exe"",0"
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package\shell\open\command"; ValueType: string; ValueData: """{app}\Win.apk.exe"" ""%1"""
+; Each app file's own icon as its thumbnail in Explorer (bin\winapk-shell.dll, windows/shell/apk_thumbnail.cpp): the
+; IThumbnailProvider key on the file type (removed with it), and its COM server, per user. The launcher writes the
+; same keys at its start (register_file_types). No DisableProcessIsolation: the shell runs it in its own surrogate.
+Root: HKCU; Subkey: "Software\Classes\WinApk.Package\ShellEx\{{e357fccd-a995-4576-b01f-234630154e96}"; ValueType: string; ValueData: "{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}"
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}"; ValueType: string; ValueData: "Win.apk app file thumbnails"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}\InprocServer32"; ValueType: string; ValueData: "{app}\bin\winapk-shell.dll"
+Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}\InprocServer32"; ValueType: string; ValueName: "ThreadingModel"; ValueData: "Apartment"
 
 [UninstallDelete]
 ; The apps' shortcuts the library made (Start > Win.apk Apps).
 Type: filesandordirs; Name: "{userprograms}\Win.apk Apps"
 
 [Run]
+; The framework's class-data sharing archive for this Win.apk (host/cds.h), made now as Android
+; compiles its framework at an update, so that no app start makes it: a second JVM of 200 MB
+; beside the app 10 s into its first start doubled that start's memory. Hidden; an install
+; without it still works (the first app install starts it in the background, or else the
+; first app start makes it).
+Filename: "{app}\bin\winapk-runtime.exe"; Parameters: "--cds-prepare"; StatusMsg: "{cm:Optimizing}"; Flags: runhidden
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; The background updates' scheduled task earlier builds made (the launcher opens the windows itself now, while
+; it runs, and deletes the task once at its start; this removes it should that start never have come).
+Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""Win.apk\Background updates"" /F"; Flags: runhidden; RunOnceId: "DeleteBackgroundUpdatesTask"
 
 [Code]
 // Inno Setup's right-to-left forms flip their controls but not the title bar:

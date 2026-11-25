@@ -1,5 +1,6 @@
 package android.widget;
 import android.content.Context;
+import com.macapk.loader.res.ResBackend;
 // android.widget.Button -- a TextView whose default style centers its label
 // (AOSP's Widget.Button sets gravity=center_vertical|center_horizontal). Without
 // setting it here the label drew top-left (FrozenBubble's menu buttons, any
@@ -42,20 +43,18 @@ public class Button extends TextView {
      *  one per Button construction. */
     private static Boolean sTraceStyle;
     private static boolean macapkTraceStyle() {
-        if (sTraceStyle == null) sTraceStyle = System.getenv("MACAPK_TRACE_WINDOW_FLAGS") != null;
+        if (sTraceStyle == null) sTraceStyle = false;
         return sTraceStyle;
     }
 
     private void macapkApplyDefaultButtonStyle(Context c) {
         try {
             if (c == null) return;
-            Object ri = android.content.res.Resources.macapkGetResourceIndex();
+            Object ri = ResBackend.get().resourceIndex();
             if (ri == null) return;
-            java.lang.reflect.Method resolve = ri.getClass()
-                .getMethod("resolveAttrInTheme", String.class, String.class);
-            Object appTheme = ri.getClass().getMethod("getApplicationThemeName").invoke(ri);
+            Object appTheme = ResBackend.get().indexApplicationThemeName(ri);
             if (!(appTheme instanceof String)) return;
-            Object sr = resolve.invoke(ri, appTheme, "buttonStyle");
+            Object sr = ResBackend.get().indexResolveAttrInTheme(ri, (String) appTheme, "buttonStyle");
             // MEASUREMENT ONLY (v1.0.1025, no behaviour change): does the
             // Context's own theme cascade answer buttonStyle differently from
             // the process-wide anchor? This is the style-tier twin of the
@@ -66,7 +65,7 @@ public class Button extends TextView {
                 try {
                     android.content.res.Resources.Theme th = c.getTheme();
                     String viaCtx = null;
-                    if (th != null) viaCtx = th.macapkResolveAttrRawHonest("buttonStyle");
+                    if (th != null) viaCtx = ResBackend.get().resolveAttrRawHonest(th, "buttonStyle");
                     String viaGlobal = (sr instanceof String) ? ((String) sr).trim() : null;
                     if (viaCtx != null) viaCtx = viaCtx.trim();
                     boolean differ = (viaCtx == null) ? (viaGlobal != null)
@@ -86,26 +85,25 @@ public class Button extends TextView {
             try { dm = c.getResources().getDisplayMetrics(); } catch (Throwable ignored) {}
             // Background first: setBackgroundDrawable applies the drawable's own
             // padding, and AOSP's constructor order is background-then-attrs.
-            Object bg = resolve.invoke(ri, styleName, "background");
+            Object bg = ResBackend.get().indexResolveAttrInTheme(ri, styleName, "background");
             if (bg instanceof String && ((String) bg).startsWith("@android:drawable/")) {
-                android.graphics.drawable.Drawable d = c.getResources()
-                    .macapkFrameworkDrawableByName(((String) bg).substring(18), c.getTheme());
+                android.graphics.drawable.Drawable d = ResBackend.get().frameworkDrawableByName(c.getResources(),
+                    ((String) bg).substring(18), c.getTheme());
                 if (d != null) setBackgroundDrawable(d);
             }
-            Object tc = resolve.invoke(ri, styleName, "textColor");
+            Object tc = ResBackend.get().indexResolveAttrInTheme(ri, styleName, "textColor");
             if (tc instanceof String) {
-                Integer col = android.content.res.Resources
-                    .macapkResolveColorExpr((String) tc);
+                Integer col = ResBackend.get().resolveColorExpr((String) tc);
                 if (col != null) setTextColor(col.intValue());
             }
-            int mh = macapkStyleDimenPx(resolve.invoke(ri, styleName, "minHeight"), dm);
+            int mh = macapkStyleDimenPx(ResBackend.get().indexResolveAttrInTheme(ri, styleName, "minHeight"), dm);
             if (mh > 0) setMinHeight(mh);
-            int mw = macapkStyleDimenPx(resolve.invoke(ri, styleName, "minWidth"), dm);
+            int mw = macapkStyleDimenPx(ResBackend.get().indexResolveAttrInTheme(ri, styleName, "minWidth"), dm);
             if (mw > 0) setMinWidth(mw);
             // Widget.Button's focusable / clickable (styles.xml): what lets a
             // button built in code take D-pad / Tab focus, as on a device.
-            if ("true".equals(resolve.invoke(ri, styleName, "focusable"))) setFocusable(true);
-            if ("true".equals(resolve.invoke(ri, styleName, "clickable"))) setClickable(true);
+            if ("true".equals(ResBackend.get().indexResolveAttrInTheme(ri, styleName, "focusable"))) setFocusable(true);
+            if ("true".equals(ResBackend.get().indexResolveAttrInTheme(ri, styleName, "clickable"))) setClickable(true);
         } catch (Throwable ignored) {}
     }
 

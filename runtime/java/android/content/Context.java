@@ -16,6 +16,7 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import com.macapk.loader.view.ViewHost;
 
 public abstract class Context {
 
@@ -152,7 +153,7 @@ public abstract class Context {
                 // empty asset paths so the Theme has a valid back-ref
                 // (its getResources() lookup must not return null;
                 // Glide DrawableDecoderCompat.loadDrawableV7 needs it).
-                r = new Resources(null, null, null);
+                r = com.macapk.loader.res.ResBackend.get().placeholderResources();
             }
             // AOSP ContextImpl.getTheme (android11-release ContextImpl.java:
             // 378-390) selects a DEFAULT theme when setTheme() was never
@@ -201,7 +202,7 @@ public abstract class Context {
      *  An UNRESOLVED targetSdk means our ApplicationInfo stub answered (real
      *  Android always populates it); treat as modern, matching Boot.java's
      *  default application-theme selection for a theme-less manifest. A REAL
-     *  0 (no <uses-sdk>, Application.macapkTargetSdkKnown) is below 11 and
+     *  0 (no <uses-sdk>, com.macapk.loader.app.Apps.targetSdkKnown) is below 11 and
      *  takes R.style.Theme, as AOSP's selectSystemTheme does. */
     private int macapkSelectDefaultTheme() {
         int targetSdk = 0;
@@ -209,7 +210,7 @@ public abstract class Context {
             android.content.pm.ApplicationInfo ai = getApplicationInfo();
             if (ai != null) targetSdk = ai.targetSdkVersion;
         } catch (Throwable ignored) {}
-        if (!android.app.Application.macapkTargetSdkKnown(targetSdk)) return 0x0103013f;
+        if (!com.macapk.loader.app.Apps.targetSdkKnown(targetSdk)) return 0x0103013f;
         if (targetSdk < 11)  return 0x01030005;
         if (targetSdk < 14)  return 0x0103006b;
         if (targetSdk < 24)  return 0x01030128;
@@ -367,22 +368,24 @@ public abstract class Context {
      *  recursion (see createConfigurationContext doc above), and
      *  getApplicationContext pins the global Application. */
     private static final class ConfigOverrideContext extends ContextWrapper {
-        // Stored for fidelity with AOSP (the override config shapes the
-        // returned context's Resources); Mac.apk's single-configuration
-        // Resources model has no consumer for it yet.
+        // The override config shapes the returned context's Resources
+        // (ResBackend.resourcesForConfiguration).
         private final android.content.res.Configuration overrideConfig;
         ConfigOverrideContext(Context origin, android.content.res.Configuration cfg) {
             super(origin);
             this.overrideConfig = cfg;
         }
         @Override public Resources getResources() {
-            // Skip the chain. Go straight to Application.
-            android.app.Application app = android.app.Application.macapk_get();
-            return app != null ? app.getResourcesDirect()
-                               : getBaseContext().getResources();
+            // Skip the chain. Go straight to Application. Then the override's own Resources, as
+            // AOSP's ContextImpl.createConfigurationContext gets from ResourcesManager (the
+            // application's own with Win.apk's single-configuration resources).
+            android.app.Application app = com.macapk.loader.app.Apps.current();
+            Resources base = app != null ? app.getResourcesDirect() : getBaseContext().getResources();
+            return overrideConfig == null ? base
+                    : com.macapk.loader.res.ResBackend.get().resourcesForConfiguration(base, overrideConfig);
         }
         @Override public Context getApplicationContext() {
-            return android.app.Application.macapk_get();
+            return com.macapk.loader.app.Apps.current();
         }
     }
 
@@ -588,7 +591,7 @@ public abstract class Context {
      *  ENFORCE=0 and same-app cases below stay a no-op for exactly that
      *  reason). Review issue 2 (2026-09-28). */
     public void revokeUriPermission(android.net.Uri uri, int modeFlags) {
-        if (MacApkUriGrants.ENFORCE && macapkUriProviderIsAnotherPackage(uri)) {
+        if (macapkUriProviderIsAnotherPackage(uri)) {
             MacApkUriGrants.revokeNonOwned(uri, modeFlags);
         }
     }
@@ -622,12 +625,10 @@ public abstract class Context {
      *  myPid() here). =0: every check answers GRANTED and enforce* never
      *  throws, as before. */
     public int checkUriPermission(android.net.Uri uri, int pid, int uid, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         return MacApkUriGrants.checkUriPermission(uri, pid, uid, modeFlags);
     }
     /** ContextImpl :2474-2497. */
     public int checkUriPermission(android.net.Uri uri, String readPermission, String writePermission, int pid, int uid, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
             if (readPermission == null
                     || checkPermission(readPermission, pid, uid)
@@ -647,7 +648,6 @@ public abstract class Context {
     }
     /** ContextImpl :2440-2447. */
     public int checkCallingUriPermission(android.net.Uri uri, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         int pid = android.os.Binder.getCallingPid();
         if (pid != android.os.Process.myPid()) {
             return checkUriPermission(uri, pid, android.os.Binder.getCallingUid(), modeFlags);
@@ -656,27 +656,22 @@ public abstract class Context {
     }
     /** ContextImpl :2462-2465. */
     public int checkCallingOrSelfUriPermission(android.net.Uri uri, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         return checkUriPermission(uri, android.os.Binder.getCallingPid(),
                 android.os.Binder.getCallingUid(), modeFlags);
     }
     /** ContextImpl :2539-2575 over enforceForUri :2522-2536. */
     public void enforceUriPermission(android.net.Uri uri, int pid, int uid, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkUriPermission(uri, pid, uid, modeFlags), false, uid, uri, message);
     }
     public void enforceUriPermission(android.net.Uri uri, String readPermission, String writePermission, int pid, int uid, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkUriPermission(uri, readPermission, writePermission, pid, uid, modeFlags),
                 false, uid, uri, message);
     }
     public void enforceCallingUriPermission(android.net.Uri uri, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkCallingUriPermission(uri, modeFlags), false,
                 android.os.Binder.getCallingUid(), uri, message);
     }
     public void enforceCallingOrSelfUriPermission(android.net.Uri uri, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkCallingOrSelfUriPermission(uri, modeFlags), true,
                 android.os.Binder.getCallingUid(), uri, message);
     }
@@ -766,7 +761,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(attrs);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs);
     }
     /** AOSP ContextThemeWrapper/Context: this overload delegates straight to
      *  `getTheme().obtainStyledAttributes(resid, attrs)` -- the STYLE named by
@@ -779,7 +774,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(resId, attrs);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs);
     }
     public android.content.res.TypedArray obtainStyledAttributes(
             android.util.AttributeSet set, int[] attrs) {
@@ -798,7 +793,7 @@ public abstract class Context {
             android.content.res.Resources.Theme t = getTheme();
             if (t != null) return t.obtainStyledAttributes(set, attrs, 0, 0);
         } catch (Throwable ignored) {}
-        return new android.content.res.TypedArray(getResources(), attrs, set);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs, set);
     }
     public android.content.res.TypedArray obtainStyledAttributes(
             android.util.AttributeSet set, int[] attrs,
@@ -819,7 +814,7 @@ public abstract class Context {
         } catch (Throwable t) {
             macapkTraceThemelessOsa(defStyleAttr, t);
         }
-        return new android.content.res.TypedArray(getResources(), attrs, set);
+        return com.macapk.loader.res.ResBackend.get().themelessTypedArray(getResources(), attrs, set);
     }
     /** Diagnostic (MACAPK_TRACE_DEFSTYLE, zero cost unset): the 4-arg
      *  obtainStyledAttributes fell back to the THEME-LESS TypedArray --
@@ -1221,6 +1216,11 @@ public abstract class Context {
      *  `(JobScheduler) ctx.getSystemService(JOB_SCHEDULER_SERVICE)`. */
     public Object getSystemService(String name) {
         Object result;
+        // AOSP's views (-Dwinapk.aosp.views=1) own their managers (window, layout_inflater,
+        // input_method, accessibility...); Win.apk's view host answers null for every name.
+        if (name != null && (result = com.macapk.loader.view.ViewHost.get().systemService(this, name)) != null) {
+            return result;
+        }
         if (name == null) {
             result = null;
         } else switch (name) {
@@ -1254,7 +1254,7 @@ public abstract class Context {
                 // androidx ripple effects do `(AccessibilityManager)
                 // getSystemService(ACCESSIBILITY_SERVICE)` and chain
                 // .isEnabled(); null would NPE.
-                result = new android.view.accessibility.AccessibilityManager();
+                result = ViewHost.get().newAccessibilityManager();
                 break;
             case PROFILING_SERVICE:
                 // android.os.ProfilingManager already existed in this tree but
@@ -1467,7 +1467,7 @@ public abstract class Context {
                 result = new android.app.usage.StorageStatsManager(this);
                 break;
             case TEXT_SERVICES_MANAGER_SERVICE:
-                result = new android.view.textservice.TextServicesManager(this);
+                result = ViewHost.get().newTextServicesManager(this);
                 break;
             case HARDWARE_PROPERTIES_SERVICE:
                 result = new android.os.HardwarePropertiesManager(this);
@@ -1573,7 +1573,7 @@ public abstract class Context {
             case CAPTIONING_SERVICE:
                 // Media players do getSystemService(CaptioningManager.class)
                 // .isEnabled() unguarded; null NPEs before playback starts.
-                result = new android.view.accessibility.CaptioningManager();
+                result = ViewHost.get().newCaptioningManager();
                 break;
             case RESTRICTIONS_SERVICE:
                 // Unmanaged device: an empty restrictions Bundle, never null.
@@ -1871,7 +1871,7 @@ public abstract class Context {
 
     /** The APP's own declared targetSdkVersion as seen from this Context, or 0
      *  when it cannot be read. The one input a targetSdk compat gate may use;
-     *  see android.app.Application.macapkAppTargetSdk for the convention. */
+     *  see com.macapk.loader.app.Apps.targetSdk for the convention. */
     public static int macapkTargetSdkOf(Context ctx) {
         try {
             android.content.pm.ApplicationInfo ai =
@@ -1891,7 +1891,7 @@ public abstract class Context {
     public SharedPreferences getSharedPreferences(String name, int mode) {
         if (name == null) {
             int targetSdkVersion = macapkTargetSdkOf(this);
-            if (android.app.Application.macapkTargetSdkKnown(targetSdkVersion)
+            if (com.macapk.loader.app.Apps.targetSdkKnown(targetSdkVersion)
                     && targetSdkVersion < android.os.Build.VERSION_CODES.KITKAT) {
                 name = "null";
             }
@@ -1949,984 +1949,120 @@ public abstract class Context {
         return out;
     }
 
-    // Route to ActivityHost.start, exactly as startActivities (below) routes to
-    // ActivityHost.startAll. Activity overrides this to ALSO thread the
-    // (caller, requestCode) result pairing, but the base launch is the same
-    // ActivityThread path, and a NON-Activity context must perform it too.
-    //
-    // ⚠ v1.0.953: this used to be an empty no-op, on the reasoning that only an
-    // Activity starts activities. That silently dropped every launch made from
-    // an app/service context -- most importantly PendingIntent.send(), whose
-    // dispatch runs startActivity on its creator context. That creator is
-    // routinely the Application (PendingIntent.getActivity(getApplicationContext(),
-    // ...)), so a notification tap, an alarm callback, or a widget action that
-    // wraps an activity fired into a no-op. Concretely it blocked the F-Droid
-    // install end to end: DefaultInstaller broadcasts INSTALL_USER_INTERACTION
-    // with a PendingIntent wrapping DefaultInstallerActivity, AppDetailsActivity
-    // fires PendingIntent.send() on it, and the activity that would issue
-    // ACTION_INSTALL_PACKAGE never launched. AOSP allows an app-context
-    // startActivity (it requires FLAG_ACTIVITY_NEW_TASK, which
-    // PendingIntent.getActivity sets); ActivityHost models the single foreground
-    // task, so the flag is a no-op here and the launch is correct.
+    // Android: abstract. ContextImpl's (AOSP's, lib/aosp-app.jar) start through the activity task
+    // manager, and every context an app has (its Application, an Activity, a Service) is a wrapper
+    // over one. A context of Win.apk's own with no base of that kind starts through the
+    // application's, as a start from outside an activity is: a new task (FLAG_ACTIVITY_NEW_TASK,
+    // which PendingIntent.getActivity sets too). Each form hands its own call over, never to the
+    // other form on the same object: a wrapper that overrides the two the other way round (Chrome's)
+    // would go round until the stack ran out.
     public void startActivity(Intent intent) {
-        com.macapk.loader.ActivityHost.start(intent);
+        applicationForStarts().startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
     }
-    // AOSP API-16+ overload (intent + ActivityOptions.toBundle()). Apps invoke
-    // this against the Context static type (e.g. F-Droid's row-click handler
-    // -> Context.startActivity(intent, options.toBundle())), so it must be
-    // declared here for resolution; delegate to the single-arg form so any
-    // subclass that only overrides startActivity(Intent) (Activity does, via
-    // ActivityHost.start) still performs the launch. The Bundle (launch
-    // animation hints) is ignored -- Mac.apk has no activity transitions.
-    // Win.apk: it launches by itself. It called startActivity(intent) on this object, and a
-    // wrapper that overrides the two the other way round (Chrome's: its one-argument form goes
-    // through super to here, its two-argument form calls its one-argument form) went round
-    // until the stack ran out, at Chrome's start. AOSP's two forms never call each other on
-    // the same object: each ContextWrapper method hands its own call to the base context.
-    // Activity overrides both and launches from each.
     public void startActivity(Intent intent, android.os.Bundle options) {
-        com.macapk.loader.ActivityHost.start(intent);
+        applicationForStarts().startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), options);
     }
-    // AOSP startActivities(Intent[]) launches a back-STACK: intents[0] is the
-    // ROOT of the task and each later intent is pushed on top of it, so the
-    // LAST one ends up visible/resumed and every earlier one sits underneath.
-    // androidx TaskStackBuilder.startActivities() routes here, and the parent
-    // stack it synthesises is the entire reason the API exists.
-    //
-    // v1.0.834: this used to start ONLY the top-most intent carrying a
-    // component, on the reasoning that Mac.apk has a single foreground
-    // activity. But com.macapk.loader.ActivityHost keeps a real LIFO task
-    // stack and reveals the activity underneath on finish(), so the
-    // simplification was silently discarding a stack we CAN model. Measured
-    // consequence (Sgt Puzzles 1.49, 2026-07-29): its launcher builds
-    // [GameChooser, GamePlay] via addNextIntentWithParentStack and starts
-    // both; with only GamePlay started, GamePlay's own "no saved game" branch
-    // (NavUtils.navigateUpFromSameTask -> Activity.navigateUpTo -> finish())
-    // had nothing underneath to reveal, so the chooser never appeared.
-    //
-    // ActivityHost.startAll is called instead of looping startActivity()
-    // because under MACAPK_REAL_LOOPER the single-intent path enters
-    // Looper.loop() and never returns -- the whole stack has to be posted
-    // before the loop is entered. See its header.
-    public void startActivities(Intent[] intents) { startActivities(intents, null); }
+    public void startActivities(Intent[] intents) {
+        applicationForStarts().startActivities(newTask(intents));
+    }
     public void startActivities(Intent[] intents, android.os.Bundle options) {
-        if (intents == null || intents.length == 0) return;
-        com.macapk.loader.ActivityHost.startAll(intents);
+        applicationForStarts().startActivities(newTask(intents), options);
     }
-    // v1.0.426 Tier-2: a real process-wide dynamic-BroadcastReceiver registry.
-    // Was all no-ops -> androidx ProcessLifecycle-adjacent code, Connectivity
-    // change receivers, ACTION_LOCALE_CHANGED / ACTION_TIME_TICK handlers, and
-    // any component that registers a receiver and broadcasts to itself in-process
-    // got no callback. Single-VM, so a registered receiver hears every in-process
-    // sendBroadcast whose action its filter matches (system broadcasts we don't
-    // emit simply never arrive, same as a device with the feature absent).
-    private static final java.util.List<Object[]> sReceivers =
-        new java.util.concurrent.CopyOnWriteArrayList<>();   // {BroadcastReceiver, IntentFilter}
-
-    // ---- STICKY BROADCASTS ----------------------------------------------
-    //
-    // AOSP Context.registerReceiver: "If your IntentFilter matches one of these
-    // sticky Intents, that Intent will be returned by this function AND sent to
-    // your receiver as if it had just been broadcast... you can supply null for
-    // your receiver... the function simply returns the sticky Intent".
-    //
-    // We retained nothing and always returned null, which broke the single most
-    // common battery idiom on Android -- `registerReceiver(null,
-    // new IntentFilter(ACTION_BATTERY_CHANGED))` to read the level once -- with
-    // an app-side NPE or a permanent "battery unknown". 17 corpus apps embed
-    // ACTION_BATTERY_CHANGED.
-    private static final java.util.Map<String, Intent> sStickies =
-        new java.util.concurrent.ConcurrentHashMap<>();
-
-    static void macapkPutSticky(Intent i) {
-        if (i == null || i.getAction() == null) return;
-        // STORE A COPY. AOSP's AMS does `new Intent(intent)` on both sticky
-        // paths; aliasing the caller's object lets an app that reuses and
-        // mutates its Intent after sendStickyBroadcast silently mutate the
-        // retained sticky.
-        try { sStickies.put(i.getAction(), new Intent(i)); }
-        catch (Throwable t) { sStickies.put(i.getAction(), i); }
-    }
-
-    /** EVERY sticky this filter matches, in AOSP's sense.
-     *
-     *  AOSP registerReceiver, verbatim: "There may be multiple sticky Intents
-     *  that match filter, in which case EACH OF THESE WILL BE SENT TO RECEIVER.
-     *  In this case, only one of these can be returned directly by the function;
-     *  which of these that is returned is arbitrarily decided by the system."
-     *  So the arbitrary-return is by design, but delivering only one is not.
-     *
-     *  Matching is the FULL filter match, not matchAction: this file already
-     *  learned that once -- sendBroadcast's own comment records that
-     *  "matchAction-only was over-delivery" -- and the lesson did not carry to
-     *  this helper when it was written. */
-    private java.util.List<Intent> macapkStickiesFor(android.content.IntentFilter f) {
-        java.util.ArrayList<Intent> out = new java.util.ArrayList<>(2);
-        if (f == null) return out;
-        for (Intent i : sStickies.values()) {
-            if (i.getAction() == null) continue;
-            boolean match;
-            try { match = f.match(getContentResolver(), i, true, "macapk") >= 0; }
-            catch (Throwable t) {
-                try { match = f.matchAction(i.getAction()); } catch (Throwable t2) { match = false; }
-            }
-            if (match) out.add(i);
+    private Context applicationForStarts() {
+        Context app = com.macapk.loader.app.Apps.current();
+        if (app == null || app == this) {
+            throw new android.util.AndroidRuntimeException("a start or bind from a context with no application");
         }
+        return app;
+    }
+    private static Intent[] newTask(Intent[] intents) {
+        Intent[] out = new Intent[intents.length];
+        for (int i = 0; i < intents.length; i++) out[i] = new Intent(intents[i]);
+        if (out.length > 0) out[0].addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         return out;
     }
-
-    private Intent macapkRegisterReceiver(android.content.BroadcastReceiver receiver,
-                                          android.content.IntentFilter filter) {
-        return macapkRegisterReceiver(receiver, filter, null);
-    }
-
-    private Intent macapkRegisterReceiver(android.content.BroadcastReceiver receiver,
-                                          android.content.IntentFilter filter,
-                                          android.os.Handler scheduler) {
-        return macapkRegisterReceiver(receiver, filter, scheduler, 0);
-    }
-
-    /** `flags`: RECEIVER_EXPORTED / RECEIVER_NOT_EXPORTED, kept with the
-     *  registration -- a NOT_EXPORTED receiver must never hear another app's
-     *  broadcast (they now arrive from other processes, SystemClient). */
-    private Intent macapkRegisterReceiver(android.content.BroadcastReceiver receiver,
-                                          android.content.IntentFilter filter,
-                                          android.os.Handler scheduler, int flags) {
-        // BATTERY_CHANGED is synthesized on demand rather than published on a
-        // timer: a registration is the only moment its value is observed, and
-        // BatteryManager already caches its pmset read behind a short TTL.
-        try {
-            if (filter != null && filter.matchAction(Intent.ACTION_BATTERY_CHANGED)) {
-                macapkPutSticky(macapkBatteryIntent());
-            }
-        } catch (Throwable ignored) { }
-        // AOSP's LoadedApk.ReceiverDispatcher keeps the registrant's own Context
-        // and Handler per registration. We kept neither, which cost two bugs:
-        // every dispatch passed whatever Context happened to be handy, and the
-        // minute ticker captured the FIRST registrant's Activity and pinned it
-        // for the process lifetime. Store both.
-        if (receiver != null && filter != null) {
-            sReceivers.add(new Object[]{ receiver, filter, this, scheduler, flags });
-        }
-        // Start the minute ticker only when something actually wants it.
-        try {
-            if (filter != null && filter.matchAction(Intent.ACTION_TIME_TICK)) macapkStartMinuteTicker();
-        } catch (Throwable ignored) { }
-
-        java.util.List<Intent> stickies = macapkStickiesFor(filter);
-        if (!stickies.isEmpty() && receiver != null) {
-            final android.content.BroadcastReceiver r = receiver;
-            for (Intent one : stickies) {
-                final Intent si = one;
-                Runnable task = new Runnable() { @Override public void run() {
-                    // Unregistered between the post and now: AOSP drops the
-                    // queued delivery when the filter is removed, so a receiver
-                    // that released state in unregisterReceiver is not called.
-                    boolean live = false;
-                    for (Object[] e : sReceivers) if (e[0] == r) { live = true; break; }
-                    if (!live) return;
-                    // The PendingResult install the ordinary dispatch paths do.
-                    // Without it goAsync() returns null on THIS path only, which
-                    // is the exact bug v1.0.1110 fixed -- and isInitialSticky
-                    // must be TRUE here, which is the whole point of that API:
-                    // it is how an app tells retained state from a real change.
-                    final android.content.BroadcastReceiver.PendingResult prev = r.getPendingResult();
-                    try { r.setPendingResult(new android.content.BroadcastReceiver.PendingResult(
-                            0, null, null,
-                            android.content.BroadcastReceiver.PendingResult.TYPE_REGISTERED,
-                            /*ordered=*/ false, /*sticky=*/ true, 0,
-                            android.os.Process.myUid(), getPackageName())); }
-                    catch (Throwable ignored) { }
-                    try { r.onReceive(Context.this, si); }
-                    catch (Throwable t) {
-                        com.macapk.loader.NativeLog.w("Context",
-                            "sticky replay to " + r.getClass().getName() + " threw: " + t);
-                    }
-                    finally { try { r.setPendingResult(prev); } catch (Throwable ignored) { } }
-                } };
-                if (android.os.Looper.macapkHasMainThread()) {
-                    try { new android.os.Handler(getMainLooper()).post(task); continue; }
-                    catch (Throwable ignored) { }
-                }
-                task.run();
-            }
-        }
-        // AOSP returns ONE of the matches, "arbitrarily decided by the system".
-        return stickies.isEmpty() ? null : stickies.get(0);
-    }
-
-    // ---- ACTION_TIME_TICK ------------------------------------------------
-    //
-    // Intent.ACTION_TIME_TICK, verbatim: "The current time has changed. Sent
-    // every minute. You *cannot* receive this through components declared in
-    // manifests, only by explicitly registering for it with
-    // Context.registerReceiver()."
-    //
-    // Nothing anywhere emitted it, so a clock driven by TIME_TICK froze at the
-    // minute it launched -- silently, with no error. 21 corpus apps embed the
-    // action, deskclock among them, which makes this pixel-falsifiable on the
-    // fleet: the minute digit must advance.
-    //
-    // The manifest exclusion is AOSP-mandated, not an optimisation, so this
-    // fans out to the DYNAMIC registry only and never touches the manifest path.
-    private static volatile boolean sTickerStarted;
-
-    private void macapkStartMinuteTicker() {
-        if (sTickerStarted) return;
-        synchronized (Context.class) {
-            if (sTickerStarted) return;
-            sTickerStarted = true;
-        }
-        final android.os.Handler h;
-        try { h = new android.os.Handler(getMainLooper()); }
-        catch (Throwable t) { sTickerStarted = false; return; }
-        final Runnable[] tick = new Runnable[1];
-        tick[0] = new Runnable() { @Override public void run() {
-            try { macapkSendToDynamicOnly(new Intent(Intent.ACTION_TIME_TICK)); }
-            catch (Throwable ignored) { }
-            try { h.postDelayed(tick[0], macapkMsToNextMinute()); } catch (Throwable ignored) { }
-        } };
-        // Align to the wall-clock minute boundary, as the system does -- a clock
-        // that ticks 43 seconds late is visibly wrong even though it ticks.
-        try { h.postDelayed(tick[0], macapkMsToNextMinute()); }
-        catch (Throwable t) { sTickerStarted = false; }
-    }
-
-    private static long macapkMsToNextMinute() {
-        long now = System.currentTimeMillis();
-        long ms = 60_000L - (now % 60_000L);
-        return (ms < 1_000L) ? ms + 60_000L : ms;   // never schedule a near-zero delay
-    }
-
-    /** Fan out to the DYNAMIC registry only. ACTION_TIME_TICK must never reach a
-     *  manifest-declared receiver (AOSP forbids it), so this deliberately does
-     *  not call the manifest path that sendBroadcast uses. */
-    private void macapkSendToDynamicOnly(Intent intent) {
-        if (intent == null) return;
-        for (Object[] e : sReceivers) {
-            android.content.IntentFilter f = (android.content.IntentFilter) e[1];
-            boolean match;
-            try { match = f.match(intent.getAction(), null, null, intent.getData(), null, "macapk") >= 0; }
-            catch (Throwable t) {
-                try { match = f.matchAction(intent.getAction()); } catch (Throwable t2) { match = false; }
-            }
-            if (!match) continue;
-            android.content.BroadcastReceiver rcv = (android.content.BroadcastReceiver) e[0];
-            // Deliver with the REGISTRANT'S context, not the one that happened to
-            // start the ticker. The ticker's Runnable is re-posted forever, so
-            // capturing a Context here pinned the FIRST registrant's Activity for
-            // the process lifetime and then handed that (possibly destroyed)
-            // Activity to every later receiver too. deskclock's AnalogClock
-            // registers TIME_TICK from View.getContext(), i.e. the Activity.
-            Context rctx = (e.length > 2 && e[2] instanceof Context) ? (Context) e[2] : this;
-            final android.content.BroadcastReceiver.PendingResult prev = rcv.getPendingResult();
-            try { rcv.setPendingResult(new android.content.BroadcastReceiver.PendingResult(
-                    0, null, null, android.content.BroadcastReceiver.PendingResult.TYPE_REGISTERED,
-                    false, false, 0, android.os.Process.myUid(), getPackageName())); }
-            catch (Throwable ignored) { }
-            try { rcv.onReceive(rctx, intent); }
-            catch (Throwable t) {
-                com.macapk.loader.NativeLog.w("Context",
-                    "receiver " + rcv.getClass().getName() + " threw on "
-                    + intent.getAction() + ": " + t);
-            }
-            finally { try { rcv.setPendingResult(prev); } catch (Throwable ignored) { } }
-        }
-    }
-
-    /** The ACTION_BATTERY_CHANGED sticky a device always has, built from the
-     *  REAL host battery (BatteryManager reads `pmset -g batt`). Extras follow
-     *  AOSP's BatteryService: level/scale/status/present/health/plugged. */
-    private Intent macapkBatteryIntent() {
-        Intent i = new Intent(Intent.ACTION_BATTERY_CHANGED);
-        try {
-            Object o = getSystemService(BATTERY_SERVICE);
-            android.os.BatteryManager bm = (android.os.BatteryManager) o;
-            int level = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY);
-            int status = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_STATUS);
-            boolean charging = bm.isCharging();
-            if (level < 0) level = 100;
-            i.putExtra(android.os.BatteryManager.EXTRA_LEVEL, level);
-            i.putExtra(android.os.BatteryManager.EXTRA_SCALE, 100);
-            i.putExtra(android.os.BatteryManager.EXTRA_STATUS, status);
-            i.putExtra(android.os.BatteryManager.EXTRA_PRESENT, true);
-            i.putExtra(android.os.BatteryManager.EXTRA_HEALTH, 2 /* BATTERY_HEALTH_GOOD */);
-            // AOSP EXTRA_PLUGGED: 0 when on battery, else the source. A Mac on
-            // mains is AC, which is the honest answer and the one apps branch on.
-            i.putExtra("plugged", charging ? 1 /* BATTERY_PLUGGED_AC */ : 0);
-            i.putExtra(android.os.BatteryManager.EXTRA_BATTERY_LOW, level <= 15);
-            i.putExtra("technology", "Li-ion");
-        } catch (Throwable ignored) { }
-        return i;
-    }
-
-    public void sendBroadcast(Intent intent) {
-        if (intent == null) return;
-        // Other apps run in other processes (each Mac.apk app has its own): AMS
-        // delivers a broadcast to every app whose receivers match, so it goes to
-        // the system broker too (com.macapk.loader.SystemClient; a no-op unless
-        // it is enabled, and never for a broadcast aimed at THIS package).
-        com.macapk.loader.SystemClient.forwardBroadcast(intent);
-        macapkDeliverLocal(intent);
-    }
-
-    /** Deliver a broadcast to THIS process's receivers only (dynamic + this
-     *  app's manifest receivers) -- the in-process half of sendBroadcast, and
-     *  what the broker calls when ANOTHER app's broadcast arrives here. */
-    /** True while delivering a broadcast that ANOTHER app sent (set by
-     *  com.macapk.loader.SystemClient around macapkDeliverLocal): only
-     *  exported receivers may hear it, as AMS enforces. */
-    public static final ThreadLocal<Boolean> MACAPK_FROM_OTHER_APP =
-        ThreadLocal.withInitial(() -> Boolean.FALSE);
-
-    public void macapkDeliverLocal(Intent intent) {
-        if (intent == null) return;
-        final boolean fromOtherApp = MACAPK_FROM_OTHER_APP.get();
-        // AOSP: an EXPLICIT broadcast (component set) is delivered to exactly
-        // that component's manifest-declared receiver and NEVER consults the
-        // dynamic registry -- ActivityManagerService.broadcastIntentLocked
-        // builds a component intent's receiver list by resolving the component
-        // alone. Load-bearing for PackageInstaller session status callbacks:
-        // stores wrap PendingIntent.getBroadcast(Intent(context,
-        // XReceiver.class)) where XReceiver is manifest-declared with
-        // exported=false and NO intent-filter (Aurora's
-        // InstallerStatusReceiver, read from its manifest 2026-08-12), so
-        // component dispatch is the ONLY way such a receiver can ever fire --
-        // the filter loop below cannot match a receiver that has no filter.
-        if (intent.getComponent() != null) {
-            macapkDeliverToManifestReceiver(intent);
-            return;
-        }
-        // A package-targeted broadcast must not reach a DYNAMIC receiver of a
-        // different package either. The manifest path below already returns
-        // early on this test; the dynamic loop did not, and Mac.apk hosts
-        // exactly one package, so `setPackage(somethingElse)` should deliver to
-        // NOTHING rather than to whatever dynamic filter happens to match.
-        // Concretely this is the FCM routing field: McsClient dispatches
-        // setPackage(category), and a dynamically-registered c2dm RECEIVE
-        // receiver would otherwise see another app's push.
-        String targeted = intent.getPackage();
-        if (targeted != null) {
-            String selfPkgName = null;
-            try { selfPkgName = getPackageName(); } catch (Throwable ignored) {}
-            // Same direction as the manifest path below: a null self DROPS. The
-            // two guards answer the same question and must not disagree, and
-            // dropping is the safe side (over-delivery is the failure with
-            // consequences, per that path's own note).
-            if (!targeted.equals(selfPkgName)) return;
-        }
-        for (Object[] e : sReceivers) {
-            if (fromOtherApp && e.length > 4 && e[4] instanceof Integer
-                    && (((Integer) e[4]) & RECEIVER_NOT_EXPORTED) != 0) continue;
-            android.content.IntentFilter f = (android.content.IntentFilter) e[1];
-            // Full AOSP filter match (action AND data/scheme/type AND categories),
-            // not action-only: a data- or category-constrained dynamic receiver
-            // must NOT fire for an intent whose data/category does not match
-            // (matchAction-only was over-delivery). IntentFilter.match returns
-            // >= 0 on a match, a NO_MATCH_* (< 0) otherwise. Fall back to the old
-            // action-only test if match() ever throws, so nothing regresses.
-            boolean match;
-            try {
-                match = f.match(getContentResolver(), intent, true, null) >= 0;
-            } catch (Throwable t) {
-                String action = intent.getAction();
-                match = (action == null) ? (f.countActions() == 0) : f.matchAction(action);
-            }
-            if (match) {
-                // AOSP installs the PendingResult before EVERY dispatch, ordered
-                // or not: LoadedApk.ReceiverDispatcher.Args does
-                // `receiver.setPendingResult(this)` unconditionally
-                // (android14-release LoadedApk.java:1801). Only the ordered
-                // FINAL receiver got one here, so goAsync() returned null on
-                // every other dispatch -- and a null deref inside the app's own
-                // receiver is then SWALLOWED by the catch below, leaving the
-                // receiver's deferred half silently un-run. 15 apps in the
-                // corpus call goAsync().
-                android.content.BroadcastReceiver rcv = (android.content.BroadcastReceiver) e[0];
-                // Save the OUTER result: a receiver whose onReceive sends a
-                // broadcast that matches its own filter re-enters here, and a
-                // nested `finally` that nulled the field would leave the outer
-                // frame's goAsync() returning null again -- reintroducing the
-                // exact NPE this install exists to prevent. AOSP cannot hit this
-                // because its dispatch is handler-serialized with one fresh Args
-                // per delivery; ours is inline, so it must save and restore.
-                // AOSP registerReceiver, verbatim: "The receiver will be called
-                // with any broadcast Intent that matches filter, IN THE MAIN
-                // APPLICATION THREAD" -- and the 4-arg form runs it "in the
-                // context of scheduler ... If null, the main thread of the
-                // process will be used."
-                //
-                // We ran it INLINE on the caller's thread, and that has a traced
-                // victim: AlarmManager's POOL thread -> PendingIntent.send() ->
-                // sendBroadcast() -> onReceive() OFF MAIN, where androidx
-                // LiveData.setValue throws IllegalStateException and the catch
-                // below swallows it. 40 of 63 corpus APKs call AlarmManager.set*
-                // and 30 reference PendingIntent.getBroadcast.
-                //
-                // The tree already knew this rule one file away: DownloadManager
-                // hops to the main looper with the comment "Broadcast receivers
-                // run on the main thread on Android; delivering straight from
-                // this worker would run app code that expects the UI thread off
-                // it." The manifest path here already posts to main too -- plain
-                // sendBroadcast was the last inline path.
-                //
-                // Deliver with the REGISTRANT'S own Context (AOSP's
-                // ReceiverDispatcher holds mContext per registration), not
-                // whichever Context happened to make the call.
-                final Context rctx = (e.length > 2 && e[2] instanceof Context) ? (Context) e[2] : this;
-                final android.os.Handler sched =
-                        (e.length > 3 && e[3] instanceof android.os.Handler) ? (android.os.Handler) e[3] : null;
-                final Intent deliver = intent;
-                Runnable dispatch = new Runnable() { @Override public void run() {
-                    final android.content.BroadcastReceiver.PendingResult prev = rcv.getPendingResult();
-                    try { rcv.setPendingResult(new android.content.BroadcastReceiver.PendingResult(
-                            0, null, null, android.content.BroadcastReceiver.PendingResult.TYPE_REGISTERED,
-                            false, false, 0, android.os.Process.myUid(), getPackageName())); }
-                    catch (Throwable ignored) { }
-                    try { rcv.onReceive(rctx, deliver); }
-                    catch (Throwable t) {
-                        com.macapk.loader.NativeLog.w("Context",
-                            "registered receiver " + rcv.getClass().getName()
-                            + " threw on " + deliver.getAction() + ": " + t);
-                    }
-                    finally { try { rcv.setPendingResult(prev); } catch (Throwable ignored) { } }
-                } };
-                boolean posted = false;
-                if (sched != null) { try { sched.post(dispatch); posted = true; } catch (Throwable ignored) { } }
-                else if (android.os.Looper.macapkHasMainThread()) {
-                    try { new android.os.Handler(getMainLooper()).post(dispatch); posted = true; }
-                    catch (Throwable ignored) { }
-                }
-                // No looper yet (early boot): inline is better than dropped.
-                if (!posted) dispatch.run();
-                // (The "a receiver that throws must NOT vanish" logging that used
-                // to live here now runs inside the dispatch Runnable above, so a
-                // throw is still absorbed and still logged -- the 2026-08-20
-                // Aurora case where a silent throw left a store row stuck on
-                // "Installing" forever stays covered.)
-            }
-        }
-        // ...AND the MANIFEST-declared receivers whose <intent-filter> matches.
-        // AOSP delivers an implicit broadcast to BOTH lists: ActivityManagerService
-        // .broadcastIntentLocked builds `registeredReceivers` from the dynamic
-        // registry and `receivers` from collectReceiverComponents (which calls
-        // PackageManagerInternal.queryIntentReceivers with no target-SDK gate of
-        // its own, android14-release AMS.java:14132-14147), then merges the two.
-        //
-        // WHY THIS IS NOT OVER-DELIVERY under the O+ implicit-broadcast rule:
-        // that rule is a BACKGROUND-EXECUTION limit, applied per receiver via
-        // getAppStartModeLOSP, and that method returns APP_START_MODE_NORMAL
-        // whenever the target uid has a live, non-idle UidRecord (AMS.java:6058-
-        // 6117 -- the `alwaysRestrict || uidRec.isIdle()` branch is what leads to
-        // the restricted answer). Mac.apk hosts exactly one app, in this process,
-        // in the foreground, so on a device it would never be idle and its
-        // manifest receivers would fire. Dropping them here was our gap, not
-        // Android's behaviour.
-        //
-        // Load-bearing for the install-completion contract: a store is free to
-        // declare its package-event receiver in the manifest rather than
-        // registering it at runtime (Aurora happens to register dynamically;
-        // ACTION_MY_PACKAGE_REPLACED is manifest-only in BOTH stores we have),
-        // and before this it could never hear one. See
-        // PackageInstallerBackend.broadcastPackageInstalled.
-        macapkDeliverToMatchingManifestReceivers(intent);
-    }
-
-    /** Manifest-declared receivers of the hosted package whose `<intent-filter>`
-     *  matches a component-less intent. Resolution is PackageManager's
-     *  queryBroadcastReceivers, so the filter semantics are the same ones
-     *  queryIntentActivities already uses and there is no second matcher to
-     *  drift. */
-    private void macapkDeliverToMatchingManifestReceivers(Intent intent) {
-        java.util.List<android.content.pm.ResolveInfo> hits;
-        try {
-            android.content.pm.PackageManager pm = getPackageManager();
-            if (pm == null) return;
-            hits = pm.queryBroadcastReceivers(intent, 0);
-        } catch (Throwable t) {
-            return;   // no manifest / no PM yet: same as a device with nothing declared
-        }
-        if (hits == null || hits.isEmpty()) return;
-        // AOSP: `intent.setPackage(x)` restricts delivery to package x. When we
-        // cannot establish our own name the safe direction is to DROP -- the
-        // sender named a specific target, and delivering to an unidentified one
-        // is the failure mode with consequences. (This is how AOSP's
-        // ACTION_MY_PACKAGE_REPLACED, which is targeted and carries no data,
-        // stays scoped to the app it is about.)
-        String only = intent.getPackage();
-        String selfPkg = null;
-        try { selfPkg = getPackageName(); } catch (Throwable ignored) {}
-        if (only != null && !only.equals(selfPkg)) return;
-        // AOSP's PACKAGE_ADDED self-exclusion, verbatim in intent:
-        // "A special case for PACKAGE_ADDED: do not allow the package being
-        // added to see this broadcast. This prevents them from using this as a
-        // back door to get run as soon as they are installed."
-        // (AMS.java:15060-15095; it applies to PACKAGE_ADDED, PACKAGE_RESTARTED
-        // and PACKAGE_DATA_CLEARED, and only to the MANIFEST list.) It never
-        // fires for a store installing something else, which is the whole point
-        // of keeping it: the one case it does fire for is an app that somehow
-        // reinstalls itself, and there a device would stay silent.
-        String skipPackage = null;
-        String action = intent.getAction();
-        if (Intent.ACTION_PACKAGE_ADDED.equals(action)
-                || Intent.ACTION_PACKAGE_RESTARTED.equals(action)
-                || Intent.ACTION_PACKAGE_DATA_CLEARED.equals(action)) {
-            try {
-                android.net.Uri d = intent.getData();
-                if (d != null) skipPackage = d.getSchemeSpecificPart();
-            } catch (Throwable ignored) {}
-        }
-        for (android.content.pm.ResolveInfo ri : hits) {
-            if (ri == null || ri.activityInfo == null || ri.activityInfo.name == null) continue;
-            String owner = ri.activityInfo.packageName;
-            if (skipPackage != null && skipPackage.equals(owner)) continue;
-            if (MACAPK_FROM_OTHER_APP.get() && !ri.activityInfo.exported) continue;
-            macapkRunManifestReceiver(ri.activityInfo.name, intent);
-        }
-    }
-    /** Instantiate the hosted app's manifest-declared receiver named by the
-     *  intent's component and deliver on the MAIN thread (AOSP runs manifest
-     *  receivers there; a fresh instance per broadcast is also AOSP's
-     *  behavior). Only the hosted package can receive: a component in any
-     *  other package would, on a device, be delivered into that app's own
-     *  process, and an app that is not running here has no process -- so the
-     *  faithful answer for foreign components is a silent drop, same as a
-     *  device with the target app not installed.
-     *
-     *  Leniency note, NARROWED at v1.1.0. Delivery used to be keyed purely on
-     *  "the class loads from the app's classloader and is a BroadcastReceiver",
-     *  which bypassed the parsed <receiver> set entirely -- so an
-     *  android:enabled="false" receiver received here while the SAME receiver
-     *  was correctly skipped by the filter-matched sibling
-     *  (macapkDeliverToMatchingManifestReceivers -> queryBroadcastReceivers,
-     *  which has always tested the flag). Two paths, one rule, opposite
-     *  answers: an explicit-component broadcast reached a receiver the implicit
-     *  one would not. 124 corpus receivers across 31 apps are enabled=false.
-     *
-     *  The leniency that remains is exactly the case it was introduced for --
-     *  an UNDECLARED receiver still gets delivery, so a manifest-parse gap
-     *  cannot eat a store's install-status callback. What is no longer lenient
-     *  is a receiver the manifest DECLARES and DISABLES: that is an explicit
-     *  statement by the app, not a gap in our parser, and a device drops it.
-     *  AOSP is stricter than both (undeclared components do not resolve at
-     *  all); the residual cost is unchanged -- a component the app ships but
-     *  never declared fires here and would not on a device. */
-    private void macapkDeliverToManifestReceiver(Intent intent) {
-        android.content.ComponentName cn = intent.getComponent();
-        String selfPkg = null;
-        try { selfPkg = getPackageName(); } catch (Throwable ignored) {}
-        if (selfPkg != null && cn.getPackageName() != null
-                && !selfPkg.equals(cn.getPackageName())) {
-            return;   // foreign package: not running in this process; dropped
-        }
-        String cls = cn.getClassName();
-        if (cls == null) return;
-        if (MACAPK_FROM_OTHER_APP.get()) {
-            // Another app's explicit broadcast: only an exported receiver.
-            try {
-                android.content.pm.ActivityInfo ai = getPackageManager().getReceiverInfo(cn, 0);
-                if (ai != null && !ai.exported) return;
-            } catch (Throwable ignored) { return; }
-        }
-        // Manifest-relative names (".Foo") normalize against the package.
-        final String className = cls.startsWith(".") && cn.getPackageName() != null
-                ? cn.getPackageName() + cls : cls;
-        if (macapkIsDeclaredButDisabledReceiver(className)) {
-            com.macapk.loader.NativeLog.i("Context",
-                "manifest broadcast to " + className
-                + " dropped: declared android:enabled=false");
-            return;
-        }
-        macapkRunManifestReceiver(className, intent);
-    }
-
-    /** True only when the manifest DECLARES this receiver AND the effective
-     *  gate says it is disabled -- see the leniency note on
-     *  macapkDeliverToManifestReceiver for why "declared but disabled" and
-     *  "undeclared" must be told apart rather than both treated as absent.
-     *
-     *  Two probes, in this order: getReceiverInfo with
-     *  MATCH_DISABLED_COMPONENTS throws only for a genuinely undeclared
-     *  component (stay lenient); the same call without the flag throws when a
-     *  declared component is disabled (drop). Same idiom as
-     *  ServiceRegistry.macapkIsDeclaredButDisabled, deliberately -- the two
-     *  dispatch paths should not have two different ways of asking one
-     *  question. */
-    private boolean macapkIsDeclaredButDisabledReceiver(String className) {
-        if (className == null || className.isEmpty()) return false;
-        try {
-            android.content.pm.PackageManager pm = getPackageManager();
-            if (pm == null) return false;
-            android.content.ComponentName cn =
-                new android.content.ComponentName(getPackageName(), className);
-            try {
-                pm.getReceiverInfo(cn,
-                    android.content.pm.PackageManager.MATCH_DISABLED_COMPONENTS);
-            } catch (android.content.pm.PackageManager.NameNotFoundException undeclared) {
-                return false;
-            }
-            try {
-                pm.getReceiverInfo(cn, 0);
-                return false;
-            } catch (android.content.pm.PackageManager.NameNotFoundException disabled) {
-                return true;
-            }
-        } catch (Throwable t) {
-            return false;
-        }
-    }
-
-    /** Instantiate the hosted app's receiver class and run onReceive on the
-     *  MAIN thread (AOSP runs manifest receivers there, and a fresh instance
-     *  per broadcast is also AOSP's behavior). ONE implementation for both the
-     *  explicit-component path and the filter-matched path -- two copies of
-     *  "how do we actually invoke a manifest receiver" is how one of them ends
-     *  up on the wrong thread. */
-    private void macapkRunManifestReceiver(final String className, Intent intent) {
-        if (className == null || className.isEmpty()) return;
-        // A manifest receiver runs in ITS OWN android:process. When the system
-        // broker has split this package into processes, one declared for another
-        // process is that process's to run (the broker delivers the broadcast
-        // there); instantiating it here would run it in a process a device never
-        // would, and run it twice once the broker also delivers. Always true when
-        // processes are not split.
-        if (!com.macapk.loader.SystemClient.hostsHere(className)) {
-            com.macapk.loader.NativeLog.i("Context", "manifest receiver " + className
-                + " belongs to another android:process; left to the process that hosts it");
-            return;
-        }
-        final Intent delivered = intent;
-        Runnable run = () -> {
-            try {
-                ClassLoader cl = com.macapk.loader.ActivityHost.macapkAppClassLoader();
-                if (cl == null) cl = Context.class.getClassLoader();
-                Class<?> c = Class.forName(className, true, cl);
-                if (!android.content.BroadcastReceiver.class.isAssignableFrom(c)) return;
-                android.content.BroadcastReceiver r = (android.content.BroadcastReceiver)
-                        c.getDeclaredConstructor().newInstance();
-                // Same PendingResult contract on the manifest path (AOSP's
-                // ReceiverDispatcher does not distinguish).
-                try { r.setPendingResult(new android.content.BroadcastReceiver.PendingResult(
-                        0, null, null, android.content.BroadcastReceiver.PendingResult.TYPE_COMPONENT,
-                        false, false, 0, 0, getPackageName())); }
-                catch (Throwable ignored) { }
-                try { r.onReceive(Context.this, delivered); }
-                finally { try { r.setPendingResult(null); } catch (Throwable ignored) { } }
-            } catch (Throwable t) {
-                com.macapk.loader.NativeLog.w("Context",
-                        "manifest broadcast to " + className + " failed: " + t);
-            }
-        };
-        try {
-            new android.os.Handler(getMainLooper()).post(run);
-        } catch (Throwable t) {
-            run.run();   // main looper unavailable (early boot): inline
-        }
-    }
-
-    public void sendBroadcast(Intent intent, String receiverPermission) { sendBroadcast(intent); }
-    public void sendStickyBroadcast(Intent intent) {
-        // AOSP retains the intent so a LATER registerReceiver replays it. We
-        // previously only fanned it out to current receivers and kept nothing,
-        // so anyone registering afterwards never learned the state.
-        macapkPutSticky(intent);
-        sendBroadcast(intent);
-    }
-
-    // ---- Cross-user / permission-list / sticky broadcast variants.
-    //
-    // Mac.apk has ONE user (UserManager reports a single profile and
-    // UserHandle is always user 0) and dispatches broadcasts in-process to the
-    // app's own registered receivers, which by definition hold every
-    // permission the app declares. So the *AsUser and *WithMultiplePermissions
-    // forms cannot select a different receiver set than the plain form -- they
-    // are the SAME delivery, not a weakened one, and each is routed through
-    // the existing method so it cannot drift.
-    public void sendBroadcastAsUser(Intent intent, android.os.UserHandle user) {
-        sendBroadcast(intent);
-    }
-    public void sendBroadcastAsUser(Intent intent, android.os.UserHandle user,
-                                    String receiverPermission) {
-        sendBroadcast(intent, receiverPermission);
-    }
-    public void sendBroadcastWithMultiplePermissions(Intent intent, String[] receiverPermissions) {
-        sendBroadcast(intent);
-    }
-    public void sendStickyBroadcastAsUser(Intent intent, android.os.UserHandle user) {
-        sendStickyBroadcast(intent);
-    }
-    /** AOSP API-31: `options` is a BroadcastOptions.toBundle() payload; see
-     *  sendBroadcast(Intent,String,Bundle) below for why none of its knobs
-     *  apply here. */
-    public void sendStickyBroadcast(Intent intent, android.os.Bundle options) {
-        sendStickyBroadcast(intent);
-    }
-
-    /** AOSP removeStickyBroadcast: drop a previously-sent sticky so a later
-     *  registerReceiver no longer replays it.
-     *
-     *  These were no-ops, justified by a comment saying our sticky send
-     *  "RETAINS NOTHING, so there is nothing for a remove to erase". That
-     *  justification died the moment retention landed (v1.0.1112), and the
-     *  comment itself said so: "If sticky retention is ever implemented, these
-     *  must be implemented with it." Left alone they became a LIVE bug -- a
-     *  sticky that can never be withdrawn. */
-    public void removeStickyBroadcast(Intent intent) {
-        if (intent == null || intent.getAction() == null) return;
-        sStickies.remove(intent.getAction());
-    }
-    public void removeStickyBroadcastAsUser(Intent intent, android.os.UserHandle user) {
-        removeStickyBroadcast(intent);
-    }
-    public void sendOrderedBroadcast(Intent intent, String receiverPermission) { sendBroadcast(intent); }
-    /** AOSP API-26 overload. `options` is a BroadcastOptions.toBundle()
-     *  payload: temp-allowlist duration, background-activity-start grants,
-     *  deferral policy. None of those knobs exist in a single-process host
-     *  with no background-execution limits, so delivery is identical to the
-     *  2-arg form. Declaring it is what matters -- callers compiled against
-     *  API 26+ invoke this exact descriptor and got NoSuchMethodError. */
-    public void sendBroadcast(Intent intent, String receiverPermission,
-                              android.os.Bundle options) {
-        sendBroadcast(intent, receiverPermission);
-    }
-    /** AOSP 7-arg ordered broadcast: the registered receivers run in
-     *  priority order and then the caller-supplied resultReceiver runs as
-     *  the final receiver in the chain, dispatched on `scheduler` (or the
-     *  main thread when scheduler is null). Our sendBroadcast already fans
-     *  out to every matching dynamic receiver; the piece missing entirely
-     *  was the final-receiver callback, so a caller that used the ordered
-     *  form specifically to collect a result never heard back.
-     *
-     *  initialCode / initialData / initialExtras ARE seeded now:
-     *  BroadcastReceiver carries real result state (a PendingResult), so the
-     *  final receiver is handed one pre-loaded with the caller's initial
-     *  values and can read them through getResultCode()/getResultData()/
-     *  getResultExtras().
-     *
-     *  ⚠ STATED PARTIAL. What is still missing is the CHAIN: the fan-out above
-     *  (sendBroadcast) invokes every matching receiver without installing that
-     *  PendingResult on each of them in turn, so an intermediate receiver's
-     *  setResult() is not visible to the final receiver, and abortBroadcast()
-     *  does not stop later receivers. Threading it means restructuring the
-     *  shared delivery loop in sendBroadcast, which is a separate change; this
-     *  one moves the caller-seeded half from "impossible" to "works" without
-     *  touching that loop. */
-    /** AOSP API-30 -- ordered broadcast with a BroadcastOptions bundle but no
-     *  result receiver. */
-    public void sendOrderedBroadcast(Intent intent, String receiverPermission,
-                                     android.os.Bundle options) {
-        sendOrderedBroadcast(intent, receiverPermission);
-    }
-
-    /** AOSP API-30 -- the 7-arg ordered form plus BroadcastOptions. */
-    public void sendOrderedBroadcast(Intent intent, String receiverPermission,
-                                     android.os.Bundle options,
-                                     android.content.BroadcastReceiver resultReceiver,
-                                     android.os.Handler scheduler,
-                                     int initialCode, String initialData,
-                                     android.os.Bundle initialExtras) {
-        sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler,
-                             initialCode, initialData, initialExtras);
-    }
-
-    /** AOSP API-33 -- adds an appOp string alongside the permission. Mac.apk
-     *  has no AppOps enforcement (there is no AppOpsManager gate on delivery),
-     *  so the appOp cannot filter a receiver out. */
-    public void sendOrderedBroadcast(Intent intent, String receiverPermission,
-                                     String receiverAppOp,
-                                     android.content.BroadcastReceiver resultReceiver,
-                                     android.os.Handler scheduler,
-                                     int initialCode, String initialData,
-                                     android.os.Bundle initialExtras) {
-        sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler,
-                             initialCode, initialData, initialExtras);
-    }
-
-    /** AOSP API-34 -- the widest ordered form: initialCode first, then BOTH a
-     *  permission and an appOp, then the result receiver, then the initial
-     *  data/extras and a BroadcastOptions bundle. Note the ARGUMENT ORDER
-     *  differs from the other overloads (initialCode is second, not sixth);
-     *  that is AOSP's, and getting it wrong would silently swap the initial
-     *  data with the permission. */
-    public void sendOrderedBroadcast(Intent intent, int initialCode, String receiverPermission,
-                                     String receiverAppOp,
-                                     android.content.BroadcastReceiver resultReceiver,
-                                     android.os.Handler scheduler, String initialData,
-                                     android.os.Bundle initialExtras,
-                                     android.os.Bundle options) {
-        sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler,
-                             initialCode, initialData, initialExtras);
-    }
-
-    /** AOSP sendOrderedBroadcastAsUser -- single user here, see the *AsUser
-     *  note above. */
-    public void sendOrderedBroadcastAsUser(Intent intent, android.os.UserHandle user,
-                                           String receiverPermission,
-                                           android.content.BroadcastReceiver resultReceiver,
-                                           android.os.Handler scheduler,
-                                           int initialCode, String initialData,
-                                           android.os.Bundle initialExtras) {
-        sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler,
-                             initialCode, initialData, initialExtras);
-    }
-
-    /** AOSP sendStickyOrderedBroadcast / ...AsUser (both @Deprecated). Ordered
-     *  delivery to the already-registered receivers, AND retention so a later
-     *  registerReceiver replays it -- the sticky half was previously skipped on
-     *  the reasoning that nothing retained anything, which stopped being true
-     *  at v1.0.1112 and left this method inconsistent with its non-ordered
-     *  sibling. */
-    @Deprecated
-    public void sendStickyOrderedBroadcast(Intent intent,
-                                           android.content.BroadcastReceiver resultReceiver,
-                                           android.os.Handler scheduler,
-                                           int initialCode, String initialData,
-                                           android.os.Bundle initialExtras) {
-        macapkPutSticky(intent);
-        sendOrderedBroadcast(intent, null, resultReceiver, scheduler,
-                             initialCode, initialData, initialExtras);
-    }
-    @Deprecated
-    public void sendStickyOrderedBroadcastAsUser(Intent intent, android.os.UserHandle user,
-                                                 android.content.BroadcastReceiver resultReceiver,
-                                                 android.os.Handler scheduler,
-                                                 int initialCode, String initialData,
-                                                 android.os.Bundle initialExtras) {
-        sendStickyOrderedBroadcast(intent, resultReceiver, scheduler,
-                                   initialCode, initialData, initialExtras);
-    }
-
-    public void sendOrderedBroadcast(Intent intent, String receiverPermission,
-                                     android.content.BroadcastReceiver resultReceiver,
-                                     android.os.Handler scheduler,
-                                     int initialCode, String initialData,
-                                     android.os.Bundle initialExtras) {
-        sendBroadcast(intent, receiverPermission);
-        if (resultReceiver == null) return;
-        final android.content.BroadcastReceiver finalReceiver = resultReceiver;
-        final Intent delivered = intent;
-        // AOSP's ordered dispatch hands the final receiver a PendingResult
-        // carrying whatever the chain left in it, seeded from the caller's
-        // initial values. TYPE_REGISTERED because this receiver was supplied
-        // directly rather than resolved from a manifest component; ordered=true
-        // so setResult() on it is legal (checkSynchronousHint).
-        final android.content.BroadcastReceiver.PendingResult pending =
-                new android.content.BroadcastReceiver.PendingResult(
-                        initialCode, initialData, initialExtras,
-                        android.content.BroadcastReceiver.PendingResult.TYPE_REGISTERED,
-                        /*ordered=*/ true, /*sticky=*/ false,
-                        android.os.UserHandle.USER_SYSTEM,
-                        android.os.Process.myUid(), getPackageName());
-        Runnable run = new Runnable() {
-            @Override public void run() {
-                finalReceiver.setPendingResult(pending);
-                try { finalReceiver.onReceive(Context.this, delivered); }
-                catch (Throwable t) {
-                    // Same reasoning as the registered-receiver dispatch above:
-                    // a result receiver that throws used to disappear without a
-                    // trace, which is how an install confirmation goes missing
-                    // with an empty log.
-                    com.macapk.loader.NativeLog.w("Context",
-                        "result receiver " + finalReceiver.getClass().getName()
-                        + " threw on " + delivered.getAction() + ": " + t);
-                } finally {
-                    // AOSP clears the pending result once the receiver returns
-                    // (unless it took it with goAsync()), so a later
-                    // getResultCode() on the same receiver object does not read
-                    // a stale result from a finished broadcast.
-                    if (finalReceiver.getPendingResult() == pending) {
-                        pending.finish();
-                        finalReceiver.setPendingResult(null);
-                    }
-                }
-            }
-        };
-        // AOSP documents the ordered send as asynchronous ("returns
-        // immediately, and you will continue executing while the receivers
-        // are run"), so post rather than calling inline.
-        android.os.Handler h = (scheduler != null) ? scheduler
-                                                   : new android.os.Handler(getMainLooper());
-        h.post(run);
-    }
-
-    public Intent registerReceiver(android.content.BroadcastReceiver receiver,
-                                   android.content.IntentFilter filter) {
-        return macapkRegisterReceiver(receiver, filter);
-    }
-    /** AOSP API-26+ -- 3-arg overload with flags (e.g.
-     *  RECEIVER_NOT_EXPORTED). F-Droid + ContextCompat call this. */
-    public Intent registerReceiver(android.content.BroadcastReceiver receiver,
-                                   android.content.IntentFilter filter,
-                                   int flags) { return macapkRegisterReceiver(receiver, filter, null, flags); }
-    /** AOSP API-1+ 4-arg variant with broadcast permission and Handler.
-     *  ContextCompat probes this via reflection to gate flag-arg vs
-     *  permission-arg overloads. */
-    public Intent registerReceiver(android.content.BroadcastReceiver receiver,
-                                   android.content.IntentFilter filter,
-                                   String broadcastPermission,
-                                   android.os.Handler scheduler) { return macapkRegisterReceiver(receiver, filter, scheduler); }
-    /** AOSP API-26+ 5-arg variant. */
-    public Intent registerReceiver(android.content.BroadcastReceiver receiver,
-                                   android.content.IntentFilter filter,
-                                   String broadcastPermission,
-                                   android.os.Handler scheduler,
-                                   int flags) { return macapkRegisterReceiver(receiver, filter, scheduler, flags); }
-    /** Receiver-export flags for the 3-arg / 5-arg variants. AOSP. */
+    // Broadcasts and receivers. Android: abstract; ContextImpl's (AOSP's) go to the activity manager,
+    // whose broadcast queue (com.winapk.aospapp.ActiveBroadcasts) delivers them through each
+    // receiver's LoadedApk.ReceiverDispatcher and ActivityThread.handleReceiver, and hands them to the
+    // system broker for other apps. A context of Win.apk's own with no base of that kind uses the
+    // application's.
     public static final int RECEIVER_EXPORTED     = 0x2;
     public static final int RECEIVER_NOT_EXPORTED = 0x4;
     public static final int RECEIVER_VISIBLE_TO_INSTANT_APPS = 0x1;
-
+    public void sendBroadcast(Intent intent) {
+        applicationForStarts().sendBroadcast(intent);
+    }
+    public void sendBroadcast(Intent intent, String receiverPermission) {
+        applicationForStarts().sendBroadcast(intent, receiverPermission);
+    }
+    public void sendBroadcast(Intent intent, String receiverPermission, android.os.Bundle options) {
+        applicationForStarts().sendBroadcast(intent, receiverPermission, options);
+    }
+    public void sendBroadcastAsUser(Intent intent, android.os.UserHandle user) {
+        applicationForStarts().sendBroadcastAsUser(intent, user);
+    }
+    public void sendBroadcastAsUser(Intent intent, android.os.UserHandle user, String receiverPermission) {
+        applicationForStarts().sendBroadcastAsUser(intent, user, receiverPermission);
+    }
+    public void sendBroadcastWithMultiplePermissions(Intent intent, String[] receiverPermissions) {
+        applicationForStarts().sendBroadcastWithMultiplePermissions(intent, receiverPermissions);
+    }
+    public void sendStickyBroadcast(Intent intent) {
+        applicationForStarts().sendStickyBroadcast(intent);
+    }
+    public void sendStickyBroadcast(Intent intent, android.os.Bundle options) {
+        applicationForStarts().sendStickyBroadcast(intent, options);
+    }
+    public void sendStickyBroadcastAsUser(Intent intent, android.os.UserHandle user) {
+        applicationForStarts().sendStickyBroadcastAsUser(intent, user);
+    }
+    public void removeStickyBroadcast(Intent intent) {
+        applicationForStarts().removeStickyBroadcast(intent);
+    }
+    public void removeStickyBroadcastAsUser(Intent intent, android.os.UserHandle user) {
+        applicationForStarts().removeStickyBroadcastAsUser(intent, user);
+    }
+    public void sendOrderedBroadcast(Intent intent, String receiverPermission) {
+        applicationForStarts().sendOrderedBroadcast(intent, receiverPermission);
+    }
+    public void sendOrderedBroadcast(Intent intent, String receiverPermission, android.os.Bundle options) {
+        applicationForStarts().sendOrderedBroadcast(intent, receiverPermission, options);
+    }
+    public void sendOrderedBroadcast(Intent intent, String receiverPermission, android.os.Bundle options, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        applicationForStarts().sendOrderedBroadcast(intent, receiverPermission, options, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    public void sendOrderedBroadcast(Intent intent, String receiverPermission, String receiverAppOp, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        applicationForStarts().sendOrderedBroadcast(intent, receiverPermission, receiverAppOp, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    public void sendOrderedBroadcast(Intent intent, int initialCode, String receiverPermission, String receiverAppOp, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, String initialData, android.os.Bundle initialExtras, android.os.Bundle options) {
+        applicationForStarts().sendOrderedBroadcast(intent, initialCode, receiverPermission, receiverAppOp, resultReceiver, scheduler, initialData, initialExtras, options);
+    }
+    public void sendOrderedBroadcast(Intent intent, String receiverPermission, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        applicationForStarts().sendOrderedBroadcast(intent, receiverPermission, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    public void sendOrderedBroadcastAsUser(Intent intent, android.os.UserHandle user, String receiverPermission, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        applicationForStarts().sendOrderedBroadcastAsUser(intent, user, receiverPermission, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    public void sendStickyOrderedBroadcast(Intent intent, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        applicationForStarts().sendStickyOrderedBroadcast(intent, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    public void sendStickyOrderedBroadcastAsUser(Intent intent, android.os.UserHandle user, android.content.BroadcastReceiver resultReceiver, android.os.Handler scheduler, int initialCode, String initialData, android.os.Bundle initialExtras) {
+        applicationForStarts().sendStickyOrderedBroadcastAsUser(intent, user, resultReceiver, scheduler, initialCode, initialData, initialExtras);
+    }
+    public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter) {
+        return applicationForStarts().registerReceiver(receiver, filter);
+    }
+    public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter, int flags) {
+        return applicationForStarts().registerReceiver(receiver, filter, flags);
+    }
+    public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler) {
+        return applicationForStarts().registerReceiver(receiver, filter, broadcastPermission, scheduler);
+    }
+    public Intent registerReceiver(android.content.BroadcastReceiver receiver, android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler, int flags) {
+        return applicationForStarts().registerReceiver(receiver, filter, broadcastPermission, scheduler, flags);
+    }
     public void unregisterReceiver(android.content.BroadcastReceiver receiver) {
-        if (receiver == null) return;
-        for (Object[] e : sReceivers) if (e[0] == receiver) sReceivers.remove(e);
-    }
-
-    /** AOSP LoadedApk.removeContextRegistrations (android14 :1529-1569), run by
-     *  ActivityThread.handleDestroyActivity -> ContextImpl.scheduleFinalCleanup:
-     *  every receiver a destroyed activity registered and never unregistered is
-     *  unregistered ("has leaked IntentReceiver"), and every service it bound
-     *  and never unbound is unbound ("has leaked ServiceConnection"). v1.0.1643:
-     *  ours kept them forever -- the entry pins the activity, and a leaked
-     *  receiver kept running against torn-down views and fragments. */
-    public static void macapkRemoveContextRegistrations(Context dead) {
-        if (dead == null) return;
-        String who = dead.getClass().getName();
-        for (Object[] e : sReceivers) {   // copy-on-write: removing while iterating is safe
-            if (e.length > 2 && e[2] instanceof Context && macapkWraps((Context) e[2], dead)) {
-                sReceivers.remove(e);
-                try {
-                    com.macapk.loader.NativeLog.w("Context", "Activity " + who
-                        + " has leaked IntentReceiver " + e[0]
-                        + " that was originally registered here. Are you missing a call to unregisterReceiver()?");
-                } catch (Throwable ignored) {}
-            }
-        }
-        synchronized (sBoundConnections) {
-            java.util.Iterator<java.util.Map.Entry<ServiceConnection, Context>> it =
-                sBoundBy.entrySet().iterator();
-            while (it.hasNext()) {
-                java.util.Map.Entry<ServiceConnection, Context> en = it.next();
-                if (macapkWraps(en.getValue(), dead)) {
-                    sBoundConnections.remove(en.getKey());
-                    it.remove();
-                    try {
-                        com.macapk.loader.NativeLog.w("Context", "Activity " + who
-                            + " has leaked ServiceConnection " + en.getKey()
-                            + " that was originally bound here");
-                    } catch (Throwable ignored) {}
-                }
-            }
-        }
-    }
-
-    /** Whether `c` is `target` or a ContextWrapper chain around it. */
-    private static boolean macapkWraps(Context c, Context target) {
-        for (int i = 0; c != null && i < 16; i++) {
-            if (c == target) return true;
-            if (!(c instanceof ContextWrapper)) return false;
-            c = ((ContextWrapper) c).getBaseContext();
-        }
-        return false;
+        applicationForStarts().unregisterReceiver(receiver);
     }
 
     /** AOSP API-14+: registers a ComponentCallbacks for memory-pressure
@@ -2941,291 +2077,55 @@ public abstract class Context {
      *  Before this, the no-op silently dropped Compose's image-vector cache
      *  and Glide's memory-trim listener registrations. */
     public void registerComponentCallbacks(android.content.ComponentCallbacks cb) {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app != null && app != this) app.registerComponentCallbacks(cb);
     }
     public void unregisterComponentCallbacks(android.content.ComponentCallbacks cb) {
-        android.app.Application app = android.app.Application.macapk_get();
+        android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app != null && app != this) app.unregisterComponentCallbacks(cb);
     }
 
-    /** Live bindings, keyed by ServiceConnection identity (AOSP keys its
-     *  ServiceDispatchers the same way, per (Context, ServiceConnection)).
-     *  One connection may be bound to several components at once, hence the
-     *  set of ComponentNames. */
-    private static final java.util.Map<ServiceConnection, java.util.HashSet<ComponentName>>
-        sBoundConnections = new java.util.IdentityHashMap<>();
-    /** Which Context bound each live connection (guarded by sBoundConnections),
-     *  so macapkRemoveContextRegistrations can unbind a destroyed activity's. */
-    private static final java.util.Map<ServiceConnection, Context> sBoundBy =
-        new java.util.IdentityHashMap<>();
-    /** Connections whose bind is queued on the main looper and has not run yet
-     *  (guarded by sBoundConnections). unbindService removes the entry, and the
-     *  queued bind then does nothing. */
-    private static final java.util.Map<ServiceConnection, Boolean> sPendingBinds =
-        new java.util.IdentityHashMap<>();
-
-    /** AOSP bindService. Once the target Service's onBind() returns, the
-     *  IBinder is delivered through LoadedApk.ServiceDispatcher: connected()
-     *  posts a RunConnection to the caller's Handler (or Executor) and
-     *  doConnected() calls mConnection.onServiceConnected(name, binder). The
-     *  callback is ASYNCHRONOUS -- it is never delivered inline out of
-     *  bindService(). (frameworks/base/core/java/android/app/LoadedApk.java,
-     *  ServiceDispatcher.connected / doConnected.)
-     *
-     *  This used to return false unconditionally and never touch the
-     *  ServiceConnection, so every bound-service client sat waiting forever
-     *  for a callback that could not arrive. Mac.apk is single-process, so
-     *  there is nothing to fake: the IBinder that
-     *  android.app.ServiceRegistry.bind() returns IS the Service's own
-     *  onBind() result and the client can call straight through it.
-     *
-     *  Flags: AOSP only brings the Service up when BIND_AUTO_CREATE is set.
-     *  ServiceRegistry exposes no "is this component already live" query, so
-     *  we always ensure+bind. The effect is that the rare non-AUTO_CREATE
-     *  bind creates the Service slightly earlier than Android would -- over
-     *  eager, not a different answer. */
+    // Services. Android: abstract; ContextImpl's (AOSP's) go to the activity manager, which runs
+    // the app's services through ActivityThread (com.winapk.aospapp.ActiveServices) or hands
+    // another app's to the system broker. A context of Win.apk's own with no base of that kind
+    // starts, binds and stops through the application's, as it starts activities.
     public boolean bindService(Intent intent, ServiceConnection conn, int flags) {
-        return bindService(intent, flags, null, conn);
+        return applicationForStarts().bindService(intent, conn, flags);
     }
-    /** AOSP bindServiceAsUser(Intent, ServiceConnection, int, UserHandle): bind
-     *  on behalf of another user. It is a SystemApi guarded by
-     *  INTERACT_ACROSS_USERS, and apps that call it (Signal does) are built to
-     *  run as a device/profile owner where it is granted.
-     *
-     *  Mac.apk models exactly one user -- UserHandle is always the single
-     *  running user, and `UserManager` reports one profile -- so a cross-user
-     *  bind and a same-user bind are the same operation here. Delegating is
-     *  therefore the faithful answer rather than a shortcut: there is no other
-     *  user whose service we could fail to reach. The alternative, returning
-     *  false, would tell the app the bind failed when the service it wanted is
-     *  in fact running. */
+    /** AOSP bindServiceAsUser: one user here, so bindService. */
     public boolean bindServiceAsUser(Intent intent, ServiceConnection conn, int flags,
                                      android.os.UserHandle user) {
-        return bindService(intent, conn, flags);
+        return applicationForStarts().bindService(intent, conn, flags);
     }
-    /** AOSP API-34 overloads taking Context.BindServiceFlags, the long form
-     *  of the BIND_* mask. Every flag this runtime acts on is in the low 32
-     *  bits, so they are the int overloads with the value narrowed. */
     public boolean bindService(Intent intent, ServiceConnection conn, BindServiceFlags flags) {
-        return bindService(intent, conn, (flags != null) ? (int) flags.getValue() : 0);
+        return applicationForStarts().bindService(intent, conn, flags);
     }
     public boolean bindService(Intent intent, BindServiceFlags flags,
                                java.util.concurrent.Executor executor,
                                ServiceConnection conn) {
-        return bindService(intent, (flags != null) ? (int) flags.getValue() : 0, executor, conn);
+        return applicationForStarts().bindService(intent, flags, executor, conn);
     }
     /** AOSP startActivityAsUser(Intent, UserHandle), a system API. There is one
      *  user (see bindServiceAsUser), so it is startActivity. */
     public void startActivityAsUser(Intent intent, android.os.UserHandle user) {
         startActivity(intent);
     }
-    /** AOSP API-29 overload: the ServiceConnection callbacks are delivered on
-     *  the supplied Executor rather than the caller's main-thread Handler
-     *  (LoadedApk.ServiceDispatcher.connected prefers mActivityExecutor when
-     *  one was registered). */
     public boolean bindService(Intent intent, int flags,
                                java.util.concurrent.Executor executor,
                                ServiceConnection conn) {
-        // AOSP ContextImpl.bindServiceCommon treats a null connection as an
-        // IllegalArgumentException, not a quiet false.
-        if (conn == null) throw new IllegalArgumentException("connection is null");
-        if (intent == null) return false;
-        // Another package running in ANOTHER process (each Mac.apk app has its
-        // own): AMS-style, through the system broker, delivering a real
-        // cross-process IBinder. A package the broker does not know keeps every
-        // in-process path below unchanged. See com.macapk.loader.SystemClient.
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, intent)) {
-            return com.macapk.loader.SystemClient.bindRemote(this, intent, flags, executor, conn);
-        }
-        // AOSP bindService only resolves and returns: CREATE_SERVICE and
-        // BIND_SERVICE are main-looper messages that run after the caller has
-        // unwound (ActivityThread.H handleCreateService / handleBindService). We
-        // created + bound inline, so a Hilt @Singleton whose constructor binds
-        // (media3 MediaController.buildAsync in Libro.fm) had the Service's
-        // onCreate inject that singleton mid-construction and Dagger threw
-        // "Scoped provider was invoked recursively" -> black screen (issue #7).
-        // Resolve now (the return value), create + bind on the main looper.
-        if (android.app.ServiceRegistry.BIND_ASYNC) {
-            if (!android.app.ServiceRegistry.resolves(this, intent)) return false;
-            final Intent fi = intent; final int ff = flags;
-            final java.util.concurrent.Executor fe = executor; final ServiceConnection fc = conn;
-            synchronized (sBoundConnections) { sPendingBinds.put(fc, Boolean.TRUE); }
-            new android.os.Handler(getMainLooper()).post(() -> {
-                // unbindService before the bind ran: AOSP drops the dispatcher,
-                // so the connection never hears onServiceConnected.
-                synchronized (sBoundConnections) { if (sPendingBinds.remove(fc) == null) return; }
-                if (!macapkBindNow(fi, ff, fe, fc)) macapkDeliverNullBinding(fi, fe, fc);
-            });
-            return true;
-        }
-        // A bind to a Service that is inside its own onCreate (it binds to
-        // itself, as a media3 MediaSessionService building a MediaController for
-        // its own SessionToken does) is a BIND_SERVICE message queued behind
-        // CREATE_SERVICE on a device, so onBind runs on the published instance
-        // after onCreate returns. Binding inline here re-entered onCreate on a
-        // second instance. The target is being created, so it resolved: true.
-        if (android.app.ServiceRegistry.isCreating(intent)) {
-            final Intent fi = intent; final int ff = flags;
-            final java.util.concurrent.Executor fe = executor; final ServiceConnection fc = conn;
-            new android.os.Handler(getMainLooper()).post(() -> macapkBindNow(fi, ff, fe, fc));
-            return true;
-        }
-        return macapkBindNow(intent, flags, executor, conn);
+        return applicationForStarts().bindService(intent, flags, executor, conn);
     }
-
-    /** AOSP LoadedApk.ServiceDispatcher.doConnected with a null binder: the
-     *  component resolved but its onBind() returned null, so bindService said
-     *  true and the connection hears onNullBinding (API 26+), never
-     *  onServiceConnected. */
-    private void macapkDeliverNullBinding(Intent intent,
-                                          java.util.concurrent.Executor executor,
-                                          final ServiceConnection conn) {
-        ComponentName c = intent.getComponent();
-        if (c == null) {
-            try {
-                android.content.pm.ResolveInfo ri = getPackageManager().resolveService(intent, 0);
-                if (ri != null && ri.serviceInfo != null && ri.serviceInfo.name != null) {
-                    c = new ComponentName(ri.serviceInfo.packageName != null
-                            ? ri.serviceInfo.packageName : getPackageName(), ri.serviceInfo.name);
-                }
-            } catch (Throwable ignored) {}
-        }
-        final ComponentName name = c;
-        Runnable deliver = () -> {
-            try { conn.onNullBinding(name); }
-            catch (Throwable t) {
-                try { com.macapk.loader.NativeLog.w("ctx", "onNullBinding(" + name + ") threw " + t); }
-                catch (Throwable ignored) {}
-            }
-        };
-        if (executor != null) executor.execute(deliver);
-        else new android.os.Handler(getMainLooper()).post(deliver);
+    public void unbindService(ServiceConnection conn) {
+        applicationForStarts().unbindService(conn);
     }
-
-    /** bindService's inline half: bring the Service up, onBind, record the
-     *  connection and post onServiceConnected. */
-    private boolean macapkBindNow(Intent intent, int flags,
-                                  java.util.concurrent.Executor executor,
-                                  ServiceConnection conn) {
-        final android.os.IBinder binder = android.app.ServiceRegistry.bind(this, intent);
-        if (binder == null) {
-            // Two AOSP cases collapse to null here: the Intent names no
-            // resolvable Service (AOSP returns false), or the Service's
-            // onBind() legitimately returned null (AOSP returns true and calls
-            // ServiceConnection.onNullBinding). ServiceRegistry cannot tell
-            // them apart and our ServiceConnection has no onNullBinding to
-            // call, so report the "couldn't find the service" answer: a client
-            // told false takes its no-service path instead of blocking on a
-            // callback that cannot come.
-            return false;
-        }
-        // AOSP ALWAYS hands onServiceConnected a real ComponentName: the one the
-        // intent RESOLVED to, not the one the caller happened to write. For an
-        // implicit bind (setPackage + action, which is how every Firebase/GMS
-        // client binds) getComponent() is null, so we used to deliver
-        // onServiceConnected(null, binder). Most SDKs ignore the argument, but a
-        // null there is a latent NPE for any that does not -- and it also
-        // collapsed every implicit connection onto ONE key in sBoundConnections
-        // below, so two different implicit binds looked like a duplicate and the
-        // second was dropped by the "already have this one" check.
-        // Resolving it became possible at v1.0.1177, when the PackageManager
-        // learned to answer an implicit service action at all.
-        ComponentName resolved = intent.getComponent();
-        if (resolved == null) {
-            try {
-                android.content.pm.ResolveInfo ri = getPackageManager().resolveService(intent, 0);
-                if (ri != null && ri.serviceInfo != null && ri.serviceInfo.name != null) {
-                    String rp = ri.serviceInfo.packageName != null
-                              ? ri.serviceInfo.packageName : getPackageName();
-                    resolved = new ComponentName(rp, ri.serviceInfo.name);
-                }
-            } catch (Throwable ignored) {
-                // A context without a PackageManager keeps the old behaviour
-                // rather than failing the bind: null is what it delivered before.
-            }
-        }
-        final ComponentName name = resolved;
-        synchronized (sBoundConnections) {
-            java.util.HashSet<ComponentName> bound = sBoundConnections.get(conn);
-            if (bound == null) {
-                bound = new java.util.HashSet<>();
-                sBoundConnections.put(conn, bound);
-            }
-            sBoundBy.putIfAbsent(conn, this);
-            // AOSP doConnected() early-returns when this connection already
-            // holds this binder ("Huh, already have this one").
-            if (!bound.add(name)) return true;
-        }
-        final ServiceConnection target = conn;
-        Runnable deliver = new Runnable() {
-            @Override public void run() {
-                try { target.onServiceConnected(name, binder); }
-                catch (Throwable t) {
-                    try {
-                        com.macapk.loader.NativeLog.w("ctx",
-                            "onServiceConnected(" + name + ") threw " + t);
-                    } catch (Throwable ignored) {}
-                }
-            }
-        };
-        if (executor != null) executor.execute(deliver);
-        else new android.os.Handler(getMainLooper()).post(deliver);
-        return true;
-    }
-    /** AOSP unbindService drops the ServiceDispatcher for this connection and
-     *  does NOT call onServiceDisconnected -- that fires only on unexpected
-     *  service death (LoadedApk.ServiceDispatcher.doDeath). ContextImpl also
-     *  throws IllegalArgumentException("Service not registered") for a
-     *  connection it never handed out; we deliberately do not, because our
-     *  bind path returns false (and therefore records nothing) in cases where
-     *  AOSP would have returned true, so a faithful throw here would invent a
-     *  crash real Android never produces. */
-    public void    unbindService(ServiceConnection conn) {
-        // A connection to another app's process: drop it there (SystemClient).
-        if (conn != null && com.macapk.loader.SystemClient.unbindRemote(conn)) return;
-        if (conn == null) return;
-        synchronized (sBoundConnections) {
-            sBoundConnections.remove(conn); sBoundBy.remove(conn); sPendingBinds.remove(conn);
-        }
-    }
-    /** AOSP startService: instantiate (once) + drive the target Service's
-     *  onCreate/onStartCommand. v1.0: was a no-op returning null, so
-     *  Context.startService and PendingIntent.getService never ran the
-     *  service. Now backed by android.app.ServiceRegistry (single-process
-     *  Service host), keyed on the Intent's ComponentName -- generic, no
-     *  package-name branch. Returns the started ComponentName or null
-     *  when the Intent names no resolvable component. */
     public android.content.ComponentName startService(Intent service) {
-        // Another app's service in another process: through the broker
-        // (com.macapk.loader.SystemClient), as bindService does.
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, service)) {
-            return com.macapk.loader.SystemClient.startRemote(service);
-        }
-        return android.app.ServiceRegistry.start(this, service, false);
+        return applicationForStarts().startService(service);
     }
-    /** AOSP API-26+: same contract as startService except the service
-     *  is started in the foreground (allowed to bypass background
-     *  execution limits for the first 5 seconds while it calls
-     *  startForeground). Called by ContextCompat.startForegroundService
-     *  inside WorkManager's Processor.startForeground when a Worker
-     *  publishes ForegroundInfo via setForegroundAsync. We don't
-     *  display notifications, so we just no-op-return null; the
-     *  caller (WorkForegroundUpdater) completes its future
-     *  regardless. */
     public android.content.ComponentName startForegroundService(Intent service) {
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, service)) {
-            return com.macapk.loader.SystemClient.startRemote(service);
-        }
-        return android.app.ServiceRegistry.start(this, service, true);
+        return applicationForStarts().startForegroundService(service);
     }
     public boolean stopService(Intent service) {
-        // A service another process hosts (another app's, or this app's in its
-        // own android:process): stopped there, through the broker.
-        if (com.macapk.loader.SystemClient.bindsRemotely(this, service)) {
-            return com.macapk.loader.SystemClient.stopRemote(service);
-        }
-        return android.app.ServiceRegistry.stop(service);
+        return applicationForStarts().stopService(service);
     }
     /** AOSP permission checks. ContextImpl funnels every one of these
      *  through a SINGLE per-UID granted-permission set:
@@ -3271,6 +2171,17 @@ public abstract class Context {
     }
     public int  checkPermission(String permission, int pid, int uid) {
         if (permission == null) throw new IllegalArgumentException("permission is null");
+        // Win.apk: another app's process (a caller of one of this app's binders) holds what the
+        // system says the package that process is holds (ActivityManagerService.checkPermission,
+        // the system broker's answer), never this app's own grants; the system holds everything.
+        if (uid == android.os.Process.SYSTEM_UID) return android.content.pm.PackageManager.PERMISSION_GRANTED;
+        if (pid > 0 && pid != android.os.Process.myPid() && uid != android.os.Process.myUid()) {
+            int answer = com.macapk.loader.SystemClient.checkPermissionOfPid(permission, pid);
+            if (answer >= 0) {
+                return answer == 1 ? android.content.pm.PackageManager.PERMISSION_GRANTED
+                                   : android.content.pm.PackageManager.PERMISSION_DENIED;
+            }
+        }
         android.content.pm.PackageManager pm = getPackageManager();
         if (pm != null) {
             try { return pm.checkPermission(permission, getPackageName()); }
@@ -3440,46 +2351,19 @@ public abstract class Context {
     }
     public void revokeSelfPermissionsOnKill(java.util.Collection<String> permissions) { }
 
-    /** AOSP API-29 -- reorder a bound service's process within its LRU group.
-     *  A pure memory-management hint to the ActivityManager, with no return
-     *  value and no observable effect on the binding. Mac.apk runs one process
-     *  and never kills it for memory, so there is no group to move it in.
-     *  AOSP's own IllegalArgumentException for an unbound connection is kept
-     *  -- it is the one thing a caller can get wrong. */
     public void updateServiceGroup(ServiceConnection conn, int group, int importance) {
-        if (conn == null) throw new IllegalArgumentException("connection is null");
+        applicationForStarts().updateServiceGroup(conn, group, importance);
     }
-
-    /** AOSP bindIsolatedService (API 29) -- "Variation of bindService() that,
-     *  in the specific case of ISOLATED services, allows the caller to
-     *  generate multiple instances of the service from a single component
-     *  declaration", distinguished by instanceName.
-     *
-     *  ⚠ STATED DIVERGENCE. The bind itself is real: it goes through the same
-     *  ServiceRegistry path bindService() uses, so the caller gets a live
-     *  binder and its onServiceConnected fires. What Mac.apk cannot provide is
-     *  the two properties in the method's name. There is one process, so the
-     *  service is not isolated (a service asking Process.isIsolated() gets
-     *  false -- as it does for every service here). And ServiceRegistry keys
-     *  instances by COMPONENT, so two different instanceNames resolve to the
-     *  same instance rather than two.
-     *
-     *  Binding anyway rather than returning false, because a false would leave
-     *  a caller with no service at all, while the properties it loses are ones
-     *  nothing in a single-process runtime could have supplied under any
-     *  answer. The null-instanceName check is AOSP's. */
     public boolean bindIsolatedService(Intent service, int flags, String instanceName,
                                        java.util.concurrent.Executor executor,
                                        ServiceConnection conn) {
-        if (instanceName == null) throw new NullPointerException("null instanceName");
-        return bindService(service, flags, executor, conn);
+        return applicationForStarts().bindIsolatedService(service, flags, instanceName, executor, conn);
     }
     public boolean bindIsolatedService(Intent service, BindServiceFlags flags,
                                        String instanceName,
                                        java.util.concurrent.Executor executor,
                                        ServiceConnection conn) {
-        return bindIsolatedService(service, (flags != null) ? (int) flags.getValue() : 0,
-                                   instanceName, executor, conn);
+        return applicationForStarts().bindIsolatedService(service, flags, instanceName, executor, conn);
     }
 
     /** AOSP Context.BindServiceFlags (API 34) -- a long-width wrapper around

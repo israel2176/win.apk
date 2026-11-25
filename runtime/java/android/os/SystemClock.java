@@ -25,9 +25,6 @@ public final class SystemClock {
     // android.hardware.SensorManager's elapsedRealtimeNanos-based event
     // timestamp -- read the identical decision rather than re-parsing the
     // env var themselves (2026-09-28 review fix; no behaviour change, the
-    // field's value and meaning are unchanged).
-    public static final boolean AOSP_CLOCKS =
-        !"0".equals(System.getenv("MACAPK_GUEST_CLOCK_NANOTIME"));
 
     /** CLOCK_BOOTTIME on the System.nanoTime() base: the runtime's native
      *  (mach_continuous_time), else System.nanoTime() itself on a bare JVM (an
@@ -51,8 +48,7 @@ public final class SystemClock {
     }
 
     public static long uptimeMillis() {
-        if (AOSP_CLOCKS) return System.nanoTime() / 1_000_000L;
-        return (System.nanoTime() - START_NANOS) / 1_000_000L;
+        return System.nanoTime() / 1_000_000L;
     }
     // elapsedRealtime() must be MONOTONIC: AOSP callers use it for timers,
     // timeouts and backoff windows, and a wall-clock (currentTimeMillis)
@@ -63,12 +59,10 @@ public final class SystemClock {
     // host sleep advances and uptimeMillis does not, as on a device; under =0 both
     // count since process start.
     public static long elapsedRealtime() {
-        if (AOSP_CLOCKS) return bootNanos() / 1_000_000L;
-        return (System.nanoTime() - START_NANOS) / 1_000_000L;
+        return bootNanos() / 1_000_000L;
     }
     public static long elapsedRealtimeNanos() {
-        if (AOSP_CLOCKS) return bootNanos();
-        return System.nanoTime() - START_NANOS;
+        return bootNanos();
     }
     // AOSP: per-thread CPU time (only advances while THIS thread runs), not
     // process uptime. Back it with ThreadMXBean (OpenJDK 21); fall back to
@@ -96,8 +90,7 @@ public final class SystemClock {
      *  is the same tick count plus host sleep, so the two share a base and
      *  differ by exactly the time suspended, as on a device. */
     public static long uptimeNanos() {
-        if (AOSP_CLOCKS) return System.nanoTime();
-        return System.nanoTime() - START_NANOS;
+        return System.nanoTime();
     }
 
     /** AOSP :414 -- a Clock synchronised from the device's LOCATION provider,

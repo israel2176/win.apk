@@ -1,117 +1,92 @@
 // The site's texts in both languages and the language choice: ?lang= first, then the visitor's own pick (the
-// switch in the header), then the browser's languages; Hebrew lays the page out right to left.
+// switch in the header), then the browser's languages; Hebrew lays the page out right to left. Then the download
+// buttons: GitHub's public releases list names the newest installer, so the buttons work while every release is
+// a pre-release (releases/latest skips those and would answer 404).
 (function () {
-  var GH = 'https://github.com/israel2176/win.apk';
+  var REPO = 'israel2176/win.apk';
+  var GH = 'https://github.com/' + REPO;
   var T = {
     en: {
-      title: 'Win.apk: run Android apps on Windows',
-      description: 'Run Android apps on Windows like any other program: their own window, Start menu entry and notifications. No emulator, no virtual machine. Free and open source.',
-      nav_features: 'Features', nav_how: 'Compared with an emulator', nav_install: 'Download',
-      star: 'GitHub', lang_switch: 'עברית', lang_label: 'Switch to Hebrew',
-      badge: 'Free · Open source · Public preview',
-      hero_title: 'Android apps on your Windows PC, like any other program',
-      hero_sub: 'No emulator and no virtual machine. Every app opens in its own window, with its own Start menu entry, taskbar icon and Windows notifications.',
+      title: 'Win.apk: Android apps on Windows',
+      description: 'Install an Android app and it runs like any Windows program. No emulator. Free and open source.',
+      skip: 'Skip to content', footer_label: 'Links',
+      lang_switch: 'עברית', lang_label: 'עברית: switch the page to Hebrew',
+      hero_title: 'Android apps on Windows',
+      hero_sub: 'Install an app and it runs like any Windows program. No emulator.',
       download: 'Download for Windows',
-      download_small: 'Windows 10 and 11 · 64-bit · Free',
-      source: 'View on GitHub',
-      portable: 'Portable ZIP', all_releases: 'All releases', whats_new: 'What\'s new',
-      stat1_n: '1', stat1: 'window per app, with its own taskbar icon',
-      stat2_n: '0', stat2: 'emulators or virtual machines',
-      stat3_n: '4', stat3: 'package formats: APK, APKM, XAPK, APKS',
-      features_title: 'What you get',
-      f1_t: 'Apps that feel like Windows programs', f1_d: 'Each app gets its own resizable window, a Start menu shortcut and a taskbar icon. Its notifications appear as Windows notifications.',
-      f2_t: 'Install with a double-click', f2_d: 'Open an APK file, or a split bundle (APKM, XAPK or APKS), or drag it onto the window. Or pick from the built-in F-Droid store.',
-      f3_t: 'Uses your PC\'s hardware', f3_d: 'Webcam, microphone, location, paired Bluetooth devices, Xbox controllers, the clipboard, and your Downloads and Pictures folders.',
-      f4_t: 'ARM-only apps too', f4_d: 'Apps built only for phone processors are translated for your PC in the background, at the lowest priority.',
-      f5_t: 'Sign in with Google', f5_d: 'Google sign-in is built in. Google\'s own Play services and Play Store can be set up too (experimental).',
-      f6_t: 'English and Hebrew', f6_d: 'Light and dark themes. In Hebrew the whole program, its installer included, is laid out right to left.',
-      how_title: 'How is it different from an emulator?',
-      how_sub: 'An emulator starts a whole Android phone inside your PC and runs apps in it. Win.apk recreates only what each app needs, on top of Windows itself.',
-      col_emu: 'Emulator', col_win: 'Win.apk',
-      r1: 'Starting up', r1_e: 'Boots a whole Android system', r1_w: 'Nothing to boot; the app just opens',
-      r2: 'Memory in the background', r2_e: 'Android keeps running', r2_w: 'Only the apps you have open',
-      r3: 'Virtualization (Hyper-V, BIOS)', r3_e: 'Usually required', r3_w: 'Not needed; no administrator rights either',
-      r4: 'Windows', r4_e: 'Every app inside one big window', r4_w: 'A window per app: Alt+Tab, Snap, the taskbar',
-      r5: 'Hardware', r5_e: 'Emulated devices', r5_w: 'Your PC\'s own, through Windows',
-      r6: 'How many apps run', r6_e: 'More, today', r6_w: 'Many, and growing: see the compatibility table',
-      honest: 'To be fair: an emulator runs more apps today. Win.apk is young; check whether your app works before you rely on it.',
-      compat_link: 'Compatibility table',
-      shots_title: 'A look inside',
-      shot_library: 'Your apps, in the library', shot_store: 'The built-in F-Droid store', shot_dark: 'Dark theme',
-      install_title: 'Get started in three steps',
-      s1_t: 'Download', s1_d: 'Win.apk-Setup.exe, with the button above.',
-      s2_t: 'Install', s2_d: 'Windows SmartScreen may warn, because the preview isn\'t signed yet: click More info, then Run anyway.',
-      s3_t: 'Add apps', s3_d: 'Install one from the Store, or double-click an APK you downloaded.',
-      req_title: 'You need',
-      req: 'Windows 10 (version 1903 or later) or Windows 11, 64-bit, with an Intel or AMD processor; about 500 MB of disk space; a graphics card with Direct3D 11. No administrator rights.',
-      preview: 'Public preview: many apps run well, some only in part, some not yet.',
-      d_start: 'Getting started', d_compat: 'Compatibility', d_faq: 'FAQ', d_trouble: 'Troubleshooting', d_report: 'Report a problem',
-      footer_1: 'Free and open source.', license: 'License: AGPL-3.0',
-      footer_2: 'Android is a trademark of Google LLC.'
+      meta_default: 'Windows 10 and 11, 64-bit',
+      meta_req: 'Windows 10 and 11, 64-bit', meta_pre: 'preview',
+      free: 'Free and open source.', other_versions: 'Other versions',
+      alt_library: 'The Win.apk library with installed Android apps',
+      f1_t: 'Double-click to install', f1_d: 'APK files and app bundles install like any Windows program.',
+      f2_t: 'A window of its own', f2_d: 'Each app is in the Start menu and on the taskbar, with Windows notifications.',
+      f3_t: 'In Hebrew too', f3_d: 'The whole program, installer included, reads right to left.',
+      apps_title: 'Israeli apps', apps_sub: 'Real screenshots from Win.apk.',
+      cap_waze: 'Waze', cap_moovit: 'Moovit', cap_maccabi: 'Maccabi', cap_hapoalim: 'Bank Hapoalim',
+      alt_waze: 'Waze in its own window on Windows, asking in Hebrew for the precise location',
+      alt_moovit: 'Moovit\'s home screen in Hebrew, in its own window on Windows',
+      alt_maccabi: 'The Maccabi app\'s start screen in Hebrew, with its sign-in button',
+      alt_hapoalim: 'Bank Hapoalim\'s app in Hebrew, with its sign-in button',
+      apps_note: 'Not every app works yet.', compat_link: 'Compatibility list',
+      start_title: 'Three steps',
+      s1: 'Download the installer.',
+      s2: 'Run it. If SmartScreen warns: More info, then Run anyway.',
+      s3: 'Open an APK, or pick an app in the Store.',
+      l_releases: 'Releases', l_docs: 'Getting started', l_faq: 'FAQ', l_compat: 'Compatibility list',
+      l_report: 'Report a problem', l_license: 'License (AGPL-3.0)',
+      marks: 'Android is a trademark of Google LLC. App names and screenshots belong to their owners.'
     },
     he: {
       title: 'Win.apk: אפליקציות אנדרואיד ב-Windows',
-      description: 'מריצים אפליקציות אנדרואיד ב-Windows כמו כל תוכנה אחרת: חלון משלהן, קיצור דרך בתפריט התחל והתראות. בלי אמולטור ובלי מכונה וירטואלית. חינם וקוד פתוח.',
-      nav_features: 'מה יש בו', nav_how: 'לעומת אמולטור', nav_install: 'הורדה',
-      star: 'GitHub', lang_switch: 'English', lang_label: 'Switch to English',
-      badge: 'חינם · קוד פתוח · גרסת תצוגה',
-      hero_title: 'אפליקציות אנדרואיד במחשב, כמו כל תוכנה אחרת',
-      hero_sub: 'בלי אמולטור ובלי מכונה וירטואלית. כל אפליקציה נפתחת בחלון משלה, עם קיצור דרך בתפריט התחל, אייקון בשורת המשימות והתראות של Windows.',
+      description: 'מתקינים אפליקציית אנדרואיד, והיא עובדת כמו כל תוכנה במחשב. בלי אמולטור. חינם וקוד פתוח.',
+      skip: 'דילוג לתוכן', footer_label: 'קישורים',
+      lang_switch: 'English', lang_label: 'English: הצגת העמוד באנגלית',
+      hero_title: 'אפליקציות אנדרואיד ב-Windows',
+      hero_sub: 'מתקינים אפליקציה, והיא עובדת כמו כל תוכנה במחשב. בלי אמולטור.',
       download: 'הורדה ל-Windows',
-      download_small: 'Windows 10 ו-11 · 64 ביט · חינם',
-      source: 'לעמוד ב-GitHub',
-      portable: 'גרסה ניידת (ZIP)', all_releases: 'כל הגרסאות', whats_new: 'מה חדש',
-      stat1_n: '1', stat1: 'חלון לכל אפליקציה, עם אייקון משלה בשורת המשימות',
-      stat2_n: '0', stat2: 'אמולטורים או מכונות וירטואליות',
-      stat3_n: '4', stat3: 'סוגי קבצים: APK, APKM, XAPK, APKS',
-      features_title: 'מה מקבלים',
-      f1_t: 'אפליקציות שמרגישות כמו תוכנות Windows', f1_d: 'לכל אפליקציה חלון משלה שאפשר לשנות את גודלו, קיצור דרך בתפריט התחל ואייקון בשורת המשימות. ההתראות שלה מופיעות כהתראות של Windows.',
-      f2_t: 'התקנה בלחיצה כפולה', f2_d: 'פותחים קובץ APK, או חבילה מפוצלת מסוג APKM, XAPK או APKS, או גוררים אותו לחלון. או בוחרים מחנות F-Droid המובנית.',
-      f3_t: 'משתמש בחומרה של המחשב', f3_d: 'מצלמת רשת, מיקרופון, מיקום, התקני Bluetooth מצומדים, בקרי Xbox, העתק-הדבק, ותיקיות ההורדות והתמונות שלכם.',
-      f4_t: 'גם אפליקציות ARM', f4_d: 'אפליקציות שנבנו רק למעבדים של טלפונים מתורגמות למחשב שלכם ברקע, בעדיפות הנמוכה ביותר.',
-      f5_t: 'כניסה עם Google', f5_d: 'כניסה עם חשבון Google מובנית. אפשר גם להגדיר את שירותי Play וחנות Play המקוריים של Google (ניסיוני).',
-      f6_t: 'עברית ואנגלית', f6_d: 'מצב בהיר וכהה. בעברית כל התוכנה, כולל ההתקנה, מסודרת מימין לשמאל.',
-      how_title: 'במה זה שונה מאמולטור?',
-      how_sub: 'אמולטור מפעיל טלפון אנדרואיד שלם בתוך המחשב ומריץ בו את האפליקציות. Win.apk בונה רק את מה שכל אפליקציה צריכה, על גבי Windows עצמו.',
-      col_emu: 'אמולטור', col_win: 'Win.apk',
-      r1: 'הפעלה', r1_e: 'מאתחל מערכת אנדרואיד שלמה', r1_w: 'אין מה לאתחל, האפליקציה פשוט נפתחת',
-      r2: 'זיכרון ברקע', r2_e: 'אנדרואיד ממשיך לרוץ', r2_w: 'רק האפליקציות שפתוחות',
-      r3: 'וירטואליזציה (Hyper-V, BIOS)', r3_e: 'בדרך כלל נדרשת', r3_w: 'לא צריך, וגם לא הרשאות מנהל',
-      r4: 'חלונות', r4_e: 'כל האפליקציות בתוך חלון אחד גדול', r4_w: 'חלון לכל אפליקציה: Alt+Tab, הצמדה, שורת המשימות',
-      r5: 'חומרה', r5_e: 'התקנים מדומים', r5_w: 'החומרה של המחשב עצמו, דרך Windows',
-      r6: 'כמה אפליקציות עובדות', r6_e: 'יותר, נכון להיום', r6_w: 'הרבה, והרשימה גדלה: ראו את טבלת התאימות',
-      honest: 'ובהגינות: אמולטור מריץ היום יותר אפליקציות. Win.apk עוד צעיר, וכדאי לבדוק שהאפליקציה שלכם עובדת לפני שסומכים עליה.',
-      compat_link: 'טבלת התאימות',
-      shots_title: 'הצצה פנימה',
-      shot_library: 'האפליקציות שלכם, בספרייה', shot_store: 'חנות F-Droid המובנית', shot_dark: 'מצב כהה',
-      install_title: 'מתחילים בשלושה צעדים',
-      s1_t: 'מורידים', s1_d: 'את Win.apk-Setup.exe, בכפתור למעלה.',
-      s2_t: 'מתקינים', s2_d: 'ייתכן ש-SmartScreen יזהיר, כי גרסת התצוגה עוד לא חתומה: לוחצים "מידע נוסף" ואז "הפעל בכל זאת".',
-      s3_t: 'מוסיפים אפליקציות', s3_d: 'מהחנות המובנית, או בלחיצה כפולה על קובץ APK שהורדתם.',
-      req_title: 'מה צריך',
-      req: 'Windows 10 (גרסה 1903 ומעלה) או Windows 11, ‏64 ביט, עם מעבד Intel או AMD; כ-500MB פנויים בדיסק; כרטיס גרפי עם Direct3D 11. לא צריך הרשאות מנהל.',
-      preview: 'גרסת תצוגה ציבורית: הרבה אפליקציות עובדות טוב, חלקן רק בחלקן, וחלקן עוד לא.',
-      d_start: 'מדריך התחלה', d_compat: 'תאימות', d_faq: 'שאלות נפוצות', d_trouble: 'פתרון בעיות', d_report: 'דיווח על בעיה',
-      footer_1: 'חינם וקוד פתוח.', license: 'רישיון: AGPL-3.0',
-      footer_2: 'Android הוא סימן מסחרי של Google LLC.'
+      meta_default: 'Windows 10 ו-11, ‏64 ביט',
+      meta_req: 'Windows 10 ו-11, ‏64 ביט', meta_pre: 'גרסת תצוגה',
+      free: 'חינם וקוד פתוח.', other_versions: 'גרסאות נוספות',
+      alt_library: 'הספרייה של Win.apk עם אפליקציות אנדרואיד מותקנות',
+      f1_t: 'לחיצה כפולה ומתקינים', f1_d: 'קובצי APK וחבילות אפליקציה מותקנים כמו כל תוכנה.',
+      f2_t: 'חלון משלה', f2_d: 'כל אפליקציה בתפריט התחל ובשורת המשימות, עם התראות של Windows.',
+      f3_t: 'גם בעברית', f3_d: 'כל התוכנה, כולל ההתקנה, מימין לשמאל.',
+      apps_title: 'אפליקציות ישראליות', apps_sub: 'צילומי מסך אמיתיים מתוך Win.apk.',
+      cap_waze: 'וייז', cap_moovit: 'מוביט', cap_maccabi: 'מכבי', cap_hapoalim: 'בנק הפועלים',
+      alt_waze: 'וייז בחלון משלו ב-Windows, מבקש בעברית גישה למיקום המדויק',
+      alt_moovit: 'מסך הבית של מוביט בעברית, בחלון משלו ב-Windows',
+      alt_maccabi: 'מסך הפתיחה של אפליקציית מכבי בעברית, עם כפתור הכניסה',
+      alt_hapoalim: 'אפליקציית בנק הפועלים בעברית, עם כפתור הכניסה לחשבון',
+      apps_note: 'עוד לא כל אפליקציה עובדת.', compat_link: 'רשימת התאימות',
+      start_title: 'שלושה צעדים',
+      s1: 'מורידים את קובץ ההתקנה.',
+      s2: 'מריצים אותו. אם SmartScreen מזהיר: "מידע נוסף", ואז "הפעל בכל זאת".',
+      s3: 'פותחים קובץ APK, או בוחרים אפליקציה בחנות.',
+      l_releases: 'גרסאות', l_docs: 'מדריך התחלה', l_faq: 'שאלות נפוצות', l_compat: 'רשימת התאימות',
+      l_report: 'דיווח על בעיה', l_license: 'רישיון (AGPL-3.0)',
+      marks: 'Android הוא סימן מסחרי של Google LLC. שמות האפליקציות וצילומי המסך שייכים לבעליהם.'
     }
   };
   // A link to a document goes to its Hebrew page where one exists.
   var DOCS = {
-    en: { d_start: 'docs/getting-started.md', d_compat: 'docs/APPS.md', d_faq: 'docs/faq.md', d_trouble: 'docs/troubleshooting.md' },
-    he: { d_start: 'docs/he/getting-started.md', d_compat: 'docs/APPS.md', d_faq: 'docs/he/faq.md', d_trouble: 'docs/he/troubleshooting.md' }
+    en: { start: 'docs/getting-started.md', compat: 'docs/APPS.md', faq: 'docs/faq.md' },
+    he: { start: 'docs/he/getting-started.md', compat: 'docs/APPS.md', faq: 'docs/he/faq.md' }
   };
 
   // Storage can throw (private windows, blocked site data); the page works without it.
-  function saved(v) {
-    try { if (v) localStorage.setItem('winapk-lang', v); else return localStorage.getItem('winapk-lang'); } catch (e) {}
+  function store(kind, key, v) {
+    try {
+      var s = window[kind];
+      if (v === undefined) return s.getItem(key);
+      s.setItem(key, v);
+    } catch (e) {}
     return null;
   }
 
   function pick() {
     var q = new URLSearchParams(location.search).get('lang');
     if (q === 'he' || q === 'en') return q;
-    var s = saved();
+    var s = store('localStorage', 'winapk-lang');
     if (s === 'he' || s === 'en') return s;
     var langs = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || 'en'];
     for (var i = 0; i < langs.length; i++) {
@@ -123,6 +98,28 @@
   }
 
   var lang = pick();
+  var dark = window.matchMedia ? matchMedia('(prefers-color-scheme: dark)') : { matches: false };
+  var heShots = [];   // the screenshots the deploy has in Hebrew, from images/he/shots.json
+  var release = null;  // { v, size, pre } of the installer the buttons point at, once GitHub has answered
+
+  // The installer's line: version, size, what it runs on. Each part is isolated, so a Latin version and size keep
+  // their order inside a Hebrew line; a tag such as v0.3.0-preview already says that it is a preview.
+  function meta() {
+    var el = document.querySelector('[data-dl-meta]');
+    if (!el || !release) return;
+    var t = T[lang];
+    var dir = lang === 'he' ? 'rtl' : 'ltr';
+    var parts = [[release.v, 'ltr'], [release.size + ' MB', 'ltr'], [t.meta_req, dir]];
+    if (release.pre && release.v.indexOf('-') < 0) parts.splice(1, 0, [t.meta_pre, dir]);
+    el.textContent = '';
+    parts.forEach(function (p, i) {
+      if (i) el.appendChild(document.createTextNode(' · '));
+      var b = document.createElement('bdi');
+      b.dir = p[1];
+      b.textContent = p[0];
+      el.appendChild(b);
+    });
+  }
 
   function apply() {
     var t = T[lang];
@@ -130,24 +127,98 @@
     root.lang = lang;
     root.dir = lang === 'he' ? 'rtl' : 'ltr';
     document.title = t.title;
-    var meta = document.querySelector('meta[name=description]');
-    if (meta) meta.content = t.description;
-    document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = t[el.dataset.i18n]; });
+    var desc = document.querySelector('meta[name=description]');
+    if (desc) desc.content = t.description;
+    // A Hebrew prefix letter before a Latin word ("ב-Win.apk") takes a non-breaking hyphen, so a line never ends
+    // on the letter alone.
+    var text = lang === 'he' ? function (s) { return s.replace(/(^|[\s(])([בהוכלמש])-(?=[A-Za-z0-9])/g, '$1$2‑'); }
+                             : function (s) { return s; };
+    document.querySelectorAll('[data-i18n]').forEach(function (el) { el.textContent = text(t[el.dataset.i18n]); });
     document.querySelectorAll('[data-i18n-label]').forEach(function (el) { el.setAttribute('aria-label', t[el.dataset.i18nLabel]); });
+    document.querySelectorAll('[data-i18n-alt]').forEach(function (el) { el.alt = t[el.dataset.i18nAlt]; });
+    // The switch names the other language in that language.
+    var sw = document.querySelector('[data-lang-toggle] span');
+    if (sw) sw.lang = lang === 'he' ? 'en' : 'he';
+    // A Hebrew screenshot (images/he/<name>) when the deploy has one (it lists them in images/he/shots.json, so
+    // no picture is asked for in vain), else the English one. A picture missing altogether hides its figure, and
+    // a gallery left with none hides its section.
     document.querySelectorAll('img[data-shot]').forEach(function (el) {
-      var name = el.dataset.shot;
-      el.onerror = lang === 'he' ? function () { el.onerror = null; el.src = 'images/' + name; } : null;
-      el.src = (lang === 'he' ? 'images/he/' : 'images/') + name;
+      // The program's own dark theme on a page shown dark.
+      var name = el.dataset.shotDark && dark.matches ? el.dataset.shotDark : el.dataset.shot;
+      el.onerror = function () {
+        el.onerror = null;
+        var fig = el.closest('figure');
+        if (fig) fig.hidden = true;
+        var sec = el.closest('section');
+        if (sec && !sec.querySelector('figure:not([hidden])')) sec.hidden = true;
+      };
+      var want = (lang === 'he' && heShots.indexOf(name) >= 0 ? 'images/he/' : 'images/') + name;
+      if (el.getAttribute('src') !== want) el.src = want;
     });
     document.querySelectorAll('[data-doc]').forEach(function (el) { el.href = GH + '/blob/main/' + DOCS[lang][el.dataset.doc]; });
+    meta();
   }
 
-  document.addEventListener('click', function (e) {
-    if (!e.target.closest('[data-lang-toggle]')) return;
+  document.querySelector('[data-lang-toggle]').addEventListener('click', function () {
     lang = lang === 'he' ? 'en' : 'he';
-    saved(lang);
+    store('localStorage', 'winapk-lang', lang);
+    // A ?lang= in the address would win over the choice on the next visit; keep the address in step.
+    var u = new URL(location.href);
+    if (u.searchParams.has('lang')) { u.searchParams.set('lang', lang); history.replaceState(null, '', u); }
     apply();
   });
 
   apply();
+  if (dark.addEventListener) dark.addEventListener('change', apply);
+  if (window.fetch) {
+    fetch('images/he/shots.json').then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+      heShots = Array.isArray(list) ? list : [];
+      if (heShots.length && lang === 'he') apply();
+    }).catch(function () {});
+  }
+
+  // The newest release that has the installer: a full release when there is one, else the newest pre-release
+  // (as the launcher's update check picks). Remembered for the tab's session, so reloading does not ask again
+  // (GitHub allows 60 unauthenticated requests an hour).
+  function choose(list) {
+    var best = null;
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      if (r.draft) continue;
+      var setup = null, zip = null;
+      (r.assets || []).forEach(function (a) {
+        if (a.name === 'Win.apk-Setup.exe') setup = a;
+        if (a.name === 'Win.apk-windows-x64.zip') zip = a;
+      });
+      if (!setup) continue;
+      var c = { v: r.tag_name, pre: !!r.prerelease, notes: r.html_url, setup: setup.browser_download_url,
+                zip: zip ? zip.browser_download_url : null, size: Math.round(setup.size / 1048576) };
+      if (!c.pre) return c;
+      if (!best) best = c;
+    }
+    return best;
+  }
+
+  function point(c) {
+    if (!c) return;
+    release = c;
+    document.querySelectorAll('[data-dl=setup]').forEach(function (el) { el.href = c.setup; });
+    document.querySelectorAll('[data-dl=notes]').forEach(function (el) { el.href = c.notes; });
+    if (c.zip) document.querySelectorAll('[data-dl=zip]').forEach(function (el) { el.href = c.zip; });
+    meta();
+  }
+
+  var cached = store('sessionStorage', 'winapk-release');
+  if (cached) {
+    try { point(JSON.parse(cached)); return; } catch (e) {}
+  }
+  if (!window.fetch) return;
+  fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=30', { headers: { Accept: 'application/vnd.github+json' } })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (list) {
+      var c = choose(Array.isArray(list) ? list : []);
+      if (c) store('sessionStorage', 'winapk-release', JSON.stringify(c));
+      point(c);
+    })
+    .catch(function () { /* The buttons keep the releases page. */ });
 })();

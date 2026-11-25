@@ -40,8 +40,25 @@ std::string hex(uint64_t v) {
     return buf;
 }
 
+// A library's path as the file call takes it: near MAX_PATH by its long-path form (an app's
+// native libraries sit under android/data/app/~~<id>/<package>-<id>/lib/<abi>, past 260
+// characters with a long user name or package where Windows' long-path policy is off).
+std::filesystem::path open_path(const std::filesystem::path& path) {
+    const std::wstring w = path.wstring();
+    if (w.size() < MAX_PATH - 12 || w.rfind(L"\\\\?\\", 0) == 0) return path;
+    const DWORD n = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
+    if (n == 0) return path;
+    std::wstring full(n, L'\0');
+    const DWORD m = GetFullPathNameW(w.c_str(), n, &full[0], nullptr);
+    if (m == 0 || m >= n) return path;
+    full.resize(m);
+    if (full.rfind(L"\\\\?\\", 0) == 0) return full;
+    if (full.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + full.substr(2);
+    return L"\\\\?\\" + full;
+}
+
 bool read_file(const std::filesystem::path& path, std::vector<uint8_t>* out, std::string* error) {
-    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    std::ifstream f(open_path(path), std::ios::binary | std::ios::ate);
     if (!f) {
         *error = "cannot open " + path.string();
         return false;
@@ -139,8 +156,9 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         *error = "not a shared object (e_type " + std::to_string(eh.e_type) + ")";
         return nullptr;
     }
-    if (eh.e_phentsize != sizeof(Phdr) ||
-        eh.e_phoff + static_cast<uint64_t>(eh.e_phnum) * sizeof(Phdr) > file.size()) {
+    // Written so that no sum can wrap: the offsets come from the file, which may be hostile.
+    if (eh.e_phentsize != sizeof(Phdr) || eh.e_phoff > file.size() ||
+        static_cast<uint64_t>(eh.e_phnum) * sizeof(Phdr) > file.size() - eh.e_phoff) {
         *error = "program header table out of bounds";
         return nullptr;
     }
@@ -154,7 +172,7 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         std::memcpy(&ph, file.data() + eh.e_phoff + i * sizeof(Phdr), sizeof(ph));
         img->phdrs_.push_back(ph);
         if (ph.p_type == kPtLoad) {
-            if (ph.p_filesz > ph.p_memsz || ph.p_offset + ph.p_filesz > file.size()) {
+            if (ph.p_filesz > ph.p_memsz || ph.p_offset > file.size() || ph.p_filesz > file.size() - ph.p_offset) {
                 *error = "PT_LOAD " + std::to_string(i) + " out of bounds";
                 return nullptr;
             }

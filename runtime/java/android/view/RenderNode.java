@@ -49,9 +49,10 @@ public class RenderNode {
         mOwningView = owningView;
     }
 
-    /** Kept for source-compat with any caller using the no-arg form. */
+    /** Kept for source-compat with any caller using the no-arg form. AOSP's
+     *  android.graphics.RenderNode has only the named constructor. */
     public RenderNode() {
-        mDelegate = new android.graphics.RenderNode();
+        mDelegate = new android.graphics.RenderNode(null);
         mOwningView = null;
     }
 
@@ -69,7 +70,8 @@ public class RenderNode {
 
     // ---- Recording state -------------------------------------------------
     public void discardDisplayList() { mDelegate.discardDisplayList(); }
-    public boolean isValid() { return mDelegate.isValid(); }
+    /** AOSP's android.graphics.RenderNode calls it hasDisplayList. */
+    public boolean isValid() { return mDelegate.hasDisplayList(); }
 
     // ---- Matrix ------------------------------------------------------
     public boolean hasIdentityMatrix() { return mDelegate.hasIdentityMatrix(); }
@@ -147,9 +149,9 @@ public class RenderNode {
     public boolean setTranslationZ(float v) { return mDelegate.setTranslationZ(v); }
     public float getTranslationZ() { return mDelegate.getTranslationZ(); }
     /** Legacy name for the Z-axis rotation (android.graphics.RenderNode
-     *  calls this setRotationZ, and aliases setRotation to it). */
-    public boolean setRotation(float v) { return mDelegate.setRotation(v); }
-    public float getRotation() { return mDelegate.getRotation(); }
+     *  calls this setRotationZ). */
+    public boolean setRotation(float v) { return mDelegate.setRotationZ(v); }
+    public float getRotation() { return mDelegate.getRotationZ(); }
     public boolean setRotationX(float v) { return mDelegate.setRotationX(v); }
     public float getRotationX() { return mDelegate.getRotationX(); }
     public boolean setRotationY(float v) { return mDelegate.setRotationY(v); }
