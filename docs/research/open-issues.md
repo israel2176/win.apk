@@ -1040,6 +1040,34 @@ New bugs found with AOSP views:
   held AOSP's frames at 33 a second are gone (6 ms a frame, 60 a second);
   look at CI's numbers on real Windows for what is left.
 
+## Jellyfin's 13.4 s cold start in the the other runtime comparison (2026-11-25): to check on the next run
+
+`comparison` run 45513190823: Jellyfin (a WebView shell) cold 13.36 s to its first
+frame, warm 1.04 s; every other app's cold start 1.5-3.3 s. **Not WebView2, and not Jellyfin's
+code**, by its own log (artifact `compare-org.jellyfin.mobile`, `winapk-cold.log`):
+
+- WebView2's environment was never asked for in that run: no `webview2: user data in` line,
+  only the runtime lookup (`available()`); creating the environment and the controller is
+  asynchronous on the WebView2 thread anyway (`webview2_host.cpp`), and Jellyfin's first screen
+  is its Compose server picker, not the web page.
+- Steps that run no app code and are the same for every app were 15-18x slower than in the
+  other eleven jobs of the same run: `system fonts` 4587 ms (others 95-392 ms, the same files),
+  `resource index joined` -> `starting window painted` 2.1 s (others 0.06-0.13 s); from the
+  run loop to the first frame 5.2 s (warm 0.3 s; `Skipped 278 frames`) is that same factor.
+- It began before the cold run: in the install step just before, the AppInstall child JVM
+  took ~6 s (the next JVM `created at 6.063 s`, 0.15-0.6 s in every other job) while its dex
+  conversion's rate matched Jerboa's; the other runtime's device only started at 00:01:28, after.
+  CI's smoke test boots Jellyfin in 0.6 s from the run loop to the first frame.
+
+So the runner was busy with something else (the measured processes are only the runtime's;
+another job of the same run sampled `TiWorker.exe`, `TrustedInstaller.exe`,
+`MoUsoCoreWorker.exe`, Windows' servicing, and `MsMpEng.exe`). From this change every run logs
+`startup: machine N% busy to the first frame ..., this process M%; busiest others: ...`
+(`host/machine_load.h`), and WebView2 its lookup and environment times (`found in`,
+`environment ready in`). **On the next compare run:** if Jellyfin's cold start is slow again,
+read that line in `winapk-cold.log`; a low machine share would mean the cost is ours after all
+(then time the main thread between `entering the Cocoa runloop` and the first frame).
+
 ## Screen readers (UI Automation), to check
 
 Win.apk's own (November 2026), written from Microsoft's UI Automation documentation

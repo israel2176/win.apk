@@ -39,6 +39,7 @@
 
 #include "cds.h"
 #include "frame_times.h"
+#include "machine_load.h"
 #include "gl/gl_surface.h"
 #include "native_window.h"
 #include "win32_window.h"
@@ -1483,6 +1484,7 @@ void present_pixels(const uint32_t* argb, int w, int h) {
         std::fprintf(stderr, "[win.apk] first frame presented (%dx%d)\n", w, h);
         std::fflush(stderr);
         cds_first_frame();
+        machine_load::log_first_frame();
     }
     const std::wstring& path = headless_frame_path();
     // An ARGB int is B, G, R, A in memory: the byte order of a 32-bit DIB.
