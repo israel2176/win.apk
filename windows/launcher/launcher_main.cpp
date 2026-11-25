@@ -10787,13 +10787,15 @@ void write_registry() {
     std::error_code ec;
     fs::create_directories(data_dir(), ec);
     const fs::path file = data_dir() / L"installed_apps.json";
-    const fs::path tmp = data_dir() / L"installed_apps.json.tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f << out;
-        if (!f) return;
+    // Per process: the library and an install helper (another Win.apk.exe) may write it at once, and one
+    // shared temporary name would let them interleave into a file neither wrote.
+    const fs::path tmp = data_dir() / (L"installed_apps.json.tmp." + std::to_wstring(GetCurrentProcessId()));
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    f << out;
+    f.close();  // a full disk shows here, when the buffer is written
+    if (!f || !MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        fs::remove(tmp, ec);  // the old registry stays whole
     }
-    MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
 }
 
 // Apps installed before the library recorded packages get theirs read now,
@@ -11296,14 +11298,12 @@ bool read_bytes(const fs::path& p, Bytes* out) {
 bool write_bytes(const fs::path& p, const void* data, size_t n) {
     const fs::path tmp = p.parent_path() / (L"." + p.filename().wstring() + L".tmp." +
                                             std::to_wstring(GetCurrentProcessId()));
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f.write(static_cast<const char*>(data), static_cast<std::streamsize>(n));
-        if (!f) return false;
-    }
-    if (MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+    f.write(static_cast<const char*>(data), static_cast<std::streamsize>(n));
+    f.close();  // a full disk shows here, when the buffer is written
+    if (f && MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
     std::error_code ec;
-    fs::remove(tmp, ec);
+    fs::remove(tmp, ec);  // no temporary file left behind, and the old file stays
     return false;
 }
 
