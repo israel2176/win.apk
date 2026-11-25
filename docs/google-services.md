@@ -25,7 +25,18 @@ needs it.
 **Settings > Google account > Sign in** opens Google's own sign-in page in a
 window of its own (Microsoft Edge WebView2, private profile). Win.apk never
 sees your password; it keeps the token Google hands back, only on this PC, in
-`%LOCALAPPDATA%\Win.apk\gms`.
+`%LOCALAPPDATA%\Win.apk\gms`, encrypted for your Windows account (Windows'
+data protection, DPAPI).
+
+- **Apps never get the account's token.** As on a phone, where only Google
+  Play services holds it, the token Google hands back at sign-in stays with
+  Win.apk's own Google side (Settings, the sign-in window and a small
+  background token service). An app that needs Google asks that service and
+  gets a short-lived token for what it asked, minted for that app and no
+  other. The service starts when an app first needs it and stops by itself
+  after a few idle minutes; its log is `logs\gms-tokens.log`. A token saved
+  by an older Win.apk is encrypted and moved the first time Win.apk's Google
+  side opens it.
 
 - **One account for every app.** An app's **Sign in with Google** opens the
   same window when no account is signed in yet; with an account, the app shows
@@ -193,7 +204,12 @@ installed again, it gets a new ID, which has to be registered again.
   real phone. (Before v0.8.0 it called itself "Mac.apk", so Google meets it as
   a new device once.)
 - Every app still runs with your Windows account's rights; there is no
-  sandbox between apps on Windows.
+  sandbox between apps on Windows. Keeping the Google account's token
+  encrypted and out of the apps protects it from copies of the data folder,
+  backups and other Windows accounts, and from apps that only use Android's
+  APIs; it cannot stop a program running as you that sets out to read your
+  Windows account's secrets. That needs apps to run in a sandbox, which
+  Win.apk does not do yet.
 
 Logs: `logs\google-setup.log` (the setup's checks), `logs\system.log` (the
 broker), `logs\services\` (apps it started for other apps).

@@ -36,8 +36,10 @@ Reports in these areas are welcome:
   `apk-store.apk` that is not the one GitHub's release lists (by size and
   SHA-256), or to fetch it from anywhere but that release; or a way for
   another app to get the Store's permission to install apps.
-- The Google sign-in window: anything that would expose the Google session or
-  the stored tokens (`gms\gms_state.properties`) to an app or another user.
+- The Google sign-in window and the token service: anything that would expose
+  the Google session or the stored tokens (`gms\tokens.dat`, sealed with
+  DPAPI and opened only by the account's owner side) to an app's Java code,
+  or let an app get a token minted for another app.
 - The install helper (`Win.apk.exe install` and the permission verbs): a way
   for an app to drive it without the user's answer.
 - Memory-safety bugs in the loader, the linker or the Bionic shim that a
