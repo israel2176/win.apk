@@ -41,8 +41,6 @@ public final class StatusBarDriver {
     // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
     // "subsequent calls to putenv/setenv from C will not be visible from Java
     // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_STATUSBAR_BLEND = System.getenv("MACAPK_STATUSBAR_BLEND");
     private static final String ENV_MACAPK_TRACE_BARCOLOR = System.getenv("MACAPK_TRACE_BARCOLOR");
 
     private static final String TAG = "Mac.apk.StatusBar";
@@ -83,23 +81,8 @@ public final class StatusBarDriver {
     // window's flags -- so it keeps feeding Configuration.screenHeightDp and
     // WindowInsets.getInsetsIgnoringVisibility(statusBars()), exactly as it
     // does today for a fullscreen window. Same split, same two answers.
-    //
-    // MACAPK_SYSTEM_BARS=1 paints them again, for an A/B. Note that an
-    // emulator-vs-us pixel comparison is NOT valid across this flag: the
-    // reference AVD draws both bars, and debug/imgdiff.py's --safe-area crops
-    // OUR side by a CONSTANT 48/48 inset that this change invalidates. Pass
-    // MACAPK_IMGDIFF_OUR_INSET=0,0 (or MACAPK_SYSTEM_BARS=1 for the capture)
-    // before quoting a fleet number across it.
-    private static volatile Boolean sBarsOn;
-    private static final boolean sPhoneAppWindow =
-        !"0".equals(System.getenv("MACAPK_PHONE_APP_WINDOW"));
     public static boolean systemBarsEnabled() {
-        Boolean b = sBarsOn;
-        if (b == null) {
-            b = Boolean.valueOf("1".equals(System.getenv("MACAPK_SYSTEM_BARS")));
-            sBarsOn = b;
-        }
-        return b.booleanValue();
+        return false;
     }
 
     /** Bar height in host pixels = 24dp scaled by the View's
@@ -148,7 +131,7 @@ public final class StatusBarDriver {
         // only from windows that exist, :1312-1327 / :1862-1880). Reporting 24dp for a
         // bar that is not there made Configuration.screenHeightDp and the stable
         // insets disagree with the window. MACAPK_PHONE_APP_WINDOW=0 restores it.
-        if (!systemBarsEnabled() && sPhoneAppWindow) return 0;
+        if (!systemBarsEnabled()) return 0;
         float density = android.util.DisplayMetrics.macapkDeviceDensity();
         try {
             if (root != null && root.getResources() != null
@@ -305,14 +288,6 @@ public final class StatusBarDriver {
         if (v == null) {
             boolean on = true;
             try {
-                String s = System.getenv("MACAPK_NAV_BAR_SIDE");
-                if (s != null && (s.equals("0") || s.equalsIgnoreCase("false"))) {
-                    on = false;
-                    NativeLog.i(TAG, "MACAPK_NAV_BAR_SIDE=0 -- navigation bar "
-                        + "pinned to the BOTTOM in every orientation "
-                        + "(pre-v1.0.997 geometry; AOSP moves it to the right "
-                        + "edge in landscape on a phone-class display)");
-                }
             } catch (Throwable ignored) {}
             v = Boolean.valueOf(on);
             sNavSideEnabled = v;
@@ -524,7 +499,7 @@ public final class StatusBarDriver {
         if (v == null) {
             boolean on = true;
             try {
-                String s = System.getenv("MACAPK_WINDOW_BOX");
+                String s = null;
                 if (s != null && (s.equals("0") || s.equalsIgnoreCase("false"))) {
                     on = false;
                     NativeLog.i(TAG, "MACAPK_WINDOW_BOX=0 -- app-window box "
@@ -701,9 +676,6 @@ public final class StatusBarDriver {
      *  on failure and are otherwise indistinguishable. Not a colour any theme
      *  declares. */
     private static final int MACAPK_UNSET_COLOR = 0x00000001;
-    /** Same flag as android.app.Activity's ActivityWindow bar-colour gate. */
-    private static final boolean MACAPK_WINDOW_BAR_COLORS =
-            !"0".equals(System.getenv("MACAPK_WINDOW_BAR_COLORS"));
 
     /** AOSP DecorView.calculateBarColor, ported verbatim (Color.BLACK spelled
      *  0xFF000000, Color.alpha(c) spelled c >>> 24). Kept as its own method with
@@ -849,7 +821,7 @@ public final class StatusBarDriver {
             // system windows would show window background where AOSP shows app
             // content. Only visible with MACAPK_SYSTEM_BARS=1. Gate:
             // MACAPK_WINDOW_BAR_COLORS=0 restores the verbatim theme colour.
-            if (!statusBar && declared != MACAPK_UNSET_COLOR && MACAPK_WINDOW_BAR_COLORS
+            if (!statusBar && declared != MACAPK_UNSET_COLOR
                     && root != null) {
                 int[] t = navigationBarTable(root.getContext());
                 declared = resolveNavigationBarColor(declared,
@@ -1168,8 +1140,7 @@ public final class StatusBarDriver {
                              int barHeight, int bgUnder) {
         if (canvas == null || surfaceWidth <= 0 || barHeight <= 0) return;
 
-        boolean blend = ((bgUnder >>> 24) != 0)
-            && !"0".equals(ENV_MACAPK_STATUSBAR_BLEND);
+        boolean blend = ((bgUnder >>> 24) != 0);
 
         // -- Background --
         // ?attr/colorBackground blends with the activity's window bg.
@@ -1183,9 +1154,7 @@ public final class StatusBarDriver {
         // branch never once executed. MACAPK_STATUSBAR_BLEND=1 restores it (note
         // the sense is now opt-IN where it used to be opt-OUT with =0) so the two
         // can be A/B'd on one build if an app regresses.
-        int bgColor = (blend && "1".equals(ENV_MACAPK_STATUSBAR_BLEND))
-            ? (0xFF000000 | (bgUnder & 0x00FFFFFF))
-            : macapkSystemBarColor(root, true);
+        int bgColor = macapkSystemBarColor(root, true);
         Paint bgPaint = new Paint();
         bgPaint.setStyle(Paint.Style.FILL);
         bgPaint.setColor(bgColor);

@@ -164,10 +164,8 @@ public final class SpecialAccessHandler {
      *  resolves to nothing again, as before. */
     static final boolean APP_DETAILS;
     static {
-        String r = System.getenv("MACAPK_RESULT_ORDER_AOSP");
-        RESULT_ORDER_AOSP = r == null || r.isEmpty() || r.charAt(0) != '0';
-        String d = System.getenv("MACAPK_APP_DETAILS_SETTINGS");
-        APP_DETAILS = d == null || d.isEmpty() || d.charAt(0) != '0';
+        RESULT_ORDER_AOSP = true;
+        APP_DETAILS = true;
     }
 
     /** Hand a host-produced result back and bring the caller up, in the order

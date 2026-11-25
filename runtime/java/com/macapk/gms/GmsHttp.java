@@ -217,8 +217,7 @@ public final class GmsHttp {
     }
 
     private static String version() {
-        String v = System.getenv("MACAPK_VERSION");
-        return (v == null || v.isEmpty()) ? "1.0" : v;
+        return "1.0";
     }
 
     private static String sdkRelease() {

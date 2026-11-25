@@ -135,13 +135,9 @@ public final class GmsCli {
             }
         }
         System.out.println("identity we present to Google:");
-        System.out.println("  app        = " + envOr("MACAPK_GMS_AUTH_APP", "com.android.vending"));
-        System.out.println("  client_sig = " + envOr("MACAPK_GMS_AUTH_SIG",
-                                                     GoogleAuthClient.platformSigSha1())
+        System.out.println("  app        = com.android.vending");
+        System.out.println("  client_sig = " + GoogleAuthClient.platformSigSha1()
                                              + "   (our platform cert, never Google's)");
-        System.out.println("layer flag     : MACAPK_GMS_PRESENT="
-            + (System.getenv("MACAPK_GMS_PRESENT") == null ? "(unset -> OFF)"
-                                                           : System.getenv("MACAPK_GMS_PRESENT")));
     }
 
     private static int selfTest() {

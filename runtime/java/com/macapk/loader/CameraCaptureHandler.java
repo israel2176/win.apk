@@ -40,7 +40,6 @@ import java.util.concurrent.atomic.AtomicLong;
 public final class CameraCaptureHandler {
     private static final String TAG = "Win.apk.Camera";
 
-    static final boolean ON = !"0".equals(System.getenv("MACAPK_IMAGE_CAPTURE"));
 
     /** The camera app a device lists for the capture intents (AOSP Camera2). */
     static final String CAMERA_PACKAGE = "com.android.camera2";
@@ -65,7 +64,7 @@ public final class CameraCaptureHandler {
 
     /** The PURE predicate: an image-capture intent this host can serve. */
     static boolean isCaptureIntent(Intent intent) {
-        if (!ON || intent == null) return false;
+        if (intent == null) return false;
         String a = intent.getAction();
         return (MediaStore.ACTION_IMAGE_CAPTURE.equals(a) || MediaStore.ACTION_IMAGE_CAPTURE_SECURE.equals(a))
             && available();

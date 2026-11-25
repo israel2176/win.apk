@@ -39,7 +39,6 @@ public final class PlayServices {
     // loader jar must not take a link dependency on the gms shadow (the gms
     // classes can be child-first, this class never is).
     private static final int SUCCESS         = 0;
-    private static final int SERVICE_MISSING = 1;
 
     /** The client-API version this device's provider implements. Apps compare
      *  their bundled com.google.android.gms.version meta-data against this; a
@@ -50,18 +49,10 @@ public final class PlayServices {
     public static final int VERSION_CODE = 264400000;
 
     // MACAPK_GMS_HONEST_MISSING=1/true: answer the fully-absent contract on the
-    // availability question too. A/B diagnosis only -- nothing needs it set.
-    private static final boolean FULLY_ABSENT =
-            "1".equals(System.getenv("MACAPK_GMS_HONEST_MISSING"))
-            || "true".equalsIgnoreCase(System.getenv("MACAPK_GMS_HONEST_MISSING"));
 
     // MACAPK_GMS_HONEST_MISSING=0/false: the legacy full spoof, where the gms
     // package is treated as installed AND permission-holding. Preserved only so
     // the pre-v1.0.574 behavior stays reachable for A/B. Setting it re-opens the
-    // FCM registration loop; that is the point of it being a diagnostic.
-    private static final boolean LEGACY_SPOOF =
-            "0".equals(System.getenv("MACAPK_GMS_HONEST_MISSING"))
-            || "false".equalsIgnoreCase(System.getenv("MACAPK_GMS_HONEST_MISSING"));
 
     /**
      * "Does this device have Google Play Services?"
@@ -83,7 +74,7 @@ public final class PlayServices {
      * verifies GMS's signature still correctly finds it is not Google-signed.
      */
     public static int availability() {
-        return FULLY_ABSENT ? SERVICE_MISSING : SUCCESS;
+        return SUCCESS;
     }
 
     /**
@@ -91,7 +82,7 @@ public final class PlayServices {
      * Independent of {@link #availability()} on purpose; see the class header.
      */
     public static boolean gmsPackageInstalled() {
-        return LEGACY_SPOOF;
+        return false;
     }
 
     // ======================================================================
@@ -156,10 +147,6 @@ public final class PlayServices {
     // NOTE on verification: the games in scripts/sweep.sh do not exercise GMS,
     // so a clean sweep there proves the game paths did not regress but is NOT
     // the GMS gate. The GMS-sensitive canary is Crossy Road (and the tuned
-    // corpus in docs/gms-device-oracle-parent-first); check it on the ON path.
-    private static final boolean GMS_LAYER =
-            !"0".equals(System.getenv("MACAPK_GMS_PRESENT"))
-            && !"false".equalsIgnoreCase(System.getenv("MACAPK_GMS_PRESENT"));
 
     /**
      * Is Mac.apk's own GMS layer enabled? THE single gate for every new
@@ -168,7 +155,7 @@ public final class PlayServices {
      * existing {@code GMS_HONEST_MISSING &&} guards, so "off" is provably the
      * old behaviour rather than approximately it.
      */
-    public static boolean gmsLayerEnabled() { return GMS_LAYER; }
+    public static boolean gmsLayerEnabled() { return true; }
 
     // ---- THE FCM / PUSH GATE (v1.0.1175), DEFAULT OFF -----------------------
     // Separate from GMS_LAYER on purpose, and default OFF for a measured reason.
@@ -207,14 +194,10 @@ public final class PlayServices {
     // delivery path works, but DataMessageStanza parsing of a REAL server frame
     // is untested and needs a Firebase send credential we do not have. If that
     // parse is wrong, push does not arrive -- which is what the flag being off
-    // did anyway, so it is not a regression, just not yet a benefit.
-    private static final boolean GMS_FCM =
-            !"0".equals(System.getenv("MACAPK_GMS_FCM"))
-            && !"false".equalsIgnoreCase(System.getenv("MACAPK_GMS_FCM"));
 
     /** Is the in-process FCM push backend enabled? Gates the com.google.android.gms
      *  package presence + c2dm permission + register-service resolution. */
-    public static boolean pushBackendEnabled() { return GMS_FCM; }
+    public static boolean pushBackendEnabled() { return true; }
 
     /**
      * "Is there an installed com.android.vending PACKAGE?"
@@ -230,5 +213,5 @@ public final class PlayServices {
      * package installed, and an app that probes presence before prompting for
      * sign-in needs that answer to be about the package, not the session.
      */
-    public static boolean vendingPresent() { return GMS_LAYER; }
+    public static boolean vendingPresent() { return true; }
 }

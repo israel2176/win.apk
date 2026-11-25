@@ -350,7 +350,7 @@ public final class ResourceIndex {
         // have done anyway; under-keying would silently serve a view selected for the wrong
         // configuration, which is the kind of bug that shows up as one wrong dimension months
         // later. If a future change makes the view depend on more state, the key already covers it.
-        if (macapkFwView == null && macapkFwViewEnabled()) {
+        if (macapkFwView == null) {
             ArscReader fwOnly = macapkFrameworkTable();
             if (fwOnly != null) {
                 // macapkBuildFwView is the cache wrapper (in-memory keyed by
@@ -400,40 +400,7 @@ public final class ResourceIndex {
     // each row put()s, so the best matching config wins per key -- the
     // last-put-wins contract, in one place.
 
-    /** MACAPK_FW_VIEW -- build the PLATFORM-table resolution view regardless of the APP-table gate.
-     *
-     *  **DEFAULT ON since v1.0.1104.** It shipped OFF at v1.0.1103 because a before/after
-     *  `debug/recap_fleet.sh` measured deskclock 97.27 -> 0.00 and newpipe 76.69 -> 6.76. BOTH were
-     *  bugs of ours that the platform table merely exposed, and both are now fixed:
-     *
-     *   1. `macapkFwItemText`'s TYPE_REFERENCE branch rendered every type except
-     *      color/string/dimen/bool/integer/fraction as a raw `@0x%08x`, discarding the name it
-     *      already held. A `style/` ref therefore reached our NAME-based resolvers as
-     *      `@0x010301ed` instead of `@android:style/TextAppearance.Material`. AOSP's
-     *      `@android:style/Widget` is `{textAppearance=?android:textAppearance}`, so Material's
-     *      ThemeEnforcement found no usable resource id and threw "requires a valid TextAppearance
-     *      attribute" -> FrameLayout fallback -> ClassCastException -> onCreate aborted (deskclock).
-     *   2. `Resources.getXml` built a TEXT DomXmlResourceParser unconditionally, but a framework id
-     *      is served straight out of framework-res.apk as aapt-COMPILED AXML, which fails
-     *      "Content is not allowed in prolog". It now sniffs the RES_XML_TYPE magic and routes to
-     *      BinaryXmlParser, the same discrimination the drawable path already did (newpipe).
-     *
-     *  Re-measured with both fixes, same 17 pairs, only this gate changed: **mean delta +0.04**,
-     *  deskclock 97.27, newpipe 77.53, bobball 89.45, bouncy +0.62, anuto +1.50, and the largest
-     *  single dip is unitconverter -1.22. That is what made the flip defensible; a sweep could not
-     *  have judged it (all 13 protected rows are games on colour bands).
-     *
-     *  `MACAPK_FW_VIEW=0` restores the pre-v1103 behaviour (view built only under the app gate),
-     *  which is the bisect handle if a Canvas-tier row moves. */
-    private static boolean macapkFwViewEnabled() {
-        return !"0".equals(System.getenv("MACAPK_FW_VIEW"));
-    }
 
-    /** BISECT GATE (2026-09-26, default ON). A framework selector row whose
-     *  android:alpha is a theme attribute has it resolved (see the selector
-     *  flattener). =0 restores the pre-change skip, which left such rows opaque. */
-    private static final boolean MACAPK_FWCSL_THEME_ALPHA =
-        !"0".equals(System.getenv("MACAPK_FWCSL_THEME_ALPHA"));
 
     /** "?0x01010552" (a compiled framework ?attr) -> its value in the application
      *  theme as the flattener's alpha code already understands it ("0.87", or an
@@ -770,13 +737,6 @@ public final class ResourceIndex {
      *  file won and its id count (15,122 = API 36), so a capture's
      *  provenance is in its log. */
     private static File macapkFrameworkApkFile() {
-        String env = System.getenv("MACAPK_FW_RES_APK");
-        if (env != null && !env.isEmpty()) {
-            File f = new File(env);
-            if (f.isFile()) return f;
-            NativeLog.w(TAG, "MACAPK_FW_RES_APK=" + env
-                + " is not a file; looking next to the runtime's jars instead");
-        }
         try {
             java.security.CodeSource cs = ResourceIndex.class.getProtectionDomain().getCodeSource();
             if (cs != null && cs.getLocation() != null) {
@@ -954,7 +914,7 @@ public final class ResourceIndex {
         return cfgDensityDpi + "|" + cfgNight + "|" + cfgOrientation + "|"
             + w + "x" + h + "|" + sw
             + "|" + cfgLocales.toLanguageTags() + "|" + cfgResSdk
-            + (MACAPK_RES_SIZECLASS ? "|sl" + Integer.toHexString(sl) : "")
+            + ("|sl" + Integer.toHexString(sl))
             // The platform table's -ldrtl rows are selected by the direction, and
             // a Configuration can carry one its locale does not imply. Appended
             // only for RTL, so every LTR key and its cached slices stay as they were.
@@ -1096,7 +1056,6 @@ public final class ResourceIndex {
      *  sidecar byte for byte. */
     private static int[][] macapkFwBucketsFromConfigs(java.util.Collection<String> cfgs) {
         int[][] dp = macapkFwThresholdsFromConfigs(cfgs);
-        if (!MACAPK_RES_SIZECLASS) return dp;
         int[][] sa = macapkSizeAspectFromConfigs(cfgs);
         return new int[][] { dp[0], dp[1], dp[2], sa[0], sa[1] };
     }
@@ -1118,7 +1077,6 @@ public final class ResourceIndex {
      *  the question "does the index need rebuilding" instead of "does the
      *  activity need relaunching". */
     private static int macapkLayoutBitsSelectedBy(int[][] b) {
-        if (!MACAPK_RES_SIZECLASS) return 0;
         final int size = android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK;
         final int lng = android.content.res.Configuration.SCREENLAYOUT_LONG_MASK;
         if (b == null || b.length < 5) return size | lng;
@@ -1282,9 +1240,6 @@ public final class ResourceIndex {
         } catch (Throwable ignore) { /* best-effort */ }
     }
 
-    private static boolean macapkFwViewDiskCacheEnabled() {
-        return !"0".equals(System.getenv("MACAPK_FWVIEW_DISK_CACHE"));
-    }
 
     private static File macapkFwViewCacheDir() {
         // Win.apk: %LOCALAPPDATA%\Win.apk\cache, not a "Library" folder in the
@@ -1306,9 +1261,7 @@ public final class ResourceIndex {
         File fwApk = macapkFrameworkApkFile();
         File dir = macapkFwViewCacheDir();
         String idHash = (fwApk != null) ? macapkFwIdHash(fwApk) : null;
-        boolean verify = "1".equals(System.getenv("MACAPK_FWVIEW_DISK_CACHE_VERIFY"));
-        boolean diskOk = fwApk != null && dir != null && idHash != null
-            && macapkFwViewDiskCacheEnabled();
+        boolean diskOk = fwApk != null && dir != null && idHash != null;
 
         // Canonicalize the config key against the framework's own dp thresholds
         // when they are known (this process's earlier build, or the sidecar),
@@ -1319,7 +1272,7 @@ public final class ResourceIndex {
         MacapkFwView mem = macapkFwViewCache;
         if (mem != null && cfgKey.equals(macapkFwViewKey)) return mem;
 
-        if (diskOk && !verify && thr != null) {
+        if (diskOk && thr != null) {
             try {
                 long t0 = System.nanoTime();
                 MacapkFwView disk = macapkLoadFwViewFromDisk(fwApk, dir, idHash, cfgKey, indexReader);
@@ -1351,7 +1304,7 @@ public final class ResourceIndex {
             String canonKey = (builtThr != null) ? macapkFwViewCfgKey(builtThr) : cfgKey;
             macapkFwViewCache = built;
             macapkFwViewKey = canonKey;
-            if (diskOk && !verify) {
+            if (diskOk) {
                 try {
                     macapkWriteFwThresholds(idHash, dir, builtThr);
                     macapkWriteFwViewToDisk(built, fwApk, dir, idHash, canonKey);
@@ -1363,7 +1316,6 @@ public final class ResourceIndex {
                     }
                 }
             }
-            if (verify && diskOk) macapkVerifyFwViewDisk(built, fwApk, dir, idHash, canonKey, indexReader);
         }
         return built;
     }
@@ -1538,55 +1490,7 @@ public final class ResourceIndex {
         catch (Throwable t) { return (int) (System.nanoTime() & 0x7fffffff); }
     }
 
-    /** MACAPK_FWVIEW_DISK_CACHE_VERIFY=1: write, replay, and compare every
-     *  field against the live build -- the positive control that the replayed
-     *  object equals the built one. Logs PASS or the first divergence. */
-    private void macapkVerifyFwViewDisk(MacapkFwView built, File fwApk, File dir,
-                                        String idHash, String cfgKey, ArscReader indexReader) {
-        try {
-            macapkWriteFwViewToDisk(built, fwApk, dir, idHash, cfgKey);
-            MacapkFwView disk = macapkLoadFwViewFromDisk(fwApk, dir, idHash, cfgKey, indexReader);
-            if (disk == null) { NativeLog.e(TAG, "fwview verify: replay returned null"); return; }
-            String d = macapkFwViewDiff(built, disk);
-            if (d == null) {
-                NativeLog.i(TAG, "fwview verify: PASS (" + built.styles.size()
-                    + " styles, " + built.simple.size() + " values round-trip identical)");
-            } else {
-                NativeLog.e(TAG, "fwview verify: MISMATCH -- " + d);
-            }
-        } catch (Throwable t) {
-            NativeLog.e(TAG, "fwview verify threw: " + t);
-        }
-    }
 
-    /** First structural difference between two views, or null if identical
-     *  (publicMap/nameToId/cslCache excluded -- reconstructed, not serialized). */
-    private static String macapkFwViewDiff(MacapkFwView a, MacapkFwView b) {
-        if (a.styles.size() != b.styles.size())
-            return "style count " + a.styles.size() + " vs " + b.styles.size();
-        for (Map.Entry<String, StyleDef> en : a.styles.entrySet()) {
-            StyleDef sb = b.styles.get(en.getKey());
-            StyleDef sa = en.getValue();
-            if (sb == null) return "style missing: " + en.getKey();
-            if (!java.util.Objects.equals(sa.parent, sb.parent))
-                return "style " + en.getKey() + " parent " + sa.parent + " vs " + sb.parent;
-            if (!sa.items.equals(sb.items)) return "style " + en.getKey() + " items differ";
-        }
-        if (a.simple.size() != b.simple.size())
-            return "simple count " + a.simple.size() + " vs " + b.simple.size();
-        for (Map.Entry<Integer, Object[]> en : a.simple.entrySet()) {
-            Object[] ob = b.simple.get(en.getKey());
-            Object[] oa = en.getValue();
-            if (ob == null) return "simple missing: 0x" + Integer.toHexString(en.getKey());
-            if (!oa[0].equals(ob[0]) || !oa[1].equals(ob[1])
-                    || !java.util.Objects.equals(oa[2], ob[2]))
-                return "simple 0x" + Integer.toHexString(en.getKey()) + " differs";
-        }
-        if (!a.attrEnum.equals(b.attrEnum)) return "attrEnum differs";
-        if (!a.attrFlagged.equals(b.attrFlagged)) return "attrFlagged differs";
-        if (!a.settledOrigin.equals(b.settledOrigin)) return "settledOrigin differs";
-        return null;
-    }
 
     /** Build the resolution view: full-parse the framework table, keep the
      *  config-selected slice. Returns null on ANY failure; the caller keeps
@@ -2187,7 +2091,7 @@ public final class ResourceIndex {
                 // resolved. Resolve it through the application theme, the same
                 // convention the ?0x colour branch above uses; an alpha that does not
                 // resolve is skipped exactly as before. =0 restores the skip.
-                if (MACAPK_FWCSL_THEME_ALPHA && alphaAttr != null && alphaAttr.startsWith("?0x")) {
+                if (alphaAttr != null && alphaAttr.startsWith("?0x")) {
                     alphaAttr = macapkFwThemeAlpha(alphaAttr);
                 }
                 if (alphaAttr != null && !alphaAttr.isEmpty()
@@ -2732,16 +2636,14 @@ public final class ResourceIndex {
         // it). Name the selected size/aspect configs explicitly so the log
         // answers "did the class apply?" on its own.
         StringBuilder layoutSel = new StringBuilder();
-        if (MACAPK_RES_SIZECLASS) {
-            int k = 0;
-            for (String s : selected) {
-                if (!macapkNamesSizeOrAspect(s)) continue;
-                if (k++ < 12) layoutSel.append(' ').append(s);
-            }
-            if (k > 12) layoutSel.append(" +").append(k - 12).append(" more");
-            layoutSel.insert(0, "; size/aspect configs selected (" + k + "):");
-            if (k == 0) layoutSel.append(" none");
+        int k = 0;
+        for (String s : selected) {
+            if (!macapkNamesSizeOrAspect(s)) continue;
+            if (k++ < 12) layoutSel.append(' ').append(s);
         }
+        if (k > 12) layoutSel.append(" +").append(k - 12).append(" more");
+        layoutSel.insert(0, "; size/aspect configs selected (" + k + "):");
+        if (k == 0) layoutSel.append(" none");
         NativeLog.i(TAG, "resources.arsc ingest (the installed apk set, in place): "
             + tables.size() + " table(s), " + idToTypeName.size() + " ids, " + totalRows
             + " rows, " + selected.size() + "/" + allCfgs.size() + " configs selected: " + cfgs
@@ -3223,10 +3125,6 @@ public final class ResourceIndex {
     // to carry ("Boot.java:319, 1366") named no such call sites and had not for
     // a long time. The real ones are Boot.run (the boot-time build) and
     // Boot.macapkApplySystemAppearance (the live light/dark flip, which exists
-    // PRECISELY because this class bakes cfgNight and every values-* family at
-    // construction and therefore cannot be re-qualified in place).
-    private final Map<String, List<File>> matchingDirsCache = new HashMap<>();
-    private final Map<File, org.w3c.dom.Document> parsedValuesDocs = new HashMap<>();
 
     /** Score the dash-separated qualifier string of a `res/<type>-<quals>`
      *  directory against the device Configuration. Returns -1 if ANY
@@ -3351,48 +3249,46 @@ public final class ResourceIndex {
             // (538 < 672) and 835x898dp NOTLONG too; only the unlocked
             // 1680x898dp one is LONG. The two lines after the gated branch are
             // the pre-fix constants, kept verbatim for MACAPK_RES_SIZECLASS=0.
-            if (MACAPK_RES_SIZECLASS) {
-                // ---- screen SIZE class (small/normal/large/xlarge) ----
-                // AOSP ResTable_config::match (android14-release
-                // libs/androidfw/ResourceTypes.cpp:2888-2894):
-                //     const int screenSize = screenLayout&MASK_SCREENSIZE;
-                //     const int setScreenSize = settings.screenLayout&MASK_SCREENSIZE;
-                //     // Any screen sizes for larger screens than the setting do not
-                //     // match.
-                //     if (screenSize != 0 && screenSize > setScreenSize) {
-                //         return false;
-                //     }
-                // i.e. a size-qualified config matches the device's class and
-                // every SMALLER class; the ranking among matches is
-                // macapkSizeClassBand's (isBetterThan :2624-2651). The qualifier
-                // spellings are ConfigDescription.cpp parseScreenLayoutSize
-                // (:138-172). An undefined device size (0) rejects every one,
-                // exactly as match() does.
-                int sz = macapkSizeClassOf(q);
-                if (sz != 0) {
-                    if (sz > (cfgScreenLayout
-                              & android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK)) return -1;
-                    sizeClass = sz;
-                    continue;
-                }
-                // ---- screen ASPECT (long/notlong) ----
-                // match() :2896-2900: a config naming an aspect matches only the
-                // SAME aspect (screenLong != 0 && screenLong != setScreenLong ->
-                // no match), so notlong is a real match on a notlong window and
-                // long is rejected there. isBetterThan :2652-2655 ranks a config
-                // that names the aspect above one that does not, directly below
-                // the size class -- the +700 band this method already used.
-                // Parse spellings: ConfigDescription.cpp parseScreenLayoutLong
-                // (:174-196).
-                if (q.equals("long") || q.equals("notlong")) {
-                    int want = q.equals("long")
-                        ? android.content.res.Configuration.SCREENLAYOUT_LONG_YES
-                        : android.content.res.Configuration.SCREENLAYOUT_LONG_NO;
-                    if ((cfgScreenLayout & android.content.res.Configuration.SCREENLAYOUT_LONG_MASK)
-                            != want) return -1;
-                    score += 700;
-                    continue;
-                }
+            // ---- screen SIZE class (small/normal/large/xlarge) ----
+            // AOSP ResTable_config::match (android14-release
+            // libs/androidfw/ResourceTypes.cpp:2888-2894):
+            //     const int screenSize = screenLayout&MASK_SCREENSIZE;
+            //     const int setScreenSize = settings.screenLayout&MASK_SCREENSIZE;
+            //     // Any screen sizes for larger screens than the setting do not
+            //     // match.
+            //     if (screenSize != 0 && screenSize > setScreenSize) {
+            //         return false;
+            //     }
+            // i.e. a size-qualified config matches the device's class and
+            // every SMALLER class; the ranking among matches is
+            // macapkSizeClassBand's (isBetterThan :2624-2651). The qualifier
+            // spellings are ConfigDescription.cpp parseScreenLayoutSize
+            // (:138-172). An undefined device size (0) rejects every one,
+            // exactly as match() does.
+            int sz = macapkSizeClassOf(q);
+            if (sz != 0) {
+                if (sz > (cfgScreenLayout
+                          & android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK)) return -1;
+                sizeClass = sz;
+                continue;
+            }
+            // ---- screen ASPECT (long/notlong) ----
+            // match() :2896-2900: a config naming an aspect matches only the
+            // SAME aspect (screenLong != 0 && screenLong != setScreenLong ->
+            // no match), so notlong is a real match on a notlong window and
+            // long is rejected there. isBetterThan :2652-2655 ranks a config
+            // that names the aspect above one that does not, directly below
+            // the size class -- the +700 band this method already used.
+            // Parse spellings: ConfigDescription.cpp parseScreenLayoutLong
+            // (:174-196).
+            if (q.equals("long") || q.equals("notlong")) {
+                int want = q.equals("long")
+                    ? android.content.res.Configuration.SCREENLAYOUT_LONG_YES
+                    : android.content.res.Configuration.SCREENLAYOUT_LONG_NO;
+                if ((cfgScreenLayout & android.content.res.Configuration.SCREENLAYOUT_LONG_MASK)
+                        != want) return -1;
+                score += 700;
+                continue;
             }
             if (q.equals("long"))     { score += 700; continue; }
             if (q.equals("notlong"))  return -1;
@@ -3500,42 +3396,6 @@ public final class ResourceIndex {
         return -1;
     }
 
-    /** MACAPK_RES_SIZECLASS (2026-09-25), default ON: match the screen-size
-     *  CLASS qualifiers (small/normal/large/xlarge) and the screen ASPECT
-     *  qualifiers (long/notlong) against the Configuration's screenLayout, the
-     *  way AOSP ResTable_config::match / isBetterThan do (qualifierScore quotes
-     *  both).
-     *
-     *  WHY. qualifierScore used to return -1 for every size class, so every
-     *  values-large / values-xlarge / layout-large / drawable-xlarge row an app
-     *  ships was ignored. Harmless while the window was a phone; wrong since
-     *  v1.0.1647 made the automatic window Android 16's large-screen window:
-     *  an unlocked app opens at 1680x898dp (XLARGE, long), a portrait-locked
-     *  one at 673x898dp or 835x898dp (LARGE, notlong). MEASURED on the corpus
-     *  (debug/sizeclass_gate.sh --corpus, 2026-09-25): 41 of 62 APKs ship
-     *  size-class configs and ALL 41 change selection on every Mac window --
-     *  AppCompat's abc_dialog_min_width_* / abc_dialog_fixed_* (65% -> 55%
-     *  large, 45% xlarge) and its DialogWhenLarge styles in almost all of them;
-     *  NewPipe's layout-large-land fragment_video_detail and VLC's
-     *  cover_media_switcher_item on the landscape window; AnkiDroid's
-     *  menu-xlarge deck_picker; Duolingo's integer/is_tablet 0 -> 1 and its
-     *  large font sizes; solitaire_cg's whole card deck from drawable-large-* /
-     *  drawable-xlarge-*; tobsolitaire's and sgtpuzzles' large dimens. None ships
-     *  long/notlong. opencalculator's layout-small / dimen-small now MATCH and,
-     *  correctly, still lose to the unqualified rows. The platform table ships
-     *  values-large / -xlarge dimens (dialog_min_width_*), 12 DialogWhenLarge
-     *  styles (-> *.Dialog.FixedSize) and 6 xlarge layouts, which the framework
-     *  view now selects too. The victim the dialog lane found:
-     *  `@dimen/abc_dialog_min_width_major` resolved to the `values` 65% on every
-     *  window, so Dialog.java carries a hand table of the 55%/45% large/xlarge
-     *  values (its REMOVAL CONDITION is this fix).
-     *
-     *  `=0` restores the pre-fix scorer exactly: every size class dropped,
-     *  `long` always accepted (+700), `notlong` always rejected, and every
-     *  score numerically what it was (macapkSizeClassBand returns 0 and the
-     *  framework-view cache key is unchanged). */
-    static final boolean MACAPK_RES_SIZECLASS =
-        !"0".equals(System.getenv("MACAPK_RES_SIZECLASS"));
 
     /** The width of one size-class step in qualifierScore's sum. The class
      *  sits between height and aspect in AOSP's isBetterThan order, which a
@@ -3618,7 +3478,6 @@ public final class ResourceIndex {
      *  undefined device size every class was rejected in qualifierScore, so
      *  `sizeClass` is 0 here and the band is 0. */
     private int macapkSizeClassBand(int sizeClass) {
-        if (!MACAPK_RES_SIZECLASS) return 0;
         final int dev = cfgScreenLayout & android.content.res.Configuration.SCREENLAYOUT_SIZE_MASK;
         if (dev >= android.content.res.Configuration.SCREENLAYOUT_SIZE_NORMAL) {
             final int key;
@@ -3816,13 +3675,6 @@ public final class ResourceIndex {
         NativeLog.i(TAG, "application theme set to " + name);
     }
 
-    /** ATTRSTYLE lane, 2026-08-13. Default ON; `MACAPK_ATTRSTYLE=0` restores the
-     *  pre-v1.0.968 behaviour of every fix in this lane in ONE run, so the
-     *  fleet A/B below can be re-derived from a single binary instead of two
-     *  builds taken minutes apart while other lanes are landing work.
-     *  Companion switch of the same name in Resources.java. */
-    static final boolean MACAPK_ATTRSTYLE =
-        !"0".equals(System.getenv("MACAPK_ATTRSTYLE"));
 
     /** Resolve a STYLE REFERENCE to the style's NAME. Three spellings, all of
      *  which real Android resolves through the same ResTable path:
@@ -3876,14 +3728,12 @@ public final class ResourceIndex {
      *  a known style. */
     private String styleNameForIdRef(String ref) {
         if (ref == null || ref.length() < 2) return null;
-        if (MACAPK_ATTRSTYLE) {
-            ref = macapkFollowStyleAttrRef(ref.trim());
-            if (ref == null || ref.length() < 2) return null;
-            // The TEXT spellings. Checked before the numeric parse because
-            // "style/X" is not a number and the parse below would discard it.
-            if (ref.startsWith("@style/"))         return ref.substring(7);
-            if (ref.startsWith("@android:style/")) return ref.substring(15);
-        }
+        ref = macapkFollowStyleAttrRef(ref.trim());
+        if (ref == null || ref.length() < 2) return null;
+        // The TEXT spellings. Checked before the numeric parse because
+        // "style/X" is not a number and the parse below would discard it.
+        if (ref.startsWith("@style/"))         return ref.substring(7);
+        if (ref.startsWith("@android:style/")) return ref.substring(15);
         if (ref.charAt(0) != '@') return null;
         String body = ref.substring(1);
         int id;
@@ -4515,11 +4365,11 @@ public final class ResourceIndex {
             // (Resources.macapkFrameworkDrawable). focusable/clickable are
             // already set unconditionally in EditText.macapkInitEditable.
             case "Widget.Material.EditText":
-                return MACAPK_ATTRSTYLE ? macapkStyle(n, "Widget.EditText", null, null) : null;
+                return macapkStyle(n, "Widget.EditText", null, null);
             case "Widget.Material.Light.EditText":
-                return MACAPK_ATTRSTYLE ? macapkStyle(n, "Widget.Material.EditText", null, null) : null;
+                return macapkStyle(n, "Widget.Material.EditText", null, null);
             case "Widget.EditText":
-                return MACAPK_ATTRSTYLE ? macapkStyle(n, null, "textSize", "18sp") : null;
+                return macapkStyle(n, null, "textSize", "18sp");
             default:
                 return null;
         }
@@ -4532,56 +4382,6 @@ public final class ResourceIndex {
         return new StyleDef(name, parent, m);
     }
 
-    /** Cluster A1 (widget-fidelity lane, 2026-09-26). Default ON;
-     *  `MACAPK_ATTR_IDENTITY=0` restores the pre-fix walk for a bisect.
-     *
-     *  WHAT. resolveAttrInTheme runs pass 1 with the BARE name over the whole
-     *  chain, then pass 2 with `android:` + name. App styles key a framework
-     *  attribute as `android:X`; the platform styles at the root of every
-     *  AppCompat / Material chain (served by macapkFwStyleAttr and the
-     *  hand tables in frameworkStyleAttr) key the same attribute BARE, because
-     *  inside framework-res `X` IS `android:X`. So a bare query walked past
-     *  every app style (none declares a bare `X`) and matched the PLATFORM
-     *  ancestor, and the leaf's own `android:X` was never consulted: a
-     *  framework value shadowed the app's own style item.
-     *
-     *  AOSP. A style item is identified by attribute RESOURCE ID, never by
-     *  name. AttributeResolution.cpp ApplyStyle (android14-release):
-     *      :253  const uint32_t cur_ident = attrs[ii];
-     *      :277  xml_style_attr_finder.Find(cur_ident)
-     *      :289  def_style_attr_finder.Find(cur_ident)
-     *  and a platform style bag can only hold 0x0101xxxx attribute ids, so an
-     *  app-namespace (0x7f) attribute can never match inside one. The guard
-     *  says exactly that: a style the app table does not hold (a platform
-     *  style) never answers a bare name. Pass 2 then finds the leaf-most app
-     *  `android:X` or, failing that, the same platform value as before.
-     *
-     *  MEASURED VICTIMS (offline, the apps' own resources,
-     *  docs/widget-fidelity-cluster_2026-09-25.md "Cluster A"):
-     *    Google Calculator Widget.GoogleMaterial3.Button.IconButton:
-     *      background btn_default_material -> @empty, minWidth 88dp -> 20dp
-     *      (with A2 below, the app's MaterialButton builds its own
-     *      RippleDrawable instead of the white 176x96 framework box);
-     *    VLC VLC.Onboarding.Title / .Text textSize 24sp -> 22sp / 16sp;
-     *    F-Droid TextAppearance.Material3.BodyLarge 14sp -> 16sp,
-     *      TitleLarge 20 -> 22sp, HeadlineSmall 20 -> 24sp.
-     *  BLAST RADIUS, measured (debug/attrident_gate.sh census, 10 apps: every
-     *  widget / TextAppearance style x 15 attributes): 4,228 of 134,700 bare
-     *  answers change (3.1%; 1.2% newpipe/unitconverter .. 5.0% Google
-     *  Calculator), NONE to null, and every one of them equals the OFF run's
-     *  `android:` answer for the same style, i.e. it IS the app leaf's own item.
-     *  By attribute: textAppearance 1158, background 836, stateListAnimator 589,
-     *  textSize 557, minWidth 377, textColor 329, minHeight 169, fontFamily 80,
-     *  textStyle 68, textColorHint 36, gravity 25, textAllCaps 4. No `android:`
-     *  query moves, and 0 of 400 THEME answers (40 attributes x 10 app themes)
-     *  move: a Theme.* platform root never answered pass 1 (macapkFwStyleAttr
-     *  and frameworkStyleAttr hold the theme table for pass 3), and pass 3's
-     *  bare walk now yields to its `android:` walk, which reaches the same
-     *  platform table through the same prefix strip. With the gate at 0 the
-     *  census is byte-identical to the pre-fix source (checked by
-     *  `debug/attrident_gate.sh --control`). */
-    static final boolean MACAPK_ATTR_IDENTITY =
-        !"0".equals(System.getenv("MACAPK_ATTR_IDENTITY"));
 
     /** Walk the theme cascade looking for the first style that declares
      *  `<item name="attrName">value</item>`. Returns the raw value
@@ -4694,7 +4494,7 @@ public final class ResourceIndex {
         if (themeStyleName == null || attrName == null) return null;
         if (!visited.add(themeStyleName)) return null;  // cycle guard
         StyleDef s = styleByName.get(themeStyleName);
-        if (s == null && MACAPK_ATTR_IDENTITY && !attrName.startsWith("android:")) {
+        if (s == null && !attrName.startsWith("android:")) {
             // A platform style can never answer a BARE (app-namespace) name.
             // See MACAPK_ATTR_IDENTITY for the AOSP citation and the measured
             // victims; resolveAttrInTheme's pass 2 re-walks with `android:X`,
@@ -5253,7 +5053,7 @@ public final class ResourceIndex {
             // their art is measured, as btn_default and btn_default_normal_holo_dark
             // were.
             case "editTextBackground":
-                return (MACAPK_ATTRSTYLE && family == FAM_MATERIAL)
+                return (family == FAM_MATERIAL)
                     ? "@android:drawable/edit_text_material" : null;
             // THE CANARY MATERIAL'S ThemeEnforcement CHECKS (v1.0.927). Both
             // Theme.Material and Theme.Material.Light set it to the same value,
@@ -6830,22 +6630,6 @@ public final class ResourceIndex {
         }
     }
 
-    /** Config-compatible `res/<typePrefix>*` subdir NAMES, BEST match
-     *  FIRST (descending qualifier score). For file-resource resolution:
-     *  the first compatible dir that actually contains the file wins,
-     *  mirroring AOSP's best-config selection. Uses the same
-     *  qualifierScore() as the value-alias path (matchingValueDirs);
-     *  incompatible/unknown-qualifier dirs are dropped. v1.0.446.
-     *
-     *  Memoized per typePrefix (compatibleSubdirsCache): called once per
-     *  file-backed resource LOOKUP (subdirCandidatesFor -> here, for
-     *  every non-drawable/mipmap type -- layout/menu/xml/anim/font/...),
-     *  so a list-heavy screen re-resolving the same handful of types
-     *  many times (RecyclerView row layouts, repeated menu inflates)
-     *  otherwise re-`listFiles()`+re-scores the same dirs every time.
-     *  Same invalidation story as matchingValueDirs: fixed for the life
-     *  of this instance. */
-    private final Map<String, List<String>> compatibleSubdirsCache = new HashMap<>();
     private String pathForByTypeName(int id, String type, String name,
                                      java.util.Set<String> visited) {
         if (type == null || name == null) return null;

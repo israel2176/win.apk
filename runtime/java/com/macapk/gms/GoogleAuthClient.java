@@ -421,8 +421,8 @@ public final class GoogleAuthClient {
     // ===================================================================
 
     private static Map<String, String> baseParams() {
-        String app = env("MACAPK_GMS_AUTH_APP", DEFAULT_APP);
-        String sig = env("MACAPK_GMS_AUTH_SIG", platformSigSha1());
+        String app = DEFAULT_APP;
+        String sig = platformSigSha1();
         long androidId = GmsStore.androidId();
 
         Map<String, String> form = new LinkedHashMap<>();
@@ -485,10 +485,6 @@ public final class GoogleAuthClient {
     private static final String GMS_PACKAGE = "com.google.android.gms";
     private static final String VENDING_PACKAGE = "com.android.vending";
 
-    private static boolean honestIdentity() {
-        String v = System.getenv("MACAPK_GMS_HONEST_IDENTITY");
-        return "1".equals(v) || "true".equalsIgnoreCase(v);
-    }
 
     /**
      * Overwrite the four identity fields with the Play Store's -- but ONLY for
@@ -508,7 +504,6 @@ public final class GoogleAuthClient {
      * succeeds under our own identity.
      */
     private static void applyPlayStoreIdentity(Map<String, String> form, String scope) {
-        if (honestIdentity()) return;
         if (!GoogleAuthenticator.SCOPE_GOOGLEPLAY.equals(scope)) return;
         form.put("app", VENDING_PACKAGE);
         form.put("client_sig", PLAY_STORE_CLIENT_SIG);

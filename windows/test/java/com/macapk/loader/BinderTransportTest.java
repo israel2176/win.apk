@@ -743,7 +743,6 @@ public final class BinderTransportTest {
         pb.environment().put("WINAPK_TEST_ANDROID_ROOT", new File(dir, "android").getPath());
         pb.environment().put("MACAPK_BROKER_ROOT", new File(dir, "broker-root").getPath());
         pb.environment().put("MACAPK_GMS_DIR", new File(dir, "gms").getPath());
-        pb.environment().remove("MACAPK_GMS_PRESENT");
         return pb.start();
     }
 
@@ -1101,7 +1100,6 @@ public final class BinderTransportTest {
         ProcessBuilder pb = new ProcessBuilder(self("accounts")).inheritIO();
         pb.environment().put("WINAPK_TEST_ANDROID_ROOT", root.getPath());
         pb.environment().put("MACAPK_GMS_DIR", new File(dir, "gms").getPath());
-        pb.environment().remove("MACAPK_GMS_PRESENT");
         Process p = pb.start();
         boolean done = p.waitFor(180, TimeUnit.SECONDS);
         if (!done) p.destroyForcibly();

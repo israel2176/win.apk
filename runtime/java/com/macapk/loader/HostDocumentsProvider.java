@@ -110,7 +110,7 @@ public final class HostDocumentsProvider extends DocumentsProvider {
     /** Trees are served when the picker can make them: MACAPK_DOC_TREE and the
      *  DocumentsProvider dispatch that lists and edits their children. */
     static boolean treesOn() {
-        return DocumentPickerHandler.TREE && DocumentsProvider.macapkDispatch();
+        return DocumentsProvider.macapkDispatch();
     }
 
     /** Where the minted ids persist (the app's data dir), and load them. */
@@ -159,29 +159,11 @@ public final class HostDocumentsProvider extends DocumentsProvider {
         return sb.toString();
     }
 
-    /** MACAPK_DOCS_PRIMARY_IDS (default ON; =0 = an opaque "macapk:" token for
-     *  every pick, the old answer). A pick that lies INSIDE the app's primary
-     *  volume -- directly, or through one of its top-level links (Download ->
-     *  ~/Downloads, a shared-volume entry) -- gets ExternalStorageProvider's own
-     *  id shape, "primary:" + the path relative to the volume
-     *  (ExternalStorageProvider.getDocIdForFileMaybeCreate: rootId + ':' + path
-     *  under the root; the primary root's id is "primary"). Apps derive real
-     *  paths from that shape -- game frontends (iiSU) turn "primary:<rel>" into
-     *  getExternalStorageDirectory()/<rel> and hand THAT to the emulator as its
-     *  ROM path; with the opaque token they fell back to handing over the
-     *  content:// URI, which RetroArch cannot open (a black game window). The
-     *  capability model is unchanged: an id resolves only under a tree the app
-     *  was granted (locate() matches it against the granted ids), so a guessed
-     *  "primary:Download/other" is refused exactly like a guessed token. A pick
-     *  outside the volume (the rest of the Mac) keeps its opaque token. */
-    static boolean primaryIdsOn() {
-        return !"0".equals(System.getenv("MACAPK_DOCS_PRIMARY_IDS"));
-    }
 
     /** "primary:" + the volume-relative path of `f`, or null when `f` is not in
      *  the app's primary volume. */
     static String primaryIdFor(File f) {
-        if (!primaryIdsOn() || f == null) return null;
+        if (f == null) return null;
         try {
             File volume = SharedStorage.externalStorageRoot();
             String canon = f.getCanonicalPath();
@@ -499,7 +481,7 @@ public final class HostDocumentsProvider extends DocumentsProvider {
     public void attachInfo(android.content.Context context, android.content.pm.ProviderInfo info) {
         // MACAPK_URI_GRANT_ENFORCE reads the same manifest facts, with or without
         // the dispatch.
-        if ((DocumentsProvider.macapkDispatch() || MacApkUriGrants.ENFORCE) && info != null) {
+        if ((DocumentsProvider.macapkDispatch() || true) && info != null) {
             if (info.readPermission == null) info.readPermission = android.Manifest.permission.MANAGE_DOCUMENTS;
             if (info.writePermission == null) info.writePermission = android.Manifest.permission.MANAGE_DOCUMENTS;
             info.exported = true;
@@ -511,7 +493,7 @@ public final class HostDocumentsProvider extends DocumentsProvider {
         // transport check then asks for MANAGE_DOCUMENTS (never held by an app) or
         // a URI grant, as on a device (MACAPK_URI_GRANT_ENFORCE; =0 keeps the app's
         // package, and with it the pre-change "same app, no check" answer).
-        if (MacApkUriGrants.ENFORCE && info != null) info.packageName = PACKAGE;
+        if (info != null) info.packageName = PACKAGE;
         super.attachInfo(context, info);
     }
 

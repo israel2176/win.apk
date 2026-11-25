@@ -106,7 +106,7 @@ public final class SystemClient {
      *  ONE process, named after the package (the behaviour before processes were
      *  split). Anything else, including unset, splits. The broker reads the same
      *  variable and passes it to every process it spawns. */
-    static boolean splitOff() { return "0".equals(System.getenv("MACAPK_PROCESS_SPLIT")); }
+    static boolean splitOff() { return false; }
 
     /** The broker is on and not told to collapse packages: android:process
      *  components get their own processes. A pure function of the environment, so
@@ -116,7 +116,7 @@ public final class SystemClient {
         // Decided once per process: Boot names the process from it, attach routes by
         // it, and the two must agree for the whole run (enabled() stats a file).
         Boolean b = sSplitConfigured;
-        if (b == null) { b = enabled() && !splitOff(); sSplitConfigured = b; }
+        if (b == null) { b = enabled(); sSplitConfigured = b; }
         return b;
     }
     private static volatile Boolean sSplitConfigured;

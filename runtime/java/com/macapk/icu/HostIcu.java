@@ -35,8 +35,6 @@ package com.macapk.icu;
 public final class HostIcu {
     private HostIcu() {}
 
-    public static final boolean PLATFORM_TYPES =
-            !"0".equals(System.getenv("MACAPK_ICU_PLATFORM_TYPES"));
 
     // Bound by RegisterNatives (icu_host_bridge.cpp, kIcuHostMethods). Both throw
     // IllegalArgumentException("<u_errorName>") on an ICU failure status.

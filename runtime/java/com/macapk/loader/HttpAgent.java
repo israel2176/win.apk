@@ -59,7 +59,6 @@ public final class HttpAgent {
      *  HttpURLConnection is created: the JDK reads http.agent once, in that
      *  class's static initializer. */
     public static void install() {
-        if ("0".equals(System.getenv("MACAPK_HTTP_AGENT_DALVIK"))) return;
         try {
             System.setProperty("http.agent", defaultUserAgent());
         } catch (Throwable ignored) {}

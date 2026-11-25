@@ -546,25 +546,8 @@ public final class InputRecorder {
                 return r;
             }
             // GATE-MUTANT(inputrec:urls-guard) begin
-            if (!"0".equals(System.getenv("MACAPK_EXTERNAL_URLS"))) {
-                r.refuse("set MACAPK_EXTERNAL_URLS=0: replayed input enters where a person's"
-                    + " does (noteRealInput), which would let the app open the host browser");
-                return r;
-            }
-            // GATE-MUTANT(inputrec:urls-guard) end
-            final String recPkg = kv.get("package"), curPkg = sink.packageName();
-            if (recPkg != null && curPkg != null && !recPkg.equals(sanitize(curPkg))) {
-                r.refuse("recorded on " + recPkg + ", this app is " + curPkg);
-                return r;
-            }
-            if (!r.windowMatches(kv.get("window"), "header")) return r;
-            if (!r.scaleMatches(kv.get("scale"))) return r;
-            final String recVer = kv.get("version"),
-                         curVer = System.getProperty("macapk.runtime.version", "?");
-            NativeLog.i(TAG, "inputrec: replaying package=" + recPkg + " window=" + kv.get("window")
-                + " recorded-version=" + recVer
-                + (recVer != null && !recVer.equals(curVer) ? " (this runtime is " + curVer
-                    + ": a different build may diverge)" : ""));
+            r.refuse("set MACAPK_EXTERNAL_URLS=0: replayed input enters where a person's"
+                + " does (noteRealInput), which would let the app open the host browser");
             return r;
         }
 

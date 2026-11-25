@@ -120,16 +120,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  to make the family child-first: the app's bundled copy wins; our shadow
      *  only rescues a class the app did NOT bundle. Full design + tradeoff:
      *  docs/gms-shadow-classloader-contract_2026-06-21.md. */
-    /*  Package-private, not private, ON PURPOSE: Boot.appProviders'
-     *  Firebase default-app rescue only makes sense under child-first and MUST
-     *  agree with this flag. It used to re-derive the answer with its own
-     *  expression that required MACAPK_GMS_CHILD_FIRST to be *explicitly* "1"/
-     *  "true", so with the variable UNSET the two disagreed: child-first was ON
-     *  here (default-ON since v1.0.493) while the rescue silently did NOT run.
-     *  One constant, one answer -- do not re-inline this test anywhere. */
-    static final boolean GMS_CHILD_FIRST =
-        !("0".equals(System.getenv("MACAPK_GMS_CHILD_FIRST"))
-          || "false".equalsIgnoreCase(System.getenv("MACAPK_GMS_CHILD_FIRST")));
 
     /** Absolute path to the stub dylib next to the runtime binary. */
     private final String stubLibraryPath;
@@ -271,8 +261,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             // not, the value is not the gate. See the oracle doc. Base only:
             // the probe is about the base's path.
             if (i == 0) {
-                String tp = System.getenv("MACAPK_TEST_APK_URLPATH");
-                if (tp != null && !tp.isEmpty()) { java.io.File f = new java.io.File(tp); if (f.isFile()) urlFile = f; }
             }
             // Device-faithful resource URL (MACAPK_ANDROID_MAPS_PATHS, default OFF; cont.73-75): pairip's
             // VMRunner.openBaseApk parses getResource("/AndroidManifest.xml").toString() to a path,
@@ -281,17 +269,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             // not our host prefix. This is now OPENABLE: the runtime installs a fishhook rebind of
             // libjava/libjvm open/stat/lstat/access/fstatat (main.cpp macapk_install_jvmfs_rebind, same
             // gate) that remaps /data/... -> <android_root> for the JVM's ZipFile open. Same File.toURI()
-            // encoding a device uses, so the folded bytes match a device's. Gated: default returns the host URL.
-            if (System.getenv("MACAPK_ANDROID_MAPS_PATHS") != null) {
-                String dev = urlFile.getAbsolutePath();
-                String root = com.macapk.loader.SharedStorage.androidRoot();
-                if (root != null && !root.isEmpty()) {
-                    while (root.length() > 1 && root.endsWith("/")) root = root.substring(0, root.length() - 1);
-                    if (dev.startsWith(root) && (dev.length() == root.length() || dev.charAt(root.length()) == '/'))
-                        dev = dev.substring(root.length());
-                }
-                return new URL("jar:" + new java.io.File(dev).toURI().toURL() + "!/" + entry);
-            }
             return new URL("jar:" + urlFile.toURI().toURL() + "!/" + entry);
         } catch (Throwable t) {
             return null;
@@ -299,38 +276,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     }
 
     // ---- BOOTSPEED: the direct classes.jar read (v1.0.1650) ----
-    /** MACAPK_BOOTSPEED_JARREAD -- default ON; "0" restores the pre-v1.0.1650
-     *  read exactly (findResource -> jar: URL -> openStream for every class).
-     *
-     *  WHAT IT CHANGES: only HOW findClass fetches a class file's bytes, never
-     *  WHICH bytes. The old read went through the URL machinery for every app
-     *  class a boot defines: URLClassPath.findResource builds a jar: URL
-     *  (ParseUtil.encodePath + new URL), then URL.openStream parses that URL
-     *  back, looks the jar up in JarURLConnection's JarFileFactory cache and
-     *  only then reads the entry. Measured offline, arms interleaved: on the
-     *  class ORDER F-Droid's real boot loaded (5,968 classes,
-     *  debug/bootspeed_bench.sh parts) URL 80-109 ms vs direct 45-64 ms; a full
-     *  load of Signal's 8,361 classes, 6 reps: CPU mean 851 -> 802 ms (-6%),
-     *  WALL within noise. So the win is CPU, and its wall-clock value on a real
-     *  boot is unproven until a live A/B. (An earlier 234-vs-40 ms reading was
-     *  a first-in-JVM ordering artifact: whichever arm ran first paid the
-     *  jar-open and warm-up; swapping the arms removed most of it.)
-     *
-     *  WHY IT IS THE SAME ANSWER: the loader's classpath is [classes.jar,
-     *  services_root/] (Boot.run), and URLClassPath searches it IN ORDER, so for
-     *  any entry classes.jar carries, findResource resolves to exactly that
-     *  entry. This opens the jar the way URLClassPath.JarLoader.getJarFile does
-     *  on JDK 21 (new JarFile(file, verify=true, OPEN_READ,
-     *  JarFile.runtimeVersion()), then jar.getJarEntry(name)), so a versioned
-     *  (multi-release) entry resolves identically too. A MISS -- a class the jar
-     *  does not carry, which is where services_root, the APK-entry fallback and
-     *  the lazy-DEX converter come in -- returns null and takes the old path
-     *  unchanged, as does any failure to open or read. The bytes then go through
-     *  the same ClassFileRewriter and defineClass as before.
-     *  Proven byte-identical by debug/bootspeed_gate.sh (every class of the
-     *  corpus boot lists, both reads, compared byte for byte). */
-    static final boolean BOOTSPEED_JARREAD =
-        !"0".equals(System.getenv("MACAPK_BOOTSPEED_JARREAD"));
     private volatile java.util.jar.JarFile classJar;
     private volatile boolean classJarTried;
 
@@ -419,9 +364,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     // Kept inside this class (fields + static helpers) rather than in a class
     // of its own: FRAMEWORK_ID counts class PRESENCE (runtime/scripts/
     // build_ids.py), so one new class would have re-converted every installed
-    // app on its next launch.
-    static final boolean PKG_REMAP =
-        !"0".equals(System.getenv("MACAPK_PROHIBITED_PKG_REMAP"));
     /** Internal-name prefix a renamed package gets. */
     static final String PKG_REMAP_PREFIX = "macapk/";
     static final String PKG_REMAP_PREFIX_DOTTED = "macapk.";
@@ -435,7 +377,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         if (r != null) return r;
         synchronized (this) {
             if (remapPkgs == null) {
-                remapPkgs = PKG_REMAP ? scanProhibitedPackages() : new String[0];
+                remapPkgs = scanProhibitedPackages();
             }
             return remapPkgs;
         }
@@ -448,11 +390,11 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // Through the BOOTSPEED reader's JarFile when that path is on; with
         // MACAPK_BOOTSPEED_JARREAD=0 a JarFile of our own, closed after the scan,
         // so that bisect arm still leaves the direct reader unengaged.
-        java.util.jar.JarFile shared = BOOTSPEED_JARREAD ? classJar() : null;
+        java.util.jar.JarFile shared = classJar();
         java.util.jar.JarFile jar = shared;
         long t0 = System.nanoTime();
         try {
-            if (jar == null && !BOOTSPEED_JARREAD) {
+            if (jar == null && false) {
                 URL[] us = getURLs();
                 if (us.length > 0 && us[0] != null && "file".equals(us[0].getProtocol())
                         && !us[0].getPath().endsWith("/")) {
@@ -674,8 +616,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             if (lazyDexTried) return lazyDex;
             lazyDexTried = true;
             if (apkFile == null) return null;
-            String on = System.getenv("MACAPK_LAZY_DEX");
-            boolean asked = on != null && !on.isEmpty() && !on.equals("0");
+            boolean asked = false;
             // ...OR there is no eager classes.jar to answer from. That is the
             // AUTOMATIC fallback, and it is what makes "the install succeeded"
             // an honest statement when the ahead-of-time conversion did not
@@ -775,7 +716,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // it carries the entry -- the SAME entry, through the same kind of
         // JarFile, that the URL lookup below would resolve. See
         // BOOTSPEED_JARREAD. A miss (or any trouble) takes the unchanged URL path.
-        byte[] direct = BOOTSPEED_JARREAD ? readClassJarEntry(resourcePath) : null;
+        byte[] direct = readClassJarEntry(resourcePath);
         java.net.URL u = direct != null ? null : findResource(resourcePath);
         if (direct != null || u != null) {
             try (java.io.InputStream in = direct != null ? null : u.openStream()) {
@@ -1143,31 +1084,13 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             + ")"
             + (normalised.equals(name) ? "" : " -> " + normalised));
 
-        // MACAPK_FWGAP_NEWCLASSES=0 bisect gate (com.macapk.loader.FwGapNewClasses,
-        // docs/fwgap-new-platform-classes_2026-09-26.md). Before the 2026-09-26
-        // framework-gap lane the parent (framework) lookup for these names
-        // missed, so the load fell through to findClass: the app's own classpath
-        // (its R8 API stub of ServiceStartNotAllowedException when it bundles
-        // one) or ClassNotFoundException. Skipping the parent for exactly those
-        // names reproduces that for every load through this loader. Default ON:
-        // hidden() returns false at once, one boolean test per load.
-        // debug/fwgap_gate.sh strips this block to build its positive control.
-        if (FwGapNewClasses.hidden(normalised)) {
-            synchronized (getClassLoadingLock(normalised)) {
-                Class<?> c = findLoadedClass(normalised);
-                if (c == null) c = findClass(normalised);
-                if (resolve) resolveClass(c);
-                return c;
-            }
-        }
-
         // v1.0.477: child-first for the GMS/Firebase/Play/Billing families.
         // The app's OWN bundled copy (reachable via our URL classpath =
         // findClass) must win over our parent-loaded shadow; we only fall back
         // to the shadow when the app didn't bundle the class. This is the whole
         // entry point because the one-arg loadClass(String) and the JVM's own
         // resolution both route through this two-arg form via virtual dispatch.
-        if (GMS_CHILD_FIRST && isGmsChildFirstFamily(normalised)) {
+        if (isGmsChildFirstFamily(normalised)) {
             synchronized (getClassLoadingLock(normalised)) {
                 Class<?> c = findLoadedClass(normalised);
                 if (c == null) {
@@ -1219,7 +1142,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                 ASKING_REQUESTER.remove();
             }
         }
-        if (RETIRE_ENGINE_SHADOWS && c.getClassLoader() != this
+        if (c.getClassLoader() != this
                 && !normalised.startsWith("android.") && isRetiredShadow(c)) {
             return appCopyOfRetiredShadow(normalised, c, resolve);
         }
@@ -1260,9 +1183,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  neither knob alone can build one that never did.
      *  docs/andengine-lock-shadow-retired_2026-09-27.md. */
     public static final String RETIRED_SHADOW = "macapk-retired-shadow";
-    static final boolean RETIRE_ENGINE_SHADOWS =
-        !"0".equals(System.getenv("MACAPK_RETIRE_ENGINE_SHADOWS"))
-        && !"0".equals(System.getenv("MACAPK_GLSV_PAUSE"));
 
     /** True when {@code c} carries the retired-shadow marker. */
     public static boolean isRetiredShadow(Class<?> c) {
@@ -1437,7 +1357,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                     // pairip runs, to test whether the module count pairip folds (buffer 0x50b60,
                     // ours 9 vs device 0) is our preloaded guest libs -- a real device lazy-loads
                     // game libs AFTER pairip. Default off. 2026-09-16.
-                    try { if (System.getenv("MACAPK_NO_PRELOAD") == null) preloadAllApkLibs(); }
+                    try { preloadAllApkLibs(); }
                     catch (Throwable t) {
                         NativeLog.w(TAG, "preloadAllApkLibs failed: " + t);
                     }
@@ -1449,24 +1369,12 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // whether a specific library is the source of a crash -- e.g.
         // MACAPK_SKIP_LIBS=fmod stubs out FMOD without touching anything
         // else. Generic across APKs.
-        String skipList = System.getenv("MACAPK_SKIP_LIBS");
-        if (skipList != null) {
-            for (String s : skipList.split(",")) {
-                if (s.trim().equals(libname)) {
-                    NativeLog.i(TAG, "findLibrary(" + libname + "): in MACAPK_SKIP_LIBS, using stub");
-                    if (stubLibraryPath != null && new File(stubLibraryPath).exists()) {
-                        return stubLibraryPath;
-                    }
-                    return super.findLibrary(libname);
-                }
-            }
-        }
 
         // Diagnostic ABI override: when MACAPK_FORCE_ABI is set, both the
         // lib/<isa>/ lookup (in locateApkSo) and the translated-dylib
         // cache filename get pinned to that ABI. The cache suffix keeps the
         // default-path lib<name>.dylib intact across A/B runs.
-        String forcedAbi = forcedAbi();
+        String forcedAbi = null;
         String cacheSuffix = (forcedAbi != null) ? "-" + forcedAbi : "";
         // v1.0.823: an INSTRUMENTED translate must not poison the normal cache.
         // MACAPK_DIFF_VADDRS compiles __macapk_capture_entry hooks into the named
@@ -1479,14 +1387,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // binaries were fine and only the cache was bad.
         // Giving instrumented output its own suffix makes the two builds
         // co-exist and makes the poisoning impossible in either direction.
-        String diffSpec = System.getenv("MACAPK_DIFF_VADDRS");
-        if (diffSpec != null && !diffSpec.isEmpty()) {
-            cacheSuffix = cacheSuffix + "-diff";
-            NativeLog.w(TAG, "findLibrary(" + libname + "): MACAPK_DIFF_VADDRS is set"
-                + " -- using a SEPARATE instrumented cache slot (suffix='"
-                + cacheSuffix + "'). Instrumented dylibs are never reused by a"
-                + " normal run.");
-        }
         if (forcedAbi != null) {
             NativeLog.i(TAG, "findLibrary(" + libname + "): MACAPK_FORCE_ABI="
                 + forcedAbi + " active (cache suffix='" + cacheSuffix + "')");
@@ -1496,88 +1396,82 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // and forces the stub fallback. Used when the translated dylib
         // crashes the JVM during native init and you want the framework's
         // empty GLSurfaceView fallback to render the activity's UI instead.
-        boolean disabled = "1".equals(System.getenv("MACAPK_DISABLE_TRANSLATOR"))
-                       || "true".equalsIgnoreCase(System.getenv("MACAPK_DISABLE_TRANSLATOR"));
         // Declared out here so step 3a below can distinguish "this APK does not
         // ship the library at all" (AOSP: return null) from "it ships it but we
         // could not translate it" (keep the stub).
         File so = null;
-        if (!disabled) {
-            // Resolve the APK's own copy up front (one cheap File.exists()
-            // stat in the common case) so step 1 below can tell a genuine
-            // cache hit from a STALE one. t3-mmap (2026-07-24): a Stage-6
-            // arm64 wrapper's constructor is no longer self-contained -- it
-            // mmaps/pread's its source .so back off disk at load time
-            // (__macapk_arm64_native_load_from_path, arm64_native.cpp), so
-            // a cached wrapper whose source .so has been deleted (data-dir
-            // tampering, a forced partial re-extract) is NOT actually
-            // loadable: handing it to System.load() as-is would dyld-load
-            // fine and then fail every trampoline (br to a null slot ->
-            // SIGSEGV), with no chance to recover.
-            so = locateApkSo(libname);
+        // Resolve the APK's own copy up front (one cheap File.exists()
+        // stat in the common case) so step 1 below can tell a genuine
+        // cache hit from a STALE one. t3-mmap (2026-07-24): a Stage-6
+        // arm64 wrapper's constructor is no longer self-contained -- it
+        // mmaps/pread's its source .so back off disk at load time
+        // (__macapk_arm64_native_load_from_path, arm64_native.cpp), so
+        // a cached wrapper whose source .so has been deleted (data-dir
+        // tampering, a forced partial re-extract) is NOT actually
+        // loadable: handing it to System.load() as-is would dyld-load
+        // fine and then fail every trampoline (br to a null slot ->
+        // SIGSEGV), with no chance to recover.
+        so = locateApkSo(libname);
 
-            // 1. Cache hit -- already translated on a previous boot, AND
-            //    (for a Stage-6 arm64 wrapper) its source .so is still
-            //    present. stage6SourceStillPresent() -- NOT `so != null` --
-            //    is the right test here: `so` is locateApkSo()'s ABI-
-            //    FALLBACK pick (arm64-v8a, else armeabi-v7a, else...), which
-            //    answers "could SOMETHING be translated for this libname
-            //    right now", not "does THIS cached wrapper's own dependency
-            //    still exist". A first version of this fix used `so != null`
-            //    directly and it was WRONG: on an app that ships both ABIs
-            //    (e.g. GD Lite), deleting only the arm64-v8a .so left
-            //    `so` pointing at the still-present armeabi-v7a copy, so the
-            //    check passed, the (now-broken) cached Stage-6 wrapper got
-            //    System.load()'d, dyld succeeded, and the JVM's own
-            //    JNI_OnLoad lookup+call landed on an unresolved (zero)
-            //    trampoline slot -- SIGSEGV pc=0 inside
-            //    Java_jdk_internal_loader_NativeLibraries_load. Reproduced,
-            //    root-caused via the hs_err_pid*.log stack, and fixed by
-            //    checking arm64-v8a specifically instead of falling back
-            //    across ABIs -- see stage6SourceStillPresent()'s own
-            //    comment for the full rationale.
-            File cached = new File(appDir, "lib_native/lib" + libname + cacheSuffix + ".dylib");
-            boolean sourcePresent = cached.exists() && stage6SourceStillPresent(libname);
-            if (sourcePresent && nativeIdMatches(cached)) {
-                NativeLog.i(TAG, "findLibrary(" + libname + ") -> cached " +
+        // 1. Cache hit -- already translated on a previous boot, AND
+        //    (for a Stage-6 arm64 wrapper) its source .so is still
+        //    present. stage6SourceStillPresent() -- NOT `so != null` --
+        //    is the right test here: `so` is locateApkSo()'s ABI-
+        //    FALLBACK pick (arm64-v8a, else armeabi-v7a, else...), which
+        //    answers "could SOMETHING be translated for this libname
+        //    right now", not "does THIS cached wrapper's own dependency
+        //    still exist". A first version of this fix used `so != null`
+        //    directly and it was WRONG: on an app that ships both ABIs
+        //    (e.g. GD Lite), deleting only the arm64-v8a .so left
+        //    `so` pointing at the still-present armeabi-v7a copy, so the
+        //    check passed, the (now-broken) cached Stage-6 wrapper got
+        //    System.load()'d, dyld succeeded, and the JVM's own
+        //    JNI_OnLoad lookup+call landed on an unresolved (zero)
+        //    trampoline slot -- SIGSEGV pc=0 inside
+        //    Java_jdk_internal_loader_NativeLibraries_load. Reproduced,
+        //    root-caused via the hs_err_pid*.log stack, and fixed by
+        //    checking arm64-v8a specifically instead of falling back
+        //    across ABIs -- see stage6SourceStillPresent()'s own
+        //    comment for the full rationale.
+        File cached = new File(appDir, "lib_native/lib" + libname + cacheSuffix + ".dylib");
+        boolean sourcePresent = cached.exists() && stage6SourceStillPresent(libname);
+        if (sourcePresent && nativeIdMatches(cached)) {
+            NativeLog.i(TAG, "findLibrary(" + libname + ") -> cached " +
+                              cached.getAbsolutePath());
+            preloadDependencies(libname);
+            return cached.getAbsolutePath();
+        }
+        if (cached.exists() && !sourcePresent) {
+            // (A native-id mismatch is reported by nativeIdMatches itself.)
+            NativeLog.w(TAG, "findLibrary(" + libname + "): cached " +
+                cached.getAbsolutePath() + " exists but its arm64 " +
+                "source .so is missing from the installed lib dir -- " +
+                "treating as a cache miss");
+        }
+        // Losing the stamp race is not an error: the .dylib is simply
+        // re-translated below and re-stamped, which is the correct
+        // behaviour for an artifact whose producer changed.
+
+        // 2. Translate from the APK's lib/<arch>/lib<name>.so.
+        if (so != null && translatorBin != null && translatorBin.canExecute()) {
+            // Pre-load this library's DT_NEEDED dependencies before
+            // we translate + dlopen ourselves, so the dependent
+            // library's __mod_init_func can resolve symbols from
+            // libc++_shared / libopenal / etc. via dlsym(RTLD_DEFAULT)
+            // when its __macapk_arm64_native_load runs.
+            preloadDependencies(libname);
+            ensureLibBiases();
+            cached.getParentFile().mkdirs();
+            if (translate(so, cached, libBias.getOrDefault(libname, 0L))) {
+                NativeLog.i(TAG, "findLibrary(" + libname + ") -> translated " +
                                   cached.getAbsolutePath());
-                preloadDependencies(libname);
+                // Stamp AFTER a successful translation only. An unstamped
+                // dylib re-translates next launch, which is the safe
+                // direction; a wrongly-stamped one would be reused forever.
+                writeNativeIdStamp(cached);
                 return cached.getAbsolutePath();
             }
-            if (cached.exists() && !sourcePresent) {
-                // (A native-id mismatch is reported by nativeIdMatches itself.)
-                NativeLog.w(TAG, "findLibrary(" + libname + "): cached " +
-                    cached.getAbsolutePath() + " exists but its arm64 " +
-                    "source .so is missing from the installed lib dir -- " +
-                    "treating as a cache miss");
-            }
-            // Losing the stamp race is not an error: the .dylib is simply
-            // re-translated below and re-stamped, which is the correct
-            // behaviour for an artifact whose producer changed.
-
-            // 2. Translate from the APK's lib/<arch>/lib<name>.so.
-            if (so != null && translatorBin != null && translatorBin.canExecute()) {
-                // Pre-load this library's DT_NEEDED dependencies before
-                // we translate + dlopen ourselves, so the dependent
-                // library's __mod_init_func can resolve symbols from
-                // libc++_shared / libopenal / etc. via dlsym(RTLD_DEFAULT)
-                // when its __macapk_arm64_native_load runs.
-                preloadDependencies(libname);
-                ensureLibBiases();
-                cached.getParentFile().mkdirs();
-                if (translate(so, cached, libBias.getOrDefault(libname, 0L))) {
-                    NativeLog.i(TAG, "findLibrary(" + libname + ") -> translated " +
-                                      cached.getAbsolutePath());
-                    // Stamp AFTER a successful translation only. An unstamped
-                    // dylib re-translates next launch, which is the safe
-                    // direction; a wrongly-stamped one would be reused forever.
-                    writeNativeIdStamp(cached);
-                    return cached.getAbsolutePath();
-                }
-                NativeLog.w(TAG, "findLibrary(" + libname + "): translation failed");
-            }
-        } else {
-            NativeLog.i(TAG, "findLibrary(" + libname + "): translator disabled by env, using stub");
+            NativeLog.w(TAG, "findLibrary(" + libname + "): translation failed");
         }
 
         // 3a. The APK does not ship this library for ANY abi -> AOSP returns
@@ -1610,7 +1504,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         //     translate -- so an app whose .so we cannot handle still boots.
         //     MACAPK_DISABLE_TRANSLATOR deliberately wants the stub for
         //     everything, so it is exempt.
-        if (!disabled && so == null) {
+        if (so == null) {
             NativeLog.i(TAG, "findLibrary(" + libname + "): not shipped in this APK"
                 + " (no lib" + libname + ".so in the installed lib dir)"
                 + " -> returning null, as AOSP does. System.loadLibrary will throw"
@@ -1864,60 +1758,16 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                 premapOne(soname, exposed, done, inProgress, counts, linkerDir);
         }
         String how;
-        if (!PREMAP_LINK_ONLY) {
-            how = " [MACAPK_SOLOADER_PREMAP_LINK_ONLY=0: System.load, JNI_OnLoad ran now]";
-        } else {
-            how = " [link-only " + counts[2] + ", System.load " + counts[3]
-                + (counts[3] > 0 && counts[4] < counts[3] ? " (unpacking-root deps: SoLoader loads those itself on Android)" : "")
-                + (counts[4] > 0 ? ", " + counts[4] + " FELL BACK: NativeLinker unbound, JNI_OnLoad ran early" : "")
-                + "]";
-        }
+        how = " [link-only " + counts[2] + ", System.load " + counts[3]
+            + (counts[3] > 0 && counts[4] < counts[3] ? " (unpacking-root deps: SoLoader loads those itself on Android)" : "")
+            + (counts[4] > 0 ? ", " + counts[4] + " FELL BACK: NativeLinker unbound, JNI_OnLoad ran early" : "")
+            + "]";
         NativeLog.i(TAG, "premapDependencyLibs: mapped " + counts[0]
                 + " dependency lib(s)" + (counts[1] > 0 ? " (" + counts[1] + " failed)" : "")
                 + " in DT_NEEDED order so SoLoader-loaded libs resolve their deps" + how);
         return counts;
     }
 
-    /**
-     * MACAPK_SOLOADER_PREMAP_LINK_ONLY (default ON; =0 restores the old
-     * System.load premap byte-for-byte). docs/soloader-premap-jni-onload-timing_2026-09-29.md.
-     *
-     * WHAT WAS WRONG. premapOne used loadIntoThisLoader, i.e. System.load, and
-     * the JDK runs JNI_OnLoad inside System.load (jdk21u NativeLibraries.c:
-     * 130-139). The Boot pass runs before the app's Application exists, so every
-     * dependency's JNI_OnLoad ran before the app had called SoLoader.init /
-     * NativeLoader.init. Android never does that: the linker maps a DT_NEEDED
-     * dependency and runs only its constructors (bionic linker_soinfo.cpp
-     * soinfo::call_constructors), and JNI_OnLoad is called only by
-     * JavaVMExt::LoadNativeLibrary for a library the app itself loads (art
-     * runtime/jni/java_vm_ext.cc:1120-1135). Measured on Efteling 5.24.0 (React
-     * Native + Hermes; 13 premapped deps, 6 with a JNI_OnLoad incl. libfbjni and
-     * libreactnative): fbjni's JNI_OnLoad initialised ThreadScopeSupport, whose
-     * <clinit> is NativeLoader.loadLibrary("fbjni") -> "NativeLoader has not been
-     * initialized" (SoLoader NativeLoader.java:42-46) -> the class is erroneous
-     * for the rest of the run -> an fbjni C++ throw with no handler ->
-     * std::terminate -> SIGABRT before the first frame.
-     *
-     * NOW. dlopen alone (NativeLinker, HotSpot's RTLD_LAZY): the Stage-6
-     * constructor maps the ELF into loaded_images() exactly as before, which is
-     * all this pass exists for; when the app later System.load()s the same file
-     * (SoLoader, after its init) the JVM registers it with the app's loader and
-     * runs JNI_OnLoad then, at the moment Android would. The path is CANONICAL
-     * because the JDK canonicalises before its own dlopen, so both reach dyld
-     * as the same string.
-     *
-     * SCOPE. Link-only applies only to a dependency in the app's own lib dir
-     * (where the Android linker maps it implicitly). A dependency from an
-     * UNPACKING root (lib-compressed / lib-main, superpack) keeps System.load:
-     * on a device SoLoader's UnpackingSoSource (RESOLVE_DEPENDENCIES) loads each
-     * DT_NEEDED dep itself, which registers it with the app loader and runs its
-     * JNI_OnLoad, and on Mac.apk nothing else does that for the superpack libs
-     * (they are served by the flags-0 fall-through DirectorySoSource). OPEN, the
-     * faithful end state: System.load those deps at the moment the app loads
-     * their dependent (RESOLVE_DEPENDENCIES timing).
-     */
-    private static final boolean PREMAP_LINK_ONLY =
-        !"0".equals(System.getenv("MACAPK_SOLOADER_PREMAP_LINK_ONLY"));
 
     /** @return true = mapped link-only; false = NativeLinker was unbound and
      *  the dependency was System.load()ed instead (the old, JNI_OnLoad-early path). */
@@ -1965,7 +1815,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             // only thing that does -- and it must register + run JNI_OnLoad like
             // SoLoader would. (docs/soloader-premap-jni-onload-timing_2026-09-29.md s3)
             boolean scoped = linkerDir != null && linkerDir.getAbsoluteFile().equals(info[0].getAbsoluteFile().getParentFile()); // SCOPE-CHECK
-            if (PREMAP_LINK_ONLY && scoped) {
+            if (scoped) {
                 if (linkDependencyOnly(info[1])) {   // maps into loaded_images(), no JNI_OnLoad
                     counts[2]++;
                     noteLinkOnlyDep(soname, info[0]);
@@ -2192,9 +2042,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     }
 
     // ----------------- pairip Java method-indirection registry ----------------
-    // Kill switch (set before launch, so the initial-environ snapshot sees it).
-    private static final boolean PAIRIP_WIRE_OFF =
-        System.getenv("MACAPK_PAIRIP_WIRE_REGISTRY_OFF") != null;
     // Lazily-computed, per-loader: is this a pairip-wrapped app? Signalled, like
     // Boot's gate registration, by the presence of com.pairip.VMRunner -- NOT by
     // MACAPK_PAIRIP_APP, which main.cpp setenv()s AFTER the JVM starts, so
@@ -2220,7 +2067,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  which creates UnityPlayer). Faithful -- not a VM bypass, a .text patch,
      *  or a forgery. Gated to pairip apps; never throws. */
     private void wirePairipRegistry(Class<?> defined, byte[] raw, String dotted) {
-        if (PAIRIP_WIRE_OFF || defined == null || raw == null) return;
+        if (defined == null || raw == null) return;
         if (!isPairipApp()) return;
         java.util.List<ClassFileRewriter.PairipWiring> wirings;
         try {
@@ -2293,9 +2140,8 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // and the ARM32 pool cap below was skipped. The overlay check further
         // down already accepted "arm". =0 restores the old ABI-spelling-only
         // test (and with it bias 0 for every image).
-        final boolean libDirAbi = !"0".equals(System.getenv("MACAPK_ARM32_LIBDIR_ABI"));
         boolean isArm32Abi = abiName.equals("armeabi-v7a") || abiName.equals("armeabi")
-            || (libDirAbi && abiName.equals("arm"));
+            || (abiName.equals("arm"));
         if (isArm32Abi && sos.length > 1) {
             java.util.List<File> ordered =
                 new java.util.ArrayList<>(java.util.Arrays.asList(sos));
@@ -2358,7 +2204,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         n = n.substring(3, n.length() - 6);
         Long b = libBias.get(n);
         if (b == null) {
-            String fa = forcedAbi();
+            String fa = null;
             if (fa != null && n.endsWith("-" + fa))
                 b = libBias.get(n.substring(0, n.length() - fa.length() - 1));
         }
@@ -2396,7 +2242,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // The one installed isa dir (same resolution as locateApkSo).
         File abiDir = nativeLibDir();
         if (abiDir == null) return;
-        String forcedAbi = forcedAbi();
+        String forcedAbi = null;
         String cacheSuffix = (forcedAbi != null) ? "-" + forcedAbi : "";
         File[] sos = abiDir.listFiles((dir, name) ->
             name.startsWith("lib") && name.endsWith(".so"));
@@ -2407,7 +2253,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
         // path that can translate, so no dylib is ever built before the biases exist).
         ensureLibBiases();
         String abiName = abiDir.getName();
-        final boolean libDirAbi = !"0".equals(System.getenv("MACAPK_ARM32_LIBDIR_ABI"));
+        final boolean libDirAbi = true;
         boolean isArm32Abi = abiName.equals("armeabi-v7a") || abiName.equals("armeabi")
             || (libDirAbi && abiName.equals("arm"));
         int translated = 0, hits = 0, failed = 0;
@@ -2961,46 +2807,6 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     private static final List<String> KNOWN_ABIS = Arrays.asList(
         "arm64-v8a", "armeabi-v7a", "armeabi", "x86_64", "x86");
 
-    /**
-     * DIAGNOSTIC ESCAPE HATCH: MACAPK_FORCE_ABI=<abi> pins native-library
-     * selection to a single ABI subdir. Diagnostic-only -- it exists so we
-     * can A/B the same APK across translation paths: the arm64 Stage-6-native
-     * path (zero translation; CPU runs the bytes verbatim) is our oracle for
-     * fixing arm32-lifter bugs surfaced by the arm32 build of the same APK.
-     *
-     * Behavior when set:
-     *   - locateApkSo() returns ONLY the .so under lib/<isa of abi>/. No
-     *     fallback to the priority list -- if the requested ABI isn't
-     *     bundled, the call returns null and findLibrary() drops to the
-     *     stub. That's intentional: a typo should fail loudly, not silently
-     *     promote the user to a different ABI.
-     *   - findLibrary() suffixes the cached-dylib filename with "-<abi>"
-     *     (e.g. lib_native/libgame-armeabi-v7a.dylib), keeping the default
-     *     path's lib<name>.dylib intact across runs.
-     *
-     * Env var vs CLI flag: every existing diagnostic knob in Mac.apk is an
-     * env var (MACAPK_SKIP_LIBS, MACAPK_DISABLE_TRANSLATOR, MACAPK_KEEP_IR,
-     * MACAPK_TRACE_VADDRS, MACAPK_OPT_LEVEL, ...); CLI flags are reserved
-     * for steady-state user options (--apk, --orientation, --android-root).
-     * Env-var lives entirely in this one file; a --abi CLI flag would need
-     * plumbing through runtime/src/main.cpp::ParseArgs -> JVM -D system
-     * property -> Boot.java constructor arg -- three extra files for a knob
-     * that exists only for this one work item. Easy to set in the launcher's
-     * child-process environment without launcher UI work.
-     *
-     * Returns null if unset or unrecognized. Unrecognized values are logged
-     * as a warning (clearer than a silent no-op).
-     */
-    private static String forcedAbi() {
-        String v = System.getenv("MACAPK_FORCE_ABI");
-        if (v == null || v.isEmpty()) return null;
-        if (!KNOWN_ABIS.contains(v)) {
-            NativeLog.w(TAG, "MACAPK_FORCE_ABI=" + v + " unrecognized; "
-                + "expected one of " + KNOWN_ABIS + "; ignoring");
-            return null;
-        }
-        return v;
-    }
 
     /** The directory holding the app's installed native libraries for this
      *  run: the install dir's lib/<isa>/ (v1.0.1588, one isa dir, chosen by
@@ -3113,7 +2919,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     }
 
     private boolean nativeIdMatches(File cached) {
-        String want = System.getenv("MACAPK_BUILD_NATIVE_ID");
+        String want = null;
         if (want == null || want.isEmpty()) return true;
         ensureLibBiases();
         want = wantedNativeId(cached, want);
@@ -3138,7 +2944,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     /** Record which translator+shim produced this dylib. Best effort: a
      *  missing stamp only costs one re-translation next launch. */
     void writeNativeIdStamp(File cached) {
-        String id = System.getenv("MACAPK_BUILD_NATIVE_ID");
+        String id = null;
         if (id == null || id.isEmpty() || !cached.isFile()) return;
         ensureLibBiases();
         id = wantedNativeId(cached, id);
@@ -3150,7 +2956,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     }
 
     private boolean stage6SourceStillPresent(String libname) {
-        String forcedAbi = forcedAbi();
+        String forcedAbi = null;
         if (forcedAbi != null && !forcedAbi.equals("arm64-v8a")) return true;
         // Only NO-EMBED arm64-v8a (Stage-6) wrappers reference an on-disk source .so
         // at load time. ARM32-lifted wrappers (an armeabi-v7a-only app like Flappy

@@ -1217,7 +1217,7 @@ public final class SpecialAccessStore {
         // The MANIFEST's own value: a 0 is AOSP's no-<uses-sdk> default, real
         // even before macapkInitVersion binds it (MACAPK_TARGETSDK_ZERO; =0
         // restores `> 0`, and the old synthesis never produced a 0 anyway).
-        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        boolean resolved = (m.targetSdk >= 0);
         return new PermModel(level, m.targetSdk, declared, snapshot().perms,
                              PHOTO_PICKER_PROMPT_ENABLED, resolved);
     }
@@ -1441,7 +1441,7 @@ public final class SpecialAccessStore {
         for (Manifest.UsesPermissionEntry e : m.usesPermissions) if (e.name != null) declared.add(e.name);
         int level;
         try { level = android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { level = 29; }
-        boolean resolved = Manifest.TARGETSDK_ZERO ? m.targetSdk >= 0 : m.targetSdk > 0;
+        boolean resolved = (m.targetSdk >= 0);
         return new GroupModel(level, m.targetSdk, declared, snapshot().perms, resolved);
     }
 

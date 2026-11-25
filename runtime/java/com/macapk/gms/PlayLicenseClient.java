@@ -281,32 +281,16 @@ public final class PlayLicenseClient {
         h.put("User-Agent", userAgent());
         // X-DFE-Client-Id names the calling Play client. microG sends
         // "am-google"; ours says what we are. Same reasoning as the User-Agent.
-        h.put("X-DFE-Client-Id", finskyUa() ? "am-google" : "mac-apk");
+        h.put("X-DFE-Client-Id", "mac-apk");
         return h;
     }
 
     /** microG's Finsky UA, only when explicitly asked for. The default says what
      *  we actually are. */
     private static String userAgent() {
-        if (finskyUa()) {
-            return "Android-Finsky/30.6.18-21%20%5B0%5D%20%5BPR%5D%20450795914"
-                 + " (api=3,versionCode=83061810,sdk=" + sdk()
-                 + ",device=" + android.os.Build.DEVICE
-                 + ",hardware=" + android.os.Build.HARDWARE
-                 + ",product=" + android.os.Build.PRODUCT
-                 + ",platformVersionRelease=" + release()
-                 + ",model=" + enc(android.os.Build.MODEL)
-                 + ",buildId=" + android.os.Build.ID
-                 + ",isWideScreen=0"
-                 + ",supportedAbis=" + String.join(";", abis()) + ")";
-        }
         return GmsHttp.USER_AGENT;
     }
 
-    private static boolean finskyUa() {
-        String v = System.getenv("MACAPK_GMS_FINSKY_UA");
-        return "1".equals(v) || "true".equalsIgnoreCase(v);
-    }
 
     private static String brief(GmsHttp.Response r) {
         String t = r.text();
@@ -325,19 +309,6 @@ public final class PlayLicenseClient {
         } catch (Throwable t) { return "en-US"; }
     }
 
-    private static int sdk() {
-        try { return android.os.Build.VERSION.SDK_INT; } catch (Throwable t) { return 30; }
-    }
 
-    private static String release() {
-        try { return android.os.Build.VERSION.RELEASE; } catch (Throwable t) { return "11"; }
-    }
 
-    private static String[] abis() {
-        try {
-            String[] a = android.os.Build.SUPPORTED_ABIS;
-            if (a != null && a.length > 0) return a;
-        } catch (Throwable ignored) {}
-        return new String[] { "arm64-v8a" };
-    }
 }

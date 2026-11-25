@@ -175,11 +175,11 @@ public final class VideoImageSelfTest {
     }
 
     public static void run() {
-        String path = System.getenv("MACAPK_VIDEO_IMAGE_SELFTEST_FILE");
+        String path = null;
         if (path == null || path.isEmpty()) path = "/tmp/goi_test.h264";
-        String refPath = System.getenv("MACAPK_VIDEO_IMAGE_SELFTEST_REF");
+        String refPath = null;
         if (refPath == null || refPath.isEmpty()) refPath = "/tmp/goi_ref.png";
-        String outPath = System.getenv("MACAPK_VIDEO_IMAGE_SELFTEST_OUT");
+        String outPath = null;
         if (outPath == null || outPath.isEmpty()) outPath = "/tmp/goi_mine.png";
 
         try {

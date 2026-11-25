@@ -49,7 +49,6 @@ public final class ArscReader {
     private static final int RES_TABLE_TYPE         = 0x0002;
     private static final int RES_TABLE_PACKAGE_TYPE = 0x0200;
     private static final int RES_TABLE_TYPE_TYPE    = 0x0201;
-    private static final int RES_TABLE_TYPE_SPEC    = 0x0202;
 
     // ---- Res_value dataType -----------------------------------------
     public static final int TYPE_NULL        = 0x00;
@@ -160,9 +159,7 @@ public final class ArscReader {
      *  resources.arsc read-only and shares it; nothing here reads it again. */
     private byte[] d;
     private static final byte[] RELEASED = new byte[0];
-    /** MACAPK_ARSC_KEEP_BYTES=1 keeps the bytes after parsing (pre-v1.0.2254). */
-    private static final boolean KEEP_BYTES = "1".equals(System.getenv("MACAPK_ARSC_KEEP_BYTES"));
-    private void releaseBytes() { if (!KEEP_BYTES) d = RELEASED; }
+    private void releaseBytes() { d = RELEASED; }
     /** True once the table bytes were dropped (gate hook). */
     boolean bytesReleased() { return d == RELEASED; }
     private String[] globalStrings = new String[0];

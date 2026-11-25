@@ -94,7 +94,7 @@ public final class HostProxy {
         String failure = null;
         try {
             String root = System.getProperty("macapk.android.root");
-            if (root == null || root.isEmpty()) root = System.getenv("MACAPK_ANDROID_ROOT");
+            if (root == null || root.isEmpty()) root = null;
             if (root != null && !root.isEmpty()) {
                 Path path = Path.of(root).resolve(".macapk/proxy.properties");
                 boolean exists = true;

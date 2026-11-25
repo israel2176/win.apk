@@ -29,13 +29,10 @@ import java.util.List;
 public final class IntentInbox {
     private static final String TAG = "Mac.apk.XAPP";
 
-    /** MACAPK_XAPP_RECEIVE (default ON). =0: no doorbell, no drain, no
-     *  activation observer (the native side reads the same variable). */
-    static final boolean XAPP_RECEIVE = !"0".equals(System.getenv("MACAPK_XAPP_RECEIVE"));
     /** A device never delivers a start late: an envelope older than this is
      *  discarded, so an inbox left by a target that died mid-start cannot open
      *  the app on a stale screen next week. */
-    static final long TTL_MS = parseLong(System.getenv("MACAPK_XAPP_TTL_MS"), 30_000L);
+    static final long TTL_MS = parseLong(null, 30_000L);
 
     private static volatile File sInbox;          // null outside a bundle
     private static volatile String sOwnPkg;
@@ -49,7 +46,6 @@ public final class IntentInbox {
      * are delivered warm, after the root, in order.
      */
     static Intent bootTakeRoot(String ownPkg, PackageManager pm) {
-        if (!XAPP_RECEIVE) return null;
         String root = SharedStorage.androidRoot();
         if (root == null) return null;
         File rootF = new File(root);
@@ -91,7 +87,7 @@ public final class IntentInbox {
     /** Called when an emptied hidden task comes back: the oldest arrival, if
      *  any, becomes the new root instead of the launcher. */
     static Intent takeForRelaunch() {
-        if (!XAPP_RECEIVE || sInbox == null) return null;
+        if (sInbox == null) return null;
         List<IntentEnvelope> arrivals = readAll();
         if (arrivals.isEmpty()) return null;
         IntentEnvelope first = arrivals.remove(0);
@@ -103,7 +99,7 @@ public final class IntentInbox {
     }
 
     static void postDrain() {
-        if (!XAPP_RECEIVE || sInbox == null) return;
+        if (sInbox == null) return;
         try {
             ActivityHost.macapkPostOnOwner(IntentInbox::drainNow);
         } catch (Throwable t) {

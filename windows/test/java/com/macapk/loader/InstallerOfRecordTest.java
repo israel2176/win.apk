@@ -8,7 +8,7 @@
 // The environment, whether a Play Store package is reported and the Play ledger backfill are the
 // class's test seams; the record is a file in the scratch dir. Checks: the setting absent/1/0; a
 // record wins either way and its removal brings the default back; a package not installed, Play,
-// Play services and GSF get no default; no Play Store package, no default; WINAPK_TEST_INSTALLER;
+// Play services and GSF get no default; no Play Store package, no default;
 // and MacApkPackageManager's two doors: getInstallerPackageName and getInstallSourceInfo (installing,
 // initiating, originating, update owner, package source) agree, in the shape a Play install has on
 // Android 14, and keep the plain shape for another store.
@@ -77,14 +77,6 @@ public class InstallerOfRecordTest {
         playPresent = false;
         eq("no Play Store package reported: null", null, InstallerOfRecord.reported(APP, true));
         playPresent = true;
-
-        // The debugging override still answers, except for its own package.
-        env.put("WINAPK_TEST_INSTALLER", FDROID);
-        env.put("WINAPK_PLAY_INSTALLER", "0");
-        eq("WINAPK_TEST_INSTALLER over setting 0", FDROID, InstallerOfRecord.reported(APP, true));
-        eq("WINAPK_TEST_INSTALLER, not for itself", null, InstallerOfRecord.reported(FDROID, true));
-        env.remove("WINAPK_TEST_INSTALLER");
-        env.remove("WINAPK_PLAY_INSTALLER");
 
         // PackageManager: the running app is installed; both doors give one answer.
         MacApkPackageManager pm = new MacApkPackageManager(APP);

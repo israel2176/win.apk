@@ -35,23 +35,11 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // code"), so one read at class init is the same value. First in the body, so
     // no other static initializer of this class can observe them unset.
     private static final String ENV_MACAPK_AGDK_TRACE = System.getenv("MACAPK_AGDK_TRACE");
-    private static final String ENV_MACAPK_CARD_GAP_PX = System.getenv("MACAPK_CARD_GAP_PX");
-    private static final String ENV_MACAPK_DISPATCH_TOP_INSET = System.getenv("MACAPK_DISPATCH_TOP_INSET");
     private static final String ENV_MACAPK_DUMP_BITMAP_AT = System.getenv("MACAPK_DUMP_BITMAP_AT");
     private static final String ENV_MACAPK_DUMP_CL_WIDGETS = System.getenv("MACAPK_DUMP_CL_WIDGETS");
     private static final String ENV_MACAPK_DUMP_MOTION = System.getenv("MACAPK_DUMP_MOTION");
     private static final String ENV_MACAPK_DUMP_TREE_EVERY = System.getenv("MACAPK_DUMP_TREE_EVERY");
-    private static final String ENV_MACAPK_GROW_FITS_APPBAR = System.getenv("MACAPK_GROW_FITS_APPBAR");
-    private static final String ENV_MACAPK_KEEP_NAV_CENTER = System.getenv("MACAPK_KEEP_NAV_CENTER");
-    private static final String ENV_MACAPK_M6_FORCE_DRAW = System.getenv("MACAPK_M6_FORCE_DRAW");
     private static final String ENV_MACAPK_MENU_TRACE = System.getenv("MACAPK_MENU_TRACE");
-    private static final String ENV_MACAPK_NAV_MEASURE_CLAMP = System.getenv("MACAPK_NAV_MEASURE_CLAMP");
-    private static final String ENV_MACAPK_NO_HEARTBEAT_LAYOUT = System.getenv("MACAPK_NO_HEARTBEAT_LAYOUT");
-    private static final String ENV_MACAPK_PUMP_AFTER_DRIVE = System.getenv("MACAPK_PUMP_AFTER_DRIVE");
-    private static final String ENV_MACAPK_RTL_RESOLVE = System.getenv("MACAPK_RTL_RESOLVE");
-    private static final String ENV_MACAPK_RV_NATURAL = System.getenv("MACAPK_RV_NATURAL");
-    private static final String ENV_MACAPK_RV_VISIBLE_INDEX = System.getenv("MACAPK_RV_VISIBLE_INDEX");
-    private static final String ENV_MACAPK_SCROLL_DRAW_ONLY = System.getenv("MACAPK_SCROLL_DRAW_ONLY");
     private static final String ENV_MACAPK_TRACE_BARRIER = System.getenv("MACAPK_TRACE_BARRIER");
     private static final String ENV_MACAPK_TRACE_FULLFILL = System.getenv("MACAPK_TRACE_FULLFILL");
     private static final String ENV_MACAPK_TRACE_INSETS = System.getenv("MACAPK_TRACE_INSETS");
@@ -83,8 +71,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // rootView.layout() -- a view-tree mutation. In REAL_LOOPER mode it
         // must run on the ONE main loop, serialized with doFrame()/touch, not
         // race them. Posted (ordered before the subsequent frame post).
-        if (android.os.Looper.MACAPK_REAL_LOOPER
-                && !android.os.Looper.macapkIsActivityThread()) {
+        if (!android.os.Looper.macapkIsActivityThread()) {
             loopHandler().post(() -> doSurfaceChanged(widthPx, heightPx));
             return;
         }
@@ -223,7 +210,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // Tier 3 M6: a surface resize invalidates the whole tree -- force the
         // next frame to fully traverse (measure+layout, not just draw) at the new
         // dimensions.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) ViewHost.get().scheduleLayout();
+        ViewHost.get().scheduleLayout();
     }
 
     /** Sparse diagnostic counter: logs the first draw, then every 60th,
@@ -263,9 +250,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // the same bisect gate android.graphics.Canvas reads for its per-primitive
     // ink counting, and restores BOTH halves of the old behaviour: the delta
     // is taken across rootView.draw alone. Read here rather than through
-    // Canvas so the loader jar does not depend on a framework-private field.
-    private static final boolean INK_AFTER_ALL_PASSES =
-        !"0".equals(System.getenv("MACAPK_COUNT_ALL_INK"));
     private static long    sPresentsElided   = 0;
     // P2/P3 of docs/canvas-present-cost-at-full-screen_2026-09-25.md: present
     // through NativeCocoa.presentFrame -- an IOSurface ring written with only the
@@ -282,15 +266,9 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // CGImage, the AOSP-faithful choice the design names. Measured cost at
     // 3360x1796 (OpenCalculator, --drive force): present 1.37 -> 0.90 ms per
     // frame, and CoreAnimation's full-frame copy leaves the main thread.
-    // MACAPK_PRESENT_IOSURFACE=0 restores presentBitmap exactly as before.
-    private static final boolean PRESENT_IOSURFACE =
-            !"0".equals(System.getenv("MACAPK_PRESENT_IOSURFACE"));
     // The 08-30 damage validator (docs/damage-aware-partial-redraw-design_2026-08-30.md):
     // the native diff also scans outside the claimed bound and logs every change
     // there as `[damage-validate] under-damage`. The bound is the whole surface
-    // until view damage exists, so today it can only ever report nothing.
-    private static final boolean DAMAGE_VALIDATE =
-            "1".equals(System.getenv("MACAPK_DAMAGE_VALIDATE"));
     // presentFrame is not registered (a runtime binary older than this jar):
     // present through presentBitmap for the rest of the process.
     private static volatile boolean sPresentFrameUnavailable = false;
@@ -356,7 +334,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // the snap-back hides for a regular change but not for a one-off one. Flip
     // the default only after a [heartbeat-diff] census reads zero or near it.
     private static final boolean FRAMESPEED_HEARTBEAT =
-            heartbeatGate(System.getenv("MACAPK_FRAMESPEED_HEARTBEAT"));
+            heartbeatGate(null);
     /** The MACAPK_FRAMESPEED_HEARTBEAT reading, as a pure function the offline
      *  gate can pin (opt-in: only "1" enables the back-off). */
     static boolean heartbeatGate(String env) { return "1".equals(env); }
@@ -443,7 +421,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     // damage a frame's own traversal raises is no longer dropped at the end of
     // the frame but kept for the next one (macapkEndFrameDamage says why).
     private static final boolean FRAMESPEED_DAMAGE =
-            ViewHost.get().damageGate(System.getenv("MACAPK_FRAMESPEED_DAMAGE"));
+            ViewHost.get().damageGate(null);
     public static final int DAMAGE_NONE = 0, DAMAGE_PARTIAL = 1, DAMAGE_FULL = 2;
     /** S1's accumulated damage since the last call (DAMAGE_*), or DAMAGE_FULL
      *  when it answers anything unexpected. (It was looked up reflectively
@@ -492,50 +470,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     //   [damage-validate] under-damage: 412 px changed outside the claimed 40,300-88,348; they span 0,96-1080,160
     //   M6: ... validate: claimed=280 clean=280 under=0
     // A view that draws by the clock without invalidating (the caret that only
-    // heartbeats repaint) is reported too: a full frame would have shown it.
-    private int[] dvPrev;
     private int dvW, dvH;
     private int dvClaimed, dvClean, dvUnder;
-    private long dvUnderTotal;
-    private void macapkDamageValidate(int[] px, int w, int h, boolean claimed, int[] rect) {
-        if (px == null || w <= 0 || h <= 0 || px.length < w * h) return;
-        if (claimed && dvPrev != null && dvW == w && dvH == h) {
-            final int l = Math.max(0, rect[0]), t = Math.max(0, rect[1]);
-            final int r = Math.min(w, rect[2]), b = Math.min(h, rect[3]);
-            int changed = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
-            for (int y = 0; y < h; y++) {
-                final int row = y * w;
-                final boolean in = y >= t && y < b;
-                // Outside the claim's rows the whole row; inside them, its two sides.
-                if (!in && java.util.Arrays.mismatch(px, row, row + w, dvPrev, row, row + w) < 0) continue;
-                for (int x = 0; x < w; x++) {
-                    if (in && x == l) { x = r - 1; continue; }
-                    if (px[row + x] != dvPrev[row + x]) {
-                        changed++;
-                        if (x < x0) x0 = x;
-                        if (x > x1) x1 = x;
-                        if (y < y0) y0 = y;
-                        if (y > y1) y1 = y;
-                    }
-                }
-            }
-            dvClaimed++;
-            if (changed == 0) {
-                dvClean++;
-            } else {
-                dvUnder++;
-                dvUnderTotal++;
-                if (dvUnderTotal <= 20 || dvUnderTotal % 100 == 0) {
-                    NativeLog.i(TAG, "[damage-validate] under-damage: " + changed + " px changed outside the claimed "
-                        + l + "," + t + "-" + r + "," + b + "; they span " + x0 + "," + y0 + "-" + (x1 + 1) + ","
-                        + (y1 + 1) + " (frame " + drawFrameCount + ", #" + dvUnderTotal + ")");
-                }
-            }
-        }
-        if (dvPrev == null || dvPrev.length != w * h) dvPrev = new int[w * h];
-        System.arraycopy(px, 0, dvPrev, 0, w * h);
-        dvW = w; dvH = h;
-    }
 
     private int m6SkipCount = 0;                          // skipped frames since the last heartbeat (diagnostic)
     private int m6DrawOnlyCount = 0;                      // draw-only (no relayout) frames since the last report (diagnostic)
@@ -621,31 +557,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     //     by hackEnabled) only fires for a populated GRID list, which no corpus app
     //     shows offline; it stays as the safety net until the natural grid path is
     //     verified against a synthetic RV test APK.
-    // Overrides: MACAPK_RETIRE_HACKS=<names|all> force-OFF (testing);
-    // MACAPK_KEEP_HACKS=<names> re-enable a default-retired hack (rollback).
-    private static final java.util.Set<String> DEFAULT_RETIRED =
-        new java.util.HashSet<>(java.util.Arrays.asList(
-            "linfix", "gravity", "zeroext", "navbar", "navitem", "tabpager"));
-    private static final java.util.Set<String> RETIRED_HACKS = parseHackSet("MACAPK_RETIRE_HACKS");
-    private static final java.util.Set<String> KEPT_HACKS    = parseHackSet("MACAPK_KEEP_HACKS");
-    private static java.util.Set<String> parseHackSet(String envName) {
-        java.util.HashSet<String> s = new java.util.HashSet<>();
-        String env = System.getenv(envName);
-        if (env != null) for (String t : env.split(",")) {
-            String x = t.trim().toLowerCase();
-            if (!x.isEmpty()) s.add(x);
-        }
-        return s;
-    }
-    private static boolean hackEnabled(String name) {
-        if (RETIRED_HACKS.contains("all") || RETIRED_HACKS.contains(name)) return false;
-        if (DEFAULT_RETIRED.contains(name)
-                && android.os.Looper.MACAPK_REAL_LOOPER
-                && !KEPT_HACKS.contains(name)) {
-            return false;   // retired on the real-loop path (M5/M6 replace it)
-        }
-        return true;        // flag-off (shipped) keeps every hack; nav hacks stay
-    }
     // v1.0.363: once we've drawn a frame for a pure View/Compose tree,
     // deliver window focus (see the macapkDrawFrame call site).
     private boolean windowFocusDelivered = false;
@@ -683,8 +594,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // a slow loop coalesces frames (like Android) rather than backing up.
         // Off-mode -- or re-entrantly, when already ON the loop thread -- runs
         // inline, byte-for-byte the historical path.
-        if (android.os.Looper.MACAPK_REAL_LOOPER
-                && !android.os.Looper.macapkIsActivityThread()) {
+        if (!android.os.Looper.macapkIsActivityThread()) {
             if (framePending.compareAndSet(false, true)) {
                 loopHandler().post(() -> { framePending.set(false); doFrame(); });
             }
@@ -805,34 +715,23 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // SNAP_ABSENT and returns, so no later call re-enters this branch.
             try {
                 ClassLoader cl = rootView.getClass().getClassLoader();
-                String envCls = System.getenv("MACAPK_SNAPSHOT_CLASS");
-                if (envCls != null) {
-                    String mth = System.getenv("MACAPK_SNAPSHOT_METHOD");
-                    if (mth == null) mth = "a";
-                    Class<?> c = Class.forName(envCls, true, cl);
-                    m = c.getDeclaredMethod(mth);
-                    m.setAccessible(true);
-                    sSnapPumpTarget = null;
-                    NativeLog.i(TAG, "snapshot-pump: resolved override " + envCls + "." + mth + "()");
-                } else {
-                    Class<?> snap = Class.forName(
-                        "androidx.compose.runtime.snapshots.Snapshot", true, cl);
-                    // Public API is Snapshot.Companion.sendApplyNotifications().
-                    // Try the Companion instance first, then a @JvmStatic on Snapshot.
-                    try {
-                        Object companion = snap.getField("Companion").get(null);
-                        java.lang.reflect.Method cm =
-                            companion.getClass().getMethod("sendApplyNotifications");
-                        cm.setAccessible(true);
-                        m = cm; sSnapPumpTarget = companion;
-                    } catch (Throwable noCompanion) {
-                        java.lang.reflect.Method sm =
-                            snap.getMethod("sendApplyNotifications");
-                        sm.setAccessible(true);
-                        m = sm; sSnapPumpTarget = null;
-                    }
-                    NativeLog.i(TAG, "snapshot-pump: resolved generic Snapshot.sendApplyNotifications()");
+                Class<?> snap = Class.forName(
+                    "androidx.compose.runtime.snapshots.Snapshot", true, cl);
+                // Public API is Snapshot.Companion.sendApplyNotifications().
+                // Try the Companion instance first, then a @JvmStatic on Snapshot.
+                try {
+                    Object companion = snap.getField("Companion").get(null);
+                    java.lang.reflect.Method cm =
+                        companion.getClass().getMethod("sendApplyNotifications");
+                    cm.setAccessible(true);
+                    m = cm; sSnapPumpTarget = companion;
+                } catch (Throwable noCompanion) {
+                    java.lang.reflect.Method sm =
+                        snap.getMethod("sendApplyNotifications");
+                    sm.setAccessible(true);
+                    m = sm; sSnapPumpTarget = null;
                 }
+                NativeLog.i(TAG, "snapshot-pump: resolved generic Snapshot.sendApplyNotifications()");
                 sSnapPumpMethod = m;
                 sSnapPumpState = SNAP_RESOLVED;
             } catch (Throwable t) {
@@ -963,20 +862,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // second chance if Boot's threw; the driver's start is a CAS, so here it
         // is a no-op. (v1.0.444 to v1.0.1644 this WAS the start point.)
         try { com.macapk.loader.TouchDispatcher.macapkStartInjectDriver(); } catch (Throwable ignored) {}
-        // Gated bottom-sheet animation probe (MACAPK_PROBE_SHEET): log the live
-        // BottomSheetState/SwipeableState offset/target each ~15 frames so we can
-        // see whether the auth modal's enter tween has the wrong target or stalls.
-        if (rootView != null) {
-            // Every frame: the lite cached-`l` path is cheap and needs per-frame
-            // resolution of the open trajectory; the pre-cache BFS self-throttles.
-            try { ComposeViewFallback.probeBottomSheetState(rootView); } catch (Throwable ignored) {}
-            // v1.0.488 gated diagnostic: dump the bespoke navstack HOST's live state
-            // (MACAPK_NAVSTACK_HOST_PROBE=1) to find which visible-entry-gate input is empty
-            // (host.e() readiness / back-stack / per-entry visibility). One-shot once found.
-            try { ComposeViewFallback.probeNavstackHost(rootView); } catch (Throwable ignored) {}
-            // Gated diagnostic/fix: force compose-host root remeasure (MACAPK_FORCE_REMEASURE).
-            try { ComposeViewFallback.forceRemeasureHosts(rootView); } catch (Throwable ignored) {}
-        }
         // Tier 3 M7: drive the MAIN-loop Choreographer one real frame BEFORE the
         // traversal -- runs the queued frame callbacks (ValueAnimator /
         // ViewPropertyAnimator / MotionLayout / Compose withFrameNanos) on true
@@ -984,21 +869,15 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // which schedules a traversal (M6), so the M6 dirty-gate below sees the
         // tree as dirty and renders the new animation frame on THIS vsync.
         // (No-op off the main loop / flag-off.)
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            try { ViewHost.get().driveMainFrame(); }
-            catch (Throwable t) { NativeLog.w(TAG, "Choreographer.macapkDriveMainFrame: " + t); }
-            // v1.0.463 EXPERIMENT (MACAPK_PUMP_AFTER_DRIVE): pump the Compose global
-            // snapshot apply AGAIN, AFTER the frame clock drained the animation's
-            // withFrameNanos writes (offset etc.), so those writes are apply-notified
-            // to the layout snapshot-observer BEFORE this same frame's measureAndLayout/
-            // draw -> the observer fires requestRelayout and the sheet re-places THIS
-            // frame. (The start-of-frame pump only sees the PREVIOUS frame's writes.)
-            // The decisive test for "frame-driven offset writes never re-place because
-            // they are notified a frame too late / not at all."
-            if ("1".equals(ENV_MACAPK_PUMP_AFTER_DRIVE)) {
-                try { macapkPumpSnapshot(); } catch (Throwable ignored) {}
-            }
-        }
+        try { ViewHost.get().driveMainFrame(); }
+        catch (Throwable t) { NativeLog.w(TAG, "Choreographer.macapkDriveMainFrame: " + t); }
+        // v1.0.463 EXPERIMENT (MACAPK_PUMP_AFTER_DRIVE): pump the Compose global
+        // snapshot apply AGAIN, AFTER the frame clock drained the animation's
+        // withFrameNanos writes (offset etc.), so those writes are apply-notified
+        // to the layout snapshot-observer BEFORE this same frame's measureAndLayout/
+        // draw -> the observer fires requestRelayout and the sheet re-places THIS
+        // frame. (The start-of-frame pump only sees the PREVIOUS frame's writes.)
+        // The decisive test for "frame-driven offset writes never re-place because
         pt1 = System.nanoTime();   // pre = pump + probes + choreographer drive
         if (rootView == null || surfaceW <= 0 || surfaceH <= 0) {
             if (n == 1 || n == 60 || n == 300 || (n % 600) == 0) {
@@ -1043,81 +922,72 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // every vsync, so its frames are FULL frames in a stream.
         int frameKind = FK_FULL;
         dmgKind = DAMAGE_FULL;   // FRAMESPEED S2: full unless the M6 block below says otherwise
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            boolean scheduled = ViewHost.get().consumeTraversalScheduled(ViewHost.get().viewRoot());
-            boolean layoutRequested = ViewHost.get().consumeLayoutRequested(ViewHost.get().viewRoot());
-            // FRAMESPEED heartbeat: evidence that the app is ACTIVE puts the net
-            // back to 30 vsyncs before this frame's heartbeat test. A draw-only
-            // invalidate (a caret blink, a spinner) is not such evidence: it
-            // repaints its own damage and says nothing about mutations elsewhere.
-            if (FRAMESPEED_HEARTBEAT) {
-                final long lastInput = TouchDispatcher.lastUserInputMillis();
-                if (lastInput != hbLastInputMillis) { hbLastInputMillis = lastInput; hb.reset(); }
-                else if (layoutRequested) hb.reset();
-            }
-            boolean heartbeat = hb.due(n, scheduled);
-            boolean warmup = n <= M6_WARMUP_FRAMES;
-            // DIAGNOSTIC (MACAPK_M6_FORCE_DRAW): force a full traversal+draw every
-            // frame, bypassing the dirty-gate skip. Decisive test for "an actively
-            // animating Compose subtree (a pushed ComposeBottomSheetScreen) never
-            // presents because its per-frame invalidation doesn't schedule a
-            // traversal." If the modal renders ONLY with this on, the real fix is
-            // to route Compose animation/recompose invalidation -> ViewRootImpl
-            // .schedule(). NOT a shipping flag (defeats the M6 idle-perf win).
-            if ("1".equals(ENV_MACAPK_M6_FORCE_DRAW)) { scheduled = true; layoutRequested = true; }
-            // Periodically report how many of the last ~300 frames were skipped
-            // (the M6 win: an idle window traverses ~2x/sec instead of 60x) and how
-            // many ran DRAW-ONLY (the scroll-perf win: a scroll/animation frame
-            // redraws without re-measuring/re-laying-out the whole tree).
-            if ((n % 300) == 0 && n > M6_WARMUP_FRAMES) {
-                NativeLog.i(TAG, "M6: skipped " + m6SkipCount + "/300 traversals (idle), "
-                    + m6DrawOnlyCount + "/300 draw-only (scroll/anim, no relayout)"
-                    + (FRAMESPEED_HEARTBEAT ? " heartbeat=" + hb.interval
-                        + " widened=" + hb.widenings + " reset=" + hb.resets : "")
-                    + (FRAMESPEED_DAMAGE ? " partial=" + m6PartialCount
-                        + (m6PartialCount > 0 && surfaceW > 0 && surfaceH > 0
-                           ? String.format(" (%.1f%% of the window each)",
-                                 100.0 * m6PartialArea / m6PartialCount / ((double) surfaceW * surfaceH))
-                           : "")
-                        + (DAMAGE_VALIDATE ? " validate: claimed=" + dvClaimed + " clean=" + dvClean
-                            + " under=" + dvUnder : "") : ""));
-                dvClaimed = dvClean = dvUnder = 0;
-                m6PartialCount = 0;
-                m6PartialArea = 0;
-                m6SkipCount = 0;
-                m6DrawOnlyCount = 0;
-            }
-            if (!scheduled && !heartbeat && !warmup) {
-                m6SkipCount++;
-                m6IdleStreak++;
-                return;   // nothing changed -- skip the whole measure/layout/draw/present
-            }
-            final long idleBefore = m6IdleStreak;
-            m6IdleStreak = 0;
-            // Draw-only unless a real layout was requested (or the backstops fire).
-            // Env rollback MACAPK_SCROLL_DRAW_ONLY=0 forces every traversal to be
-            // full (the pre-split behavior) for A/B.
-            doLayout = layoutRequested || heartbeat || warmup
-                       || "0".equals(ENV_MACAPK_SCROLL_DRAW_ONLY);
-            // DIAGNOSTIC (MACAPK_NO_HEARTBEAT_LAYOUT): drop the periodic heartbeat
-            // re-layout (keep it as a DRAW-only refresh). Test for "the heartbeat
-            // full re-layout re-measures the Compose modal -> Material
-            // SwipeableState.processNewAnchors cancels the bottom sheet's in-flight
-            // enter animation -> it freezes partway". If the modal animates in with
-            // this on, the heartbeat re-layout is the churn source.
-            if ("1".equals(ENV_MACAPK_NO_HEARTBEAT_LAYOUT))
-                doLayout = layoutRequested || warmup;
-            if (!doLayout) m6DrawOnlyCount++;
-            // A heartbeat that coincides with a scheduled frame is part of a
-            // stream, so it is filed with the stream (full), not as a heartbeat.
-            if (warmup)                               frameKind = FK_WARMUP;
-            else if (!scheduled)                      frameKind = FK_HEARTBEAT;
-            else if (idleBefore >= M6_WAKE_GAP_FRAMES) frameKind = FK_WAKE;
-            else                                      frameKind = doLayout ? FK_FULL : FK_DRAW;
-            // FRAMESPEED S2: take S1's damage with the traversal flag (the rect
-            // follows the flag). Inert (DAMAGE_FULL) until S1 exists.
-            if (FRAMESPEED_DAMAGE) dmgKind = macapkConsumeDamage(dmgRect);
+        boolean scheduled = ViewHost.get().consumeTraversalScheduled(ViewHost.get().viewRoot());
+        boolean layoutRequested = ViewHost.get().consumeLayoutRequested(ViewHost.get().viewRoot());
+        // FRAMESPEED heartbeat: evidence that the app is ACTIVE puts the net
+        // back to 30 vsyncs before this frame's heartbeat test. A draw-only
+        // invalidate (a caret blink, a spinner) is not such evidence: it
+        // repaints its own damage and says nothing about mutations elsewhere.
+        if (FRAMESPEED_HEARTBEAT) {
+            final long lastInput = TouchDispatcher.lastUserInputMillis();
+            if (lastInput != hbLastInputMillis) { hbLastInputMillis = lastInput; hb.reset(); }
+            else if (layoutRequested) hb.reset();
         }
+        boolean heartbeat = hb.due(n, scheduled);
+        boolean warmup = n <= M6_WARMUP_FRAMES;
+        // DIAGNOSTIC (MACAPK_M6_FORCE_DRAW): force a full traversal+draw every
+        // frame, bypassing the dirty-gate skip. Decisive test for "an actively
+        // animating Compose subtree (a pushed ComposeBottomSheetScreen) never
+        // presents because its per-frame invalidation doesn't schedule a
+        // traversal." If the modal renders ONLY with this on, the real fix is
+        // to route Compose animation/recompose invalidation -> ViewRootImpl
+        // Periodically report how many of the last ~300 frames were skipped
+        // (the M6 win: an idle window traverses ~2x/sec instead of 60x) and how
+        // many ran DRAW-ONLY (the scroll-perf win: a scroll/animation frame
+        // redraws without re-measuring/re-laying-out the whole tree).
+        if ((n % 300) == 0 && n > M6_WARMUP_FRAMES) {
+            NativeLog.i(TAG, "M6: skipped " + m6SkipCount + "/300 traversals (idle), "
+                + m6DrawOnlyCount + "/300 draw-only (scroll/anim, no relayout)"
+                + (FRAMESPEED_HEARTBEAT ? " heartbeat=" + hb.interval
+                    + " widened=" + hb.widenings + " reset=" + hb.resets : "")
+                + (FRAMESPEED_DAMAGE ? " partial=" + m6PartialCount
+                    + (m6PartialCount > 0 && surfaceW > 0 && surfaceH > 0
+                       ? String.format(" (%.1f%% of the window each)",
+                             100.0 * m6PartialArea / m6PartialCount / ((double) surfaceW * surfaceH))
+                       : "")
+                    + "" : ""));
+            dvClaimed = dvClean = dvUnder = 0;
+            m6PartialCount = 0;
+            m6PartialArea = 0;
+            m6SkipCount = 0;
+            m6DrawOnlyCount = 0;
+        }
+        if (!scheduled && !heartbeat && !warmup) {
+            m6SkipCount++;
+            m6IdleStreak++;
+            return;   // nothing changed -- skip the whole measure/layout/draw/present
+        }
+        final long idleBefore = m6IdleStreak;
+        m6IdleStreak = 0;
+        // Draw-only unless a real layout was requested (or the backstops fire).
+        // Env rollback MACAPK_SCROLL_DRAW_ONLY=0 forces every traversal to be
+        // full (the pre-split behavior) for A/B.
+        doLayout = layoutRequested || heartbeat || warmup;
+        // DIAGNOSTIC (MACAPK_NO_HEARTBEAT_LAYOUT): drop the periodic heartbeat
+        // re-layout (keep it as a DRAW-only refresh). Test for "the heartbeat
+        // full re-layout re-measures the Compose modal -> Material
+        // SwipeableState.processNewAnchors cancels the bottom sheet's in-flight
+        // enter animation -> it freezes partway". If the modal animates in with
+        if (!doLayout) m6DrawOnlyCount++;
+        // A heartbeat that coincides with a scheduled frame is part of a
+        // stream, so it is filed with the stream (full), not as a heartbeat.
+        if (warmup)                               frameKind = FK_WARMUP;
+        else if (!scheduled)                      frameKind = FK_HEARTBEAT;
+        else if (idleBefore >= M6_WAKE_GAP_FRAMES) frameKind = FK_WAKE;
+        else                                      frameKind = doLayout ? FK_FULL : FK_DRAW;
+        // FRAMESPEED S2: take S1's damage with the traversal flag (the rect
+        // follows the flag). Inert (DAMAGE_FULL) until S1 exists.
+        if (FRAMESPEED_DAMAGE) dmgKind = macapkConsumeDamage(dmgRect);
         // ⚠ `canvas == null` is part of the test on purpose. `bitmap` and `canvas` are allocated
         // together and are only meaningful as a PAIR, but this guard used to test `bitmap` alone --
         // so if `new Canvas(bitmap)` ever threw (an OOME out of `createGraphics()` is the plausible
@@ -1275,7 +1145,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             lastOverlayNonEmpty = overlayNow;
             damageForceFullNext = false;
             // The validator draws fully and only CLAIMS the rect (present bound).
-            if (partial && !DAMAGE_VALIDATE) {
+            if (partial) {
                 partialSave = canvas.save();
                 GfxBackend.get().clipChildRect(canvas, partialRect[0], partialRect[1],
                                            partialRect[2], partialRect[3]);
@@ -1391,10 +1261,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // doFrame already runs ON the loop), and GLOBAL_QUEUE then holds only
         // GL-thread queueEvent work that must run on the OS main thread -- so
         // do NOT drain it here. Off-mode: drain the historical per-frame main
-        // queue on the OS main thread, exactly as before.
-        if (!android.os.Looper.MACAPK_REAL_LOOPER) {
-            try { android.os.Handler.drainGlobal(); } catch (Throwable ignored) {}
-        }
         // Window-attach the root tree (idempotent fast path). Real
         // Android attaches via ViewRootImpl once the window exists --
         // for us that's "the canvas pump is running". Views inflated
@@ -1444,9 +1310,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 // this pre-pass every start/end constraint stays UNSET
                 // and the solver zeros the whole keypad. Idempotent per
                 // view (isLayoutDirectionResolved short-circuits).
-                if (!"0".equals(ENV_MACAPK_RTL_RESOLVE)) {
-                    resolveTreeRtl(rootView);
-                }
+                resolveTreeRtl(rootView);
                 rootView.measure(
                     android.view.View.MeasureSpec.makeMeasureSpec(
                         // v1.0.997: the window's width, not the display's --
@@ -1485,10 +1349,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // RelativeLayout lay out the tree correctly -- bar pinned bottom, list
             // filling above -- via the real rules, no position hack needed. Gated
             // on the real-loop flag; MACAPK_NAV_MEASURE_CLAMP=0 to disable.
-            if (android.os.Looper.MACAPK_REAL_LOOPER
-                    && !"0".equals(ENV_MACAPK_NAV_MEASURE_CLAMP)) {
-                try { clampNavBarMeasuredHeight(rootView); } catch (Throwable ignored) {}
-            }
+            try { clampNavBarMeasuredHeight(rootView); } catch (Throwable ignored) {}
             rootView.layout(contentLeft, statusBarH, contentRight, contentBottom);
             // v1.0.97: now that layout has set every View's bounds,
             // selectively measure RecyclerViews against their
@@ -1581,8 +1442,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                     // display density) instead of a second StatusBarDriver.heightPx
                     // call. Dormant by default (MACAPK_DISPATCH_TOP_INSET=0), so this
                     // only matters when that diagnostic flag is opted in.
-                    int topInset = "1".equals(ENV_MACAPK_DISPATCH_TOP_INSET)
-                        ? statusBarH : 0;
+                    int topInset = 0;
                     android.graphics.Insets sys = (topInset > 0)
                         ? android.graphics.Insets.of(0, topInset, 0, 0)
                         : android.graphics.Insets.NONE;
@@ -1631,8 +1491,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // measuredHeight + setLeftTopRightBottom on the bar AND
             // the MenuView AND each item, so the whole chain grows
             // together. Per-frame call; each invocation is idempotent
-            // (setFrame short-circuits when bounds match).
-            if (hackEnabled("navbar")) enforceM3NavigationBarHeight(rootView);
             // v1.0.76: subclass-onLayout overrides (e.g. ConstraintLayout
             // in the APK) skip our base-ViewGroup.onLayout's "fill
             // parent" default. If they then fail to position their own
@@ -1651,25 +1509,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // Re-enforcing per frame is cheap (~5 ints/frame) and
             // generic: any RV with 2-5 children of distinct view types
             // is treated as a tab pager, with item N selected by
-            // MACAPK_RV_VISIBLE_INDEX (default 0).
-            if (hackEnabled("tabpager")) enforceTabPagerVisibility(rootView);
-            // v1.0.111: bypass Glide's coroutine-based HttpFetcher
-            // for ImageViews whose Glide load is stuck (the StandaloneCoroutine
-            // launched on Dispatchers.IO never dispatches in our env).
-            // Walks the tree, finds each ImageView with a Glide-tagged
-            // pending REMOTE load, reflectively extracts the URL from
-            // the Glide Request's model (F-Droid DownloadRequest =>
-            // indexFile.name + first https mirror.baseUrl), fetches
-            // bytes via HttpURLConnection, decodes via BitmapFactory,
-            // and applies via setImageDrawable. Per-ImageView dedup
-            // via IdentityHashMap so subsequent frames are no-op.
-            try { GlideRescue.scanAndFetch(rootView); } catch (Throwable ignored) {}
             // v1.0.118: re-stack vertical LinearLayouts when GONE children
             // leave gaps. Uses setLeftTopRightBottom (NOT c.layout) on
-            // children so no cascade triggers; for RecyclerView siblings
-            // the cards stay positioned where layoutGridManually put them.
-            if (hackEnabled("linfix")) fixupVerticalLinearLayouts(rootView);
-            if (hackEnabled("zeroext")) forceLayoutZeroExtentChildren(rootView);
             // v1.0.101: gravity-based positioning pass. Walks the tree
             // for any child whose LayoutParams.macapkGravity is set
             // (FAB at bottom|end, SnackBar at bottom, dialog content
@@ -1681,18 +1522,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // _gravity wasn't explicitly set (Material's
             // CoordinatorLayout.Behavior contract). Generic for all
             // CoordinatorLayout / FrameLayout / custom-ViewGroup-from-
-            // APK trees -- no per-app code.
-            if (hackEnabled("gravity")) applyLayoutGravity(rootView);
-            // v1.0.395: on the real-loop path the broad `gravity` hack is
-            // retired (the real measure/layout handles most cases), but our
-            // CoordinatorLayout doesn't run Material's FAB Behavior, so a
-            // FloatingActionButton anchored in it lays out at [0,0-0,0] and
-            // is clipped away (the owner's "missing search icon", 2026-06-14).
-            // Run a FOCUSED FAB-only pass that sizes a degenerate / parent-
-            // filling FAB to its Material default (56dp) and anchors it at
-            // its layout_gravity (BOTTOM|END default + 16dp margin), matching
-            // the FAB Behavior contract. Generic; no per-APK code.
-            else if (android.os.Looper.MACAPK_REAL_LOOPER) positionFloatingActionButtons(rootView);
+            positionFloatingActionButtons(rootView);
             // v1.0.402: grow a fitsSystemWindows AppBarLayout (F-Droid's
             // AppDetails CollapsingToolbar hero) by the status-bar height,
             // mirroring AOSP CollapsingToolbarLayout.onMeasure which adds the
@@ -1703,10 +1533,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // content down to match. Gated on the fitsSystemWindows AppBar in
             // a CoordinatorLayout, so non-edge-to-edge apps (games,
             // Calculator) are untouched. Env rollback MACAPK_GROW_FITS_APPBAR=0.
-            if (android.os.Looper.MACAPK_REAL_LOOPER
-                    && !"0".equals(ENV_MACAPK_GROW_FITS_APPBAR)) {
-                try { growFitsSystemWindowsAppBar(rootView); } catch (Throwable ignored) {}
-            }
+            try { growFitsSystemWindowsAppBar(rootView); } catch (Throwable ignored) {}
         } catch (Throwable layoutErr) {
             if (!warnedLayoutErr) {
                 warnedLayoutErr = true;
@@ -1804,28 +1631,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // BaselineLayout (with its label children) below the icon.
         // Class-name keyed, generic for any APK with a M3 bottom nav.
         try {
-            if (hackEnabled("navitem")) fixupNavigationBarItemViews(rootView);
-            // ⚠ centerNavItemContent GATED OFF by default v1.0.930. It was
-            // written 2026-06-14 when the nav-item measure genuinely was wrong,
-            // but its own header's RETIRE condition ("when the measure chain wraps
-            // the bar/items to their natural design height so Material's own
-            // onLayout centers the content") is now MET -- and it had never once
-            // run against a real Material nav bar, because until v1.0.928
-            // BottomNavigationView's constructor threw and we substituted a
-            // FrameLayout placeholder, so there were no NavigationBarItemViews to
-            // centre. Now that the bar really inflates it is actively CLOBBERING a
-            // correct layout: traced on F-Droid, contentArea = max(iconH=64,
-            // ih=160 - inset=96) = 64 < groupH=101, so groupTop clamps to 0 and the
-            // icon+label group is jammed to the item's TOP. Material had already
-            // laid the icon container out at [17,24-145,88] -- 12dp top, exactly
-            // m3_bottom_nav_item_padding_top and exactly the emulator's geometry --
-            // and we moved it to [.,0-.,64]. Census over one run: 950 frames
-            // correct, 7,120 post-clobber. That is the owner's "ours just isn't
-            // centered and theirs is".
-            // MACAPK_KEEP_NAV_CENTER=1 restores it as a bisect gate.
-            else if (android.os.Looper.MACAPK_REAL_LOOPER
-                     && "1".equals(ENV_MACAPK_KEEP_NAV_CENTER))
-                centerNavItemContent(rootView);
         }
         catch (Throwable ignored) {}
         pt3 = System.nanoTime();   // layout = measure + layout + RV pump (0-cost on draw-only)
@@ -1900,8 +1705,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // frame costs more than the present it is trying to avoid, which
             // would defeat the whole optimisation.
             // Only the MACAPK_COUNT_ALL_INK=0 bisect path decides here; the
-            // default decides after the window-overlay pass below.
-            if (!INK_AFTER_ALL_PASSES) sFrameDrewInk = (GfxBackend.get().drawOps(canvas) != opsBefore);
             canvas.restore();
             // MACAPK_PUNCH_TRACE=1: does the SurfaceView hole survive the draw?
             // Sampled HERE, immediately after rootView.draw and before the
@@ -1963,30 +1766,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // once; the flag just avoids the per-frame call.
         // (Window focus is the window manager's to give, with AOSP's app layer and views.)
         if (!hasGl && !windowFocusDelivered && n >= 2) windowFocusDelivered = true;
-        // v1.0.134: ComposeView fallback. Walks the tree for
-        // ComposeView instances whose Compose runtime didn't paint
-        // (kotlinx-coroutines / Compose frame scheduler don't fully
-        // drive in our env), and paints a banner-shaped fallback with
-        // text harvested from the LayoutNode tree. The fallback paints
-        // in the CANVAS's pre-translate space so it has to add
-        // statusBarH to the y coordinate; we do that by issuing the
-        // walk with the canvas still in its translated state.
-        try {
-            canvas.save();
-            canvas.translate(0, statusBarH);
-            ComposeViewFallback.paint(rootView, canvas);
-            canvas.restore();
-        } catch (Throwable cfe) {
-            com.macapk.loader.GfxTrace.swallow("ComposeViewFallback.paint", cfe);
-            try { canvas.restoreToCount(1); } catch (Throwable t) {}
-        }
-        // DIAGNOSTIC (MACAPK_TRACE_COMPOSE_FALLBACK=1): dump the view tree +
-        // Compose LayoutNode tree every ~60 frames even under the real loop, to
-        // see whether a Compose screen's ComposeView is attached + whether its
-        // composition produced sized content nodes.
-        if ((n % 20) == 10) {
-            try { ComposeViewFallback.macapkDiagnoseTree(rootView); } catch (Throwable ignored2) {}
-        }
         // v1.0.691: composite the floating-window overlay stack (Dialog /
         // PopupWindow / Spinner dropdown / PopupMenu) OVER the content view.
         // Each layer is measured+laid out at its WindowManager.LayoutParams
@@ -2087,7 +1866,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // published stayed frozen on the layer after dismiss, because the next
         // empty frame elided too. Same failure as the Candy Crush splash, on the
         // overlay path.
-        if (INK_AFTER_ALL_PASSES) sFrameDrewInk = (GfxBackend.get().drawOps(inkCanvas) != inkOpsFrameStart);
+        sFrameDrewInk = (GfxBackend.get().drawOps(inkCanvas) != inkOpsFrameStart);
         // v1.0.134: status bar overlays the very top of the canvas
         // AFTER rootView.draw -- AOSP-correct because real SystemUI
         // composites over the Activity decor, never under it.
@@ -2157,9 +1936,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // next one repaints fully.
         boolean presentPartial = false;
         if (partial) {
-            if (DAMAGE_VALIDATE) {
-                presentPartial = true;   // drawn fully; the rect is only CLAIMED, and checked
-            } else if (partialSave >= 0 && canvas.getSaveCount() > partialSave) {
+            if (partialSave >= 0 && canvas.getSaveCount() > partialSave) {
                 canvas.restoreToCount(partialSave);
                 presentPartial = true;
             } else {
@@ -2179,9 +1956,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         int[] pixels = GfxBackend.get().frameArgb(bitmap, framePixels);
         framePixels = pixels;
         final long ptPixels = System.nanoTime();   // FrameTimes' `pixels`: the frame read out of the bitmap
-        if (DAMAGE_VALIDATE && FRAMESPEED_DAMAGE) {
-            macapkDamageValidate(pixels, bitmap.getWidth(), bitmap.getHeight(), presentPartial, partialRect);
-        }
         long ckNs = 0;   // phase trace: checkpoint-block time, kept out of `present`
         if (pixels != null) {
             // Diagnostic: count any pixel that ISN'T fully transparent
@@ -2328,7 +2102,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             } else {
                 sLastPublishedInk = sFrameDrewInk;
                 boolean presented = false;
-                if (PRESENT_IOSURFACE && !sPresentFrameUnavailable) {
+                if (!sPresentFrameUnavailable) {
                     // The whole surface is the claimed bound until view damage
                     // exists (08-30 S1); the native diff finds what really changed.
                     // HEARTBEAT marks a frame nothing scheduled, so the native side
@@ -2336,7 +2110,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                     // ([heartbeat-diff]).
                     final int bw = bitmap.getWidth(), bh = bitmap.getHeight();
                     final int flags = (presentForceFull ? NativeCocoa.PRESENT_FLAG_FORCE_FULL : 0)
-                            | (DAMAGE_VALIDATE ? NativeCocoa.PRESENT_FLAG_VALIDATE : 0)
+                            | 0
                             | (frameKind == FK_HEARTBEAT ? NativeCocoa.PRESENT_FLAG_HEARTBEAT : 0);
                     // FRAMESPEED S2: a partial frame changed pixels only inside its
                     // rect, so that is the bound the native diff scans (AOSP trusts
@@ -2435,16 +2209,14 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // Clearing here means only schedules from OTHER loop dispatches (real app
         // events: touch, Compose recompose, posted runnables, animations) keep the
         // window dirty, so a settled tree finally goes idle and frames skip.
-        if (android.os.Looper.MACAPK_REAL_LOOPER) {
-            ViewHost.get().consumeTraversalScheduled(ViewHost.get().viewRoot());
-            // FRAMESPEED S2: the rect follows the flag (08-30 hazard 6) -- but the
-            // damage this traversal raised is kept for the next frame's rectangle
-            // instead of being dropped, and when it reaches outside what a partial
-            // frame drew, that frame is asked for (ViewRootImpl.macapkEndFrameDamage).
-            if (FRAMESPEED_DAMAGE && ViewHost.get().endFrameDamage(ViewHost.get().viewRoot(),
-                    presentPartial ? partialRect : null)) {
-                ViewHost.get().scheduleSameDamage(ViewHost.get().viewRoot());
-            }
+        ViewHost.get().consumeTraversalScheduled(ViewHost.get().viewRoot());
+        // FRAMESPEED S2: the rect follows the flag (08-30 hazard 6) -- but the
+        // damage this traversal raised is kept for the next frame's rectangle
+        // instead of being dropped, and when it reaches outside what a partial
+        // frame drew, that frame is asked for (ViewRootImpl.macapkEndFrameDamage).
+        if (FRAMESPEED_DAMAGE && ViewHost.get().endFrameDamage(ViewHost.get().viewRoot(),
+                presentPartial ? partialRect : null)) {
+            ViewHost.get().scheduleSameDamage(ViewHost.get().viewRoot());
         }
     }
 
@@ -2669,18 +2441,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
         return m;
     }
-    private static final java.util.Map<Class<?>, java.lang.reflect.Method> sRvGetItemViewTypeCache =
-        new java.util.concurrent.ConcurrentHashMap<>();
-    private static java.lang.reflect.Method cachedGetItemViewType(Class<?> adapterClass) {
-        java.lang.reflect.Method m = sRvGetItemViewTypeCache.get(adapterClass);
-        if (m != null) return m;
-        m = findPublicMethod(adapterClass, "getItemViewType", int.class);
-        if (m != null) {
-            m.setAccessible(true);
-            sRvGetItemViewTypeCache.put(adapterClass, m);
-        }
-        return m;
-    }
 
     private static void measureRecyclerViews(View v) {
         if (v == null) return;
@@ -2713,24 +2473,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             //
             // Env rollback MACAPK_RV_NATURAL=0 restores the v123
             // force-bind / layoutGridManually workaround.
-            if ("0".equals(ENV_MACAPK_RV_NATURAL)) {
-                resetRvLayoutStep(v);
-                int w = v.getRight() - v.getLeft();
-                int h = v.getBottom() - v.getTop();
-                if (w > 0 && h > 0) {
-                    int wSpec = android.view.View.MeasureSpec.makeMeasureSpec(
-                        w, android.view.View.MeasureSpec.EXACTLY);
-                    int hSpec = android.view.View.MeasureSpec.makeMeasureSpec(
-                        h, android.view.View.MeasureSpec.EXACTLY);
-                    try { v.measure(wSpec, hSpec); } catch (Throwable t) {
-                        NativeLog.w(TAG, "RV.measure threw " + t);
-                    }
-                }
-                // Force-bind: bypass RV's LayoutManager / Recycler state
-                // machine entirely. The natural-flow path (v1.0.124+)
-                // lets the LM handle this properly via its onLayoutChildren.
-                forceBindRecyclerView(v);
-            } else {
+            {
                 // v1.0.124: natural flow. RV.onLayout (fired from our
                 // ViewGroup.onLayout cascade and re-fired per-frame
                 // via the layout block at line 145+157) drives
@@ -2793,25 +2536,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
     }
 
-    /** Force RecyclerView's mState.mLayoutStep back to STEP_START (=1).
-     *  Without this, after the first onMeasure runs dispatchLayoutStep1
-     *  (which advances to STEP_LAYOUT=2), all subsequent dispatchLayout
-     *  calls take the else branch and may skip dispatchLayoutStep2 --
-     *  the only path that calls LayoutManager.onLayoutChildren ->
-     *  Recycler.getViewForPosition -> Adapter.onCreateViewHolder. */
-    private static void resetRvLayoutStep(View rv) {
-        try {
-            java.lang.reflect.Field mState = findField(rv.getClass(), "mState");
-            if (mState == null) return;
-            mState.setAccessible(true);
-            Object state = mState.get(rv);
-            if (state == null) return;
-            java.lang.reflect.Field step = findField(state.getClass(), "mLayoutStep");
-            if (step == null) return;
-            step.setAccessible(true);
-            step.setInt(state, 1); // STEP_START
-        } catch (Throwable ignored) {}
-    }
 
     private static final java.util.Map<View, Boolean> rvForceBound = new java.util.WeakHashMap<>();   // weak: see rvDumped
     /** v1.0.98: force-bind ViewHolders into the RecyclerView via the
@@ -3020,63 +2744,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
     }
 
-    /** v1.0.106: invoke the RecyclerView's attached LayoutManager's
-     *  onLayoutChildren so it positions the children we just
-     *  force-bound. AOSP signature:
-     *      LayoutManager.onLayoutChildren(Recycler, State)
-     *  Both Recycler and State are private fields on the RecyclerView,
-     *  accessed reflectively. Generic across LinearLayoutManager,
-     *  GridLayoutManager, StaggeredGridLayoutManager, etc.
-     *
-     *  v1.0.107: also force `RecyclerView.LayoutManager.mWidth/mHeight`
-     *  to the RV's actual dimensions before onLayoutChildren runs.
-     *  AOSP normally sets these in `LayoutManager.setMeasureSpecs()`
-     *  during the RV's onMeasure pass; when we force-bind we bypass
-     *  the standard measure-then-layout pipeline, leaving mWidth/mHeight
-     *  at 0. GridLayoutManager then computes `totalSpace = 0 - paddings`
-     *  -> negative -> mCachedBorders all zero -> every cell is the
-     *  default min width (~10 px) -> cards squish into a 10-wide
-     *  column. Same root cause for any other LayoutManager that
-     *  reads getWidth() during layout. Also push the State to a sane
-     *  pre-layout state so `state.getItemCount()` returns the real
-     *  count (otherwise GridLayoutManager.layoutChunk bails after
-     *  the first item with State.mItemCount=0). */
-    private static void runLayoutManager(View rv) {
-        try {
-            Class<?> rvCls = rv.getClass();
-            java.lang.reflect.Field fLayout = findField(rvCls, "mLayout");
-            java.lang.reflect.Field fRecycler = findField(rvCls, "mRecycler");
-            java.lang.reflect.Field fState = findField(rvCls, "mState");
-            java.lang.reflect.Field fAdapter = findField(rvCls, "mAdapter");
-            if (fLayout == null || fRecycler == null || fState == null) return;
-            fLayout.setAccessible(true);
-            fRecycler.setAccessible(true);
-            fState.setAccessible(true);
-            Object layoutManager = fLayout.get(rv);
-            Object recycler = fRecycler.get(rv);
-            Object state = fState.get(rv);
-            if (layoutManager == null || recycler == null || state == null) return;
-            // v1.0.107: prep the LayoutManager + State.
-            primeLayoutManagerForLayout(rv, layoutManager, state, fAdapter);
-            java.lang.reflect.Method onLayoutChildren = null;
-            for (java.lang.reflect.Method m : layoutManager.getClass().getMethods()) {
-                if ("onLayoutChildren".equals(m.getName()) && m.getParameterCount() == 2) {
-                    onLayoutChildren = m; break;
-                }
-            }
-            if (onLayoutChildren == null) {
-                NativeLog.w(TAG, "runLayoutManager: no onLayoutChildren on "
-                    + layoutManager.getClass().getSimpleName());
-                return;
-            }
-            onLayoutChildren.invoke(layoutManager, recycler, state);
-            NativeLog.i(TAG, "runLayoutManager: " + layoutManager.getClass().getSimpleName()
-                + ".onLayoutChildren done");
-            dumpLayoutManagerState(layoutManager, "after-onLayoutChildren");
-        } catch (Throwable t) {
-            NativeLog.w(TAG, "runLayoutManager failed: " + (t.getCause() != null ? t.getCause() : t));
-        }
-    }
 
     /** v1.0.107: lay out the children of a force-bound RecyclerView
      *  manually, respecting the LayoutManager's spanCount + the
@@ -3194,7 +2861,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             // edges. Configurable via env var for A/B testing.
             int gap = 16;  // 8dp at density=2 -- inter-card margin
             try {
-                String gv = ENV_MACAPK_CARD_GAP_PX;
+                String gv = null;
                 if (gv != null) gap = Math.max(0, Integer.parseInt(gv));
             } catch (Throwable ignored) {}
             int halfGap = gap / 2;
@@ -3248,9 +2915,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 // the solver leaves widget.X=0. Idempotent per View
                 // (View.isLayoutDirectionResolved short-circuits
                 // subsequent calls). Env rollback MACAPK_RTL_RESOLVE=0.
-                if (!"0".equals(ENV_MACAPK_RTL_RESOLVE)) {
-                    resolveTreeRtl(child);
-                }
+                resolveTreeRtl(child);
                 try { child.measure(wSpec, hSpec); }
                 catch (Throwable ignored) {}
                 int childH = child.getMeasuredHeight();
@@ -3712,75 +3377,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
     }
 
-    /** Push the RecyclerView's width/height into the LayoutManager
-     *  via reflection. AOSP normally writes these in setMeasureSpecs
-     *  during the RV.onMeasure pass; we bypass that. Without proper
-     *  mWidth/mHeight, GridLayoutManager.calculateItemBorders gets
-     *  totalSpace=0 and every cell collapses to default-min width. */
-    private static void primeLayoutManagerForLayout(View rv,
-                                                    Object layoutManager,
-                                                    Object state,
-                                                    java.lang.reflect.Field fAdapter) {
-        try {
-            // Push width/height into LayoutManager
-            int w = rv.getRight() - rv.getLeft();
-            int h = rv.getBottom() - rv.getTop();
-            java.lang.reflect.Field fMW = findField(layoutManager.getClass(), "mWidth");
-            java.lang.reflect.Field fMH = findField(layoutManager.getClass(), "mHeight");
-            if (fMW != null) { fMW.setAccessible(true); fMW.setInt(layoutManager, w); }
-            if (fMH != null) { fMH.setAccessible(true); fMH.setInt(layoutManager, h); }
-            // Push width/height MeasureSpec mode so getWidthMode/HeightMode
-            // return EXACTLY (not unspecified -> default cells).
-            java.lang.reflect.Field fMWM = findField(layoutManager.getClass(), "mWidthMode");
-            java.lang.reflect.Field fMHM = findField(layoutManager.getClass(), "mHeightMode");
-            int EXACTLY = android.view.View.MeasureSpec.EXACTLY;
-            if (fMWM != null) { fMWM.setAccessible(true); fMWM.setInt(layoutManager, EXACTLY); }
-            if (fMHM != null) { fMHM.setAccessible(true); fMHM.setInt(layoutManager, EXACTLY); }
-            // Push the real item count into State so layoutChunk can
-            // walk past position 0. AOSP normally sets mItemCount in
-            // dispatchLayoutStep1 from mAdapter.getItemCount.
-            if (fAdapter != null && state != null) {
-                fAdapter.setAccessible(true);
-                Object adapter = fAdapter.get(rv);
-                if (adapter != null) {
-                    java.lang.reflect.Method getItemCount = findPublicMethod(adapter.getClass(), "getItemCount");
-                    int itemCount = (int) getItemCount.invoke(adapter);
-                    java.lang.reflect.Field fIC = findField(state.getClass(), "mItemCount");
-                    if (fIC != null) { fIC.setAccessible(true); fIC.setInt(state, itemCount); }
-                }
-            }
-            dumpLayoutManagerState(layoutManager, "before-onLayoutChildren");
-        } catch (Throwable t) {
-            NativeLog.w(TAG, "primeLayoutManagerForLayout failed: " + t);
-        }
-    }
 
-    /** Diagnostic: log key LayoutManager state. */
-    private static void dumpLayoutManagerState(Object lm, String phase) {
-        try {
-            StringBuilder sb = new StringBuilder("LM(" + phase + ") ");
-            sb.append(lm.getClass().getSimpleName());
-            for (String field : new String[] { "mWidth", "mHeight", "mWidthMode", "mHeightMode", "mSpanCount" }) {
-                java.lang.reflect.Field f = findField(lm.getClass(), field);
-                if (f != null) {
-                    f.setAccessible(true);
-                    sb.append(" ").append(field).append("=").append(f.getInt(lm));
-                }
-            }
-            // mCachedBorders if it exists
-            java.lang.reflect.Field fCB = findField(lm.getClass(), "mCachedBorders");
-            if (fCB != null) {
-                fCB.setAccessible(true);
-                int[] borders = (int[]) fCB.get(lm);
-                if (borders != null) {
-                    sb.append(" mCachedBorders=").append(java.util.Arrays.toString(borders));
-                } else {
-                    sb.append(" mCachedBorders=null");
-                }
-            }
-            NativeLog.i(TAG, sb.toString());
-        } catch (Throwable ignored) {}
-    }
 
     /** v1.0.100: parse `MACAPK_RV_VISIBLE_INDEX` (an integer >= 0,
      *  default 0) which selects the single visible item index when
@@ -3790,66 +3387,14 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
      *  at a time. Useful for previewing tabs without touch dispatch.
      *  Generic: works for any RV holding 2+ children with the same
      *  bound class, not F-Droid-specific. */
-    /** v1.0.110: every-frame re-enforcement of tab-pager visibility.
-     *  Walks the view tree finding any RecyclerView whose adapter has
-     *  >= 2 children of DISTINCT view types and itemCount <= 5 (the
-     *  tab-pager heuristic). For each such RV, hides every page-child
-     *  whose index != selectedTab (0 by default). F-Droid's
-     *  MainViewAdapter is exactly this shape: 5 pages, 5 view types,
-     *  one selected at a time.
-     *
-     *  Without this, CategoriesViewBinder's LiveData observer
-     *  re-attaches its layout-inflation root after the initial
-     *  setVisibility(GONE) we set during force-bind, leaving both the
-     *  Latest and Categories page-FrameLayouts visible at once. */
-    private static void enforceTabPagerVisibility(View v) {
-        if (v == null) return;
-        if (v.getClass().getName().endsWith("RecyclerView")) {
-            tryEnforceOnRv(v);
-        }
-        if (v instanceof android.view.ViewGroup vg) {
-            int n = vg.getChildCount();
-            for (int i = 0; i < n; i++) enforceTabPagerVisibility(vg.getChildAt(i));
-        }
-    }
 
-    // PERF1: this runs every frame (called from enforceTabPagerVisibility, which
-    // hackEnabled("tabpager") keeps live on the default flag-off path) for every
-    // RecyclerView in the tree. fAdapter/getItemCount/getItemViewType now come from
+    // PERF1: this runs every frame (called from enforceTabPagerVisibility) for
+    // every RecyclerView in the tree. fAdapter/getItemCount/getItemViewType now come from
     // the per-Class caches above instead of a fresh getDeclaredField/getMethod walk
-    // each time.
-    private static void tryEnforceOnRv(View rv) {
-        try {
-            java.lang.reflect.Field fAdapter = cachedAdapterField(rv.getClass());
-            if (fAdapter == null) return;
-            Object adapter = fAdapter.get(rv);
-            if (adapter == null) return;
-            Class<?> ac = adapter.getClass();
-            java.lang.reflect.Method getItemCount = cachedGetItemCount(ac);
-            if (getItemCount == null) return;
-            int n = (int) getItemCount.invoke(adapter);
-            if (n < 2 || n > 5) return;
-            java.lang.reflect.Method getItemViewType = cachedGetItemViewType(ac);
-            if (getItemViewType == null) return;
-            java.util.Set<Integer> types = new java.util.HashSet<>();
-            for (int i = 0; i < n; i++) types.add((int) getItemViewType.invoke(adapter, i));
-            if (types.size() != n) return; // not a tab pager
-            int sel = parseSelectedTab();
-            if (sel >= n) sel = 0;
-            if (!(rv instanceof android.view.ViewGroup rvg)) return;
-            int childCount = rvg.getChildCount();
-            for (int i = 0; i < childCount; i++) {
-                View child = rvg.getChildAt(i);
-                if (child == null) continue;
-                int desired = (i == sel) ? View.VISIBLE : View.GONE;
-                if (child.getVisibility() != desired) child.setVisibility(desired);
-            }
-        } catch (Throwable ignored) {}
-    }
 
     private static int parseSelectedTab() {
         try {
-            String v = ENV_MACAPK_RV_VISIBLE_INDEX;
+            String v = null;
             if (v == null) return 0;
             int n = Integer.parseInt(v.trim());
             if (n < 0) n = 0;
@@ -3913,20 +3458,18 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         // Still recurse into the children's subtrees so any
         // grandchild (e.g. inner ConstraintLayout) that DOES have
         // zero bounds gets handled.
-        if (!"0".equals(ENV_MACAPK_RV_NATURAL)) {
-            String fqcn;
-            try { fqcn = v.getClass().getName(); } catch (Throwable t) { fqcn = ""; }
-            if (fqcn.endsWith(".RecyclerView")
-                || fqcn.equals("androidx.recyclerview.widget.RecyclerView")) {
-                int n = vg.getChildCount();
-                for (int i = 0; i < n; i++) {
-                    View c = vg.getChildAt(i);
-                    if (c instanceof android.view.ViewGroup) {
-                        forceLayoutZeroExtentChildren(c);
-                    }
+        String fqcn;
+        try { fqcn = v.getClass().getName(); } catch (Throwable t) { fqcn = ""; }
+        if (fqcn.endsWith(".RecyclerView")
+            || fqcn.equals("androidx.recyclerview.widget.RecyclerView")) {
+            int n = vg.getChildCount();
+            for (int i = 0; i < n; i++) {
+                View c = vg.getChildAt(i);
+                if (c instanceof android.view.ViewGroup) {
+                    forceLayoutZeroExtentChildren(c);
                 }
-                return;
             }
+            return;
         }
 
         // Two-pass: collect zero-extent children, then distribute the
@@ -4002,39 +3545,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
     }
 
-    /** v1.0.101: post-layout gravity pass. Walks the view tree; for any
-     *  child whose LayoutParams.macapkGravity is non-zero (set from
-     *  XML `layout_gravity` during inflation) AND whose current bounds
-     *  cover the parent's entire extent (a sign the parent's onLayout
-     *  did nothing positional), re-position the child inside its
-     *  parent's bounds using the gravity bits.
-     *
-     *  Also applies a Material-default BOTTOM|END gravity to any class
-     *  whose simple name ends in "FloatingActionButton" if gravity
-     *  wasn't otherwise set. Material's FAB Behavior in CoordinatorLayout
-     *  defaults to bottom-end with a 16dp margin -- without this, a
-     *  FAB inflated under an APK-bundled CoordinatorLayout (which
-     *  doesn't run measure with our framework) inherits the parent's
-     *  full extent and the cap-fallback in ImageView.onDraw renders
-     *  the FAB icon centered in the entire content area instead of
-     *  in the corner where the user expects it.
-     *
-     *  Generic for any CoordinatorLayout / FrameLayout / custom-ViewGroup
-     *  tree -- no per-APK code, no class-name allowlist beyond the
-     *  Material FAB default.
-     *
-     *  Sizing rule, in priority order:
-     *    1. LayoutParams.width/height in pixels (> 0)
-     *    2. drawable.getIntrinsicWidth/Height + 2 * padding (when the
-     *       view has a drawable and we'd otherwise oversize it)
-     *    3. 56dp (FAB / SnackBar / dialog default)
-     *  Default outer margin is 16dp. v1.0.126: dimensions route through
-     *  dp() helper that reads the View's actual DisplayMetrics.density,
-     *  so 56dp -> 112px on the default xhdpi (d=2) phone preset, 168px
-     *  on xxhdpi (d=3), etc. Previously hardcoded at density=3. */
-    private static void applyLayoutGravity(View v) {
-        applyLayoutGravityRec(v, new java.util.IdentityHashMap<>());
-    }
 
     /** v1.0.395: FOCUSED FloatingActionButton sizing + positioning for the
      *  real-loop path (where the broad `gravity` hack is retired). Material's
@@ -4307,85 +3817,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
             } catch (Throwable ignored) {}
         }
         return Math.round(dp * density);
-    }
-    private static void applyLayoutGravityRec(View v,
-                                              java.util.IdentityHashMap<View, Boolean> visited) {
-        if (v == null) return;
-        if (visited.put(v, Boolean.TRUE) != null) return;
-        if (!(v instanceof android.view.ViewGroup vg)) return;
-        int parentW = v.getRight() - v.getLeft();
-        int parentH = v.getBottom() - v.getTop();
-        if (parentW <= 0 || parentH <= 0) {
-            // Still recurse for child ViewGroups that themselves have
-            // real bounds.
-            for (int i = 0; i < vg.getChildCount(); i++) {
-                View c = vg.getChildAt(i);
-                applyLayoutGravityRec(c, visited);
-            }
-            return;
-        }
-        int n = vg.getChildCount();
-        for (int i = 0; i < n; i++) {
-            View c = vg.getChildAt(i);
-            if (c == null) continue;
-            if (c.getVisibility() == View.GONE) continue;
-            int g = childGravity(c);
-            if (g == android.view.Gravity.NO_GRAVITY) continue;
-            // Reposition the child if its bounds look like a default
-            // ViewGroup.onLayout result (either: fills parent because
-            // single-child FrameLayout, OR was given a half-parent slice
-            // by the equal-divide-vertical fallback when multiple
-            // siblings exist). v1.0.117: previously required fillsParent
-            // in BOTH dimensions, but FAB siblings get split vertically
-            // (720x584 instead of 720x1168), leaving FAB at half-height
-            // and skipped. Detect "filled at least one dimension OR has
-            // WRAP_CONTENT LayoutParams" as the signal to reposition.
-            int cw = c.getRight() - c.getLeft();
-            int ch = c.getBottom() - c.getTop();
-            android.view.ViewGroup.LayoutParams clp = c.getLayoutParams();
-            boolean defaultLaidOut =
-                (cw >= parentW && ch >= parentH)            // fills both
-                || (cw >= parentW)                          // fills width (vertical split)
-                || (ch >= parentH)                          // fills height
-                || (clp != null
-                    && (clp.width == android.view.ViewGroup.LayoutParams.WRAP_CONTENT
-                        || clp.height == android.view.ViewGroup.LayoutParams.WRAP_CONTENT)
-                    && cw > 0 && ch > 0);
-            if (!defaultLaidOut) continue;
-            int desiredW = childDesiredWidth(c, parentW);
-            int desiredH = childDesiredHeight(c, parentH);
-            int marginL = 0, marginT = 0, marginR = 0, marginB = 0;
-            android.view.ViewGroup.LayoutParams lp = c.getLayoutParams();
-            if (lp instanceof android.view.ViewGroup.MarginLayoutParams mlp) {
-                marginL = mlp.leftMargin; marginT = mlp.topMargin;
-                marginR = mlp.rightMargin; marginB = mlp.bottomMargin;
-            }
-            // Default margin -- Material 3 spec is 16dp on all sides
-            // for a FAB inside a CoordinatorLayout. v1.0.126: was
-            // hardcoded `48` (= 16dp at density=3) which oversized the
-            // chrome's stand-off from screen edges; route through the
-            // density-aware dp() helper so we get 32px at density=2.
-            if (marginL == 0 && marginR == 0 && marginT == 0 && marginB == 0) {
-                int defaultMargin = dp(c, 16);
-                marginL = marginR = marginT = marginB = defaultMargin;
-            }
-            // Resolve START/END against the PARENT's resolved direction, as
-            // FrameLayout.layoutChildren does. This assumed LTR, so under an RTL
-            // locale it dragged every bottom|end FAB (WhatsApp's new-chat and
-            // Meta AI buttons) back to the right edge after the real layout pass
-            // had put it on the left.
-            int abs = android.view.Gravity.getAbsoluteGravity(g, vg.getLayoutDirection());
-            android.graphics.Rect container = new android.graphics.Rect(
-                marginL, marginT, parentW - marginR, parentH - marginB);
-            android.graphics.Rect out = new android.graphics.Rect();
-            android.view.Gravity.apply(abs, desiredW, desiredH, container, out);
-            c.layout(out.left, out.top, out.right, out.bottom);
-        }
-        // Recurse.
-        for (int i = 0; i < n; i++) {
-            View c = vg.getChildAt(i);
-            applyLayoutGravityRec(c, visited);
-        }
     }
 
     /** Resolve the gravity for a child. Reads LayoutParams.macapkGravity
@@ -4896,229 +4327,8 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
     }
 
     // Static state class so the warn-once flags persist across the
-    /** v1.0.118: walk the tree, find vertical LinearLayouts whose
-     *  visible-child bounds have y-gaps (indicating a GONE sibling
-     *  is still claiming a slot from the initial equal-divide), and
-     *  re-stack them tightly with MATCH_PARENT children getting
-     *  whatever's left. Generic across any vertical LinearLayout. */
-    private static void fixupVerticalLinearLayouts(View v) {
-        if (v == null) return;
-        fixupLinearLayoutsRec(v, new java.util.IdentityHashMap<>());
-    }
 
-    private static void fixupLinearLayoutsRec(View v,
-                                                java.util.IdentityHashMap<View, Boolean> visited) {
-        if (v == null) return;
-        if (visited.put(v, Boolean.TRUE) != null) return;
-        if (!(v instanceof android.view.ViewGroup vg)) return;
-        // Recurse FIRST so child LLs are stacked before parents
-        // (parents may rely on child measurements after fixup).
-        int n = vg.getChildCount();
-        for (int i = 0; i < n; i++) {
-            View c = vg.getChildAt(i);
-            fixupLinearLayoutsRec(c, visited);
-        }
-        // Only handle android.widget.LinearLayout instances explicitly
-        // marked VERTICAL. Skip horizontal (BottomNavigation etc.) and
-        // skip subclasses that override onLayout (their own logic).
-        if (!(vg instanceof android.widget.LinearLayout ll)) return;
-        if (ll.getOrientation() != android.widget.LinearLayout.VERTICAL) return;
-        // Bail if not laid out yet
-        int parentH = vg.getBottom() - vg.getTop();
-        int parentW = vg.getRight() - vg.getLeft();
-        if (parentH <= 0 || parentW <= 0) return;
-        int padT = vg.getPaddingTop();
-        int padB = vg.getPaddingBottom();
-        int padL = vg.getPaddingLeft();
-        int padR = vg.getPaddingRight();
-        int availW = parentW - padL - padR;
-        int availH = parentH - padT - padB;
-        // Collect visible children
-        java.util.ArrayList<View> visible = new java.util.ArrayList<>();
-        for (int i = 0; i < n; i++) {
-            View c = vg.getChildAt(i);
-            if (c == null) continue;
-            if (c.getVisibility() == View.GONE) continue;
-            visible.add(c);
-        }
-        if (visible.size() < 2) return;
-        // Two trigger conditions:
-        //   (a) Y-gap: visible children leave empty space between them
-        //       (typically from GONE siblings whose slot wasn't reclaimed)
-        //   (b) WRAP_CONTENT vs MATCH_PARENT mis-equal-divide: a wrap-
-        //       content child got the same vertical slice as a match-
-        //       parent child even though wrap_content children should
-        //       be small. F-Droid's LATEST tab LinearLayout has:
-        //         ComposeView (wrap_content, ~80px of content)
-        //         RecyclerView (match_parent)
-        //       and equal-divide gives 292/292 → 280px of ComposeView
-        //       whitespace above the cards. Detect by: if any child
-        //       has lp.height==WRAP_CONTENT and a sibling has
-        //       lp.height==MATCH_PARENT and bounds are roughly equal,
-        //       re-stack with WRAP_CONTENT children at a small fixed
-        //       size and MATCH_PARENT taking the rest.
-        int sumH = 0, minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
-        int wrapContentCount = 0, matchParentCount = 0;
-        for (View c : visible) {
-            int ch = c.getBottom() - c.getTop();
-            if (ch > 0) {
-                sumH += ch;
-                if (c.getTop() < minY) minY = c.getTop();
-                if (c.getBottom() > maxY) maxY = c.getBottom();
-            }
-            android.view.ViewGroup.LayoutParams clp = c.getLayoutParams();
-            if (clp != null) {
-                if (clp.height == android.view.ViewGroup.LayoutParams.WRAP_CONTENT) wrapContentCount++;
-                else if (clp.height == android.view.ViewGroup.LayoutParams.MATCH_PARENT) matchParentCount++;
-            }
-        }
-        if (minY == Integer.MAX_VALUE) return;
-        int span = maxY - minY;
-        boolean hasGap = span > sumH + (visible.size() * 8);
-        // Also re-stack if a WRAP_CONTENT child got more space than
-        // its natural content — sign that equal-divide gave it too
-        // much. F-Droid's LATEST tab LinearLayout has ComposeView
-        // (wrap_content, ~80px content) + RV (match_parent). When
-        // StatusBanner goes GONE, ComposeView ends up 292 tall via
-        // equal-divide of two visible children with 584 px available.
-        boolean wrapOverflow = false;
-        if (wrapContentCount > 0 && matchParentCount > 0) {
-            for (View c : visible) {
-                android.view.ViewGroup.LayoutParams clp = c.getLayoutParams();
-                if (clp == null || clp.height != android.view.ViewGroup.LayoutParams.WRAP_CONTENT) continue;
-                int ch = c.getBottom() - c.getTop();
-                // If wrap_content has > 150 px and there's a match_parent
-                // sibling, the equal-divide gave the wrap_content too much.
-                if (ch > 150) { wrapOverflow = true; break; }
-            }
-        }
-        if (!hasGap && !wrapOverflow) return;
-        // RE-STACK.
-        // Pass 1: figure out wrap_content children's natural heights.
-        // For WRAP_CONTENT, we use measuredHeight if non-zero, otherwise
-        // a sensible default (e.g. ComposeView with no measure → 80px).
-        java.util.ArrayList<View> matchParent = new java.util.ArrayList<>();
-        java.util.HashMap<View, Integer> wrapHeight = new java.util.HashMap<>();
-        int fixedH = 0;
-        for (View c : visible) {
-            android.view.ViewGroup.LayoutParams lp = c.getLayoutParams();
-            if (lp != null && lp.height == android.view.ViewGroup.LayoutParams.MATCH_PARENT) {
-                matchParent.add(c);
-                continue;
-            }
-            int ch;
-            if (lp != null && lp.height >= 0) {
-                ch = lp.height;
-            } else if (lp != null && lp.height == android.view.ViewGroup.LayoutParams.WRAP_CONTENT) {
-                // Use measuredHeight when available, else a small
-                // default that fits typical compose-view banner
-                // / status banner / call-to-action content.
-                int measured = c.getMeasuredHeight();
-                int curBound = c.getBottom() - c.getTop();
-                if (measured > 0 && measured < availH / 2) {
-                    ch = measured;
-                } else if (curBound > 0 && curBound < availH / 3) {
-                    // Already laid out at a sensible small size — trust it.
-                    ch = curBound;
-                } else {
-                    // Conservative fallback: WRAP_CONTENT gets ~80px.
-                    // ComposeView call_to_action_banner with no actual
-                    // content is ~80px; status banner is similar.
-                    ch = 80;
-                }
-            } else {
-                ch = c.getBottom() - c.getTop();
-            }
-            wrapHeight.put(c, ch);
-            fixedH += ch;
-        }
-        int leftover = Math.max(0, availH - fixedH);
-        int perMatch = matchParent.isEmpty() ? 0 : leftover / matchParent.size();
-        // Re-position
-        int y = padT;
-        for (View c : visible) {
-            android.view.ViewGroup.LayoutParams lp = c.getLayoutParams();
-            int mL = 0, mT = 0, mR = 0, mB = 0;
-            if (lp instanceof android.view.ViewGroup.MarginLayoutParams mlp) {
-                mL = mlp.leftMargin; mT = mlp.topMargin;
-                mR = mlp.rightMargin; mB = mlp.bottomMargin;
-            }
-            int ch;
-            boolean isMatch = (lp != null && lp.height == android.view.ViewGroup.LayoutParams.MATCH_PARENT);
-            if (isMatch) {
-                ch = Math.max(0, perMatch - mT - mB);
-            } else {
-                Integer wh = wrapHeight.get(c);
-                ch = wh != null ? wh : c.getBottom() - c.getTop();
-            }
-            int cw = c.getRight() - c.getLeft();
-            if (cw <= 0) cw = availW - mL - mR;
-            int x = padL + mL;
-            y += mT;
-            // ALL children: set bounds directly via setLeftTopRightBottom
-            // (NOT c.layout) to bypass the onLayout cascade. For
-            // RecyclerView specifically, calling layout() would propagate
-            // into RV's onLayout which (with our minimal RV path) hits
-            // our base ViewGroup equal-divide and resets cards to a
-            // 12x12 60x32 tile grid.
-            try {
-                c.setLeftTopRightBottom(x, y, x + cw, y + ch);
-            } catch (Throwable ignored) {
-                c.layout(x, y, x + cw, y + ch);
-            }
-            y += ch + mB;
-        }
-        // v1.0.119: after re-stacking, re-run layoutGridManually for
-        // any RecyclerView child to give cards a chance to grow with
-        // the new RV bounds (their CL solver was clamped to the old
-        // smaller RV size). Run AFTER the visibility loop completes
-        // so RV's bounds are stable.
-        //
-        // v1.0.124: when MACAPK_RV_NATURAL is on (default), SKIP
-        // relayoutRvChildren -- the natural RV.onLayout pump fires
-        // from the c.setLeftTopRightBottom-or-c.layout above (which
-        // already re-positioned the RV), and our ViewGroup.onLayout
-        // now re-fires c.layout on already-positioned children to
-        // cascade onLayout into the RV. LM.onLayoutChildren handles
-        // the visible-window subset via fill() viewport gate.
-        if ("0".equals(ENV_MACAPK_RV_NATURAL)) {
-            for (View c : visible) {
-                if (c.getClass().getName().endsWith("RecyclerView")) {
-                    try { relayoutRvChildren(c); } catch (Throwable ignored) {}
-                }
-            }
-        }
-    }
 
-    /** v1.0.118: re-issue layoutGridManually for a RecyclerView whose
-     *  children may have been bounds-reset by a recent layout call.
-     *  Pulled out for use after fixupVerticalLinearLayouts. */
-    private static void relayoutRvChildren(View rv) {
-        try {
-            java.lang.reflect.Field fAdapter = findField(rv.getClass(), "mAdapter");
-            if (fAdapter == null) return;
-            fAdapter.setAccessible(true);
-            Object adapter = fAdapter.get(rv);
-            if (adapter == null) return;
-            java.lang.reflect.Method getItemCount = findPublicMethod(adapter.getClass(), "getItemCount");
-            if (getItemCount == null) return;
-            getItemCount.setAccessible(true);
-            int n = (int) getItemCount.invoke(adapter);
-            if (n <= 0) return;
-            // Don't re-layout tab-pager RVs (2-5 distinct-type items)
-            // -- those have their own visibility / positioning logic.
-            if (n >= 2 && n <= 5) {
-                java.lang.reflect.Method getItemViewType = findPublicMethod(adapter.getClass(), "getItemViewType", int.class);
-                if (getItemViewType != null) {
-                    getItemViewType.setAccessible(true);
-                    java.util.HashSet<Integer> types = new java.util.HashSet<>();
-                    for (int i = 0; i < n; i++) types.add((int) getItemViewType.invoke(adapter, i));
-                    if (types.size() == n) return; // tab pager
-                }
-            }
-            layoutGridManually(rv, adapter, n);
-        } catch (Throwable ignored) {}
-    }
 
     /** v1.0.134: cap on the longer side (in source pixels) for the
      *  chat-display companion PNG written alongside each diagnostic
@@ -5153,98 +4363,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         return outFile;
     }
 
-    /** v1.0.136: complete the WindowInsets dispatch effect. When
-     *  Material's BottomNavigationView (or any AppBarLayout / etc.)
-     *  consumes the bottom system-bar inset via its
-     *  OnApplyWindowInsetsListener, the listener adds the inset to
-     *  the view's paddingBottom and calls requestLayout. In real
-     *  Android, that requestLayout schedules a full measure+layout
-     *  pass; the view's onMeasure runs with the new padding and
-     *  reports a TALLER measuredHeight, then the parent
-     *  (RelativeLayout / CoordinatorLayout) re-positions it.
-     *
-     *  In our framework, calling measure() on the tree from outside
-     *  the natural inflation flow triggers Material's
-     *  BottomNavigationMenuView.onMeasure bug -- it mis-computes
-     *  per-child widths (collapsing the first item to 1 px). The
-     *  AOSP-equivalent shortcut: bump the consumed view's
-     *  measuredHeight by the inset amount via reflection. The next
-     *  per-frame layout cascade hits RelativeLayout.onLayout which
-     *  reads child.getMeasuredHeight() to position
-     *  layout_alignParentBottom children -- so the bar correctly
-     *  occupies a taller slot, and `layout_above` siblings (the
-     *  RecyclerView in F-Droid's case) automatically shrink to fit
-     *  the new gap. Bar's own FrameLayout.onLayout then respects its
-     *  paddingBottom for child positioning, leaving the inset
-     *  pixels at the bottom unused -- the visual "gesture nav
-     *  reserved" strip.
-     *
-     *  Generic across any APK: keys on `paddingBottom > 0 AND view
-     *  is a recognized inset-consumer widget class`. The class-name
-     *  match is suffix-based ("*NavigationBarView", "*AppBarLayout"
-     *  etc.) and APK-agnostic. */
-    private static java.util.Map<View, Integer> grownByInset =
-        new java.util.WeakHashMap<>();   // weak: see rvDumped
-    private static void growViewsWithBottomInsetPadding(View root, int insetBottom) {
-        if (root == null || insetBottom <= 0) return;
-        growRec(root, insetBottom);
-    }
-    private static void growRec(View v, int insetBottom) {
-        if (v == null) return;
-        if (v instanceof android.view.ViewGroup vg) {
-            int n = vg.getChildCount();
-            for (int i = 0; i < n; i++) growRec(vg.getChildAt(i), insetBottom);
-        }
-        String cn;
-        try { cn = v.getClass().getName(); }
-        catch (Throwable t) { return; }
-        boolean isInsetConsumer =
-               cn.endsWith("NavigationBarView")
-            || cn.endsWith("BottomNavigationView")
-            || cn.endsWith("NavigationRailView")
-            || cn.endsWith("CoordinatorLayout")
-            || cn.endsWith("AppBarLayout");
-        if (!isInsetConsumer) return;
-        int padBottom = v.getPaddingBottom();
-        if ("1".equals(ENV_MACAPK_TRACE_INSETS)) {
-            NativeLog.i(TAG, "growRec: " + v.getClass().getSimpleName()
-                + " padBottom=" + padBottom + " insetBottom=" + insetBottom);
-        }
-        if (padBottom < insetBottom) return;
-        // Idempotency: only bump once per (view, insetBottom) pair.
-        Integer alreadyGrew = grownByInset.get(v);
-        if (alreadyGrew != null && alreadyGrew == insetBottom) return;
-        int grow = Math.min(padBottom, insetBottom);
-        if (grow <= 0) return;
-        // Bump measuredHeight via reflection. View.measuredHeight is
-        // a protected int on the framework View; ViewCanvasDriver is
-        // in a different package so we go through the field directly.
-        try {
-            java.lang.reflect.Field mh = findMeasuredHeightField(v.getClass());
-            if (mh == null) return;
-            mh.setAccessible(true);
-            int currH = mh.getInt(v);
-            // The pre-inset measuredHeight is what we add to. If we've
-            // grown before with a smaller insetBottom, subtract that
-            // first.
-            int baseH = currH - (alreadyGrew != null ? alreadyGrew : 0);
-            int newH = baseH + grow;
-            mh.setInt(v, newH);
-            grownByInset.put(v, grow);
-            if ("1".equals(ENV_MACAPK_TRACE_INSETS)) {
-                NativeLog.i(TAG, "growViewsWithBottomInsetPadding "
-                    + v.getClass().getSimpleName()
-                    + "@" + Integer.toHexString(System.identityHashCode(v))
-                    + " padBottom=" + padBottom + " grew measuredHeight "
-                    + currH + " -> " + newH);
-            }
-        } catch (Throwable t) {
-            if (!warnedInsetGrow) {
-                warnedInsetGrow = true;
-                NativeLog.w(TAG, "growViewsWithBottomInsetPadding poke failed: " + t);
-            }
-        }
-    }
+       // weak: see rvDumped
     private static java.lang.reflect.Field findMeasuredHeightField(Class<?> c) {
         while (c != null) {
             try {
@@ -5255,7 +4374,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         }
         return null;
     }
-    private static boolean warnedInsetGrow = false;
 
     /** v1.0.143: enforce M3 spec BottomNavigationView container
      *  height = 80dp.
@@ -5361,140 +4479,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         } catch (Throwable ignored) {}
     }
 
-    private static void enforceM3NavigationBarHeight(View v) {
-        if (v == null) return;
-        enforceM3BarRec(v);
-    }
-    private static void enforceM3BarRec(View v) {
-        if (v == null) return;
-        if (v instanceof android.view.ViewGroup vg) {
-            int n = vg.getChildCount();
-            for (int i = 0; i < n; i++) enforceM3BarRec(vg.getChildAt(i));
-        }
-        String cn;
-        try { cn = v.getClass().getName(); }
-        catch (Throwable t) { return; }
-        if (!cn.endsWith("BottomNavigationView")
-            && !cn.endsWith("NavigationBarView")) return;
-        if (!(v instanceof android.view.ViewGroup bar)) return;
-        float density = densityOf(v);
-        // v1.0.146: reverted v1.0.145's 54dp shrink. User preferred
-        // the v1.0.144 80dp bar height; the shrink attempt + icon
-        // re-positioning didn't match their mental model. Back to
-        // the M3-spec 80dp `m3_comp_navigation_bar_container_height`
-        // value declared in F-Droid's bundled dimens.xml.
-        int m3MinH = Math.round(80f * density);
-        int curW = bar.getRight() - bar.getLeft();
-        int curH = bar.getBottom() - bar.getTop();
-        // Only act once the bar has bounds. Initial 0-width frames
-        // (pre-first-layout) get skipped; the per-frame call will
-        // catch the bar on the next tick after layout assigns size.
-        if (curW <= 0 || curH <= 0) return;
-        // v1.0.146: only-grow semantics restored (M3 spec is a floor).
-        // Material's natural ~56dp measure gets grown to 80dp; bar
-        // already at-or-above 80dp gets left alone.
-        if (curH >= m3MinH) return; // already at-or-above M3 spec
-        try {
-            // (3) setMinimumHeight floor for any future measure path.
-            bar.setMinimumHeight(m3MinH);
-            // (4) Poke measuredHeight on the bar (only if smaller).
-            java.lang.reflect.Field mh = findMeasuredHeightField(bar.getClass());
-            if (mh != null) {
-                int currH = mh.getInt(bar);
-                if (currH < m3MinH) mh.setInt(bar, m3MinH);
-            }
-            // (5) Move bar.top up by (m3MinH - curH), preserving
-            // bar.bottom (= natural bottom anchor from
-            // RelativeLayout's layout_alignParentBottom).
-            int newTop = bar.getTop() - (m3MinH - curH);
-            int newBot = bar.getBottom();
-            try { bar.setLeftTopRightBottom(bar.getLeft(), newTop,
-                                            bar.getRight(), newBot); }
-            catch (Throwable ignored) {
-                bar.layout(bar.getLeft(), newTop, bar.getRight(), newBot);
-            }
-            // (6, 7) Find MenuView + items inside the bar; grow MenuView
-            // to the bar's full new height, grow each item to the
-            // MenuView's full height. Each item's WIDTH is preserved
-            // (Material's per-child distribution from inflation time).
-            applyM3HeightToBarChildren(bar, m3MinH);
-            if ("1".equals(ENV_MACAPK_TRACE_INSETS)) {
-                NativeLog.i(TAG, "enforceM3NavigationBarHeight "
-                    + bar.getClass().getSimpleName()
-                    + "@" + Integer.toHexString(System.identityHashCode(bar))
-                    + " height " + curH + " -> " + m3MinH
-                    + " bounds=(top=" + newTop + ", bottom=" + newBot + ")");
-            }
-        } catch (Throwable t) {
-            if (!warnedM3BarEnforce) {
-                warnedM3BarEnforce = true;
-                NativeLog.w(TAG, "enforceM3NavigationBarHeight failed: " + t);
-            }
-        }
-    }
-    /** Walk the bar's tree, grow the MenuView to fill the bar's new
-     *  height, grow each NavigationBarItemView to fill MenuView's
-     *  height. Skips the bar itself -- caller already adjusted it. */
-    private static void applyM3HeightToBarChildren(android.view.ViewGroup bar,
-                                                    int barH) {
-        for (int i = 0; i < bar.getChildCount(); i++) {
-            View c = bar.getChildAt(i);
-            if (c == null) continue;
-            String cn;
-            try { cn = c.getClass().getName(); }
-            catch (Throwable t) { continue; }
-            if (cn.endsWith("NavigationBarMenuView")
-                || cn.endsWith("BottomNavigationMenuView")) {
-                // MenuView fills the bar interior.
-                int mvL = c.getLeft();
-                int mvR = c.getRight();
-                int mvT = 0;
-                int mvB = barH;
-                // v1.0.146: grow-only MenuView measuredHeight.
-                try {
-                    java.lang.reflect.Field mh = findMeasuredHeightField(c.getClass());
-                    if (mh != null) {
-                        int currH = mh.getInt(c);
-                        if (currH < barH) mh.setInt(c, barH);
-                    }
-                } catch (Throwable ignored) {}
-                try { c.setLeftTopRightBottom(mvL, mvT, mvR, mvB); }
-                catch (Throwable ignored) { c.layout(mvL, mvT, mvR, mvB); }
-                // Recurse into MenuView for items.
-                if (c instanceof android.view.ViewGroup mv) {
-                    applyM3HeightToItems(mv, barH);
-                }
-            }
-        }
-    }
-    private static void applyM3HeightToItems(android.view.ViewGroup menu, int itemH) {
-        for (int i = 0; i < menu.getChildCount(); i++) {
-            View c = menu.getChildAt(i);
-            if (c == null) continue;
-            String cn;
-            try { cn = c.getClass().getName(); }
-            catch (Throwable t) { continue; }
-            if (cn.endsWith("NavigationBarItemView")
-                || cn.endsWith("BottomNavigationItemView")) {
-                int iL = c.getLeft();
-                int iR = c.getRight();
-                // Item top stays at MenuView local y=0; item bottom
-                // extends to MenuView's new height.
-                int iT = 0;
-                int iB = itemH;
-                // v1.0.146: grow-only item measuredHeight.
-                try {
-                    java.lang.reflect.Field mh = findMeasuredHeightField(c.getClass());
-                    if (mh != null) {
-                        int currH = mh.getInt(c);
-                        if (currH < itemH) mh.setInt(c, itemH);
-                    }
-                } catch (Throwable ignored) {}
-                try { c.setLeftTopRightBottom(iL, iT, iR, iB); }
-                catch (Throwable ignored) { c.layout(iL, iT, iR, iB); }
-            }
-        }
-    }
     private static float densityOf(View v) {
         try {
             if (v.getResources() != null
@@ -5505,31 +4489,7 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
         } catch (Throwable ignored) {}
         return 2.0f;
     }
-    private static boolean warnedM3BarEnforce = false;
 
-    /** v1.0.134: position labels under icons inside Material's
-     *  NavigationBarItemView. The widget's M3 layout structure is:
-     *      NavigationBarItemView (FrameLayout-derived)
-     *        ImageView (icon)
-     *        BaselineLayout
-     *          TextView smallLabel (inactive typography)
-     *          TextView largeLabel (active typography)
-     *  Material expects BaselineLayout.onLayout to place children at
-     *  their baseline below the icon; with our framework's minimal
-     *  ViewGroup.onLayout the BaselineLayout ends up at negative-Y
-     *  and its children render off-canvas. We fix it with a per-frame
-     *  walk that re-positions the icon at top-center and the
-     *  BaselineLayout directly below it, then lays out the visible
-     *  label inside the BaselineLayout's local space.
-     *
-     *  Class-name keyed on simple names ("NavigationBarItemView" /
-     *  "BottomNavigationItemView" / "BaselineLayout") -- generic for
-     *  any APK with a Material2 or Material3 bottom nav. No
-     *  package-name dependency. */
-    private static void fixupNavigationBarItemViews(View v) {
-        if (v == null) return;
-        fixupNavItemViewsRec(v, new java.util.IdentityHashMap<>());
-    }
     /** v1.0.144 experiment: walk the tree DFS-first, find the topmost
      *  ComposeView (lowest absolute Y in rootView-local coords). Walk
      *  back up its parent chain; for each ancestor whose `top` is
@@ -5803,351 +4763,6 @@ public final class ViewCanvasDriver implements MetalSurfaceCallbacks {
                 dumpBaselineLayoutBounds(vg.getChildAt(i), frame);
             }
         }
-    }
-    private static void fixupNavItemViewsRec(View v,
-                                              java.util.IdentityHashMap<View, Boolean> visited) {
-        if (v == null) return;
-        if (visited.put(v, Boolean.TRUE) != null) return;
-        if (!(v instanceof android.view.ViewGroup vg)) return;
-        // Recurse first so descendants get their normal positioning,
-        // then fix THIS node if it's a NavigationBarItemView.
-        int n = vg.getChildCount();
-        for (int i = 0; i < n; i++) fixupNavItemViewsRec(vg.getChildAt(i), visited);
-        String cn;
-        try { cn = vg.getClass().getSimpleName(); }
-        catch (Throwable t) { return; }
-        if (cn == null) return;
-        if (!cn.endsWith("NavigationBarItemView")
-            && !cn.endsWith("BottomNavigationItemView")) return;
-        int iw = vg.getRight() - vg.getLeft();
-        int ih = vg.getBottom() - vg.getTop();
-        if (iw <= 0 || ih <= 0) return;
-        float density = android.util.DisplayMetrics.macapkDeviceDensity();
-        try {
-            if (vg.getResources() != null
-                && vg.getResources().getDisplayMetrics() != null
-                && vg.getResources().getDisplayMetrics().density > 0f) {
-                density = vg.getResources().getDisplayMetrics().density;
-            }
-        } catch (Throwable ignored) {}
-        // Find first ImageView descendant (icon) and BaselineLayout.
-        android.widget.ImageView icon = findFirstImageView(vg);
-        android.view.ViewGroup labels = findBaselineLayoutChild(vg);
-        // v1.0.144 diagnostic: trace once per item so we can see ih
-        // and the computed positions, gated on MACAPK_TRACE_NAV=1.
-        boolean traceThis = "1".equals(ENV_MACAPK_TRACE_NAV)
-                             && fixupNavTraced.putIfAbsent(vg, Boolean.TRUE) == null;
-        if (traceThis) {
-            NativeLog.i(TAG, "fixupNavItem " + cn
-                + "@" + Integer.toHexString(System.identityHashCode(vg))
-                + " iw=" + iw + " ih=" + ih + " density=" + density
-                + " labels=" + (labels != null ? labels.getClass().getSimpleName()
-                                                  + "@" + Integer.toHexString(
-                                                      System.identityHashCode(labels))
-                                                : "null")
-                + " labelChildren=" + (labels != null ? labels.getChildCount() : 0));
-        }
-        // Icon size: prefer explicit LP, fall back to drawable
-        // intrinsic, fall back to 24dp.
-        int iconSize = Math.round(24f * density);
-        if (icon != null) {
-            android.view.ViewGroup.LayoutParams ilp = icon.getLayoutParams();
-            if (ilp != null && ilp.width > 0 && ilp.height > 0) {
-                iconSize = Math.min(ilp.width, ilp.height);
-            }
-        }
-        // v1.0.143: M3-spec item-internal layout for an 80dp-tall
-        // BottomNavigationItemView (the height enforceM3Navigation-
-        // BarHeight grows the bar to, matching Material 3's
-        // `m3_comp_navigation_bar_container_height=80dp` declaration).
-        //
-        // Per M3 BottomNavigation spec (https://m3.material.io/
-        // components/navigation-bar/specs):
-        //
-        // - Icon: 24dp, `marginTop = 12dp` from item top so the icon
-        //   center sits at item-y = 12 + 12 = 24dp. The M3
-        //   active-indicator pill (32dp tall x 64dp wide) is centered
-        //   on the icon center, which lands the pill at item-y =
-        //   8..40dp. View.macapkPaintMaterialChrome's pill formula
-        //   mirrors this so pill+icon stay aligned.
-        //
-        // - Label (BaselineLayout): F-Droid's bundled
-        //   `design_bottom_navigation_item.xml` declares
-        //   `android:layout_gravity="center|bottom"` and
-        //   `android:paddingBottom="@dimen/design_bottom_navigation_label_padding"`
-        //   (= 10dp). So BaselineLayout is sized to its content (the
-        //   visible 14sp label = ~16dp tall) + 10dp paddingBottom,
-        //   and positioned at the item's BOTTOM edge. The label
-        //   itself paints at BaselineLayout-local y = 0..16dp
-        //   (BL.paddingBottom places it 10dp above BL's bottom).
-        //
-        // Visual layout for an 80dp bar:
-        //   item-y    0..12dp   = top margin
-        //   item-y   12..36dp   = icon (with 32dp pill at item-y 8..40dp)
-        //   item-y   40..54dp   = gap (label "below" the pill)
-        //   item-y   54..70dp   = label TextView (16dp / 14sp text)
-        //   item-y   70..80dp   = BaselineLayout paddingBottom (10dp)
-        //
-        // The `extra` term handles the rare case where the item is
-        // measured larger than 80dp -- the icon top and BL bottom each
-        // shift by extra/2 so the layout stays vertically centered.
-        // v1.0.148: icon shifted UP another 20 px (10dp at density 2)
-        // per user feedback. iconMarginTop now 2dp (was 12dp);
-        // icon sits at item-y 2..26dp. Pill stays at item-y 26..58dp
-        // (see View.macapkPaintMaterialChrome iconTopPad=22dp),
-        // so icon and pill are now stacked: icon at top, pill below.
-        int spec80 = Math.round(80f * density);
-        int extra = Math.max(0, ih - spec80);
-        int iconMarginTop = Math.round(2f * density) + extra / 2;
-        int blPaddingBottom = Math.round(10f * density);
-        // -- Icon centered horizontally in its actual parent. --
-        //
-        // v1.0.150 had a -15 px hardcoded LEFT shift that masked a
-        // framework bug: the ImageView's bounds are relative to its
-        // PARENT (the icon_container FrameLayout, which Material's
-        // design_bottom_navigation_item.xml inflates), NOT to the
-        // item itself. Computing `iconLeft = (iw - iconSize) / 2`
-        // uses the item width (144 px) where the icon's parent is
-        // only 112 px wide (= 56dp icon_container). The mismatch
-        // shifts the icon 16 px right of item-center; the v1.0.150
-        // -15 px hack subtracted out almost all of that.
-        //
-        // Framework-correct fix: walk up to the icon's actual parent
-        // and use its width for centering. Idempotent regardless of
-        // container size; matches AOSP's natural FrameLayout child
-        // gravity=center positioning. No per-APK offset needed.
-        if (icon != null) {
-            View iconParent = (icon.getParent() instanceof View)
-                              ? (View) icon.getParent() : null;
-            int parentW = (iconParent != null
-                           && iconParent.getRight() > iconParent.getLeft())
-                          ? iconParent.getRight() - iconParent.getLeft()
-                          : iw;
-            int iconLeft = (parentW - iconSize) / 2;
-            int iconTop  = iconMarginTop;
-            int iconRight = iconLeft + iconSize;
-            int iconBottom = iconTop + iconSize;
-            try { icon.setLeftTopRightBottom(iconLeft, iconTop, iconRight, iconBottom); }
-            catch (Throwable t) { icon.layout(iconLeft, iconTop, iconRight, iconBottom); }
-        }
-        // -- BaselineLayout positioned at item BOTTOM (gravity=center|bottom),
-        //    sized to wrap the visible label + paddingBottom.
-        if (labels != null) {
-            // Find the visible label TextView; measure its intrinsic
-            // size so we know how tall to make BaselineLayout.
-            android.widget.TextView visibleLabel = null;
-            int labelMw = 0, labelMh = 0;
-            int wSpec = android.view.View.MeasureSpec.makeMeasureSpec(
-                iw, android.view.View.MeasureSpec.AT_MOST);
-            int hSpec = android.view.View.MeasureSpec.makeMeasureSpec(
-                0, android.view.View.MeasureSpec.UNSPECIFIED);
-            for (int i = 0; i < labels.getChildCount(); i++) {
-                View c = labels.getChildAt(i);
-                if (c == null) continue;
-                if (c.getVisibility() != View.VISIBLE) continue;
-                if (!(c instanceof android.widget.TextView tv)) continue;
-                try { tv.measure(wSpec, hSpec); } catch (Throwable ignored) {}
-                int mw = Math.max(1, Math.min(iw, tv.getMeasuredWidth()));
-                int mh = Math.max(1, tv.getMeasuredHeight());
-                if (mh <= 0) continue;
-                if (visibleLabel == null
-                    || mh > labelMh) { // pick the taller of inactive/active typography
-                    visibleLabel = tv; labelMw = mw; labelMh = mh;
-                }
-            }
-            // BaselineLayout height = label height + paddingBottom.
-            // Bottom-align in the item: BL.bottom = item.bottom - extra/2,
-            // BL.top = BL.bottom - blHeight.
-            int blHeight = (visibleLabel != null)
-                            ? labelMh + blPaddingBottom
-                            : Math.round(26f * density); // ~16dp label + 10dp padding
-            int lBot = ih - extra / 2;
-            int lTop = Math.max(iconMarginTop + iconSize, lBot - blHeight);
-            int lLeft = 0;
-            int lRight = iw;
-            if (traceThis) {
-                NativeLog.i(TAG, "  visibleLabel="
-                    + (visibleLabel != null ? visibleLabel.getClass().getSimpleName()
-                                              + "@" + Integer.toHexString(
-                                                  System.identityHashCode(visibleLabel))
-                                              + " mw=" + labelMw + " mh=" + labelMh
-                                              + " text='" + KeyLogPolicy.viewText(visibleLabel, visibleLabel.getText()) + "'"
-                                            : "none")
-                    + " blHeight=" + blHeight + " lTop=" + lTop + " lBot=" + lBot);
-            }
-            try { labels.setLeftTopRightBottom(lLeft, lTop, lRight, lBot); }
-            catch (Throwable t) { labels.layout(lLeft, lTop, lRight, lBot); }
-            if (traceThis) {
-                NativeLog.i(TAG, "  POST-SET-BL: left=" + labels.getLeft()
-                    + " top=" + labels.getTop() + " right=" + labels.getRight()
-                    + " bottom=" + labels.getBottom());
-            }
-            // -- Visible label centered horizontally, padded 10dp from
-            //    BL's bottom (matching paddingBottom in the XML). --
-            int lh = lBot - lTop;
-            for (int i = 0; i < labels.getChildCount(); i++) {
-                View c = labels.getChildAt(i);
-                if (c == null) continue;
-                if (c.getVisibility() != View.VISIBLE || c != visibleLabel) {
-                    // Snap GONE / INVISIBLE / non-visible labels to
-                    // zero so they don't push the visible one.
-                    try { c.setLeftTopRightBottom(0, 0, 0, 0); }
-                    catch (Throwable t) { c.layout(0, 0, 0, 0); }
-                    continue;
-                }
-                // Visible label: BL-local y = (blHeight - paddingBottom - labelHeight)
-                //                          .. (blHeight - paddingBottom)
-                int cBot = lh - blPaddingBottom;
-                int cTop = Math.max(0, cBot - labelMh);
-                int cx = (iw - labelMw) / 2;
-                try { c.setLeftTopRightBottom(cx, cTop, cx + labelMw, cBot); }
-                catch (Throwable t) { c.layout(cx, cTop, cx + labelMw, cBot); }
-            }
-        }
-    }
-    /** v1.0.395 (real-loop path): vertically CENTER each Material nav item's
-     *  icon container + label group as a unit within the item's content area
-     *  (item height minus the bottom gesture-nav inset, where the pill is
-     *  painted), matching real Android.
-     *
-     *  Why: F-Droid's bundled `design_bottom_navigation_item.xml` gives the
-     *  icon container `layout_gravity="center_horizontal"` + `marginTop=8dp`
-     *  and the label group `layout_gravity="center|bottom"`, sized for the
-     *  natural 56dp item (`design_bottom_navigation_height`) where icon-top +
-     *  label-bottom meet in the middle. Our measure chain fills instead of
-     *  wrapping (base View.onMeasure returns the AT_MOST spec size, and the
-     *  bundled BottomNavigationMenuView fills the height it is given), so the
-     *  bar + items measure to the FULL screen height. clampNavBarMeasured-
-     *  Height then clamps the bar to 80dp, but Material's NavigationBarItemView
-     *  has already positioned the content for ~56dp at the TOP of the now-160px
-     *  item -- and it mis-centers the icon because the label group measured
-     *  96px from the same fill bug (icon margin lands at -4 instead of +16).
-     *  Net visual: icons+labels jam the top of the bar with a big empty gap
-     *  below -- the "icons too high inside the nav bar" the owner reported
-     *  (2026-06-14).
-     *
-     *  Faithful fix: realize the item XML's `center` gravity by centering the
-     *  icon+label group in the content area. The gesture inset is reserved
-     *  (not centered into) so the group sits ABOVE the pill, matching an
-     *  Android-14 emulator capture of the same F-Droid build
-     *  (diag/refs/fdroid_emulator_android14_gesturenav.png). The active-
-     *  indicator pill (View.macapkPaintMaterialChrome) now derives its center
-     *  from the icon's actual laid-out position, so it follows the re-center.
-     *
-     *  Generic: keys on the Material nav item class names; no per-APK data.
-     *  RETIRE when the measure chain wraps the bar/items to their natural
-     *  design height so Material's own onLayout centers the content (then no
-     *  post-layout repositioning is needed). */
-    private static void centerNavItemContent(View root) {
-        if (root == null) return;
-        // v1.0.997: the BOTTOM share of the nav inset. This reserves vertical
-        // room inside a bottom-nav item, so a bar that has moved to the display's
-        // right edge must contribute nothing here.
-        int inset = com.macapk.loader.StatusBarDriver.navBarInsetBottomPx(root);
-        centerNavItemRec(root, inset, new java.util.IdentityHashMap<>());
-    }
-    private static void centerNavItemRec(View v, int insetPx,
-                                         java.util.IdentityHashMap<View, Boolean> visited) {
-        if (v == null) return;
-        if (visited.put(v, Boolean.TRUE) != null) return;
-        if (!(v instanceof android.view.ViewGroup vg)) return;
-        for (int i = 0; i < vg.getChildCount(); i++)
-            centerNavItemRec(vg.getChildAt(i), insetPx, visited);
-        String cn;
-        try { cn = vg.getClass().getSimpleName(); } catch (Throwable t) { return; }
-        if (cn == null) return;
-        if (!cn.endsWith("NavigationBarItemView")
-            && !cn.endsWith("BottomNavigationItemView")) return;
-        int itemW = vg.getRight() - vg.getLeft();
-        int ih = vg.getBottom() - vg.getTop();
-        if (ih <= 0 || itemW <= 0) return;
-        // Icon container = the icon ImageView's DIRECT-child-of-item parent
-        // (the design_bottom_navigation_item structure). Fall back to the
-        // ImageView itself if it is a direct child.
-        android.widget.ImageView icon = findFirstImageView(vg);
-        android.view.ViewGroup labels = findBaselineLayoutChild(vg);
-        View iconContainer = (icon != null && icon.getParent() instanceof View)
-                             ? (View) icon.getParent() : null;
-        if (iconContainer != null && iconContainer.getParent() != vg) {
-            iconContainer = (icon != null && icon.getParent() == vg) ? icon : null;
-        }
-        if (iconContainer == null && icon != null && icon.getParent() == vg)
-            iconContainer = icon;
-        if (iconContainer == null) return;
-        int iconH = iconContainer.getBottom() - iconContainer.getTop();
-        if (iconH <= 0) iconH = Math.round(24f * densityOf(vg));
-        // Visible label intrinsic height (NOT the over-tall inflated container).
-        int labelH = 0;
-        if (labels != null) {
-            int wSpec = android.view.View.MeasureSpec.makeMeasureSpec(
-                itemW, android.view.View.MeasureSpec.AT_MOST);
-            int hSpec = android.view.View.MeasureSpec.makeMeasureSpec(
-                0, android.view.View.MeasureSpec.UNSPECIFIED);
-            for (int i = 0; i < labels.getChildCount(); i++) {
-                View c = labels.getChildAt(i);
-                if (!(c instanceof android.widget.TextView tv)) continue;
-                if (tv.getVisibility() != View.VISIBLE) continue;
-                try { tv.measure(wSpec, hSpec); } catch (Throwable ignored) {}
-                labelH = Math.max(labelH, tv.getMeasuredHeight());
-            }
-        }
-        int gap = (labelH > 0) ? Math.round(4f * densityOf(vg)) : 0;
-        int groupH = iconH + (labelH > 0 ? gap + labelH : 0);
-        int contentAreaH = Math.max(iconH, ih - Math.max(0, insetPx));
-        int groupTop = Math.max(0, (contentAreaH - groupH) / 2);
-        if ("1".equals(ENV_MACAPK_TRACE_NAV)) {
-            NativeLog.i(TAG, "centerNavItem " + cn + " ih=" + ih + " inset=" + insetPx
-                + " iconH=" + iconH + " labelH=" + labelH + " groupH=" + groupH
-                + " contentArea=" + contentAreaH + " groupTop=" + groupTop
-                + " iconCont=" + iconContainer.getClass().getSimpleName()
-                + "[" + iconContainer.getLeft() + "," + iconContainer.getTop()
-                + "-" + iconContainer.getRight() + "," + iconContainer.getBottom() + "]");
-        }
-        // Move the icon container's TOP (preserve L/R and height).
-        int icL = iconContainer.getLeft(), icR = iconContainer.getRight();
-        try { iconContainer.setLeftTopRightBottom(icL, groupTop, icR, groupTop + iconH); }
-        catch (Throwable t) { iconContainer.layout(icL, groupTop, icR, groupTop + iconH); }
-        // Move the label group's TOP right below the icon (its text sits at
-        // the group's top; the group can overhang into the inset region --
-        // it has no background and clipChildren=false, so nothing shows).
-        if (labels != null && labelH > 0) {
-            int lL = labels.getLeft(), lR = labels.getRight();
-            int lH = labels.getBottom() - labels.getTop();
-            if (lH <= 0) lH = labelH;
-            int lTop = groupTop + iconH + gap;
-            try { labels.setLeftTopRightBottom(lL, lTop, lR, lTop + lH); }
-            catch (Throwable t) { labels.layout(lL, lTop, lR, lTop + lH); }
-        }
-    }
-    private static android.widget.ImageView findFirstImageView(android.view.ViewGroup g) {
-        if (g == null) return null;
-        for (int i = 0; i < g.getChildCount(); i++) {
-            View c = g.getChildAt(i);
-            if (c instanceof android.widget.ImageView iv) return iv;
-        }
-        // Some Material variants wrap the icon in an inner FrameLayout
-        // (active-indicator host). Walk one level deep to find it.
-        for (int i = 0; i < g.getChildCount(); i++) {
-            View c = g.getChildAt(i);
-            if (c instanceof android.view.ViewGroup vc) {
-                android.widget.ImageView nested = findFirstImageView(vc);
-                if (nested != null) return nested;
-            }
-        }
-        return null;
-    }
-    private static android.view.ViewGroup findBaselineLayoutChild(android.view.ViewGroup g) {
-        if (g == null) return null;
-        for (int i = 0; i < g.getChildCount(); i++) {
-            View c = g.getChildAt(i);
-            if (c == null) continue;
-            String name = null;
-            try { name = c.getClass().getSimpleName(); } catch (Throwable t) {}
-            if ("BaselineLayout".equals(name) && c instanceof android.view.ViewGroup vc) {
-                return vc;
-            }
-        }
-        return null;
     }
 
     // driver instance lifecycle (e.g. activity recreate).
