@@ -52,25 +52,6 @@ public class AppComponentFactory {
     // androidx.core.app.CoreComponentFactory pattern: wrap-and-rethrow around
     // the super call) depend on that exact exception shape, so we mirror
     // AOSP's choice verbatim rather than "modernizing" it.
-    /** MACAPK_ACTIVITYTHREAD_INSTANTIATE selects the instantiation primitive.
-     *  "aosp" (the default, and the only value that is AOSP-faithful) uses
-     *  Class#newInstance below. "mh" uses a MethodHandle constructor invoke.
-     *
-     *  This exists ONLY as an A/B arm, and it must never become the default.
-     *  Measured on this project's JDK 21.0.11, the number of java.base frames a
-     *  class's <clinit> sees beneath it differs sharply by primitive:
-     *      Class.forName(name, true, cl)              3   (the pre-pipeline shape)
-     *      Class.newInstance()                       10   (AOSP's choice, arm "aosp")
-     *      getDeclaredConstructor().newInstance()     8
-     *      MethodHandle findConstructor().invoke()    2   (arm "mh")
-     *  An app that hashes its own launch stack therefore sees a different frame
-     *  COUNT per primitive even though the framework frames are identical. The
-     *  arm lets a measurement separate "the android.app.* frames are present"
-     *  from "the jdk.internal reflection cluster changed size". Choosing "mh"
-     *  is a deliberate deviation from AOSP: it changes the exception shape the
-     *  CoreComponentFactory pattern documented below depends on. */
-    private static final boolean MH_INSTANTIATE =
-        "mh".equalsIgnoreCase(System.getenv("MACAPK_ACTIVITYTHREAD_INSTANTIATE"));
 
     /** The instantiation primitive, shared by every construction site that must
      *  honour MACAPK_ACTIVITYTHREAD_INSTANTIATE -- including
@@ -87,20 +68,7 @@ public class AppComponentFactory {
     @SuppressWarnings("deprecation")
     static Object macapkNewInstance(Class<?> c)
             throws InstantiationException, IllegalAccessException {
-        if (!MH_INSTANTIATE) return c.newInstance();
-        try {
-            java.lang.invoke.MethodHandle ctor =
-                java.lang.invoke.MethodHandles
-                    .privateLookupIn(c, java.lang.invoke.MethodHandles.lookup())
-                    .findConstructor(c, java.lang.invoke.MethodType.methodType(void.class));
-            return ctor.invoke();
-        } catch (Throwable t) {
-            if (t instanceof Error) throw (Error) t;
-            if (t instanceof RuntimeException) throw (RuntimeException) t;
-            InstantiationException ie = new InstantiationException(t.toString());
-            ie.initCause(t);
-            throw ie;
-        }
+        return c.newInstance();
     }
 
     public Application instantiateApplication(ClassLoader cl, String className)

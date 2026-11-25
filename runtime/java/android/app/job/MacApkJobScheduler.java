@@ -131,25 +131,8 @@ final class MacApkJobScheduler extends JobScheduler {
      *  system_server; we are in-process, so we need the delay explicitly. */
     private static final long MIN_ARM_DELAY_MS = 100L;
 
-    /** How often a constraint-deferred job re-checks. AOSP is push-based
-     *  (per-constraint StateControllers), which we have no signal sources
-     *  for -- pmset and the ConnectivityManager stub are both pull-only --
-     *  so this polls. Only reachable with MACAPK_JOB_CONSTRAINTS=1. */
-    private static final long CONSTRAINT_RECHECK_MS = 15_000L;
 
-    private static final boolean HONOUR_CONSTRAINTS =
-            "1".equals(System.getenv("MACAPK_JOB_CONSTRAINTS"));
-    private static final boolean PERIODIC_WINDOW =
-            "1".equals(System.getenv("MACAPK_JOB_PERIODIC_WINDOW"));
 
-    /** Content-URI triggers (see the header). DEFAULT ON. =0 restores the exact
-     *  pre-change path: every one-shot job is armed on the timer, no
-     *  ContentObserver is registered, JobInfo.Builder keeps its old 0/0 trigger
-     *  delay defaults and JobParameters reports no triggered URIs. The env var
-     *  is read once, in JobInfo (whose Builder needs it for those defaults
-     *  without initialising the scheduler). Offline gate:
-     *  debug/w5sensorsjobs_gate.sh. */
-    static final boolean CONTENT_TRIGGER = JobInfo.MACAPK_CONTENT_TRIGGER;
 
     // AOSP constants, verbatim (android14-release):
     //   JobStatus.java:216-225
@@ -527,12 +510,10 @@ final class MacApkJobScheduler extends JobScheduler {
      *  base answer. */
     @Override @SuppressWarnings("deprecation")
     public int getPendingJobReason(int jobId) {
-        if (CONTENT_TRIGGER) {
-            synchronized (mLock) {
-                JobRecord r = mJobs.get(jobId);
-                if (r != null && r.trigger != null && !r.running && !r.trigger.satisfied) {
-                    return PENDING_JOB_REASON_CONSTRAINT_CONTENT_TRIGGER;
-                }
+        synchronized (mLock) {
+            JobRecord r = mJobs.get(jobId);
+            if (r != null && r.trigger != null && !r.running && !r.trigger.satisfied) {
+                return PENDING_JOB_REASON_CONSTRAINT_CONTENT_TRIGGER;
             }
         }
         return super.getPendingJobReason(jobId);
@@ -560,13 +541,6 @@ final class MacApkJobScheduler extends JobScheduler {
         long flex = Math.max(JobInfo.getMinFlexMillis(), Math.min(period, job.getFlexMillis()));
         long faithful = Math.max(MIN_ARM_DELAY_MS, period - flex);
 
-        if (PERIODIC_WINDOW) {
-            // AOSP JobStatus.createFromJobInfo: the first window is
-            // [now + period - flex, now + period], and originalLatestRunTime
-            // (our anchor) is the top of it.
-            rec.periodAnchorUptimeMs = now + period;
-            return faithful;
-        }
 
         // Deviation mode: we fire the first run promptly. Anchor the window
         // to THAT fire (+ flex, since nextPeriodDelayMillis subtracts flex
@@ -641,33 +615,8 @@ final class MacApkJobScheduler extends JobScheduler {
         if (unmet != null) {
             boolean deadlinePassed = rec.deadlineUptimeMs > 0
                     && android.os.SystemClock.uptimeMillis() >= rec.deadlineUptimeMs;
-            if (HONOUR_CONSTRAINTS && !deadlinePassed) {
-                // Wake at the recheck cadence OR exactly at the override
-                // deadline, whichever comes first: AOSP fires a
-                // deadline-expired job AT the deadline, and rounding that up
-                // to the next poll would make setOverrideDeadline() mean
-                // "sometime in the next 15s after the deadline".
-                long recheck = CONSTRAINT_RECHECK_MS;
-                if (rec.deadlineUptimeMs > 0) {
-                    long toDeadline = rec.deadlineUptimeMs - android.os.SystemClock.uptimeMillis();
-                    if (toDeadline > 0) recheck = Math.min(recheck, toDeadline);
-                }
-                log("defer id=" + id + " constraint " + unmet
-                        + " unsatisfied; rechecking in " + recheck + "ms");
-                final long delay = recheck;
-                synchronized (mLock) {
-                    if (mJobs.get(id) == rec) armLocked(rec, delay, false);
-                }
-                return;
-            }
-            if (!HONOUR_CONSTRAINTS) {
-                log("id=" + id + " constraint " + unmet + " is unsatisfied; running anyway"
-                        + " (AOSP would defer). Set MACAPK_JOB_CONSTRAINTS=1 to honour it.");
-            } else {
-                log("id=" + id + " override deadline expired; running with " + unmet
-                        + " unsatisfied, per AOSP");
-                rec.ranBecauseDeadlineExpired = true;
-            }
+            log("id=" + id + " constraint " + unmet + " is unsatisfied; running anyway"
+                    + " (AOSP would defer). Set MACAPK_JOB_CONSTRAINTS=1 to honour it.");
         }
 
         ComponentName comp = info.getService();
@@ -848,7 +797,7 @@ final class MacApkJobScheduler extends JobScheduler {
             };
         }
         JobServiceEngine eng = JobServiceEngine.sEngines.get(svcName);
-        if (eng == null && !"1".equals(System.getenv("MACAPK_JOB_NO_ONBIND"))) {
+        if (eng == null) {
             // AOSP's JobServiceContext binds the service (bindServiceAsUser with
             // the job's component), so onBind runs before any job does, and a
             // service may make its JobServiceEngine only there (IBM Trusteer's
@@ -1052,7 +1001,7 @@ final class MacApkJobScheduler extends JobScheduler {
      *  pre-trigger periodic path rather than getting a meaning AOSP never gave
      *  it. */
     static boolean isContentTriggerJob(JobInfo job) {
-        if (!CONTENT_TRIGGER || job.isPeriodic()) return false;
+        if (job.isPeriodic()) return false;
         JobInfo.TriggerContentUri[] uris = job.getTriggerContentUris();
         return uris != null && uris.length > 0;
     }

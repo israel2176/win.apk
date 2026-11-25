@@ -159,26 +159,12 @@ public final class PendingIntent implements Parcelable {
         return make(TYPE_FOREGROUND_SERVICE, c, requestCode, intent, null, flags);
     }
 
-    /** MACAPK_PI_UNRESOLVED_CANCELED (default on, v1.0.1653): an ACTIVITY
-     *  PendingIntent whose intent resolves to nothing makes send() throw
-     *  CanceledException, as on a device. AOSP android14:
-     *  PendingIntentRecord.sendInner (:553-577) returns
-     *  startActivityInPackage's START_* result -- negative for
-     *  START_INTENT_NOT_RESOLVED / START_CLASS_NOT_FOUND -- and
-     *  PendingIntent.send (:1048-1056) throws when sendAndReturnResult < 0.
-     *  A RuntimeException out of the start (a SecurityException) is caught
-     *  and logged there with res left at START_SUCCESS, so it still does not
-     *  throw; nor does anything a broadcast / service send does. Here the
-     *  start's "not resolved" is ActivityNotFoundException (ActivityHost's
-     *  stage 2b). =0: every failure is swallowed, the pre-change answer. */
-    private static final boolean UNRESOLVED_CANCELED =
-        !"0".equals(System.getenv("MACAPK_PI_UNRESOLVED_CANCELED"));
     /** sendInner's res: START_SUCCESS, or negative for a start that did not
      *  resolve (the value itself is private to this class). */
     private static final int RES_OK = 0, RES_NOT_RESOLVED = -1;
     /** ActivityManager.START_CANCELED's role: the sender itself is cancelled. */
     static final int RES_CANCELED = -2;
-    static boolean macapkUnresolvedCanceled() { return UNRESOLVED_CANCELED; }
+    static boolean macapkUnresolvedCanceled() { return true; }
 
     /** Activity.startIntentSenderForResultInner's start (android14 :5969-5978):
      *  PendingIntentRecord.sendWithResult -> sendInner, whose result the
@@ -239,7 +225,7 @@ public final class PendingIntent implements Parcelable {
                 }
             }
         } catch (android.content.ActivityNotFoundException anf) {
-            if (UNRESOLVED_CANCELED && (type == TYPE_ACTIVITY || type == TYPE_ACTIVITIES)) {
+            if ((type == TYPE_ACTIVITY || type == TYPE_ACTIVITIES)) {
                 android.util.Log.w("PendingIntent", "Unable to send startActivity intent: " + anf.getMessage());
                 return RES_NOT_RESOLVED;
             }

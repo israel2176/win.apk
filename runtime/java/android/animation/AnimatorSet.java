@@ -212,7 +212,7 @@ public final class AnimatorSet extends Animator {
         if (mInterpolator != null) {
             for (Animator a : new ArrayList<>(nodes)) if (a != null) a.setInterpolator(mInterpolator);
         }
-        if (!android.os.Looper.MACAPK_REAL_LOOPER || nodes.isEmpty()) {
+        if (nodes.isEmpty()) {
             // Legacy / flag-off: start every child (they snap to end). The end
             // state is identical to the graph walk, so flag-off is unchanged.
             for (Animator a : new ArrayList<>(nodes)) if (a != null) {

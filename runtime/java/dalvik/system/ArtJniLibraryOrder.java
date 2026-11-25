@@ -69,7 +69,6 @@ import java.util.concurrent.ConcurrentSkipListMap;
 final class ArtJniLibraryOrder {
     private ArtJniLibraryOrder() {}
 
-    private static final boolean ENABLED = !"0".equals(System.getenv("MACAPK_JNI_ART_LIB_ORDER"));
     private static volatile boolean warned;
     private static volatile boolean announced;
 
@@ -82,7 +81,7 @@ final class ArtJniLibraryOrder {
 
     @SuppressWarnings({"unchecked", "rawtypes"})
     static void apply(ClassLoader loader) {
-        if (!ENABLED || loader == null) return;
+        if (loader == null) return;
         try {
             Field lf = ClassLoader.class.getDeclaredField("libraries");
             lf.setAccessible(true);

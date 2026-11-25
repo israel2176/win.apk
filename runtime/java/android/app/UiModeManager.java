@@ -28,10 +28,9 @@ public class UiModeManager {
 
     public UiModeManager() {}
 
-    /** AOSP: the device type the platform reports. A television when the app runs in
-     *  Android TV mode (com.macapk.loader.TvMode), a phone otherwise. */
+    /** AOSP: the device type the platform reports: a phone. */
     public int getCurrentModeType() {
-        return com.macapk.loader.TvMode.isEnabled() ? MODE_TYPE_TELEVISION : MODE_TYPE_NORMAL;
+        return MODE_TYPE_NORMAL;
     }
 
     // Night mode round-trips: AppCompat's AppCompatDelegate.setDefaultNightMode

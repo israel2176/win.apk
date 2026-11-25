@@ -60,7 +60,6 @@ import android.content.ClipDescription;
  * (startDragAndDrop returns false; nothing else here runs).
  */
 public final class MacApkDragSession {
-    static final boolean ENABLED = !"0".equals(System.getenv("MACAPK_DRAG_AND_DROP"));
 
     private static volatile MacApkDragSession sActive;
 

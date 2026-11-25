@@ -5,7 +5,7 @@ public class JSONArray {
     private final ArrayList<Object> items = new ArrayList<>();
     public JSONArray() {}
     public JSONArray(JSONTokener t) throws JSONException {
-        if ("1".equals(System.getenv("MACAPK_JSON_NOPARSE"))) return;  // see JSONObject
+          // see JSONObject
         Object parsed = t.nextValue();
         if (parsed instanceof JSONArray a) {
             this.items.addAll(a.items);

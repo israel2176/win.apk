@@ -72,10 +72,6 @@ public class DateTimePatternGenerator {
         }
     }
 
-    /** MACAPK_SKELETON_HOST, default ON (2026-09-29): resolve a skeleton through
-     *  the host JDK's CLDR data instead of the hand table / "return the skeleton"
-     *  fallback. =0 restores the old answers exactly. */
-    static final boolean SKELETON_HOST = !"0".equals(System.getenv("MACAPK_SKELETON_HOST"));
 
     /** Canonical field order of java.time's requestedTemplate
      *  (DateTimeFormatterBuilder.getLocalizedDateTimePattern(String, Chronology,
@@ -100,7 +96,7 @@ public class DateTimePatternGenerator {
      *  patterns. Returns null when a field cannot be expressed (S, A, D, W...),
      *  and the caller keeps its previous answer. */
     public static String macapkHostBestPattern(String skeleton, Locale locale) {
-        if (!SKELETON_HOST || skeleton == null || skeleton.isEmpty()) return null;
+        if (skeleton == null || skeleton.isEmpty()) return null;
         Locale loc = locale != null ? locale : Locale.getDefault();
         try {
             int[] want = new int[128];           // requested width per canonical field

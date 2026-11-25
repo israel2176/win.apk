@@ -83,7 +83,7 @@ public abstract class DateFormat extends UFormat {
     // java.text.SimpleDateFormat; wrap that AS our SimpleDateFormat.
     // MACAPK_ICU_PLATFORM_TYPES=0 restores the old opaque wrapper.
     static DateFormat wrap(java.text.DateFormat d) {
-        if (com.macapk.icu.HostIcu.PLATFORM_TYPES && d instanceof java.text.SimpleDateFormat) {
+        if (d instanceof java.text.SimpleDateFormat) {
             return new SimpleDateFormat((java.text.SimpleDateFormat) d);
         }
         return new JdkDateFormat(d);
@@ -99,7 +99,6 @@ public abstract class DateFormat extends UFormat {
      */
     @Override
     public java.text.AttributedCharacterIterator formatToCharacterIterator(Object obj) {
-        if (!com.macapk.icu.HostIcu.PLATFORM_TYPES) return super.formatToCharacterIterator(obj);
         return UFormat.translateAttributes(format0().formatToCharacterIterator(obj), Field.FROM_JDK);
     }
 
@@ -270,7 +269,6 @@ public abstract class DateFormat extends UFormat {
         return getPatternInstance(skeleton, ULocale.forLocale(nz(locale)));
     }
     public static final DateFormat getInstanceForSkeleton(String skeleton, ULocale locale) {
-        if (!com.macapk.icu.HostIcu.PLATFORM_TYPES) return getDateInstance();
         if (locale == null) locale = ULocale.getDefault(ULocale.Category.FORMAT);
         String bestPattern = DateTimePatternGenerator.getInstance(locale).getBestPattern(skeleton);
         return new SimpleDateFormat(bestPattern, locale);
@@ -281,7 +279,6 @@ public abstract class DateFormat extends UFormat {
     }
     public static final DateFormat getInstanceForSkeleton(android.icu.util.Calendar cal, String skeleton,
                                                           ULocale locale) {
-        if (!com.macapk.icu.HostIcu.PLATFORM_TYPES) return getDateInstance();
         if (locale == null) locale = ULocale.getDefault(ULocale.Category.FORMAT);
         if (cal != null) locale = locale.setKeywordValue("calendar", cal.getType());
         String bestPattern = DateTimePatternGenerator.getInstance(locale).getBestPattern(skeleton);

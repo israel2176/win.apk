@@ -221,7 +221,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *  it through this provider's Context.checkUriPermission). */
     protected int enforceReadPermissionInner(Uri uri, AttributionSource attributionSource)
             throws SecurityException {
-        if (!MacApkUriGrants.ENFORCE || macapkCallerIsSameApp()) return MACAPK_PERMISSION_GRANTED;
+        if (macapkCallerIsSameApp()) return MACAPK_PERMISSION_GRANTED;
         final int pid = android.os.Process.myPid();
         final int uid = android.os.Process.myUid();
         String missingPerm = null;
@@ -271,7 +271,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *  :1017-1088), same shape as the read side. */
     protected int enforceWritePermissionInner(Uri uri, AttributionSource attributionSource)
             throws SecurityException {
-        if (!MacApkUriGrants.ENFORCE || macapkCallerIsSameApp()) return MACAPK_PERMISSION_GRANTED;
+        if (macapkCallerIsSameApp()) return MACAPK_PERMISSION_GRANTED;
         final int pid = android.os.Process.myPid();
         final int uid = android.os.Process.myUid();
         String missingPerm = null;
@@ -322,14 +322,14 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *  arm and the (overwhelmingly common) same-app hot path, neither of which
      *  touched it before this transport check existed. */
     public final void macapkEnforceRead(Uri uri) {
-        if (!MacApkUriGrants.ENFORCE || macapkCallerIsSameApp()) return;
+        if (macapkCallerIsSameApp()) return;
         enforceReadPermissionInner(uri, getCallingAttributionSource());
     }
 
     /** {@hide} Transport.enforceWritePermission, for the in-process transport.
      *  See macapkEnforceRead's header (review issue 3). */
     public final void macapkEnforceWrite(Uri uri) {
-        if (!MacApkUriGrants.ENFORCE || macapkCallerIsSameApp()) return;
+        if (macapkCallerIsSameApp()) return;
         enforceWritePermissionInner(uri, getCallingAttributionSource());
     }
 
@@ -344,7 +344,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *  the SecurityException into a denial). GET_ANY_PROVIDER_TYPE is signature,
      *  never held by an app. */
     public final String macapkTransportGetType(Uri uri) {
-        if (!MacApkUriGrants.ENFORCE || macapkCallerIsSameApp()) return getType(uri);
+        if (macapkCallerIsSameApp()) return getType(uri);
         boolean readable;
         try {
             enforceReadPermissionInner(uri, getCallingAttributionSource());
@@ -359,7 +359,7 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
      *  any runs. The denial is the check's SecurityException (no app-op soft
      *  denial here, so AOSP's OperationApplicationException arm cannot arise). */
     public final void macapkEnforceBatch(java.util.List<ContentProviderOperation> operations) {
-        if (!MacApkUriGrants.ENFORCE || operations == null) return;
+        if (operations == null) return;
         for (ContentProviderOperation op : operations) {
             if (op.isReadOperation()) macapkEnforceRead(op.getUri());
             if (op.isWriteOperation()) macapkEnforceWrite(op.getUri());

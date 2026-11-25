@@ -129,24 +129,6 @@ public class SystemProperties {
         // set (a google emulator) so we can MEASURE whether that incoherence is the
         // divergence. Shipping it is a device-identity decision reserved for the owner; it
         // is not a license/attestation forge (no Google-signed token), just a coherent
-        // public platform surface. Values are self-consistent (all google emulator).
-        if (isSet("MACAPK_PAIRIP_DEVICE_IDENTITY")) {
-            KNOWN.put("ro.product.brand",           "google");
-            KNOWN.put("ro.product.manufacturer",    "Google");
-            KNOWN.put("ro.product.model",           "sdk_gphone64_arm64");
-            KNOWN.put("ro.product.name",            "sdk_gphone64_arm64");
-            KNOWN.put("ro.product.device",          "emu64a");
-            KNOWN.put("ro.product.board",           "goldfish_arm64");
-            KNOWN.put("ro.hardware",                "ranchu");
-            KNOWN.put("ro.bootloader",              "unknown");
-            String fp = "google/sdk_gphone64_arm64/emu64a:"
-                      + Build.VERSION.RELEASE + "/" + Build.ID + "/"
-                      + Build.VERSION.INCREMENTAL + ":user/release-keys";
-            KNOWN.put("ro.build.fingerprint",        fp);
-            KNOWN.put("ro.system.build.fingerprint", fp);
-            KNOWN.put("ro.build.host",              "abfarm-release");
-            KNOWN.put("ro.build.user",              "android-build");
-        }
     }
     private static boolean isSet(String k) {
         try { String v = System.getenv(k); return v != null && !v.isEmpty() && !v.equals("0"); }

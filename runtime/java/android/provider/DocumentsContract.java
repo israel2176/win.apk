@@ -211,9 +211,6 @@ public final class DocumentsContract {
      *  projection, queryArgs) default always saw null. Fixed under
      *  MACAPK_DOCSPROVIDER_DISPATCH; =0 keeps the old read. */
     public static String getSearchDocumentsQuery(Bundle bundle) {
-        if (!DocumentsProvider.DISPATCH) {
-            return bundle != null ? bundle.getString("query") : null;
-        }
         if (bundle == null) throw new NullPointerException("bundle can not be null");
         return bundle.getString(QUERY_ARG_DISPLAY_NAME, "" /* defaultValue */);
     }
@@ -309,107 +306,72 @@ public final class DocumentsContract {
     public static Uri createDocument(android.content.ContentResolver content,
             Uri parentDocumentUri, String mimeType, String displayName)
             throws FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, parentDocumentUri.getAuthority())) return null;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, parentDocumentUri);
-                in.putString(Document.COLUMN_MIME_TYPE, mimeType);
-                in.putString(Document.COLUMN_DISPLAY_NAME, displayName);
-                final Bundle out = content.call(parentDocumentUri.getAuthority(),
-                        METHOD_CREATE_DOCUMENT, null, in);
-                return out.getParcelable(EXTRA_URI, Uri.class);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to create document", e);
-                rethrowIfNecessary(e);
-                return null;
-            }
+        try {
+            if (macapkNoProvider(content, parentDocumentUri.getAuthority())) return null;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, parentDocumentUri);
+            in.putString(Document.COLUMN_MIME_TYPE, mimeType);
+            in.putString(Document.COLUMN_DISPLAY_NAME, displayName);
+            final Bundle out = content.call(parentDocumentUri.getAuthority(),
+                    METHOD_CREATE_DOCUMENT, null, in);
+            return out.getParcelable(EXTRA_URI, Uri.class);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to create document", e);
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, parentDocumentUri);
-        in.putString(Document.COLUMN_MIME_TYPE, mimeType);
-        in.putString(Document.COLUMN_DISPLAY_NAME, displayName);
-        final Bundle out = content.call(parentDocumentUri.getAuthority(),
-                METHOD_CREATE_DOCUMENT, null, in);
-        return out != null ? out.getParcelable(EXTRA_URI, Uri.class) : null;
     }
 
     public static boolean deleteDocument(android.content.ContentResolver content,
             Uri documentUri) throws FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, documentUri.getAuthority())) return false;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, documentUri);
-                content.call(documentUri.getAuthority(), METHOD_DELETE_DOCUMENT, null, in);
-                return true;
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to delete document", e);
-                rethrowIfNecessary(e);
-                return false;
-            }
+        try {
+            if (macapkNoProvider(content, documentUri.getAuthority())) return false;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, documentUri);
+            content.call(documentUri.getAuthority(), METHOD_DELETE_DOCUMENT, null, in);
+            return true;
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to delete document", e);
+            rethrowIfNecessary(e);
+            return false;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, documentUri);
-        final Bundle out = content.call(documentUri.getAuthority(),
-                METHOD_DELETE_DOCUMENT, null, in);
-        return out != null;
     }
 
     public static Uri renameDocument(android.content.ContentResolver content,
             Uri documentUri, String displayName) throws FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, documentUri.getAuthority())) return null;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, documentUri);
-                in.putString(Document.COLUMN_DISPLAY_NAME, displayName);
-                final Bundle out = content.call(documentUri.getAuthority(),
-                        METHOD_RENAME_DOCUMENT, null, in);
-                final Uri outUri = out.getParcelable(EXTRA_URI, Uri.class);
-                return (outUri != null) ? outUri : documentUri;
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to rename document", e);
-                rethrowIfNecessary(e);
-                return null;
-            }
+        try {
+            if (macapkNoProvider(content, documentUri.getAuthority())) return null;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, documentUri);
+            in.putString(Document.COLUMN_DISPLAY_NAME, displayName);
+            final Bundle out = content.call(documentUri.getAuthority(),
+                    METHOD_RENAME_DOCUMENT, null, in);
+            final Uri outUri = out.getParcelable(EXTRA_URI, Uri.class);
+            return (outUri != null) ? outUri : documentUri;
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to rename document", e);
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, documentUri);
-        in.putString(Document.COLUMN_DISPLAY_NAME, displayName);
-        final Bundle out = content.call(documentUri.getAuthority(),
-                METHOD_RENAME_DOCUMENT, null, in);
-        if (out == null) return null;
-        final Uri outUri = out.getParcelable(EXTRA_URI, Uri.class);
-        return (outUri != null) ? outUri : documentUri;
     }
 
     public static Uri moveDocument(android.content.ContentResolver content,
             Uri sourceDocumentUri, Uri sourceParentDocumentUri,
             Uri targetParentDocumentUri) throws FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, sourceDocumentUri.getAuthority())) return null;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, sourceDocumentUri);
-                in.putParcelable(EXTRA_PARENT_URI, sourceParentDocumentUri);
-                in.putParcelable(EXTRA_TARGET_URI, targetParentDocumentUri);
-                final Bundle out = content.call(sourceDocumentUri.getAuthority(),
-                        METHOD_MOVE_DOCUMENT, null, in);
-                return out.getParcelable(EXTRA_URI, Uri.class);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to move document", e);
-                rethrowIfNecessary(e);
-                return null;
-            }
+        try {
+            if (macapkNoProvider(content, sourceDocumentUri.getAuthority())) return null;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, sourceDocumentUri);
+            in.putParcelable(EXTRA_PARENT_URI, sourceParentDocumentUri);
+            in.putParcelable(EXTRA_TARGET_URI, targetParentDocumentUri);
+            final Bundle out = content.call(sourceDocumentUri.getAuthority(),
+                    METHOD_MOVE_DOCUMENT, null, in);
+            return out.getParcelable(EXTRA_URI, Uri.class);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to move document", e);
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, sourceDocumentUri);
-        in.putParcelable(EXTRA_PARENT_URI, sourceParentDocumentUri);
-        in.putParcelable(EXTRA_TARGET_URI, targetParentDocumentUri);
-        final Bundle out = content.call(sourceDocumentUri.getAuthority(),
-                METHOD_MOVE_DOCUMENT, null, in);
-        return out != null ? out.getParcelable(EXTRA_URI, Uri.class) : null;
     }
 
     /** AOSP: removes a document from a specific parent (a document reachable
@@ -418,26 +380,18 @@ public final class DocumentsContract {
      *  single highest-napps gap this class had. */
     public static boolean removeDocument(android.content.ContentResolver content,
             Uri documentUri, Uri parentDocumentUri) throws FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, documentUri.getAuthority())) return false;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, documentUri);
-                in.putParcelable(EXTRA_PARENT_URI, parentDocumentUri);
-                content.call(documentUri.getAuthority(), METHOD_REMOVE_DOCUMENT, null, in);
-                return true;
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to remove document", e);
-                rethrowIfNecessary(e);
-                return false;
-            }
+        try {
+            if (macapkNoProvider(content, documentUri.getAuthority())) return false;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, documentUri);
+            in.putParcelable(EXTRA_PARENT_URI, parentDocumentUri);
+            content.call(documentUri.getAuthority(), METHOD_REMOVE_DOCUMENT, null, in);
+            return true;
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to remove document", e);
+            rethrowIfNecessary(e);
+            return false;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, documentUri);
-        in.putParcelable(EXTRA_PARENT_URI, parentDocumentUri);
-        final Bundle out = content.call(documentUri.getAuthority(),
-                METHOD_REMOVE_DOCUMENT, null, in);
-        return out != null;
     }
 
     /** AOSP `android.provider.DocumentsContract.Path` (API 26+) -- the return
@@ -565,27 +519,19 @@ public final class DocumentsContract {
     public static Uri copyDocument(android.content.ContentResolver content,
             Uri sourceDocumentUri, Uri targetParentDocumentUri)
             throws java.io.FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, sourceDocumentUri.getAuthority())) return null;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, sourceDocumentUri);
-                in.putParcelable(EXTRA_TARGET_URI, targetParentDocumentUri);
-                final Bundle out = content.call(sourceDocumentUri.getAuthority(),
-                        METHOD_COPY_DOCUMENT, null, in);
-                return out.getParcelable(EXTRA_URI, Uri.class);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to copy document", e);
-                rethrowIfNecessary(e);
-                return null;
-            }
+        try {
+            if (macapkNoProvider(content, sourceDocumentUri.getAuthority())) return null;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, sourceDocumentUri);
+            in.putParcelable(EXTRA_TARGET_URI, targetParentDocumentUri);
+            final Bundle out = content.call(sourceDocumentUri.getAuthority(),
+                    METHOD_COPY_DOCUMENT, null, in);
+            return out.getParcelable(EXTRA_URI, Uri.class);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to copy document", e);
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, sourceDocumentUri);
-        in.putParcelable(EXTRA_TARGET_URI, targetParentDocumentUri);
-        final Bundle out = content.call(sourceDocumentUri.getAuthority(),
-                METHOD_COPY_DOCUMENT, null, in);
-        return out != null ? out.getParcelable(EXTRA_URI, Uri.class) : null;
     }
 
     /** True when childDocumentUri is a descendant of parentDocumentUri.
@@ -601,101 +547,75 @@ public final class DocumentsContract {
         if (childDocumentUri == null) {
             throw new NullPointerException("childDocumentUri can not be null");
         }
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, parentDocumentUri.getAuthority())) return false;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, parentDocumentUri);
-                in.putParcelable(EXTRA_TARGET_URI, childDocumentUri);
-                final Bundle out = content.call(parentDocumentUri.getAuthority(),
-                        METHOD_IS_CHILD_DOCUMENT, null, in);
-                if (out == null) {
-                    throw new android.os.RemoteException(
-                            "Failed to get a response from isChildDocument query.");
-                }
-                if (!out.containsKey(EXTRA_RESULT)) {
-                    throw new android.os.RemoteException("Response did not include result field..");
-                }
-                return out.getBoolean(EXTRA_RESULT);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to create document", e);
-                rethrowIfNecessary(e);
-                return false;
+        try {
+            if (macapkNoProvider(content, parentDocumentUri.getAuthority())) return false;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, parentDocumentUri);
+            in.putParcelable(EXTRA_TARGET_URI, childDocumentUri);
+            final Bundle out = content.call(parentDocumentUri.getAuthority(),
+                    METHOD_IS_CHILD_DOCUMENT, null, in);
+            if (out == null) {
+                throw new android.os.RemoteException(
+                        "Failed to get a response from isChildDocument query.");
             }
+            if (!out.containsKey(EXTRA_RESULT)) {
+                throw new android.os.RemoteException("Response did not include result field..");
+            }
+            return out.getBoolean(EXTRA_RESULT);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to create document", e);
+            rethrowIfNecessary(e);
+            return false;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, parentDocumentUri);
-        in.putParcelable(EXTRA_TARGET_URI, childDocumentUri);
-        final Bundle out = content.call(parentDocumentUri.getAuthority(),
-                METHOD_IS_CHILD_DOCUMENT, null, in);
-        if (out == null || !out.containsKey(EXTRA_RESULT)) return false;
-        return out.getBoolean(EXTRA_RESULT);
     }
 
     /** Asks the provider to eject the removable volume backing a root.
      *  AOSP :1565-1575: every failure is only logged. */
     public static void ejectRoot(android.content.ContentResolver content, Uri rootUri) {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, rootUri);
-                content.call(rootUri.getAuthority(), METHOD_EJECT_ROOT, null, in);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to eject", e);
-            }
-            return;
+        try {
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, rootUri);
+            content.call(rootUri.getAuthority(), METHOD_EJECT_ROOT, null, in);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to eject", e);
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, rootUri);
-        content.call(rootUri.getAuthority(), METHOD_EJECT_ROOT, null, in);
+        return;
     }
 
     /** Returns the provider's metadata bundle for a document, or null.
      *  AOSP :1607-1623 under MACAPK_DOCSPROVIDER_DISPATCH. */
     public static Bundle getDocumentMetadata(android.content.ContentResolver content,
             Uri documentUri) throws java.io.FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            if (content == null) throw new NullPointerException("content can not be null");
-            if (documentUri == null) throw new NullPointerException("documentUri can not be null");
-            try {
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, documentUri);
-                return content.call(documentUri.getAuthority(), METHOD_GET_DOCUMENT_METADATA,
-                        null, in);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to get document metadata");
-                rethrowIfNecessary(e);
-                return null;
-            }
+        if (content == null) throw new NullPointerException("content can not be null");
+        if (documentUri == null) throw new NullPointerException("documentUri can not be null");
+        try {
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, documentUri);
+            return content.call(documentUri.getAuthority(), METHOD_GET_DOCUMENT_METADATA,
+                    null, in);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to get document metadata");
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, documentUri);
-        return content.call(documentUri.getAuthority(), METHOD_GET_DOCUMENT_METADATA, null, in);
     }
 
     /** Returns the path from the root down to a document, or null.
      *  AOSP :1637-1652 under MACAPK_DOCSPROVIDER_DISPATCH. */
     public static Path findDocumentPath(android.content.ContentResolver content, Uri treeUri)
             throws java.io.FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, treeUri.getAuthority())) return null;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, treeUri);
-                final Bundle out = content.call(treeUri.getAuthority(),
-                        METHOD_FIND_DOCUMENT_PATH, null, in);
-                return out.getParcelable(EXTRA_RESULT, Path.class);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to find path", e);
-                rethrowIfNecessary(e);
-                return null;
-            }
+        try {
+            if (macapkNoProvider(content, treeUri.getAuthority())) return null;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, treeUri);
+            final Bundle out = content.call(treeUri.getAuthority(),
+                    METHOD_FIND_DOCUMENT_PATH, null, in);
+            return out.getParcelable(EXTRA_RESULT, Path.class);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to find path", e);
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, treeUri);
-        final Bundle out = content.call(treeUri.getAuthority(),
-                METHOD_FIND_DOCUMENT_PATH, null, in);
-        return out != null ? out.getParcelable(EXTRA_RESULT, Path.class) : null;
     }
 
     /** Asks the provider for a shareable web link to a document.
@@ -703,34 +623,21 @@ public final class DocumentsContract {
     public static android.content.IntentSender createWebLinkIntent(
             android.content.ContentResolver content, Uri uri, Bundle options)
             throws java.io.FileNotFoundException {
-        if (DocumentsProvider.DISPATCH) {
-            try {
-                if (macapkNoProvider(content, uri.getAuthority())) return null;
-                final Bundle in = new Bundle();
-                in.putParcelable(EXTRA_URI, uri);
-                if (options != null) {
-                    in.putBundle(EXTRA_OPTIONS, options);
-                }
-                final Bundle out = content.call(uri.getAuthority(),
-                        METHOD_CREATE_WEB_LINK_INTENT, null, in);
-                return out.getParcelable(EXTRA_RESULT, android.content.IntentSender.class);
-            } catch (Exception e) {
-                android.util.Log.w(TAG, "Failed to create a web link intent", e);
-                rethrowIfNecessary(e);
-                return null;
+        try {
+            if (macapkNoProvider(content, uri.getAuthority())) return null;
+            final Bundle in = new Bundle();
+            in.putParcelable(EXTRA_URI, uri);
+            if (options != null) {
+                in.putBundle(EXTRA_OPTIONS, options);
             }
+            final Bundle out = content.call(uri.getAuthority(),
+                    METHOD_CREATE_WEB_LINK_INTENT, null, in);
+            return out.getParcelable(EXTRA_RESULT, android.content.IntentSender.class);
+        } catch (Exception e) {
+            android.util.Log.w(TAG, "Failed to create a web link intent", e);
+            rethrowIfNecessary(e);
+            return null;
         }
-        final Bundle in = new Bundle();
-        in.putParcelable(EXTRA_URI, uri);
-        // AOSP nests the caller's options under EXTRA_OPTIONS so they cannot
-        // collide with the keys above.
-        if (options != null) {
-            in.putBundle(EXTRA_OPTIONS, options);
-        }
-        final Bundle out = content.call(uri.getAuthority(),
-                METHOD_CREATE_WEB_LINK_INTENT, null, in);
-        return out != null
-                ? out.getParcelable(EXTRA_RESULT, android.content.IntentSender.class) : null;
     }
 
     /** @hide AOSP :1733-1763: the EXIF thumbnail range when the image has one,

@@ -46,13 +46,6 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
         this(context, appearance, -1);
     }
 
-    /** BISECT GATE (2026-09-26, default ON; lane B-inflater, cluster B5 of
-     *  docs/widget-fidelity-cluster_2026-09-25.md). MACAPK_TA_SPAN_REAL=0
-     *  restores the pre-change span: the (Context, int[, int]) constructor builds
-     *  an INERT appearance again, and updateMeasureState / updateDrawState use
-     *  their pre-change bodies (macapkLegacy*). */
-    static final boolean MACAPK_TA_SPAN_REAL =
-        !"0".equals(System.getenv("MACAPK_TA_SPAN_REAL"));
 
     /** Set by the first construction that passes a colorList, so the warning
      *  below is printed once per process rather than once per span (a list row
@@ -124,7 +117,7 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
         int size = -1;
         ColorStateList color = null;
         ColorStateList link = null;
-        if (MACAPK_TA_SPAN_REAL && context != null) {
+        if (context != null) {
             android.content.res.TypedArray a = null;
             try {
                 a = context.obtainStyledAttributes(appearance, MACAPK_TEXT_APPEARANCE);
@@ -305,7 +298,6 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
      *  gated on its COLOUR, as AOSP gates it (the old body gated on radius). */
     @Override
     public void updateDrawState(TextPaint ds) {
-        if (!MACAPK_TA_SPAN_REAL) { macapkLegacyUpdateDrawState(ds); return; }
         updateMeasureState(ds);
         if (mTextColor != null) {
             ds.setColor(ds.drawableState != null
@@ -333,7 +325,6 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
      *  one), so the ready face is computed first and set once. */
     @Override
     public void updateMeasureState(TextPaint ds) {
-        if (!MACAPK_TA_SPAN_REAL) { macapkLegacyUpdateMeasureState(ds); return; }
         final Typeface styledTypeface;
         int style = 0;
         if (mFontTypeface != null) {
@@ -376,29 +367,7 @@ public class TextAppearanceSpan extends MetricAffectingSpan implements Parcelabl
         if (mFontVariationSettings != null) ds.setFontVariationSettings(mFontVariationSettings);
     }
 
-    /** The pre-change bodies, kept verbatim for MACAPK_TA_SPAN_REAL=0. */
-    private void macapkLegacyUpdateDrawState(TextPaint ds) {
-        macapkLegacyUpdateMeasureState(ds);
-        if (mTextColor != null) ds.setColor(mTextColor.getDefaultColor());
-        if (mTextColorLink != null) ds.linkColor = mTextColorLink.getDefaultColor();
-        if (mShadowRadius != 0f) {
-            ds.setShadowLayer(mShadowRadius, mShadowDx, mShadowDy, mShadowColor);
-        }
-    }
 
-    private void macapkLegacyUpdateMeasureState(TextPaint ds) {
-        // Typeface / style.
-        if (mTypeface != null || mStyle != 0) {
-            Typeface tf = (mTypeface != null)
-                ? Typeface.create(mTypeface, mStyle) : Typeface.create((Typeface) null, mStyle);
-            ds.setTypeface(tf);
-        } else if (mFontTypeface != null) {
-            ds.setTypeface(mFontTypeface);
-        }
-        if (mTextSize > 0) ds.setTextSize(mTextSize);
-        if (mLetterSpacing != Float.MAX_VALUE) ds.setLetterSpacing(mLetterSpacing);
-        if (mFontFeatureSettings != null) ds.setFontFeatureSettings(mFontFeatureSettings);
-    }
 
     // ---- ParcelableSpan -- AOSP TextUtils.TEXT_APPEARANCE_SPAN == 5 -------
     @Override public int getSpanTypeId() { return getSpanTypeIdInternal(); }

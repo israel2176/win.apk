@@ -595,8 +595,7 @@ public class SensorManager {
     // device reports none, as an Android device without one does:
     // getDefaultSensor(TYPE_ACCELEROMETER) is null, the list has none, and
     // PackageManager has no android.hardware.sensor.accelerometer (derived from
-    // MACAPK_CATALOG_TYPES). Tilt Control (TiltControl) drove those sensors and
-    // has nothing to drive now; Win.apk never exposed it in its UI. The
+    // the catalog). The
     // gyroscope that reported 0,0,0 went the same way (the owner's decision,
     // November 2026): a PC has none.
     private SensorEvent makeEvent(Sensor s, long nowNanos) {
@@ -609,8 +608,7 @@ public class SensorManager {
         // AOSP frameworks/base/core/java/android/hardware/SensorEvent.java :834-836:
         // "the time in nanoseconds ... in the same time base as
         // SystemClock#elapsedRealtimeNanos()".
-        ev.timestamp = android.os.SystemClock.AOSP_CLOCKS
-                ? android.os.SystemClock.elapsedRealtimeNanos() : nowNanos;
+        ev.timestamp = android.os.SystemClock.elapsedRealtimeNanos();
         return ev;
     }
 

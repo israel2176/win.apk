@@ -22,13 +22,6 @@ import android.content.ComponentName;
 import android.os.PersistableBundle;
 
 public class JobInfo implements android.os.Parcelable {
-    /** MACAPK_JOB_CONTENT_TRIGGER, the content-URI trigger gate (default ON; see
-     *  MacApkJobScheduler's header). Read HERE rather than in the scheduler so
-     *  building a JobInfo never forces JobScheduler's class init (which
-     *  constructs the STUB engine); MacApkJobScheduler.CONTENT_TRIGGER reads
-     *  this one value. Package-private: not API surface. */
-    static final boolean MACAPK_CONTENT_TRIGGER =
-            !"0".equals(System.getenv("MACAPK_JOB_CONTENT_TRIGGER"));
 
     public static final int BACKOFF_POLICY_LINEAR      = 0;
     public static final int BACKOFF_POLICY_EXPONENTIAL = 1;
@@ -155,8 +148,8 @@ public class JobInfo implements android.os.Parcelable {
         this.expedited = false;
         this.triggerContentUris = null;
         // "Unset", as the Builder now says it (see Builder.triggerContentUpdateDelay).
-        this.triggerContentUpdateDelay = MACAPK_CONTENT_TRIGGER ? -1L : 0L;
-        this.triggerContentMaxDelay = MACAPK_CONTENT_TRIGGER ? -1L : 0L;
+        this.triggerContentUpdateDelay = (-1L);
+        this.triggerContentMaxDelay = (-1L);
         this.priority = PRIORITY_DEFAULT;
         this.userInitiated = false;
         this.estimatedDownloadBytes = NETWORK_BYTES_UNKNOWN;
@@ -399,8 +392,8 @@ public class JobInfo implements android.os.Parcelable {
         // started at 0 turned every app that never calls the setters into a
         // 20x-faster trigger. Gated with the trigger engine itself
         // (MACAPK_JOB_CONTENT_TRIGGER=0 restores the old 0/0).
-        long triggerContentUpdateDelay = MACAPK_CONTENT_TRIGGER ? -1L : 0L;
-        long triggerContentMaxDelay = MACAPK_CONTENT_TRIGGER ? -1L : 0L;
+        long triggerContentUpdateDelay = (-1L);
+        long triggerContentMaxDelay = (-1L);
         // API-33..36 additions; see the JobInfo getters above.
         int priority = PRIORITY_DEFAULT;
         boolean userInitiated;

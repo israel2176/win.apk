@@ -591,7 +591,7 @@ public abstract class Context {
      *  ENFORCE=0 and same-app cases below stay a no-op for exactly that
      *  reason). Review issue 2 (2026-09-28). */
     public void revokeUriPermission(android.net.Uri uri, int modeFlags) {
-        if (MacApkUriGrants.ENFORCE && macapkUriProviderIsAnotherPackage(uri)) {
+        if (macapkUriProviderIsAnotherPackage(uri)) {
             MacApkUriGrants.revokeNonOwned(uri, modeFlags);
         }
     }
@@ -625,12 +625,10 @@ public abstract class Context {
      *  myPid() here). =0: every check answers GRANTED and enforce* never
      *  throws, as before. */
     public int checkUriPermission(android.net.Uri uri, int pid, int uid, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         return MacApkUriGrants.checkUriPermission(uri, pid, uid, modeFlags);
     }
     /** ContextImpl :2474-2497. */
     public int checkUriPermission(android.net.Uri uri, String readPermission, String writePermission, int pid, int uid, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         if ((modeFlags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
             if (readPermission == null
                     || checkPermission(readPermission, pid, uid)
@@ -650,7 +648,6 @@ public abstract class Context {
     }
     /** ContextImpl :2440-2447. */
     public int checkCallingUriPermission(android.net.Uri uri, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         int pid = android.os.Binder.getCallingPid();
         if (pid != android.os.Process.myPid()) {
             return checkUriPermission(uri, pid, android.os.Binder.getCallingUid(), modeFlags);
@@ -659,27 +656,22 @@ public abstract class Context {
     }
     /** ContextImpl :2462-2465. */
     public int checkCallingOrSelfUriPermission(android.net.Uri uri, int modeFlags) {
-        if (!MacApkUriGrants.ENFORCE) return 0;
         return checkUriPermission(uri, android.os.Binder.getCallingPid(),
                 android.os.Binder.getCallingUid(), modeFlags);
     }
     /** ContextImpl :2539-2575 over enforceForUri :2522-2536. */
     public void enforceUriPermission(android.net.Uri uri, int pid, int uid, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkUriPermission(uri, pid, uid, modeFlags), false, uid, uri, message);
     }
     public void enforceUriPermission(android.net.Uri uri, String readPermission, String writePermission, int pid, int uid, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkUriPermission(uri, readPermission, writePermission, pid, uid, modeFlags),
                 false, uid, uri, message);
     }
     public void enforceCallingUriPermission(android.net.Uri uri, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkCallingUriPermission(uri, modeFlags), false,
                 android.os.Binder.getCallingUid(), uri, message);
     }
     public void enforceCallingOrSelfUriPermission(android.net.Uri uri, int modeFlags, String message) {
-        if (!MacApkUriGrants.ENFORCE) return;
         macapkEnforceForUri(modeFlags, checkCallingOrSelfUriPermission(uri, modeFlags), true,
                 android.os.Binder.getCallingUid(), uri, message);
     }

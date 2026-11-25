@@ -79,17 +79,10 @@ public class SAXParserFactoryImpl extends SAXParserFactory {
 
     private Map<String, Boolean> features = new HashMap<String, Boolean>();
 
-    /** Non-null only under MACAPK_SAX_ANDROID_DEFAULTS=0: the JDK's own
-     *  factory, which every method below then forwards to unchanged. */
-    private final SAXParserFactory hostDefault =
-            MacApkExpatReader.ANDROID_DEFAULTS ? null : SAXParserFactory.newDefaultInstance();
 
     @Override
     public boolean getFeature(String name) throws ParserConfigurationException,
             SAXNotRecognizedException, SAXNotSupportedException {
-        if (hostDefault != null) {
-            return hostDefault.getFeature(name);
-        }
         if (name == null) {
             throw new NullPointerException("name == null");
         }
@@ -103,25 +96,16 @@ public class SAXParserFactoryImpl extends SAXParserFactory {
 
     @Override
     public boolean isNamespaceAware() {
-        if (hostDefault != null) {
-            return hostDefault.isNamespaceAware();
-        }
         return Boolean.TRUE.equals(features.get(NAMESPACES));
     }
 
     @Override
     public boolean isValidating() {
-        if (hostDefault != null) {
-            return hostDefault.isValidating();
-        }
         return Boolean.TRUE.equals(features.get(VALIDATION));
     }
 
     @Override
     public SAXParser newSAXParser() throws ParserConfigurationException, SAXException {
-        if (hostDefault != null) {
-            return hostDefault.newSAXParser();
-        }
         if (isValidating()) {
             throw new ParserConfigurationException(
                     "No validating SAXParser implementation available");
@@ -141,10 +125,6 @@ public class SAXParserFactoryImpl extends SAXParserFactory {
     @Override
     public void setFeature(String name, boolean value) throws ParserConfigurationException,
             SAXNotRecognizedException, SAXNotSupportedException {
-        if (hostDefault != null) {
-            hostDefault.setFeature(name, value);
-            return;
-        }
         if (name == null) {
             throw new NullPointerException("name == null");
         }
@@ -163,19 +143,11 @@ public class SAXParserFactoryImpl extends SAXParserFactory {
 
     @Override
     public void setNamespaceAware(boolean value) {
-        if (hostDefault != null) {
-            hostDefault.setNamespaceAware(value);
-            return;
-        }
         features.put(NAMESPACES, value);
     }
 
     @Override
     public void setValidating(boolean value) {
-        if (hostDefault != null) {
-            hostDefault.setValidating(value);
-            return;
-        }
         features.put(VALIDATION, value);
     }
 
@@ -187,35 +159,21 @@ public class SAXParserFactoryImpl extends SAXParserFactory {
 
     @Override
     public Schema getSchema() {
-        if (hostDefault != null) {
-            return hostDefault.getSchema();
-        }
         throw unsupported();
     }
 
     @Override
     public void setSchema(Schema schema) {
-        if (hostDefault != null) {
-            hostDefault.setSchema(schema);
-            return;
-        }
         throw unsupported();
     }
 
     @Override
     public boolean isXIncludeAware() {
-        if (hostDefault != null) {
-            return hostDefault.isXIncludeAware();
-        }
         throw unsupported();
     }
 
     @Override
     public void setXIncludeAware(boolean state) {
-        if (hostDefault != null) {
-            hostDefault.setXIncludeAware(state);
-            return;
-        }
         throw unsupported();
     }
 

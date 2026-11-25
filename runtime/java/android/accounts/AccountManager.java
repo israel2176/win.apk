@@ -120,8 +120,6 @@ public class AccountManager {
     // (com.macapk.accounts.AppAuthenticators); the rows persist in
     // com.macapk.accounts.AccountStore. com.google stays with com.macapk.gms, untouched.
     // =0 restores the old answers byte-for-byte (every branch below is skipped).
-    // Reference: docs/app-owned-accounts-and-play-integrity_2026-09-30.md
-    static final boolean APP_ACCOUNTS = !"0".equals(System.getenv("MACAPK_APP_ACCOUNTS"));
 
     private static volatile Context sAppContext;
 
@@ -151,7 +149,7 @@ public class AccountManager {
      *  caller's own authenticator declares the type. FOREIGN: anything else -- AOSP's
      *  isAccountManagedByCaller is false and the service throws SecurityException. */
     private static int route(String type) {
-        if (!APP_ACCOUNTS || type == null
+        if (type == null
                 || com.macapk.gms.GoogleAuthenticator.ACCOUNT_TYPE.equals(type)) {
             return OLD;
         }
@@ -402,11 +400,7 @@ public class AccountManager {
             Account[] remote = com.macapk.loader.SystemAccounts.getAccounts(null);
             return realGms() ? remote : concat(remote, com.macapk.gms.GoogleAuthenticator.accounts());
         }
-        if (APP_ACCOUNTS) {
-            return concat(appAccounts(null), com.macapk.gms.GoogleAuthenticator.accounts());
-        }
-        Account[] google = com.macapk.gms.GoogleAuthenticator.accounts();
-        return google.length == 0 ? NONE : google;
+        return concat(appAccounts(null), com.macapk.gms.GoogleAuthenticator.accounts());
     }
 
     /** AOSP filters the account list by type. Ours holds only `com.google`
@@ -417,7 +411,7 @@ public class AccountManager {
         if (sys(type)) return com.macapk.loader.SystemAccounts.getAccounts(type);
         // AOSP getAccountsAsUser(null, ...) is every account visible to the caller; an
         // unmanaged type has none visible (no other app's accounts exist on this device).
-        if (APP_ACCOUNTS && type == null) return getAccounts();
+        if (type == null) return getAccounts();
         int r = route(type);
         if (r == MANAGED) return appAccounts(type);
         if (r == FOREIGN) return NONE;
@@ -451,7 +445,7 @@ public class AccountManager {
             out[remote.length] = g;
             return out;
         }
-        if (APP_ACCOUNTS) {
+        {
             java.util.List<AuthenticatorDescription> all = new java.util.ArrayList<>();
             for (com.macapk.accounts.AppAuthenticators.Entry e : appTypes().values()) {
                 all.add(e.description);
@@ -460,8 +454,6 @@ public class AccountManager {
             if (g != null) all.add(g);
             return all.isEmpty() ? NO_AUTHENTICATORS : all.toArray(NO_AUTHENTICATORS);
         }
-        AuthenticatorDescription d = com.macapk.gms.GoogleAuthenticator.description();
-        return d == null ? NO_AUTHENTICATORS : new AuthenticatorDescription[] { d };
     }
 
     public String getUserData(Account account, String key) {
@@ -469,7 +461,7 @@ public class AccountManager {
             if (key == null) throw new IllegalArgumentException("key is null");
             return com.macapk.loader.SystemAccounts.getUserData(account, key);
         }
-        if (APP_ACCOUNTS && account != null) {
+        if (account != null) {
             int r = route(account.type);
             if (r != OLD) {
                 // AOSP client (mUserDataCache.recompute) checks before the service's
@@ -492,7 +484,7 @@ public class AccountManager {
             if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
             return com.macapk.loader.SystemAccounts.peekAuthToken(account, authTokenType);
         }
-        if (APP_ACCOUNTS && account != null && route(account.type) != OLD) {
+        if (account != null && route(account.type) != OLD) {
             if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
             if (route(account.type) == FOREIGN) {
                 throw notManaged("peek the authtokens associated with accounts of type",
@@ -508,12 +500,10 @@ public class AccountManager {
      *  an authenticator that stores none, which is exactly our case. */
     public String getPassword(Account account) {
         if (account != null && sys(account.type)) return com.macapk.loader.SystemAccounts.getPassword(account);
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            int r = route(account.type);
-            if (r == FOREIGN) throw notManaged("get secrets for accounts of type", account.type);
-            if (r == MANAGED) return store().password(account.name, account.type);
-        }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        int r = route(account.type);
+        if (r == FOREIGN) throw notManaged("get secrets for accounts of type", account.type);
+        if (r == MANAGED) return store().password(account.name, account.type);
         return null;
     }
 
@@ -522,11 +512,9 @@ public class AccountManager {
      *  (AccountManagerService.getPreviousName :1561 -> readPreviousNameInternal). */
     public String getPreviousName(Account account) {
         if (account != null && sys(account.type)) return com.macapk.loader.SystemAccounts.getPreviousName(account);
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            if (route(account.type) == MANAGED) {
-                return store().previousName(account.name, account.type);
-            }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (route(account.type) == MANAGED) {
+            return store().previousName(account.name, account.type);
         }
         return null;
     }
@@ -554,8 +542,7 @@ public class AccountManager {
         if (account != null && sys(account.type)) {
             return com.macapk.loader.SystemAccounts.addAccountExplicitly(account, password, userdata);
         }
-        if (APP_ACCOUNTS) return addAccountInternal(account, password, userdata);
-        return false;
+        return addAccountInternal(account, password, userdata);
     }
 
     public boolean addAccountExplicitly(Account account, String password, Bundle userdata,
@@ -571,8 +558,7 @@ public class AccountManager {
         }
         // Visibility toward OTHER packages is moot on a one-app device; the caller always
         // sees its own type (resolveAccountVisibility: "Authenticator can always see").
-        if (APP_ACCOUNTS) return addAccountInternal(account, password, userdata);
-        return false;
+        return addAccountInternal(account, password, userdata);
     }
 
     /** AOSP AccountManager.addAccountExplicitly (client: null account is an
@@ -600,13 +586,11 @@ public class AccountManager {
             com.macapk.loader.SystemAccounts.setUserData(account, key, value);
             return;
         }
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            if (key == null) throw new IllegalArgumentException("key is null");
-            int r = route(account.type);
-            if (r == FOREIGN) throw notManaged("set user data for accounts of type", account.type);
-            if (r == MANAGED) store().setUserData(account.name, account.type, key, value);
-        }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        if (key == null) throw new IllegalArgumentException("key is null");
+        int r = route(account.type);
+        if (r == FOREIGN) throw notManaged("set user data for accounts of type", account.type);
+        if (r == MANAGED) store().setUserData(account.name, account.type, key, value);
     }
 
     /** AOSP caches the token in the AccountManagerService under
@@ -618,7 +602,7 @@ public class AccountManager {
             com.macapk.loader.SystemAccounts.setAuthToken(account, authTokenType, authToken);
             return;
         }
-        if (APP_ACCOUNTS && account != null && route(account.type) != OLD) {
+        if (account != null && route(account.type) != OLD) {
             if (authTokenType == null) throw new IllegalArgumentException("authTokenType is null");
             if (route(account.type) == FOREIGN) {
                 throw notManaged("set auth tokens associated with accounts of type", account.type);
@@ -638,7 +622,7 @@ public class AccountManager {
             if (authToken != null) com.macapk.loader.SystemAccounts.invalidateAuthToken(accountType, authToken);
             return;
         }
-        if (APP_ACCOUNTS && route(accountType) != OLD) {
+        if (route(accountType) != OLD) {
             // AOSP: no ownership check here -- it deletes the matching token VALUE across the
             // type, which for a type the caller does not manage matches nothing.
             if (authToken != null && route(accountType) == MANAGED) {
@@ -653,14 +637,12 @@ public class AccountManager {
             com.macapk.loader.SystemAccounts.setPassword(account, password);
             return;
         }
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            int r = route(account.type);
-            if (r == FOREIGN) throw notManaged("set secrets for accounts of type", account.type);
-            // setPasswordInternal (:2757): isChanged -> sendAccountsChangedBroadcast("setPassword")
-            if (r == MANAGED && store().setPassword(account.name, account.type, password)) {
-                notifyAccountsChanged();
-            }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        int r = route(account.type);
+        if (r == FOREIGN) throw notManaged("set secrets for accounts of type", account.type);
+        // setPasswordInternal (:2757): isChanged -> sendAccountsChangedBroadcast("setPassword")
+        if (r == MANAGED && store().setPassword(account.name, account.type, password)) {
+            notifyAccountsChanged();
         }
     }
 
@@ -670,30 +652,26 @@ public class AccountManager {
             com.macapk.loader.SystemAccounts.setPassword(account, null);
             return;
         }
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            int r = route(account.type);
-            if (r == FOREIGN) throw notManaged("clear passwords for accounts of type", account.type);
-            // clearPassword is setPasswordInternal(account, null): same broadcast.
-            if (r == MANAGED && store().setPassword(account.name, account.type, null)) {
-                notifyAccountsChanged();
-            }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        int r = route(account.type);
+        if (r == FOREIGN) throw notManaged("clear passwords for accounts of type", account.type);
+        // clearPassword is setPasswordInternal(account, null): same broadcast.
+        if (r == MANAGED && store().setPassword(account.name, account.type, null)) {
+            notifyAccountsChanged();
         }
     }
 
     public boolean removeAccountExplicitly(Account account) {
         if (account != null && sys(account.type)) return com.macapk.loader.SystemAccounts.removeAccountExplicitly(account);
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            int r = route(account.type);
-            if (r == FOREIGN) {
-                throw notManaged("explicitly remove accounts of type", account.type);
-            }
-            if (r == MANAGED) {
-                boolean removed = store().remove(account.name, account.type);
-                if (removed) notifyAccountsChanged();
-                return removed;
-            }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        int r = route(account.type);
+        if (r == FOREIGN) {
+            throw notManaged("explicitly remove accounts of type", account.type);
+        }
+        if (r == MANAGED) {
+            boolean removed = store().remove(account.name, account.type);
+            if (removed) notifyAccountsChanged();
+            return removed;
         }
         return false;
     }
@@ -745,16 +723,9 @@ public class AccountManager {
             return;
         }
         if (listener == null) throw new IllegalArgumentException("the listener is null");
-        if (APP_ACCOUNTS) {
-            ListenerRecord rec = new ListenerRecord(listener, handler, accountTypes);
-            mListeners.add(rec);
-            if (updateImmediately) postAccounts(rec);
-            return;
-        }
-        mListeners.add(new ListenerRecord(listener, handler));
-        if (updateImmediately) {
-            postAccounts(listener, handler);
-        }
+        ListenerRecord rec = new ListenerRecord(listener, handler, accountTypes);
+        mListeners.add(rec);
+        if (updateImmediately) postAccounts(rec);
     }
 
     public void removeOnAccountsUpdatedListener(OnAccountsUpdateListener listener) {
@@ -882,7 +853,7 @@ public class AccountManager {
         if (account != null && sys(account.type)) {
             return sysGetAuthToken(account, authTokenType, options, notifyAuthFailure, null, callback, handler);
         }
-        if (APP_ACCOUNTS && account != null && route(account.type) == MANAGED) {
+        if (account != null && route(account.type) == MANAGED) {
             return appGetAuthToken(account, authTokenType, options, notifyAuthFailure, null,
                     callback, handler);
         }
@@ -922,7 +893,7 @@ public class AccountManager {
         if (account != null && sys(account.type)) {
             return sysGetAuthToken(account, authTokenType, options, false, activity, callback, handler);
         }
-        if (APP_ACCOUNTS && account != null && route(account.type) == MANAGED) {
+        if (account != null && route(account.type) == MANAGED) {
             return appGetAuthToken(account, authTokenType, options, false, activity,
                     callback, handler);
         }
@@ -1146,13 +1117,11 @@ public class AccountManager {
         if (account != null && sys(account.type)) {
             return submit(() -> sysRemove(account, activity), callback, handler);
         }
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            int r = route(account.type);
-            if (r == FOREIGN) throw notManaged("remove accounts of type", account.type);
-            if (r == MANAGED) {
-                return submit(() -> removeViaAuthenticator(account, activity), callback, handler);
-            }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        int r = route(account.type);
+        if (r == FOREIGN) throw notManaged("remove accounts of type", account.type);
+        if (r == MANAGED) {
+            return submit(() -> removeViaAuthenticator(account, activity), callback, handler);
         }
         // AOSP's javadoc: "Does nothing if the account does not exist." No
         // account here exists, so the removal simply did not happen.
@@ -1172,20 +1141,18 @@ public class AccountManager {
                 return b.getBoolean(KEY_BOOLEAN_RESULT);
             }, callback, handler);
         }
-        if (APP_ACCOUNTS) {
-            if (account == null) throw new IllegalArgumentException("account is null");
-            int r = route(account.type);
-            if (r == FOREIGN) throw notManaged("remove accounts of type", account.type);
-            if (r == MANAGED) {
-                // AOSP Future2Task.bundleToResult for this overload.
-                return submit(() -> {
-                    Bundle b = removeViaAuthenticator(account, null);
-                    if (b == null || !b.containsKey(KEY_BOOLEAN_RESULT)) {
-                        throw new AuthenticatorException("no result in response");
-                    }
-                    return b.getBoolean(KEY_BOOLEAN_RESULT);
-                }, callback, handler);
-            }
+        if (account == null) throw new IllegalArgumentException("account is null");
+        int r = route(account.type);
+        if (r == FOREIGN) throw notManaged("remove accounts of type", account.type);
+        if (r == MANAGED) {
+            // AOSP Future2Task.bundleToResult for this overload.
+            return submit(() -> {
+                Bundle b = removeViaAuthenticator(account, null);
+                if (b == null || !b.containsKey(KEY_BOOLEAN_RESULT)) {
+                    throw new AuthenticatorException("no result in response");
+                }
+                return b.getBoolean(KEY_BOOLEAN_RESULT);
+            }, callback, handler);
         }
         return complete(Boolean.FALSE, callback);
     }
@@ -1200,30 +1167,28 @@ public class AccountManager {
             }
             return complete(new Account(newName, account.type), callback);
         }
-        if (APP_ACCOUNTS) {
-            // AOSP client checks, then AccountManagerService.renameAccount (:2106).
-            if (account == null) throw new IllegalArgumentException("account is null.");
-            if (newName == null || newName.isEmpty()) {
-                throw new IllegalArgumentException("newName is empty or null.");
+        // AOSP client checks, then AccountManagerService.renameAccount (:2106).
+        if (account == null) throw new IllegalArgumentException("account is null.");
+        if (newName == null || newName.isEmpty()) {
+            throw new IllegalArgumentException("newName is empty or null.");
+        }
+        int r = route(account.type);
+        if (r != OLD) {
+            if (newName.length() > 200) {
+                throw new IllegalArgumentException("account name longer than 200");
             }
-            int r = route(account.type);
-            if (r != OLD) {
-                if (newName.length() > 200) {
-                    throw new IllegalArgumentException("account name longer than 200");
-                }
-                if (r == FOREIGN) throw notManaged("rename accounts of type", account.type);
-                if (!store().rename(account.name, account.type, newName)) {
-                    // renameAccountInternal returns null when the new name is taken or the
-                    // account is gone, and renameAccount then reads resultingAccount.name: the
-                    // NullPointerException crosses the binder (Parcel EX_NULL_POINTER) and is
-                    // what the caller's renameAccount() throws on a device.
-                    throw new NullPointerException("Attempt to read from field "
-                            + "'java.lang.String android.accounts.Account.name' on a null object "
-                            + "reference");
-                }
-                notifyAccountsChanged();   // renameAccountInternal -> "renameAccount" broadcast
-                return complete(new Account(newName, account.type), callback);
+            if (r == FOREIGN) throw notManaged("rename accounts of type", account.type);
+            if (!store().rename(account.name, account.type, newName)) {
+                // renameAccountInternal returns null when the new name is taken or the
+                // account is gone, and renameAccount then reads resultingAccount.name: the
+                // NullPointerException crosses the binder (Parcel EX_NULL_POINTER) and is
+                // what the caller's renameAccount() throws on a device.
+                throw new NullPointerException("Attempt to read from field "
+                        + "'java.lang.String android.accounts.Account.name' on a null object "
+                        + "reference");
             }
+            notifyAccountsChanged();   // renameAccountInternal -> "renameAccount" broadcast
+            return complete(new Account(newName, account.type), callback);
         }
         if (newName == null || newName.isEmpty()) {
             throw new IllegalArgumentException("newName is empty");

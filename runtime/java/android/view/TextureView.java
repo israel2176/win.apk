@@ -73,29 +73,6 @@ public class TextureView extends View {
     private boolean mMatrixChanged;
     private int mSurfaceWidth, mSurfaceHeight;
 
-    /** AOSP TextureView sizes its SurfaceTexture's DEFAULT BUFFER to the view:
-     *  getTextureLayer() calls mSurface.setDefaultBufferSize(getWidth(),
-     *  getHeight()) before onSurfaceTextureAvailable, onSizeChanged calls it
-     *  before onSurfaceTextureSizeChanged, and an adopted texture
-     *  (setSurfaceTexture) gets the view size the next time the layer updates
-     *  (frameworks/base core/java/android/view/TextureView.java,
-     *  android14-release, :440-449 and :452-470). We never did, so a producer
-     *  that allocates against the default size -- an EGL window surface over
-     *  this texture, BufferQueueCore's 1x1 default when nobody set one
-     *  (frameworks/native libs/gui/BufferQueueCore.cpp mDefaultWidth(1),
-     *  mDefaultHeight(1)) -- rendered at 1x1 instead of the view size
-     *  (docs/telegram-intro-logo_2026-09-26.md §6). The camera path also reads
-     *  this size (CameraCaptureSessionImpl), so an app that never sets one now
-     *  asks for the view size, which the capture backend rounds to the
-     *  nearest-area format, as camera2 rounds a SurfaceTexture size on a
-     *  device. A view that collapses to 0 on one axis passes that 0 on, as AOSP
-     *  does; SurfaceTexture.setDefaultBufferSize then keeps the previous size,
-     *  as BufferQueueConsumer's BAD_VALUE does. BISECT GATE:
-     *  MACAPK_TEXTUREVIEW_BUFSIZE=0 restores the pre-change path (no
-     *  setDefaultBufferSize from this class at all, and SurfaceTexture stores
-     *  every value again). */
-    private static final boolean sSetDefaultBufferSize =
-        !"0".equals(System.getenv("MACAPK_TEXTUREVIEW_BUFSIZE"));
 
     /** Last latch generation this view has drawn, vs the SurfaceTexture's own
      *  counter -- how draw() tells "new frame" from "same frame redrawn". */
@@ -177,7 +154,7 @@ public class TextureView extends View {
         super.onSizeChanged(w, h, oldw, oldh);
         if (mAvailable && mSurfaceTexture != null) {
             // AOSP :444: the buffer follows the view before the listener hears.
-            if (sSetDefaultBufferSize) mSurfaceTexture.setDefaultBufferSize(w, h);
+            mSurfaceTexture.setDefaultBufferSize(w, h);
             if (mListener != null && (w != mSurfaceWidth || h != mSurfaceHeight)) {
                 mSurfaceWidth = w; mSurfaceHeight = h;
                 try { mListener.onSurfaceTextureSizeChanged(mSurfaceTexture, w, h); }
@@ -206,7 +183,7 @@ public class TextureView extends View {
         ensureSurfaceTexture();
         // AOSP :466: sized to the view BEFORE onSurfaceTextureAvailable, so a
         // producer the app connects from inside the callback sees w x h.
-        if (sSetDefaultBufferSize) mSurfaceTexture.setDefaultBufferSize(w, h);
+        mSurfaceTexture.setDefaultBufferSize(w, h);
         mSurfaceWidth = w; mSurfaceHeight = h;
         mAvailable = true;
         if (mListener != null) {
@@ -237,7 +214,7 @@ public class TextureView extends View {
             surfaceTexture.setOnFrameAvailableListener(mUpdateListener);
             // AOSP getTextureLayer's mUpdateSurface branch: an adopted texture
             // is set "to use the current view size" (:487).
-            if (sSetDefaultBufferSize && getWidth() > 0 && getHeight() > 0) {
+            if (getWidth() > 0 && getHeight() > 0) {
                 surfaceTexture.setDefaultBufferSize(getWidth(), getHeight());
             }
         }

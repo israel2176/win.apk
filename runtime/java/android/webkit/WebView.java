@@ -716,7 +716,7 @@ public class WebView extends android.widget.AbsoluteLayout
         // one framework call site therefore takes View's path here. Retire this
         // once the inflater applies XML colours without calling the public
         // setter (docs/webview-page-base-colour_2026-09-26.md, "Inflater").
-        if (!MacApkWebViewBridge.BASE_COLOR || macapkCalledByInflater()) {
+        if (macapkCalledByInflater()) {
             super.setBackgroundColor(color);
             return;
         }
@@ -769,8 +769,7 @@ public class WebView extends android.widget.AbsoluteLayout
         // Cordova sets it in initWebViewSettings, before its first loadUrl; DOFUS
         // Touch's login API call (custom APIKEY header) failed its CORS preflight
         // without it ("all servers are in maintenance").
-        macapkCreatedUniversal = MacApkWebViewBridge.UNIVERSAL_ACCESS
-                && settings.getAllowUniversalAccessFromFileURLs();
+        macapkCreatedUniversal = settings.getAllowUniversalAccessFromFileURLs();
         if (macapkCreatedUniversal) {
             try {
                 MacApkWebViewBridge.nativeCreateOptions(macapkViewId, true);
@@ -794,7 +793,7 @@ public class WebView extends android.widget.AbsoluteLayout
         }
         // A page base set before the peer existed (see setBackgroundColor). The
         // default WHITE is the native default too, so there is nothing to send.
-        if (MacApkWebViewBridge.BASE_COLOR && macapkBaseColor != 0xFFFFFFFF) {
+        if (macapkBaseColor != 0xFFFFFFFF) {
             MacApkWebViewBridge.nativeSetBackgroundColor(macapkViewId, macapkBaseColor);
         }
         // v1.0.1642: tear the native WKWebView down when this WebView becomes
@@ -824,7 +823,7 @@ public class WebView extends android.widget.AbsoluteLayout
             macapkLastUa = ua;
             MacApkWebViewBridge.nativeApplySettings(macapkViewId, js, ua);
         }
-        if (MacApkWebViewBridge.UNIVERSAL_ACCESS && !macapkWarnedUniversalLate
+        if (!macapkWarnedUniversalLate
                 && settings.getAllowUniversalAccessFromFileURLs() != macapkCreatedUniversal) {
             macapkWarnedUniversalLate = true;
             com.macapk.loader.NativeLog.w("WebView", "setAllowUniversalAccessFromFileURLs("
@@ -847,7 +846,7 @@ public class WebView extends android.widget.AbsoluteLayout
      *  lets file: content -- including a loadDataWithBaseURL page with a file: base --
      *  read the app's files; WKWebView needs an explicit read grant for the same. */
     private String macapkReadRoot() {
-        if (!MacApkWebViewBridge.FILE_URL_ACCESS || !settings.getAllowFileAccess()) return null;
+        if (!settings.getAllowFileAccess()) return null;
         String root = System.getProperty("macapk.android.root");
         return root != null && !root.isEmpty() ? root : null;
     }
@@ -862,8 +861,7 @@ public class WebView extends android.widget.AbsoluteLayout
      *  close button (GD Meltdown, v1.0.1666 known issue). The app asks for it
      *  explicitly (AppLovinWebViewBase); the default stays false, as on Android. */
     private boolean macapkFileUrlAccess() {
-        return MacApkWebViewBridge.FILE_URL_ACCESS
-                && (settings.getAllowFileAccessFromFileURLs()
+        return (settings.getAllowFileAccessFromFileURLs()
                     || settings.getAllowUniversalAccessFromFileURLs());
     }
 
@@ -968,7 +966,7 @@ public class WebView extends android.widget.AbsoluteLayout
     @Override
     protected void onDraw(android.graphics.Canvas canvas) {
         super.onDraw(canvas);
-        if (Z_BELOW && macapkPeerCreated && macapkLastVisible) {
+        if (macapkPeerCreated && macapkLastVisible) {
             // Canvas.punchHole, the op SurfaceView uses (DST_OUT, carries the
             // view's alpha) -- NOT drawColor(CLEAR), which cannot get out of an
             // intervening offscreen (a RenderNode recording, a saveLayerAlpha);
@@ -1100,7 +1098,6 @@ public class WebView extends android.widget.AbsoluteLayout
     }
 
     private void macapkPushBackdrop() {
-        if (!MacApkWebViewBridge.BACKDROP || !MacApkWebViewBridge.BASE_COLOR) return;
         // An opaque page base hides the backdrop on Android too.
         if ((macapkBaseColor >>> 24) == 0xFF) return;
         int[] b;
@@ -1121,9 +1118,6 @@ public class WebView extends android.widget.AbsoluteLayout
     // and receives touches. Ours is a native WKWebView; it used to sit ABOVE
     // the whole canvas (zPosition 1.5), which hid all of that: Wikipedia's
     // article toolbar, lead image and bottom bar were drawn but never seen.
-    // MACAPK_WEBVIEW_Z_BELOW=0 restores the old slot (native + Java agree).
-    static final boolean Z_BELOW =
-        !"0".equals(System.getenv("MACAPK_WEBVIEW_Z_BELOW"));
     private int[] macapkLastOccluders;
     private int macapkContentHeightCss;
     private float macapkPxPerCss;
@@ -1136,7 +1130,7 @@ public class WebView extends android.widget.AbsoluteLayout
      *  (dialog / popup) takes every click. Pushed only when it changes. */
     private void macapkPushOccluders() {
         int[] next;
-        if (!Z_BELOW || !macapkPeerCreated || !macapkLastVisible) {
+        if (!macapkPeerCreated || !macapkLastVisible) {
             next = new int[0];
         } else {
             int[] me = new int[2];
@@ -1284,10 +1278,8 @@ public class WebView extends android.widget.AbsoluteLayout
      *  scrolled the same distance in CSS px. WheelScroll.VIEWS=0: not handled. */
     @Override
     public boolean onGenericMotionEvent(android.view.MotionEvent event) {
-        if (com.macapk.loader.WheelScroll.VIEWS
-                && event.getAction() == android.view.MotionEvent.ACTION_SCROLL
-                && event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER)
-                && Z_BELOW && macapkPeerCreated) {
+        if (event.getAction() == android.view.MotionEvent.ACTION_SCROLL
+                && event.isFromSource(android.view.InputDevice.SOURCE_CLASS_POINTER) && macapkPeerCreated) {
             android.view.ViewConfiguration vc = android.view.ViewConfiguration.get(getContext());
             final int dy = Math.round(-event.getAxisValue(android.view.MotionEvent.AXIS_VSCROLL)
                     * vc.getScaledVerticalScrollFactor());
@@ -1311,7 +1303,7 @@ public class WebView extends android.widget.AbsoluteLayout
     @Override
     public void scrollTo(int x, int y) {
         super.scrollTo(x, y);
-        if (macapkApplyingPageScroll || !Z_BELOW || !macapkPeerCreated) return;
+        if (macapkApplyingPageScroll || !macapkPeerCreated) return;
         float f = macapkPxPerCss > 0f ? macapkPxPerCss : 2f;
         MacApkWebViewBridge.nativeEvaluateJs(macapkViewId,
             "window.scrollTo(" + (x / f) + "," + (y / f) + ")", 0);
@@ -1347,9 +1339,6 @@ public class WebView extends android.widget.AbsoluteLayout
     // same pre-draw hook, plus OnGlobalLayout, which AndroidComposeView
     // dispatches when it re-places an interop View
     // (onInteropViewLayoutChange -> dispatchOnGlobalLayout). Both pushes are
-    // change-gated, so an unmoved page costs one getLocationInWindow per frame.
-    static final boolean TRACK_LAYOUT =
-            !"0".equals(System.getenv("MACAPK_WEBVIEW_TRACK_LAYOUT"));
     private android.view.ViewTreeObserver macapkTrackedVto;
     private final android.view.ViewTreeObserver.OnPreDrawListener macapkPreDraw = () -> {
         macapkFollowLayout();
@@ -1366,7 +1355,7 @@ public class WebView extends android.widget.AbsoluteLayout
     @Override
     public void onAttachedToWindow() {
         super.onAttachedToWindow();
-        if (!TRACK_LAYOUT || macapkTrackedVto != null) return;
+        if (macapkTrackedVto != null) return;
         try {
             android.view.ViewTreeObserver vto = getViewTreeObserver();
             vto.addOnPreDrawListener(macapkPreDraw);
@@ -1631,10 +1620,8 @@ public class WebView extends android.widget.AbsoluteLayout
                 // re-hosts the page on the view that is on screen now; if it is
                 // not (a stopped activity), nothing draws it and the page stays
                 // hidden with it. See WvHostFollowEnabled in webview_bridge.mm.
-                if (MacApkWebViewBridge.HOST_FOLLOW) {
-                    macapkLastX = Integer.MIN_VALUE;
-                    invalidate();
-                }
+                macapkLastX = Integer.MIN_VALUE;
+                invalidate();
                 break;
             case MacApkWebViewBridge.EV_CLOSE_WINDOW:
                 // AOSP: window.close() from page script reaches

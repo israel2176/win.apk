@@ -55,14 +55,6 @@ final class MacApkWebViewBridge {
      *  c="<length or -1>\n<mime type>". It goes to DownloadListener.onDownloadStart, as on a
      *  device, where a WebView saves nothing itself. */
     static final int EV_DOWNLOAD = 20;
-    /** MACAPK_WEBVIEW_HOST_FOLLOW, the native gate's Java half: =0 ignores
-     *  EV_HOST_LOST (native does not post it then either). */
-    static final boolean HOST_FOLLOW = !"0".equals(System.getenv("MACAPK_WEBVIEW_HOST_FOLLOW"));
-    /** MACAPK_WEBVIEW_BASE_COLOR (2026-09-26, default ON), the Java half of the
-     *  native gate (WvBaseColorEnabled in webview_bridge.mm): WebView
-     *  .setBackgroundColor sets the PAGE BASE colour as AOSP does. =0 restores
-     *  the pre-change path exactly: View.setBackgroundColor, nothing native. */
-    static final boolean BASE_COLOR = !"0".equals(System.getenv("MACAPK_WEBVIEW_BASE_COLOR"));
 
     // ---- native surface (registered by RegisterWebViewBridgeMethods) ------
     static native boolean nativeAvailable();
@@ -74,13 +66,6 @@ final class MacApkWebViewBridge {
      *  before it). WebKit reads allowUniversalAccessFromFileURLs only from the
      *  configuration a WKWebView is created with, so it cannot be applied later. */
     static native void nativeCreateOptions(int viewId, boolean universalFileAccess);
-    /** MACAPK_WEBVIEW_UNIVERSAL_ACCESS (default ON): WebSettings
-     *  .setAllowUniversalAccessFromFileURLs(true) reaches WebKit, so a file: page
-     *  of an app that asked for it makes cross-origin requests without CORS, as
-     *  Chromium's WebView does (Cordova asks for it on every file:// app). =0 sends
-     *  nothing and file: pages stay CORS-checked. */
-    static final boolean UNIVERSAL_ACCESS =
-        !"0".equals(System.getenv("MACAPK_WEBVIEW_UNIVERSAL_ACCESS"));
     /** Mirrors the native MACAPK_WEBVIEW_TRACE gate so the Java side can log
      *  geometry under the same switch. */
     private static final boolean TRACE =
@@ -101,9 +86,6 @@ final class MacApkWebViewBridge {
      *  (ARGB), which a translucent page base composites over, as on a device;
      *  known=false when it is not a flat colour we can model. */
     static native void nativeSetBackdrop(int viewId, int argb, boolean known);
-    /** MACAPK_WEBVIEW_BACKDROP (2026-10-01, default ON; =0 never sends a
-     *  backdrop, so the native side keeps its pre-change decision exactly). */
-    static final boolean BACKDROP = !"0".equals(System.getenv("MACAPK_WEBVIEW_BACKDROP"));
     static native void nativeApplySettings(int viewId, boolean jsEnabled,
                                            String userAgent);
     /** File access for this view (2026-10-02). {@code fromFileUrls}:
@@ -114,8 +96,6 @@ final class MacApkWebViewBridge {
      *  page with a file: base then gets read access to the app's own files.
      *  MACAPK_WEBVIEW_FILE_URL_ACCESS=0 never sends either (the pre-change behaviour). */
     static native void nativeSetFileUrlAccess(int viewId, boolean fromFileUrls, String readRoot);
-    static final boolean FILE_URL_ACCESS =
-            !"0".equals(System.getenv("MACAPK_WEBVIEW_FILE_URL_ACCESS"));
     static native void nativeLoadUrl(int viewId, String url, String[] headerKv);
     static native void nativeLoadData(int viewId, String baseUrl, String data,
                                       String mime, String encoding);
@@ -166,10 +146,6 @@ final class MacApkWebViewBridge {
         nativeInit(dataStoreKey(pkg));
     }
 
-    /** MACAPK_WEBVIEW_STORE_PER_ROOT=0: every copy of a package shares one
-     *  website data store again (the pre-v1.0.2252 key), for one A/B. */
-    static final boolean STORE_PER_ROOT =
-        !"0".equals(System.getenv("MACAPK_WEBVIEW_STORE_PER_ROOT"));
 
     /** The string the native side hashes into this app's WKWebsiteDataStore
      *  identifier (webview_bridge.mm EnsureDataStore).
@@ -188,7 +164,6 @@ final class MacApkWebViewBridge {
      *  other android root gets a store of its own, keyed by package + root. */
     static String dataStoreKey(String pkg) {
         String p = (pkg != null && !pkg.isEmpty()) ? pkg : "default";
-        if (!STORE_PER_ROOT) return p;
         String root;
         try { root = com.macapk.loader.SharedStorage.androidRoot(); }
         catch (Throwable t) { return p; }
@@ -456,15 +431,12 @@ final class MacApkWebViewBridge {
     // URL leaving the bridge maps back to file:///android_asset/ (WvGuestUrl), so
     // the app's Java side sees exactly what it sees on a device; the page sees a
     // file: URL with a longer path. A directory larger than FILE_ORIGIN_MAX_BYTES
-    // (the assets root of a game, say) stays on the scheme.
-    static final boolean FILE_ORIGIN = !"0".equals(System.getenv("MACAPK_WEBVIEW_FILE_ORIGIN"));
     private static final long FILE_ORIGIN_MAX_BYTES = 48L << 20;
 
     /** Called by native (off the main thread) for a top-level loadUrl of a
      *  file:///android_asset/ page. Returns {page file path, read-access root,
      *  materialised android_asset root}, or null to keep the scheme route. */
     static String[] macapkMaterializeAssetPage(int viewId, String url) {
-        if (!FILE_ORIGIN) return null;
         try {
             android.net.Uri uri = macapkVerifyUrl(url);
             if (uri == null || !"file".equals(uri.getScheme())) return null;

@@ -82,13 +82,8 @@ public class Build {
     // scoped to the one process that asked and gated on the owner's opt-in.
     // Method-call initializers (not JLS constants), so no reader constant-folds
     // them -- same rule the version fields above rely on.
-    public static final String TAGS        = macapkDebugCertsPersona() ? "test-keys"  : "release-keys";
-    public static final String TYPE        = macapkDebugCertsPersona() ? "userdebug"  : "user";
-    /** True only when this process was launched with MACAPK_DEBUG_CERTS=1 (the
-     *  broker sets it on a GMS host under the "Use Google GMS" opt-in). */
-    private static boolean macapkDebugCertsPersona() {
-        return "1".equals(System.getenv("MACAPK_DEBUG_CERTS"));
-    }
+    public static final String TAGS        = "release-keys";
+    public static final String TYPE        = "user";
     public static final String USER        = macapkWindowsHost() ? "winapk" : "macapk";
     private static String macapkBrand() { return "Apple"; }
     // By the path separator, not os.name: Boot sets os.name to "Linux" before this
@@ -101,7 +96,7 @@ public class Build {
      *  ends up in HTTP headers, account alerts and logs. */
     private static String macapkHostModel() {
         try {
-            String m = System.getenv("MACAPK_HOST_MODEL");
+            String m = null;
             if (m != null) {
                 m = m.trim();
                 if (!m.isEmpty() && m.length() <= 40) {
