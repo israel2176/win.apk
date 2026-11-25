@@ -270,7 +270,10 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} is not signed by Google, so Win.apk does not trust it as Google's app. Download it from the APKMirror page that Download opens.", L"{0} אינו חתום על ידי Google, ולכן Win.apk לא סומכת עליו כאפליקציה של Google. יש להוריד אותו מדף APKMirror שנפתח בלחיצה על „הורדה”."},
         {L"Google services are ready", L"שירותי Google מוכנים"},
         {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
-        {L"Waiting for the downloads", L"ממתין להורדות"},
+        {L"Download each app to your Downloads folder, or drop it here. Win.apk checks that Google signed it, "
+         L"then installs it.",
+         L"יש להוריד כל אפליקציה לתיקיית ההורדות, או לשחרר אותה כאן. Win.apk בודקת ש-Google חתמה עליה, ואז "
+         L"מתקינה אותה."},
         {L"Checking {0}…", L"בודק את {0}…"},
         {L"To use Google Play, install the following apps as described.", L"כדי להפעיל את חנות Google Play, יש להתקין את האפליקציות הבאות לפי ההנחיות."},
         {L"{0} has code only for ARM processors. On APKMirror, download its x86_64 variant.", L"ב-{0} יש קוד למעבדי ARM בלבד. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
@@ -6635,8 +6638,10 @@ std::vector<Section> gms_setup_sections() {
         // While the page is open the Downloads folder is watched (and a file can be dropped here): each app's row
         // says which file to download, and the files that pass the checks install themselves.
         state.rows.push_back(text_row(tr(L"To use Google Play, install the following apps as described."), L"",
-                                      g_setup.checking.empty() ? tr(L"Waiting for the downloads")
-                                                               : fmt(L"Checking {0}…", {g_setup.checking})));
+                                      g_setup.checking.empty()
+                                          ? tr(L"Download each app to your Downloads folder, or drop it here. "
+                                               L"Win.apk checks that Google signed it, then installs it.")
+                                          : fmt(L"Checking {0}…", {g_setup.checking})));
     }
     out.push_back(std::move(state));
 
