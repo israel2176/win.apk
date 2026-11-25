@@ -342,6 +342,8 @@ jobs:
         run: ./build/winapk-applink-test.exe
       - name: Run the WebView file URL test (the file origin both ways, which pages may read it)
         run: ./build/winapk-webview-urls-test.exe
+      - name: Run the data protection test (the Google account's tokens sealed at rest)
+        run: ./build/winapk-data-protection-test.exe
       - name: Run the host URL test (which URLs go to Windows' protocol handlers)
         run: ./build/winapk-host-url-test.exe
       - name: Run the frame-time record test (percentiles, the line at exit)
@@ -690,6 +692,20 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
+      - name: Run the Google token service test
+        run: |
+          # The master token held by the account's owner alone (com.macapk.gms.GmsStore,
+          # GmsTokenService, GmsTokens): an older install's plain tokens moved into the sealed
+          # tokens.dat, an app's requests through the token service and its refusals, the
+          # broker's sealed accounts table, and no app-side source reading the token.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar);$(cygpath -w stage/lib/aosp-graphics.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/gms-tokens-test windows/test/java/com/macapk/gms/GmsTokensTest.java
+          mkdir -p "$RUNNER_TEMP/gms-tokens"
+          MACAPK_GMS_DIR="$(cygpath -w "$RUNNER_TEMP/gms-tokens/gms")" "$JAVA_HOME/bin/java" \
+            -cp "$cp;$(cygpath -w build/gms-tokens-test)" com.macapk.gms.GmsTokensTest \
+            "$(cygpath -w "$RUNNER_TEMP/gms-tokens")" "$(cygpath -w "$PWD")" | tee gms-tokens-test.log
+          grep -q "ALL PASSED" gms-tokens-test.log
       - name: Run the cross-process Binder test
         run: |
           # host/binder_win.cpp under android.os.MacApkBinderTransport, between
