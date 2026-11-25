@@ -12,6 +12,11 @@
 // Text an input method made, and its composition, go to the focused editor's InputConnection
 // (ImeService) as an input method's commitText / setComposingText would; with no editor bound,
 // each character is a key, as the host's keyboard sends it.
+//
+// Every entry but a hover is a person acting on the window, so it is noted as real input
+// (TouchDispatcher.noteRealInputFromHostView), as TouchDispatcher's own entries note it: that is
+// what lets the click that asked for a link open it in the user's browser (ActivityHost.openHost
+// refuses a host open with no real input in the last 10 s, as Android refuses a background start).
 package com.winapk.aospviews;
 
 import android.os.Handler;
@@ -56,10 +61,13 @@ public final class AospInput extends TouchDispatcher {
 
     static void post(MotionEvent ev) { main().post(() -> InputRouter.motion(ev)); }
 
+    private static void real() { TouchDispatcher.noteRealInputFromHostView(); }
+
     // ---- touch ------------------------------------------------------------------------------
 
     /** One finger (the host's single-pointer entry). */
     @Override public void dispatch(int action, float x, float y, float viewW, float viewH) {
+        real();
         touchAt(action, px(x), py(y, viewH));
     }
 
@@ -76,6 +84,7 @@ public final class AospInput extends TouchDispatcher {
         if (ids == null || xs == null || ys == null || pressures == null || tools == null) return;
         final int n = ids.length;
         if (n == 0 || xs.length < n || ys.length < n || pressures.length < n || tools.length < n) return;
+        real();
         long now = SystemClock.uptimeMillis();
         if (action == MotionEvent.ACTION_DOWN) mTouchDownTime = now;
         MotionEvent.PointerProperties[] props = new MotionEvent.PointerProperties[n];
@@ -104,6 +113,7 @@ public final class AospInput extends TouchDispatcher {
 
     /** Ctrl+wheel, a precision touchpad's pinch: two fingers either side of the center. */
     @Override public void dispatchHostPinch(int phase, float cx, float cy, float span, float viewW, float viewH) {
+        real();
         float x = px(cx), y = py(cy, viewH), half = Math.max(1f, px(span) / 2f);
         long now = SystemClock.uptimeMillis();
         MotionEvent.PointerProperties[] props = {new MotionEvent.PointerProperties(), new MotionEvent.PointerProperties()};
@@ -158,6 +168,7 @@ public final class AospInput extends TouchDispatcher {
         mMouseButtons = buttonState;
         final boolean wasDown = (last & POINTER_DOWN_BUTTONS) != 0, down = (buttonState & POINTER_DOWN_BUTTONS) != 0;
         final int pressed = buttonState & ~last, released = last & ~buttonState;
+        if (buttonState != 0 || last != 0) real();
         if (!wasDown && down) mMouseDownTime = now;
         int step = last;
         for (int b = 1; b != 0 && b <= released; b <<= 1) {
@@ -191,6 +202,7 @@ public final class AospInput extends TouchDispatcher {
     /** A wheel step: ACTION_SCROLL at the pointer, as CursorInputMapper's scroll does. */
     @Override public void dispatchHostWheel(float x, float y, float viewW, float viewH, float vscroll, float hscroll,
             float slopX, float slopY, float dragX, float dragY) {
+        real();
         long now = SystemClock.uptimeMillis();
         MotionEvent.PointerProperties p = new MotionEvent.PointerProperties();
         p.id = 0;
@@ -211,6 +223,7 @@ public final class AospInput extends TouchDispatcher {
     }
 
     @Override public void dispatchHostKey(int action, int keyCode, int unicodeChar, int metaState, boolean autoRepeat) {
+        real();
         KeyEvent ev = keyEvent(action, keyCode, unicodeChar, metaState, autoRepeat);
         main().post(() -> InputRouter.key(ev));
     }
@@ -239,6 +252,7 @@ public final class AospInput extends TouchDispatcher {
 
     @Override public void dispatchHostText(final String text) {
         if (text == null || text.isEmpty()) return;
+        real();
         main().post(() -> {
             if (ImeService.commitText(text)) return;
             for (int i = 0; i < text.length(); i++) {
