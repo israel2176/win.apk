@@ -576,6 +576,8 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Turning a permission off closes {0}.", L"כיבוי הרשאה סוגר את {0}."},
         {L"What was not installed yet is left out. An app that was being updated stays as it was.", L"מה שעוד לא הותקן לא יותקן. אפליקציה שהתעדכנה נשארת כפי שהייתה."},
         {L"Win.apk could not convert this app. See the log for details.", L"Win.apk לא הצליחה להמיר את האפליקציה. פרטים נוספים ביומן."},
+        {L"Win.apk could not copy this file into its library. Check that the disk has free space, then try again.", L"Win.apk לא הצליחה להעתיק את הקובץ לספרייה שלה. בדוק שיש מקום פנוי בדיסק ונסה שוב."},
+        {L"Win.apk could not start its runtime. See the log for details.", L"Win.apk לא הצליחה להפעיל את סביבת ההרצה שלה. פרטים נוספים ביומן."},
         {L"Win.apk still asks you before each app it installs.", L"Win.apk עדיין תשאל אותך לפני כל אפליקציה שתותקן."},
         {L"Win.apk's runtime is missing. Install Win.apk again.", L"סביבת ההרצה של Win.apk חסרה. התקן את Win.apk מחדש."},
         {L"Removes the app and its shortcuts. You can also remove what it saved.", L"מסיר את האפליקציה ואת קיצורי הדרך שלה. אפשר להסיר גם את מה שהיא שמרה."},
@@ -1240,6 +1242,39 @@ void apply_aot_clang_env() {
     }
 }
 
+// A failure of the launcher's own, before the runtime could log anything, as a line of the run's or the install's
+// log: "[E] launcher: <what>: <Windows' words> (error N)". The [E] is what log_summary and the failure sentences
+// read.
+std::string launcher_error_line(const std::wstring& what, DWORD err) {
+    wchar_t* msg = nullptr;
+    std::wstring words;
+    if (FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, err, MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US), reinterpret_cast<wchar_t*>(&msg), 0,
+                       nullptr) ||
+        FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                       nullptr, err, 0, reinterpret_cast<wchar_t*>(&msg), 0, nullptr)) {
+        words = msg;
+        LocalFree(msg);
+        while (!words.empty() && (words.back() == L'\n' || words.back() == L'\r' || words.back() == L'.'))
+            words.pop_back();
+    }
+    return wide_to_utf8(L"[E] launcher: " + what + L": " + (words.empty() ? L"" : words + L" ") + L"(error " +
+                        std::to_wstring(err) + L")\r\n");
+}
+
+// The same line as a log of its own: `log` is replaced, since no runtime wrote it this time.
+void log_launcher_error(const fs::path& log, const std::wstring& what, DWORD err) {
+    std::error_code ec;
+    fs::create_directories(log.parent_path(), ec);
+    HANDLE f = CreateFileW(log.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    const std::string line = launcher_error_line(what, err);
+    DWORD n = 0;
+    WriteFile(f, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    CloseHandle(f);
+}
+
 // `name` is the app the runtime opens, for its orientation; empty for an install. The runtime's
 // stdout and stderr go to `log` (none: NUL). `ready`, when given, is the launch handshake's event
 // (win32_window.h, take_launcher_ready_event): the child gets it, and only it and the log, through
@@ -1297,7 +1332,14 @@ HANDLE start_runtime(const std::wstring& args, const fs::path& log, const std::w
                                    CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT |
                                        (listed ? EXTENDED_STARTUPINFO_PRESENT : 0),
                                    &env[0], root().c_str(), &si.StartupInfo, &pi);
+    const DWORD err = ok ? 0 : GetLastError();
     if (listed) DeleteProcThreadAttributeList(attrs);
+    if (!ok && out != INVALID_HANDLE_VALUE) {
+        // Else the log stays empty: Show log would say nothing about why the app or the install did not start.
+        const std::string line = launcher_error_line(L"could not start " + runtime_exe().wstring(), err);
+        DWORD n = 0;
+        WriteFile(out, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    }
     if (out != INVALID_HANDLE_VALUE) CloseHandle(out);
     if (!ok) return nullptr;
     // The app's window may take the foreground from the splash.
@@ -1758,8 +1800,15 @@ bool install_into_library(const fs::path& source, const std::wstring& name, bool
     // downloaded on) would have the runtime take the installed copy for this file's.
     fs::remove(install_record(name), ec);
     // Never a write over a kept file: it is the installed APK itself (library_files.h).
-    bool ok = same || (winapk::launcher::set_aside(library_dir(), name) &&
-                       CopyFileW(source.c_str(), target.c_str(), TRUE) != 0);
+    bool ok = same;
+    // The runtime does not run when these fail, so nothing else would write this install's log.
+    if (!ok && !winapk::launcher::set_aside(library_dir(), name)) {
+        log_launcher_error(install_log(name), L"could not set the app's present files aside in " +
+                                                  library_dir().wstring(), GetLastError());
+    } else if (!ok && !(ok = CopyFileW(source.c_str(), target.c_str(), TRUE) != 0)) {
+        log_launcher_error(install_log(name), L"could not copy " + source.wstring() + L" to " + target.wstring(),
+                           GetLastError());
+    }
     // The install writes the new version's icon first (so that it shows while the code is converted):
     // an update keeps the app's own beside it, to put back if the update does not go through.
     const fs::path icon = app_dir(name) / L"icon.png", icon_kept = app_dir(name) / L"icon.png.previous";
@@ -7567,6 +7616,13 @@ std::wstring install_failure_reason(const fs::path& log) {
     }
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
+    // The launcher's own lines (launcher_error_line): the install failed before the runtime ran.
+    const std::string tail = read_tail(log, 4096);
+    if (tail.find("[E] launcher: could not start ") != std::string::npos)
+        return tr(L"Win.apk could not start its runtime. See the log for details.");
+    if (tail.find("[E] launcher: could not ") != std::string::npos)
+        return tr(L"Win.apk could not copy this file into its library. Check that the disk has free space, then try "
+                  L"again.");
     return tr(L"Win.apk could not convert this app. See the log for details.");
 }
 
