@@ -522,7 +522,7 @@ before these changes.
   classes, 1 MB; `Font$Builder`'s `createBuffer` calls go to the stand-in
   `com.winapk.aospgfx.FontBuffers`, and `AdaptiveIconDrawable`'s
   `currentActivityThread` calls to `com.winapk.aospgfx.IconMaskThread`,
-  `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (12 MB: its COFF
+  `scripts/AospCallRedirect.java`, below), `bin/robolectric-nativeruntime.dll` (now `bin/aosp-hwui.dll`, [V3](#v3-hwuis-gpu-pipeline); 12 MB: its COFF
   `com.winapk.aospgfx.FontBuffers`, and the calls to natives the library
   lacks (`BaseCanvas`/`BaseRecordingCanvas.nPunchHole`,
   `Typeface.nativeRegisterLocaleList`, `Bitmap`'s gain map natives) to
@@ -1100,6 +1100,63 @@ views...), so that moving onto AOSP's code does not make Win.apk heavy:
   beside it behind a switch: two implementations are twice the disk, both
   on the class path, and twice the tests. The switch lives only while the
   AOSP side cannot yet draw what the old one does.
+
+### V3: HWUI's GPU pipeline
+
+Since November 2026 the graphics DLL is not Robolectric's native runtime but
+`bin/aosp-hwui.dll`, built from AOSP 14's own sources: HWUI with its render
+thread and `SkiaOpenGLPipeline`, Skia with Ganesh on GLES (N32 is RGBA, as on
+Android), minikin, HarfBuzz, FreeType, libpng, libjpeg-turbo, libwebp, giflib,
+ICU 72 (`bin/aosp/icu/icudt72l.dat`) and the libutils, libcutils, liblog and
+libnativehelper parts they need, with AOSP's own JNI registered on AOSP's
+classes (888 natives, none skipped). Robolectric's DLL, its `*Natives` name
+mapping and the API 34 adapters in `host/aosp_gfx_redirect.cpp` are left only
+to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
+`test/aospapp`), which keep Robolectric's `.so`.
+
+- Build: `hwui_build/fetch.sh <dir>` (the pinned AOSP 14 projects, ~700 MB
+  unpacked; CI caches `thirdparty/aosp-hwui/src`), then
+  `hwui_build/build.sh <dir> <log>`: `bp.py`/`gen.py` flatten the projects'
+  `Android.bp` into CMake modules, `patch_src.py` makes its literal edits
+  (each idempotent; libstdc++ instead of libc++, Bionic's calls, no Vulkan or
+  AHardwareBuffer, the shader caches' files on Windows), and
+  `hwui_build/cmake/` builds the DLL with clang: MSYS2's CLANG64 natively (CI,
+  the release), or clang targeting MinGW-w64 on Linux. `glue/` is Win.apk's:
+  the windows' layers and the compositor (`layers.cpp`), Choreographer's vsync
+  (`choreographer.cpp`), eventfd and epoll for libutils' `Looper`
+  (`fd_emul.cpp`), the EGL blob cache (`blob_cache.cpp`), the stubs for what
+  has no Windows counterpart (`stubs.cpp`, `hwui_stubs.cpp`).
+  `scripts/build_aosp_gfx.sh` stages the DLL and ICU's data from
+  `WINAPK_HWUI_DIR` (default `thirdparty/aosp-hwui/b`).
+- Run: `ThreadedRenderer` is on, as on a phone. Each window's `SurfaceControl`
+  is a layer in the DLL (`aosp_views/HwuiLayers`): HWUI draws it into a
+  pbuffer of its size, and the DLL's compositor draws the layers in
+  `Compositor`'s order, with the dim behind dialogs, into the host window's
+  ANGLE surface on the render thread (`host/hwui_host.cpp`; where the phone
+  goes in the window is `win32_window.cpp`'s `window_gpu_layout`). The swap
+  does not wait for vblank (frames are paced by Choreographer, DWM composes).
+  `libutils`' `systemTime` is QueryPerformanceCounter, the clock
+  `System.nanoTime` reads. There is no CPU path: the window draws nothing with
+  GDI, and the runtime stops (`error: AOSP graphics`) when the DLL has no
+  compositor. A Direct3D 11 device that fails falls back to WARP.
+- What the host has as pixels is two host layers at the display's size:
+  under the windows (a GL view read back, a SurfaceView's `lockCanvas`, an
+  app's native window below its view, a video frame) and over them
+  (`setZOrderOnTop`, a native window on top). `PixelCopy` of a window reads
+  its layer back (`Readback::copySurfaceInto`); `Bitmap.copy(HARDWARE)` is a
+  heap bitmap with the pixels (no AHardwareBuffer); a TextureView draws
+  through its own layer. `test/surfaces/build.sh` builds the APK that shows
+  all four, each logging a `SURFACES` line.
+- The snapshot (Ctrl+Shift+F12) and the headless frame file
+  (`WINAPK_HEADLESS_FRAME`) read the composed frame back on the render thread.
+- Shader caches: ANGLE's programs (`EGL_ANDROID_blob_cache`) and Skia's
+  shaders go to `com.android.opengl.shaders_cache` and
+  `com.android.skia.shaders_cache` in the app's cache folder, as on Android.
+- Memory: the run's log has `graphics memory` lines (graphics loaded, EGL
+  display up, first composed frame, the trim after 240 frames, 600 frames)
+  and, at EGL display up and 600 frames, a `memory map` of the committed
+  memory by owner (modules, heaps, other private regions, and what is new
+  since the last map).
 
 ## Footprint
 

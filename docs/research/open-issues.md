@@ -1491,8 +1491,8 @@ Left, being a matter of direction:
 
 - **V3: HWUI's GPU pipeline (November 2026; the owner approved it: exactly as
   Android, the CPU drawing path deleted once it works, no switch, +~1.2 MB
-  installer accepted, no frame-time regression). Working, on hold for the
-  performance condition.** The graphics DLL is now built from AOSP 14's
+  installer accepted, no frame-time regression; the memory the GPU driver and
+  ANGLE take is accepted: the improvement wins). Done, ready to merge.** The graphics DLL is now built from AOSP 14's
   sources (`windows/hwui_build/`: `fetch.sh`, `build.sh`, Android.bp flattened
   by `bp.py`/`gen.py`, `patch_src.py`'s edits, `glue/`): `aosp-hwui.dll`, HWUI
   with its render thread and `SkiaOpenGLPipeline`, Skia with Ganesh GL (N32 is
@@ -1507,13 +1507,23 @@ Left, being a matter of direction:
   its bitmap to its layer; what the host has as pixels (native GL, a
   SurfaceView's canvas) is the layer under the windows. The framebench draws
   correctly headless and in a window under Wine.
-  Not done: the CPU path is not deleted (GDI's `paint`, `window_present`,
-  `composed_frame` stay for runs without the DLL's compositor); CI does not
-  build the DLL yet (the stage still takes Robolectric's from
-  `build_aosp_gfx.sh`); no AHardwareBuffer (hardware bitmaps stay in memory,
-  TextureView shows nothing, PixelCopy of a window fails), no Vulkan; a
-  setZOrderOnTop surface over the windows; the Linux plain-JVM tests stay on
-  Robolectric's `.so`.
+  The CPU path is deleted (GDI's `paint`, `window_present`, the overlay,
+  `composed_frame`, the view-tree and guest compositing in `native_cocoa.cpp`);
+  CI and the release build the DLL from source (`hwui_build/fetch.sh` cached,
+  `build.sh` with MSYS2's clang). `windows/test/surfaces` shows a TextureView
+  fed by `lockCanvas`, a setZOrderOnTop SurfaceView, a `HARDWARE` bitmap copy
+  and a `PixelCopy` of the window: all four right under Wine on V3 (before V3
+  the PixelCopy never answered). The shader caches (ANGLE's programs, Skia's
+  shaders) failed to load and save on Windows (no mmap, text mode, a
+  read-only file Windows would not delete): fixed in `patch_src.py`.
+  **Left:** no AHardwareBuffer (a `HARDWARE` bitmap is a heap bitmap), no
+  Vulkan; the Linux plain-JVM tests stay on Robolectric's `.so`; the refresh
+  rate and real vsync are israel2176/win.apk#149. **Check again on the
+  owner's PC:** the warm run's cache now loads (its log has no `error mmaping`
+  or `error unlinking` line), and the `memory map` lines at "EGL display up"
+  and "600 frames" with `gpu-floor.exe` (ANGLE alone: a display, a context, a
+  540x1200 window surface, 300 swaps) say how much of the +60 MB is the
+  driver's floor; CI's MSYS2 build of the DLL has not run yet.
   Measured under Wine (Xvfb, no GPU: ANGLE's D3D11 is WARP over wined3d over
   llvmpipe, a GPU emulated on the CPU), framebench 1500 frames, before (CPU
   raster, Robolectric's DLL) / after (GPU path): in a window, median/p99 frame
@@ -1531,7 +1541,12 @@ Left, being a matter of direction:
   the compositor's swap waited for vblank on the render thread; both fixed
   (c5b91fd), Wine now 1494/1500, median/p99 4.58/12.78 ms against 5.47/13.53.
   Peak memory there +65 MB; Skia's GPU cache holds 2.2 MB of it (the compositor
-  logs it), the rest to find on the second package (Win.apk-gpu-test-2.zip).
+  logs it). Fourth package (Intel UHD, 540x1200): total frame median/p90/p99
+  3.48/4.28/5.03 ms against 7.88/18.52/27.68 before, CPU 7.8 s against 14.7 s,
+  first frame 1.7 s against 2.7 s; peak working set 252 MB against 193 MB,
+  private 248.5 MB already at "EGL display up" (the Direct3D 11 device and the
+  driver) and 291 MB at the first frame, the same cold and warm, and the trim
+  after 240 frames moved nothing.
 
 - **AOSP's app layer (November 2026; the owner approved the layer, and decided:
   no switch).** Every app's process runs on AOSP 14's own `ActivityThread`,
