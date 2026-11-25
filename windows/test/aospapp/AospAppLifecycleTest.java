@@ -63,6 +63,26 @@ public class AospAppLifecycleTest {
         @Override public void onDestroy() { svc.add("Bound.onDestroy"); }
     }
 
+    /** A started service bound twice in turn: onBind runs once, the second client gets the binder
+     *  the first got, and as onUnbind returned false there is no onRebind and no second onUnbind
+     *  (ActiveServices' IntentBindRecord keeps the binder while the service lives). */
+    public static class Kept extends android.app.Service {
+        final android.os.Binder binder = new android.os.Binder();
+        @Override public void onCreate() { kept.add("Kept.onCreate"); }
+        @Override public int onStartCommand(Intent i, int flags, int startId) {
+            kept.add("Kept.onStartCommand");
+            return START_NOT_STICKY;
+        }
+        @Override public android.os.IBinder onBind(Intent i) { kept.add("Kept.onBind"); return binder; }
+        @Override public boolean onUnbind(Intent i) { kept.add("Kept.onUnbind"); return false; }
+        @Override public void onRebind(Intent i) { kept.add("Kept.onRebind"); }
+        @Override public void onDestroy() { kept.add("Kept.onDestroy"); }
+    }
+
+    static final List<String> kept = java.util.Collections.synchronizedList(new ArrayList<>());
+    static final List<String> KEPT_EXPECTED = List.of("Kept.onCreate", "Kept.onStartCommand", "Kept.onBind",
+            "connected 1", "Kept.onUnbind", "connected 2 same binder", "Kept.onDestroy");
+
     /** A receiver the manifest declares (ActivityThread.handleReceiver through scheduleReceiver), sent
      *  an ordered broadcast whose result it sets for the result receiver. */
     static final String STATIC = PKG + ".STATIC";
@@ -182,6 +202,23 @@ public class AospAppLifecycleTest {
                     @Override public void onServiceConnected(android.content.ComponentName n, android.os.IBinder b) {
                         svc.add("connected to " + n.getClassName().substring(n.getClassName().lastIndexOf('$') + 1));
                         unbindService(this);
+                    }
+                    @Override public void onServiceDisconnected(android.content.ComponentName n) {}
+                }, BIND_AUTO_CREATE);
+                startService(new Intent(this, Kept.class));
+                bindService(new Intent(this, Kept.class), new android.content.ServiceConnection() {
+                    @Override public void onServiceConnected(android.content.ComponentName n, android.os.IBinder b) {
+                        kept.add("connected 1");
+                        android.os.IBinder firstBinder = b;
+                        unbindService(this);
+                        bindService(new Intent(First.this, Kept.class), new android.content.ServiceConnection() {
+                            @Override public void onServiceConnected(android.content.ComponentName n2, android.os.IBinder b2) {
+                                kept.add("connected 2" + (b2 == firstBinder ? " same binder" : " another binder"));
+                                unbindService(this);
+                                stopService(new Intent(First.this, Kept.class));
+                            }
+                            @Override public void onServiceDisconnected(android.content.ComponentName n2) {}
+                        }, BIND_AUTO_CREATE);
                     }
                     @Override public void onServiceDisconnected(android.content.ComponentName n) {}
                 }, BIND_AUTO_CREATE);
@@ -414,6 +451,10 @@ public class AospAppLifecycleTest {
         List<String> want = SVC_EXPECTED;
         if (!started.equals(want.subList(0, 3)) || !bound.equals(want.subList(3, want.size()))) {
             System.out.println("FAILED: the services gave " + svc + ", Android gives " + want);
+            System.exit(1);
+        }
+        if (!kept.equals(KEPT_EXPECTED)) {
+            System.out.println("FAILED: the service bound twice gave " + kept + ", Android gives " + KEPT_EXPECTED);
             System.exit(1);
         }
         if (!prov.equals(List.of("Provider.onCreate", "App.onCreate", "query hello x"))) {
