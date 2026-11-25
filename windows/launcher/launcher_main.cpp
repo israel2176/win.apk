@@ -6276,11 +6276,12 @@ long run_schtasks(const std::wstring& args) {
     if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
         return -1;
     CloseHandle(pi.hThread);
-    WaitForSingleObject(pi.hProcess, 30000);
+    // Not run when it did not end in time: its exit code would read STILL_ACTIVE (259), taken for an answer.
+    const bool ended = WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0;
     DWORD code = 1;
-    GetExitCodeProcess(pi.hProcess, &code);
+    if (ended) GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
-    return static_cast<long>(code);
+    return ended ? static_cast<long>(code) : -1;
 }
 
 // Off the library's thread: schtasks takes a moment. Noted as done once schtasks ran, whether or not there was
