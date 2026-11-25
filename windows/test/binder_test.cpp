@@ -156,7 +156,10 @@ int wmain(int argc, wchar_t** argv) {
     if (create(&vm, reinterpret_cast<void**>(&env), &vm_args) != JNI_OK) return fail("JNI_CreateJavaVM");
 
     const winapk::host::HostMethods binder = winapk::host::native_binder_methods();
-    if (!bind(env, binder.methods, binder.count) || !bind(env, kOs, sizeof kOs / sizeof kOs[0]))
+    // DataProtection too: the Google account checks seal the token store as the runtime does.
+    const winapk::host::HostMethods sealing = winapk::host::native_data_protection_methods();
+    if (!bind(env, binder.methods, binder.count) || !bind(env, kOs, sizeof kOs / sizeof kOs[0]) ||
+        !bind(env, sealing.methods, sealing.count))
         return fail("binding the natives");
     // java.io's opens as winapk-runtime binds them (FileShareDeleteTest).
     if (!winapk::host::java_io_open_init(env)) return fail("binding java.io's opens");
