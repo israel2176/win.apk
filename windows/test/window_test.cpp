@@ -297,7 +297,7 @@ int main() {
         check("Ctrl+Enter is a chord too", plan(L"\n", false, false, false, true).ch == 0);
         check("Alt+A is a chord", plan(L"a", true, false, false, false, true).kind == Kind::kKey &&
                                       plan(L"a", true, false, false, false, true).ch == 0);
-        const KeyDownPlan at = plan(L"@", false, false, false);
+        const KeyDownPlan at = plan(L"@", false, false, false, true, true);
         check("AltGr+Q on a German layout types '@', without Ctrl and Alt", at.kind == Kind::kKey && at.ch == L'@' && at.altgr);
         check("a dead key sends nothing", plan(L"", false, true).kind == Kind::kNothing);
         check("the letter after it is text: e-acute", plan(L"\x00e9", false, false, true).kind == Kind::kText);
