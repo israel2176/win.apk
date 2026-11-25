@@ -8,7 +8,7 @@
 // What goes with it is what AppInstall does not install: the bundle's own manifest.json and icon, and the
 // whole-app alternatives of a bundletool set; AppInstall installs every split of the set it picks, so
 // nothing the app runs from is lost. Given library\<name>.apk with a .splits folder beside it, AppInstall
-// links them all again, so a reinstall (a stale record, WINAPK_ABIS) needs nothing else.
+// links them all again, so a reinstall (a stale record) needs nothing else.
 //
 // A kept file is never written: it is the installed APK itself. An update renames the app's entries aside
 // as <entry>.previous, puts the new file in their place, and deletes the .previous ones once the new copy

@@ -419,7 +419,7 @@ Three engines run arm64 code, behind one CPU state (`src/arm64/`):
   a fault nobody handled, `abort()`, HotSpot's fatal error handler through
   the JVM's `abort` hook; not a normal exit, a closed window or a kill)
   twice in a row with a translation loaded, the next start disables
-  translation for the app (`aot_disable`, as `WINAPK_AOT=0` does) and says
+  translation for the app (`aot_disable`) and says
   so in its run log. A run without a crash sets the count back; two crashes
   in a row on the JIT mean it was not the translation, and the next start
   turns it on again for that build of the app. The state is
@@ -529,9 +529,7 @@ in-process window session (`IWindowSession.relayout` through AOSP's own
 "V2 as built", has the details and what is not there yet.
 
 Win.apk's own view classes, which apps ran before, drew the tree into one
-bitmap through `com.macapk.loader.ViewCanvasDriver` and could redraw only what
-invalidations damaged (`MACAPK_FRAMESPEED_DAMAGE=1`, checked by
-`windows/test/java/DamageRectTest.java` on a plain JVM). Neither runs in an app
+bitmap through `com.macapk.loader.ViewCanvasDriver`. It does not run in an app
 any more; AOSP's software renderer redraws the dirty area its own way.
 
 ### The window and the display
@@ -979,10 +977,10 @@ the change refused from anyone but the launcher.
    (`<copy>\.installed`) says the installed copy was made from that very file,
    so the library keeps one copy of the app (`keep_installed_apks`,
    `launcher/library_files.h`). AppInstall, given an `.apk` with a `.splits`
-   folder beside it, links them all again, so a reinstall (a stale record,
-   `WINAPK_ABIS`) has the whole app. A library from before this layout moves
-   to it at the launcher's next start, app by app, once each app's installed
-   copy is of its bundle (else at the start after its next run).
+   folder beside it, links them all again, so a reinstall (a stale record)
+   has the whole app. A library from before this layout moves to it at the
+   launcher's next start, app by app, once each app's installed copy is of its
+   bundle (else at the start after its next run).
 6. The launcher makes the Start menu shortcut (and the desktop one, if the
    setting is on), adds the app to the library and writes the registry
    (`installed_apps.json`). With a system broker running (Google services

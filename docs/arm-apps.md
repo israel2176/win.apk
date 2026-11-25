@@ -106,6 +106,4 @@ JIT too: not the translation`, and the translation is used again.
 | | Effect |
 |---|---|
 | Settings > Apps > **Speed up ARM apps** (on) | Off: nothing new is translated (a translation under way stops before its next part and resumes once this is on again); translations already made are still used |
-| `WINAPK_AOT=0` | Run ARM code on the JIT only: no translation is loaded or made |
 | `WINAPK_AOT_CLANG=<path to clang.exe>` | Use another clang for the translation. Without the bundled one, Win.apk also looks for `clang.exe` on the `PATH` |
-| `WINAPK_ABIS=arm64-v8a` | Install an app's ARM build although it has an x86_64 one, to compare the two |
