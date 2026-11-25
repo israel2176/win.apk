@@ -319,6 +319,9 @@ public class AospAppLifecycleTest {
         String host = System.getProperty("winapk.test.host");   // plainjvm_host.c, built
         if (host == null || !new File(host).isFile()) throw new IllegalStateException("-Dwinapk.test.host=<libplainjvm_host>");
         System.load(new File(host).getAbsolutePath());
+        // This plain JVM has Robolectric's native graphics, not the GPU DLL (no render thread): views
+        // draw in software here, as Android's own tests disable hardware rendering.
+        android.view.ThreadedRenderer.disable(false);
         // AOSP's graphics, as winapk-runtime binds them (host/aosp_gfx.cpp): Robolectric's native
         // runtime onto AOSP's classes through the host's own redirect (plainjvm_host.cpp), ICU's data, then
         // the system fonts (AospGfx.materializeSystemFonts, what Boot does): an activity's decor
