@@ -1139,7 +1139,10 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   pbuffer of its size, and the DLL's compositor draws the layers in
   `Compositor`'s order, with the dim behind dialogs, into the host window's
   ANGLE surface on the render thread (`host/hwui_host.cpp`; where the phone
-  goes in the window is `win32_window.cpp`'s `window_gpu_layout`). The swap
+  goes in the window is `win32_window.cpp`'s `window_gpu_layout`). Nothing
+  is composed before a window or a host layer has drawn, as WindowManager
+  shows a window only once it has drawn: a splash that holds its first draw
+  (the SplashScreen API) or a trampoline activity keeps the starting window. The swap
   does not wait for vblank (frames are paced by Choreographer, DWM composes).
   `libutils`' `systemTime` is QueryPerformanceCounter, the clock
   `System.nanoTime` reads. There is no CPU path: the window draws nothing with
