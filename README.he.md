@@ -9,7 +9,7 @@
 [![רישיון AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![90 מתוך 92 אפליקציות עולות](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
 
-‏[English](README.md) · **עברית**
+‏[English](README.md) · **עברית** · [אתר האינטרנט](https://israel2176.github.io/win.apk/?lang=he)
 
 ‏Win.apk מתקין אפליקציות אנדרואיד (`.apk`, `.apkm`, `.xapk`, `.apks`) ומריץ כל
 אחת בחלון משלה, עם קיצור דרך בתפריט התחל, אייקון בשורת המשימות והתראות של
