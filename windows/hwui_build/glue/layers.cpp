@@ -19,6 +19,7 @@
 #include <jni.h>
 #include <log/log.h>
 #include <renderthread/RenderThread.h>
+#include <DeviceInfo.h>
 #include <system/window.h>
 #include <utils/Timers.h>
 #include <windows.h>
@@ -243,6 +244,7 @@ struct Gl {
     GLint color_rect = -1, color_value = -1;
     GLuint host_tex = 0;
     EGLSurface screen = EGL_NO_SURFACE;
+    bool interval_set = false;  // eglSwapInterval(0) on the screen surface
     HWND screen_hwnd = nullptr;
     int screen_w = 0, screen_h = 0;  // a headless pbuffer's size
     EGLConfig config = nullptr;
@@ -343,6 +345,7 @@ bool ensure_screen(EGLDisplay d, int frame_w, int frame_h) {
         ALOGE("compositor: no surface to present on (EGL error 0x%x)", eglGetError());
         return false;
     }
+    g_gl.interval_set = false;
     g_gl.screen_hwnd = hwnd;
     g_gl.screen_w = frame_w;
     g_gl.screen_h = frame_h;
@@ -422,6 +425,14 @@ void compose_now() {
     if (!eglMakeCurrent(d, g_gl.screen, g_gl.screen, ctx)) {
         ALOGE("compositor: eglMakeCurrent 0x%x", eglGetError());
         return;
+    }
+    // The present does not wait for the display's vsync: the render thread is the one thread that
+    // draws every window, and a swap that blocked it until the next vblank kept the windows' next
+    // frames from being drawn in time (on a real GPU, a frame missed in five). Frames are already
+    // paced by Choreographer's vsync; DWM composes the window, so nothing tears.
+    if (!g_gl.interval_set) {
+        eglSwapInterval(d, 0);
+        g_gl.interval_set = true;
     }
     gl_ready();
 
@@ -528,6 +539,19 @@ void compose_now() {
     int64_t start = g_first_vsync.exchange(0);
     if (start <= 0 || start > compose_start) start = compose_start;
     if (g_host && g_host->presented) g_host->presented(dw, dh, start, compose_start, swap_start, end);
+    // Once, a few seconds in: what Skia's GPU caches hold against their limit (HWUI's CacheManager).
+    static int composed = 0;
+    if (++composed == 600) {
+        if (GrDirectContext* gr = rt.getGrContext()) {
+            int count = 0;
+            size_t bytes = 0;
+            gr->getResourceCacheUsage(&count, &bytes);
+            ALOGW("compositor: %d layers composed 600 frames; Skia's GPU cache holds %d resources, %.1f MB "
+                  "(limit %.1f MB, for a %dx%d display)", static_cast<int>(scene.size()), count, bytes / 1048576.0,
+                  gr->getResourceCacheLimit() / 1048576.0, android::uirenderer::DeviceInfo::getWidth(),
+                  android::uirenderer::DeviceInfo::getHeight());
+        }
+    }
 }
 
 void request_compose() {

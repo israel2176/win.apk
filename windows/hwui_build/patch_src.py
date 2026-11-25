@@ -171,6 +171,30 @@ EDITS = [
      '                if (count) {\n                    std::unique_ptr<int[]> temp(new int[count]);\n',
      '                if (!count) fFormatTable[i].fColorSampleCounts.push_back(1);  // Win.apk: no MSAA\n'
      '                if (count) {\n                    std::unique_ptr<int[]> temp(new int[count]);\n'),
+    # libutils' systemTime on Windows was the wall clock for every clock id. HWUI compares its
+    # times with the frame's vsync from Java's Choreographer (System.nanoTime: on HotSpot for Windows,
+    # QueryPerformanceCounter as below), as Android's are one clock (CLOCK_MONOTONIC): on the wall
+    # clock the render thread took every frame for one from 56 years before and dropped frames,
+    # and the frame times were nonsense. The monotonic clocks are now HotSpot's javaTimeNanos.
+    ('system_core/libutils/Timers.cpp',
+     '    // Windows is windows.\n    timeval t = {};\n',
+     '    // Windows is windows.\n'
+     '#if defined(_WIN32)\n'
+     '    if (clock != SYSTEM_TIME_REALTIME) {  // Win.apk: HotSpot\'s System.nanoTime\n'
+     '        static const double freq = [] {\n'
+     '            LARGE_INTEGER f;\n'
+     '            QueryPerformanceFrequency(&f);\n'
+     '            return static_cast<double>(f.QuadPart);\n'
+     '        }();\n'
+     '        LARGE_INTEGER c;\n'
+     '        QueryPerformanceCounter(&c);\n'
+     '        return static_cast<nsecs_t>((static_cast<double>(c.QuadPart) / freq) * 1000000000.0);\n'
+     '    }\n'
+     '#endif\n'
+     '    timeval t = {};\n'),
+    ('system_core/libutils/Timers.cpp',
+     '#include <utils/Timers.h>\n',
+     '#include <utils/Timers.h>\n#if defined(_WIN32)\n#include <windows.h>\n#endif\n'),
     # libutils' Looper on hwui_glue's emulated eventfd and epoll: sys/eventfd.h (its read, write
     # and close) before anything that closes a descriptor (unique_fd).
     ('system_core/libutils/Looper.cpp',

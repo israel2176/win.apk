@@ -190,15 +190,9 @@ public class AospAppRewrite {
             "android/content/ContextWrapper.getAutofillClient", "android/app/Activity.updateDisplay",
             "android/os/StrictMode.trackActivity",
             "android/content/Context.setContentCaptureOptions", "android/content/Context.updateDeviceId",
-            // HWUI's render thread is set up for the process at bind (step V3: every window draws in
-            // software), and the system font map is Win.apk's graphics', set at the run's start as
-            // the zygote preloads it on a device (AospGfx.materializeSystemFonts).
-            "android/graphics/HardwareRenderer.setContextForInit",
-            "android/graphics/HardwareRenderer.setDebuggingEnabled",
-            "android/graphics/HardwareRenderer.setIsSystemOrPersistent",
-            "android/graphics/HardwareRenderer.setIsolatedProcess",
-            "android/graphics/HardwareRenderer.setPackageName", "android/graphics/HardwareRenderer.setupDiskCache",
-            "android/graphics/HardwareRenderer.sendDeviceConfigurationForDebugging",
+            // The system font map is Win.apk's graphics', set at the run's start as the zygote
+            // preloads it on a device (AospGfx.materializeSystemFonts). (HWUI's process setup at
+            // bind runs as AOSP's: the display's size for its caches, the shader disk cache.)
             "android/graphics/Typeface.loadPreinstalledSystemFontMap", "android/graphics/Typeface.setSystemFontMap",
             // The package manager is Win.apk's (MacApkPackageManager): its caches are its own.
             "android/app/ApplicationPackageManager.configurationChanged",
