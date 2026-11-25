@@ -12,7 +12,7 @@ import zipfile
 
 
 def get(url, path):
-    req = urllib.request.Request(url, headers={"User-Agent": "app-probe"})
+    req = urllib.request.Request(url, headers={"User-Agent": "winapk-ci"})
     with urllib.request.urlopen(req, timeout=300) as r, open(path, "wb") as f:
         while True:
             block = r.read(1 << 20)
@@ -48,7 +48,7 @@ pkg, version, out = sys.argv[1:4]
 want = sys.argv[4].lower() if len(sys.argv) > 4 and sys.argv[4] not in ("", "-") else None
 codes = [version]
 if version == "latest":
-    req = urllib.request.Request(f"https://f-droid.org/api/v1/packages/{pkg}", headers={"User-Agent": "app-probe"})
+    req = urllib.request.Request(f"https://f-droid.org/api/v1/packages/{pkg}", headers={"User-Agent": "winapk-ci"})
     info = json.load(urllib.request.urlopen(req, timeout=60))
     codes = [str(p["versionCode"]) for p in info["packages"][:6]]
     codes.append(str(info["suggestedVersionCode"]))

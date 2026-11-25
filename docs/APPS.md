@@ -146,7 +146,7 @@ what to look for in the app or in its log.
 One row per app and version that someone actually used. Newest test first
 within an app. The results of [#69](https://github.com/israel2176/win.apk/issues/69)
 (20 very different apps) are added here. The rows dated 2026-11-10 are
-from the app probe (`.github/workflows/app-probe.yml`): each app a minute in
+from the app probe (a by-hand workflow, since retired): each app a minute in
 a window on a Windows machine without a graphics card, looked at in
 screenshots and its log. Nobody used the app, so the status is *Boots* at
 most.

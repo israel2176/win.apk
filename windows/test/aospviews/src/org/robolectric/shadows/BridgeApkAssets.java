@@ -11,7 +11,7 @@ import java.io.IOException;
  * libandroidfw's ApkAssets. The framework's own resources: AOSP opens
  * /system/framework/framework-res.apk; android-all carries the same resources.arsc and res/ at its
  * root, so that path is mapped to the jar (-Daospviews.framework). Win.apk would map it to its
- * own framework-res.apk (scripts/build_framework_res.sh builds one).
+ * own framework-res.apk (bin/aosp/framework-res-34.apk).
  */
 public final class BridgeApkAssets {
     private BridgeApkAssets() {}

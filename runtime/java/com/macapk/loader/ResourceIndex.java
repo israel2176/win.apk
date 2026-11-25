@@ -717,7 +717,7 @@ public final class ResourceIndex {
      *       API-30 build for parity with its API-30 golden AVD), which the
      *       runtime DEFAULTS to the apk bundled next to its tools (main.cpp,
      *       <binary_dir>/tools/framework-res.apk: the FULL API-36 platform
-     *       apk built from AOSP by scripts/build_framework_res.sh, Apache-2.0)
+     *       apk built from AOSP by upstream's build_framework_res.sh, Apache-2.0)
      *       so a bundle launch and a dev-tree launch read the SAME table;
      *   (2) the same file found RELATIVE TO THE JAR this class runs from --
      *       what an offline harness with no env (ridiff, levelprobe,
