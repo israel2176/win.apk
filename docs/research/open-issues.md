@@ -1111,6 +1111,34 @@ another job of the same run sampled `TiWorker.exe`, `TrustedInstaller.exe`,
 read that line in `winapk-cold.log`; a low machine share would mean the cost is ours after all
 (then time the main thread between `entering the Cocoa runloop` and the first frame).
 
+## Idle CPU in the the other runtime comparison (2026-11-25): fixed, to confirm on the next run
+
+`comparison` run 45513190823 (windows-latest, 4 vCPU), idle CPU in % of one core over
+the last 30 s of a 60 s run, cold / warm: Tensy (SDL2, GL ES from native code) Win.apk
+212.6 / 247.9, the other runtime 74.1 / 77; Open Sudoku (arm64-v8a only) Win.apk 17.5 / 21.1, the other runtime 0 / 0.
+Measured under Wine with per-thread CPU (`/proc/<pid>/task`), two causes:
+
+- **Tensy: no vsync.** `eglSwapBuffers` on a native window surface (a pbuffer read back,
+  `host/gl/guest_gl.cpp`) returned at once and `eglSwapInterval` went to ANGLE's pbuffer, which
+  ignores it: the menu ran at 190-260 frames a second, `SDLThread` 89% plus llvmpipe's four
+  threads. Fixed by pacing the swap as a BufferQueue SurfaceFlinger empties per vsync does
+  (`host/swap_pacing.h`, `winapk-swap-pacing-test`): 56-58 frames a second. Under Wine: 242%
+  -> 62%, and on a slower container 257% -> 91% (what is left is the readback and llvmpipe's
+  rendering of 60 frames; on a real GPU most of it is the GPU's).
+- **Open Sudoku: clang, not the app.** The app idles at 0.9% (it loads none of its three
+  libraries at start); the 20% was clang, run by the translation worker the install started,
+  which the measure counts (its image is in the runtime's folder). A library the app never ran
+  code in is no longer translated (`aot_stamp_needs_work`, as Android's dexopt compiles only
+  what a profile names): cold and warm 1.3%, no clang.
+- Klooni (libGDX on `GLSurfaceView`) and PPSSPP (its own `AndroidRender` GL thread) do not use
+  that window surface and are already paced by the framework's vsync; unchanged.
+
+**On the next compare run:** Tensy should be near or under the other runtime's 74-77%, Open Sudoku near 0.
+Not verified on Windows: the high-resolution timer's precision (Wine has it; Windows 10 1803+
+does). Seen while checking: LocalSend crashes under Wine after its first frame (`Internal Error
+(0xc06d007f)`, a delay-load failure in `kernelbase.dll`) with the build before this change too:
+not this change's; whether Windows shows it too is not checked; to look at on its own.
+
 ## Screen readers (UI Automation), to check
 
 Win.apk's own (November 2026), written from Microsoft's UI Automation documentation
