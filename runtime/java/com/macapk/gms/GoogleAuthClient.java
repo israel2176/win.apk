@@ -71,6 +71,9 @@ public final class GoogleAuthClient {
             sLastError.set("no oauth_token supplied");
             return null;
         }
+        // An app's process: the master token Google answers with is the token
+        // service's to keep (GmsStore's header); only the e-mail comes back.
+        if (!GmsStore.owner()) return GmsTokens.signIn(oauthToken);
         Map<String, String> form = baseParams();
         form.put("service", "ac2dm");
         form.put("Token", oauthToken);
@@ -168,6 +171,7 @@ public final class GoogleAuthClient {
         if (email == null) return null;
         String have = GmsStore.accountData(email, "accountId");
         if (have != null && !have.isEmpty()) return have;
+        if (!GmsStore.owner()) return GmsTokens.accountId(email);
         String master = GmsStore.masterToken(email);
         if (master == null) return null;
         Map<String, String> form = baseParams();
@@ -225,6 +229,9 @@ public final class GoogleAuthClient {
      */
     public static String fetchScopedToken(String account, String scope) {
         if (account == null || scope == null) return null;
+        // An app's process asks the token service, as AccountManager asks the
+        // authenticator through AccountManagerService.
+        if (!GmsStore.owner()) return GmsTokens.scoped(account, scope);
         String master = GmsStore.masterToken(account);
         if (master == null) {
             sLastError.set("no master token for " + GoogleAuthenticator.redact(account)
@@ -341,6 +348,12 @@ public final class GoogleAuthClient {
         if (account == null || service == null || appPkg == null || appSigSha1 == null) {
             sLastError.set("fetchAppToken: missing account/service/app identity");
             return null;
+        }
+        // An app's process asks the token service, which checks that the identity is
+        // this app's own (GMS reads the caller's from PackageManager on a device).
+        if (!GmsStore.owner()) {
+            return GmsTokens.appToken(account, service, appPkg, appSigSha1, includeEmail, includeProfile,
+                    consented, tokenRequestOptions, extra, connectMs, readMs);
         }
         String master = GmsStore.masterToken(account);
         if (master == null) {
@@ -631,6 +644,9 @@ public final class GoogleAuthClient {
     /** Why the last call ON THIS THREAD failed, for a CLI or a launcher sheet to
      *  show. Cleared on success. */
     public static String lastError() { return sLastError.get(); }
+
+    /** GmsTokens: the token service's reason, as this thread's lastError(). */
+    static void setLastError(String why) { sLastError.set(why); }
 
     /** SHA-1 of our platform certificate, lower-case hex -- the format
      *  client_sig wants (microG PackageUtils.java:151-179). */

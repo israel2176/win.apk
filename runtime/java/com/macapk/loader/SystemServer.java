@@ -2216,6 +2216,9 @@ public final class SystemServer {
     public static void main(String[] args) throws Exception {
         String name = System.getenv("MACAPK_SYSTEM_NAME");
         if (name != null && !name.isEmpty()) sName = name;
+        // The broker's account service holds the Google account as AccountManagerService
+        // does: it reads the master token (com.macapk.gms.GmsStore), no app does.
+        com.macapk.gms.GmsStore.becomeOwner();
         SystemServer s = new SystemServer();
         String apks = System.getenv("MACAPK_BROKER_APKS");
         readyFile().delete();   // a previous broker's readiness is not this one's

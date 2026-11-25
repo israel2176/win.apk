@@ -34,6 +34,9 @@ public final class GmsCli {
      */
     public static int run(String[] args) {
         if (args.length == 0) { usage(); return 2; }
+        // `--gms` is the account's own side (the launcher's Settings, its sign-in
+        // window, the token service): it reads the master token itself (GmsStore).
+        GmsStore.becomeOwner();
         // Before any HTTPS call: Boot.run does this for an app's process, but
         // `--gms` boots no app, and without the roots Windows trusts every
         // call to Google behind a filtering proxy failed with "PKIX path building failed".
@@ -64,6 +67,7 @@ public final class GmsCli {
                 case "license":  return license(arg(args, 1, "<package>"),
                                                 Integer.parseInt(arg(args, 2, "<versionCode>")));
                 case "signout":  return signout(args.length > 1 ? args[1] : null);
+                case "token-service": return GmsTokenService.serve();
                 default: usage(); return 2;
             }
         } catch (IllegalArgumentException e) {
@@ -102,6 +106,7 @@ public final class GmsCli {
           + "                          Prints response KEYS and JWT claim NAMES only, never values.\n"
           + "  license <pkg> <vc>      run a Play-Licensing check for a package\n"
           + "  signout                 forget the account and every cached token\n"
+          + "  token-service           serve the apps' token requests (GmsTokenService) until idle\n"
           + "\n"
           + "The layer's flag (MACAPK_GMS_PRESENT) gates what GUESTS see; these\n"
           + "commands work regardless, because they are the operator's own tools.");

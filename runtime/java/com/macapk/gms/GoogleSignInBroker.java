@@ -580,7 +580,7 @@ public final class GoogleSignInBroker {
     public static Result signIn(Request r, String account, String appSigSha1, boolean consented) {
         Result res = new Result();
         res.email = account;
-        if (account == null || GmsStore.masterToken(account) == null) {
+        if (account == null || !GmsStore.hasAccount(account)) {
             res.error = "no such account";
             return res;
         }
