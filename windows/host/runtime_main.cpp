@@ -64,6 +64,7 @@
 #include "debug_agent.h"
 #include "guest_libs.h"
 #include "host_natives.h"
+#include "machine_load.h"
 #include "unix_socket_dir.h"
 #include "user_folders.h"
 #include "win32_window.h"
@@ -2344,6 +2345,7 @@ int wmain(int argc, wchar_t** argv) {
         }
         return aot_translate_main(argv[2], cache, delay_s);
     }
+    winapk::host::machine_load::mark();  // the machine's CPU now, against its first frame (machine_load.h)
     BootArgs b;
     if (!parse_args(argc, argv, &b.options)) {
         std::fprintf(stderr, "usage: winapk-runtime --apk <file.apk|.apkm|.xapk|.apks> [--data <dir>] [--jdk <dir>] [--lib <dir>] "

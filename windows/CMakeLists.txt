@@ -166,6 +166,11 @@ target_include_directories(winapk-webview-urls-test PRIVATE host)
 add_executable(winapk-frame-times-test test/frame_times_test.cpp)
 target_include_directories(winapk-frame-times-test PRIVATE host)
 
+# The machine's load to the first frame (host/machine_load.h): the busy shares, the busiest
+# other processes, the line. No window. test/machine_load_test.cpp.
+add_executable(winapk-machine-load-test test/machine_load_test.cpp)
+target_include_directories(winapk-machine-load-test PRIVATE host)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.
@@ -310,7 +315,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
-                              host/native_location.cpp
+                              host/native_location.cpp host/machine_load.cpp
                               host/native_signin.cpp host/native_notifications.cpp
                               host/native_accessibility.cpp host/uia_provider.cpp host/uia_tree.cpp
                               host/binder_win.cpp
