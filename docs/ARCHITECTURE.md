@@ -166,8 +166,10 @@ drops the `--patch-module` flags only when the JRE's
 plain JDK, or a patch rebuilt since, keeps them and runs without CDS). The
 framework archive is dumped by `java -Xshare:dump` before any app starts, as
 Android compiles its framework at an update: by Win.apk's installer
-(`winapk-runtime --cds-prepare`, hidden, at the end of the setup), else at the
-end of the first app install (`--install-only`, after the DEX conversion), from
+(`winapk-runtime --cds-prepare`, hidden, at the end of the setup), else beside
+the first app install (`--install-only` starts `winapk-runtime --cds-dump` in the
+background at below-normal priority and does not wait for it; an app start that
+finds no archive while that dump runs waits for it, 30 s at most, and maps it), from
 the class list Win.apk ships (`lib\winapk-framework.classlist`, the classes at
 least three of the ten smoke apps load). Only when neither made it does an app
 start record the classes it loads and dump in the background after its first
@@ -858,12 +860,16 @@ the change refused from anyone but the launcher.
    where an x86_64 library of that name is loaded, and the background
    translation sees only those. A record file notes the result so the step
    runs once per input file.
-3. `com.winapk.tools.AppMeta` renders the launcher icon to
-   `apps\<name>\icon.png`, and writes the label and `package.txt` (package,
-   versionCode, versionName, the first activity's manifest
-   `screenOrientation`). It comes before the long step, so that the install
-   window and the library's tile show a new app's own icon and name while it
-   is converted, as Android's installer does (`pending_look` in the launcher).
+3. `com.winapk.tools.AppMeta`, in the runtime's own JVM (the framework, its
+   graphics and resources), checks the signature, renders the launcher icon to
+   `apps\<name>\icon.png`, and writes the label (resolved from the app's
+   resources through `ResBackend`) and `package.txt` (package, versionCode,
+   versionName, the first activity's manifest `screenOrientation`). It runs
+   beside steps 4 and 5, and is done long before the conversion, so that the
+   install window and the library's tile show a new app's own icon and name
+   while it is converted, as Android's installer does (`pending_look` in the
+   launcher). When this Win.apk has no framework archive yet, its dump starts
+   here too, in the background (above), and the install does not wait for it.
 4. If the app has only arm64 libraries, a background `winapk-runtime
    --aot-translate` starts for each: `winapk-aot` writes C, clang compiles it
    into `<lib>.so.aot.dll`. Nothing waits for it.
@@ -872,7 +878,9 @@ the change refused from anyone but the launcher.
    `libndroid-framework.jar` (the framework the app links against, not an
    Android SDK the PC may have), with a stamp naming the converter and the APK
    so a change to either converts again. It runs in a JVM of its own with a
-   1 GB heap; one that runs out of it (seen through JVMTI, even when the
+   1 GB heap, on HotSpot's C1 compiler alone for up to 40 MB of DEX (the
+   conversion is short, and C2's warm-up took half its time: Jerboa 4.6 -> 2.3
+   s; `dex_jit_options`); one that runs out of it (seen through JVMTI, even when the
    converter caught the error and left a class out) converts again on a
    larger heap, and a jar is kept only when it is a whole zip, whatever the
    exit code says (under Wine a killed converter reported 0). The launcher then moves the label and

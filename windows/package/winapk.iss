@@ -111,7 +111,8 @@ Type: filesandordirs; Name: "{userprograms}\Win.apk Apps"
 ; The framework's class-data sharing archive for this Win.apk (host/cds.h), made now as Android
 ; compiles its framework at an update, so that no app start makes it: a second JVM of 200 MB
 ; beside the app 10 s into its first start doubled that start's memory. Hidden; an install
-; without it still works (the first app install, or else the first app start, makes it).
+; without it still works (the first app install starts it in the background, or else the
+; first app start makes it).
 Filename: "{app}\bin\winapk-runtime.exe"; Parameters: "--cds-prepare"; StatusMsg: "{cm:Optimizing}"; Flags: runhidden
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
 
