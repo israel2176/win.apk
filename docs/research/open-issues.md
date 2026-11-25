@@ -1023,6 +1023,49 @@ New bugs found with AOSP views:
   Not verified here: a Windows build and run (CI after the push); sizes from
   the local stage (Linux): `android-framework.jar` 15.6 -> 14.2 MB, LinkScan
   and `ApkVerificationTest` on `framework-res-34.apk` checked.
+- **A first start's memory was twice a second's: fixed** (November 2026, the
+  owner's priority after comparison run 45513190823 on windows-latest,
+  360x640: Win.apk's first starts median 505 MB against the other runtime's 284, its
+  second starts 228 against 283). Attribution, from the run's JSON and
+  reproduced under Wine: every first start's peak had `java.exe` and
+  `conhost.exe` in it, the framework archive's dump (`--cds-dump` ->
+  `java -Xshare:dump` with the app's `-Xms128m -Xmx1g`, started 10 s after
+  the first frame, so inside the 60 s measured); the app's own working set at
+  the first frame was the same both times (Jerboa 194/197 MB, Open Sudoku
+  198/186). Under Wine, Jerboa: first start 586 MB = app 348 + dump wrapper
+  34 + dump JVM 207; second 351. Fixed the way Android compiles before a
+  start, not during one: the archive is made by Win.apk's installer
+  (`--cds-prepare`, hidden) or at the end of the first app install
+  (`cds_after_install`), from the shipped class list, refreshed from CI's
+  `framework-classlist` artifact (it was Java2D's); the dump at a start is
+  the last resort, and the dump's JVM has `-Xms8m -Xmx96m` (207 -> 166-190
+  MB: most of it is the classes and the archive, not the heap). After, under
+  Wine: install 14 -> 20 s (the dump 10.8 s, 5246 classes, 43.6 MB archive),
+  first start 344 MB and first frame 13.0 s (was 586 MB and 17.9 s without an
+  archive), second start 344 MB, 13.6 s (was 351, 14.1). **To see on the next
+  comparison run** (real Windows): first starts near the second's;
+  `measure.ps1` now records each process with its role and the sum at the
+  peak by role ("Memory at the peak" under the table). Also found:
+  - **LocalSend's 3358 MB** (the Flutter outlier) was `measure.ps1`'s: its
+    walk by parent process id met a recycled id and summed csrss, lsass,
+    svchost, MsMpEng, dockerd... of the runner; the app's working set at the
+    first frame was 297 MB, its second start 338 (the other runtime 475). A child now
+    counts only when created after its parent.
+  - **Open Sudoku's second start, 597 MB**, had `clang.exe` in it: the arm64
+    translation the install started, still compiling, two at once on a
+    runner with no input. The governor now allows one compiler while another
+    `winapk-runtime.exe` runs (`other_runtime_running`), as with the user
+    active. Not measured (no clang in the Wine stage used); the next run
+    shows it. The translation is still one-time work beside the app until it
+    ends (Android would wait for the device to be idle; pausing it while an
+    app runs would leave the JIT on the app the translation is for).
+  - The dump's options carry the app's `--add-opens`/`--add-exports`, so
+    HotSpot makes the archive "without full module graph" and archives no
+    heap objects (`-Xlog:cds` at a start: no heap region). A start-time cost,
+    not memory; not looked into.
+  - The last-resort path's recorded class list
+    (`cds\framework-aosp-<key>.<pid>.classlist`) stays behind: the app still
+    has it open (`-XX:DumpLoadedClassList`) when the dump deletes it.
 - **Memory has no budget yet**: the smoke test records each app's peak working
   set; add a limit once a few CI runs show the spread.
 - **Frame time has only a collapse budget** (`windows/README.md` "Frame
