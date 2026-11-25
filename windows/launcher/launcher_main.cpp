@@ -39,12 +39,16 @@
 // app the other way (library\<name>.orientation), and an app whose manifest
 // fixes its launched activity's orientation always gets that one.
 //
-// The Store tab, next to the library, is F-Droid's catalog (f-droid.org,
-// free and open-source apps): its index is fetched in the background, read
-// only out of index-v1.jar signed by F-Droid's pinned key (signed_jar.h), and
-// kept as store\catalog.tsv, searchable and by category. Install downloads
-// the APK, checks it against the index's SHA-256 and installs it as above;
-// an app the library already has (by package) is updated in place.
+// The Store, next to the library, is Win.apk's own store app (israel2176/
+// win.apk-store, package app.apkstore: Google Play's catalogue searched, free
+// apps downloaded and installed through Android's PackageInstaller), shown
+// inside the library window as Google Play is. Win.apk has it as a system
+// component, no tile and no shortcut: the first opening of the Store downloads
+// the newest release's apk-store.apk from GitHub, held to GitHub's size and
+// SHA-256 of it (store_app.h), and installs it quietly; the daily update check
+// updates it the same way. Its installs go through the install helper below,
+// and its "Install unknown apps" is on from its first install, as a device's
+// preinstalled store is allowed.
 //
 //   Win.apk.exe                      the library
 //   Win.apk.exe <app.apk> [...]      the install window, for these files
@@ -54,7 +58,7 @@
 //   Win.apk.exe runtime-permission | special-access | app-details ... --source android --json
 //
 // The last two are the install helper, upstream's macapk-installhelper: an app
-// that installs apps (F-Droid, through PackageInstaller) hands its APK to
+// that installs apps (the Store, through PackageInstaller) hands its APK to
 // PackageInstallerBackend, which runs this program. It asks the user as
 // Android's package installer does (an app whose "Install unknown apps" is off
 // is first sent to that switch, then "Do you want to install this app?"),
@@ -108,7 +112,7 @@
 #include "installs.h"
 #include "library_files.h"
 #include "maintenance.h"
-#include "signed_jar.h"
+#include "store_app.h"
 #include "updates.h"
 #include "../host/window_fit.h"
 #include "../include/winapk/aot_stamp.h"
@@ -128,11 +132,9 @@ constexpr UINT kInstalled = WM_APP + 1;       // an install ended (finish_instal
 constexpr UINT kRunExited = WM_APP + 2;       // the app's run ended (finish_run says how); lParam: new std::wstring (the app's name)
 constexpr UINT kInstallStarted = WM_APP + 3;  // lParam: new std::wstring (the app's name)
 constexpr UINT kRefresh = WM_APP + 4;         // the install helper changed the library
-constexpr UINT kStoreCatalog = WM_APP + 5;    // wParam: kCatalogList (lParam: new std::vector<StoreApp>), Done, Failed
-constexpr UINT kStoreProgress = WM_APP + 6;   // wParam: KB of the catalog received so far
-constexpr UINT kStoreIcon = WM_APP + 7;       // wParam: kIconFailed, Saved, Dropped; lParam: new std::string (package)
-constexpr UINT kStoreDownload = WM_APP + 8;   // wParam: percent, lParam: new std::string (package)
-constexpr UINT kStoreDownloaded = WM_APP + 9; // wParam: ok, lParam: new Download
+constexpr UINT kStoreAppChecked = WM_APP + 5;     // lParam: new StoreAppCheck (the Store's newest release, as read)
+constexpr UINT kStoreAppProgress = WM_APP + 6;    // wParam: percent of apk-store.apk downloaded
+constexpr UINT kStoreAppDownloaded = WM_APP + 7;  // wParam: a StoreAppDownload
 constexpr UINT kGmsDone = WM_APP + 10;       // the Google sign-in window closed; wParam: exit code, lParam: new std::wstring (stdout)
 constexpr UINT kRunReady = WM_APP + 11;       // the app's window is up; lParam: new std::wstring (the app's name)
 constexpr UINT kGmsAccount = WM_APP + 12;     // lParam: new std::wstring (the signed-in account, or empty)
@@ -149,11 +151,10 @@ constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look f
 constexpr UINT_PTR kMaintenanceTimer = 5;  // shown or hidden: is a maintenance window due? (maintenance.h)
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
-constexpr int kIdSearch = 100;
 enum Cmd { kCmdOpen = 200, kCmdStop, kCmdInfo, kCmdRemove };
 
 HINSTANCE g_inst;
-HWND g_main, g_search;
+HWND g_main;
 HFONT g_edit_font, g_mono_font;
 HBRUSH g_edit_brush, g_code_brush;
 float g_dpi = 96;
@@ -182,14 +183,11 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Installing…", L"מתקין…"},
         {L"Installing {0} of {1}", L"מתקין {0} מתוך {1}"},
         {L"Install app", L"התקנת אפליקציה"},
-        {L"No apps match “{0}”", L"אין אפליקציות שתואמות ל„{0}”"},
         {L"No apps installed yet", L"עדיין לא הותקנו אפליקציות"},
         {L"Logs", L"יומנים"},
         {L"Stop", L"עצירה"},
         {L"{0} running", L"{0} פועלות"},
         {L"Running", L"פועלת"},
-        {L"Clear the search", L"ניקוי החיפוש"},
-        {L"Check F-Droid for new apps", L"בדיקת אפליקציות חדשות ב-F-Droid"},
         {L"{0} app", L"אפליקציה אחת"},
         {L"{0} apps", L"{0} אפליקציות"},
         {L"Android apps", L"אפליקציות Android"},
@@ -283,7 +281,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Google Play closed", L"Google Play נסגרה"},
         {L"Google Play didn't start", L"Google Play לא נפתחה"},
         {L"Open Google Play", L"פתיחת Google Play"},
-        {L"Google Play opened in its own window.", L"Google Play נפתחה בחלון נפרד."},
         {L"Google's apps", L"האפליקציות של Google"},
         {L"Installed, {0}", L"מותקנת, {0}"},
         {L"Not installed.", L"לא מותקנת."},
@@ -381,30 +378,29 @@ const wchar_t* tr(const wchar_t* en) {
         {L"bytes", L"בתים"},
         {L"Library", L"ספרייה"},
         {L"Store", L"חנות"},
-        {L"Search F-Droid", L"חיפוש ב-F-Droid"},
-        {L"All categories", L"כל הקטגוריות"},
+        {L"Starting the Store…", L"מפעיל את החנות…"},
+        {L"Getting the Store…", L"מוריד את החנות…"},
+        {L"Downloading the Store… {0}%", L"מוריד את החנות… {0}%"},
+        {L"Installing the Store…", L"מתקין את החנות…"},
+        {L"Win.apk's own store, from its page on GitHub. This happens once.",
+         L"החנות של Win.apk, מהדף שלה ב-GitHub. זה קורה פעם אחת."},
+        {L"The Store couldn't be set up", L"לא ניתן היה להכין את החנות"},
+        {L"GitHub could not be reached, or did not answer. Check the internet connection, then try again later.",
+         L"לא ניתן היה להתחבר ל-GitHub, או שלא התקבלה תשובה. בדוק את החיבור לאינטרנט ונסה שוב מאוחר יותר."},
+        {L"GitHub lists no release of the Store that Win.apk can check.",
+         L"ב-GitHub אין גרסה של החנות ש-Win.apk יכולה לבדוק."},
+        {L"The downloaded file is not the one GitHub lists. It was deleted and not installed.",
+         L"הקובץ שהורד אינו זה ש-GitHub מפרט. הוא נמחק ולא הותקן."},
+        {L"Installing it failed. Its log says why.", L"ההתקנה נכשלה. היומן שלה מסביר למה."},
+        {L"The Store closed", L"החנות נסגרה"},
+        {L"The Store didn't start", L"החנות לא נפתחה"},
+        {L"Open the Store", L"פתיחת החנות"},
+        {L"The Store opened in its own window.", L"החנות נפתחה בחלון נפרד."},
+        {L"Google Play opened in its own window.", L"Google Play נפתחה בחלון נפרד."},
+        {L"It's part of Win.apk.", L"היא חלק מ-Win.apk."},
         {L"Install", L"התקנה"},
         {L"Update", L"עדכון"},
-        {L"Getting the app catalog from F-Droid…", L"מוריד את קטלוג האפליקציות מ-F-Droid…"},
-        {L"{0} MB so far. This happens once; later the store opens at once.", L"{0} MB עד עכשיו. זה קורה פעם אחת; בהמשך החנות תיפתח מיד."},
-        {L"Checking F-Droid for new apps…", L"בודק אם יש אפליקציות חדשות ב-F-Droid…"},
-        {L"F-Droid could not be reached", L"לא ניתן להתחבר ל-F-Droid"},
-        {L"Check the internet connection, then try again.", L"בדוק את החיבור לאינטרנט ונסה שוב."},
         {L"Try again", L"ניסיון חוזר"},
-        {L"Try other words, or every category.", L"נסה מילים אחרות, או את כל הקטגוריות."},
-        {L"Downloading {0}…", L"מוריד את {0}…"},
-        {L"Downloading…", L"מוריד…"},
-        {L"Downloading {0} failed. Check the internet connection, then try again.", L"ההורדה של {0} נכשלה. בדוק את החיבור לאינטרנט ונסה שוב."},
-        {L"F-Droid could not be checked for new apps.", L"לא ניתן היה לבדוק אם יש אפליקציות חדשות ב-F-Droid."},
-        {L"Details", L"פרטים"},
-        {L"Version", L"גרסה"},
-        {L"Size", L"גודל"},
-        {L"Updated", L"עודכנה"},
-        {L"License", L"רישיון"},
-        {L"Categories", L"קטגוריות"},
-        {L"Package", L"חבילה"},
-        {L"F-Droid page", L"הדף ב-F-Droid"},
-        {L"The app's description, screenshots and source code.", L"התיאור של האפליקציה, צילומי מסך וקוד המקור."},
         {L"unknown", L"לא ידוע"},
         {L"Allow", L"אישור"},
         {L"Don't allow", L"לא לאשר"},
@@ -481,7 +477,6 @@ const wchar_t* tr(const wchar_t* en) {
          L"ב-Windows אין הגדרות מערכת של Android ש-{0} תוכל לשנות; זה נחשב כמותר."},
         {L"{0} was stopped, as Android does when a permission is revoked.",
          L"{0} נעצרה, כפי ש-Android עושה כשהרשאה נשללת."},
-        {L"A newer version is out", L"יש גרסה חדשה יותר"},
         {L"Allow {0} to access music and audio on this PC?", L"לאפשר ל-{0} גישה למוזיקה ולאודיו במחשב הזה?"},
         {L"Allow {0} to access photos and videos on this PC?", L"לאפשר ל-{0} גישה לתמונות ולסרטונים במחשב הזה?"},
         {L"Allow {0} to access photos, media, and files on this PC?", L"לאפשר ל-{0} גישה לתמונות, למדיה ולקבצים במחשב הזה?"},
@@ -539,7 +534,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Google did not answer. Check the internet connection, then try again.", L"Google לא ענתה. יש לבדוק את החיבור לאינטרנט ולנסות שוב."},
         {L"Google sign-in", L"כניסה ל-Google"},
         {L"Hide details", L"הסתרת הפרטים"},
-        {L"In your library", L"בספרייה שלך"},
         {L"Installing {0}", L"מתקין את {0}"},
         {L"Installs asked for by apps", L"התקנות שאפליקציות ביקשו"},
         {L"It can change or delete photos, videos and music that other apps made, without asking you.", L"היא תוכל לשנות או למחוק תמונות, סרטונים ומוזיקה שאפליקציות אחרות יצרו, בלי לשאול אותך."},
@@ -550,7 +544,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Log - Win.apk", L"יומן - Win.apk"},
         {L"Manage", L"ניהול"},
         {L"No matches", L"אין התאמות"},
-        {L"Not installed", L"לא מותקנת"},
         {L"OK", L"אישור"},
         {L"On Windows such windows stay inside the app's own window.", L"ב-Windows חלונות כאלה נשארים בתוך החלון של האפליקציה."},
         {L"Open .apk, .apkm, .xapk and .apks files with Win.apk", L"פתיחת קובצי ‎.apk, ‎.apkm, ‎.xapk ו-‎.apks באמצעות Win.apk"},
@@ -769,11 +762,6 @@ std::wstring file_name_safe(std::wstring s) {
     return s.empty() ? L"App" : s;
 }
 
-std::wstring lower(std::wstring s) {
-    if (!s.empty()) CharLowerBuffW(&s[0], static_cast<DWORD>(s.size()));
-    return s;
-}
-
 std::wstring format_bytes(uintmax_t n) {
     const wchar_t* units[] = {tr(L"bytes"), L"KB", L"MB", L"GB"};
     double v = static_cast<double>(n);
@@ -804,14 +792,8 @@ std::wstring long_date(const FILETIME& when) {
     return buf;
 }
 
-// FILETIME counts 100 ns from 1601, Java's milliseconds from 1970.
+// FILETIME counts 100 ns from 1601, Unix time from 1970.
 constexpr unsigned long long kUnixEpochFiletime = 116444736000000000ull;
-
-std::wstring java_date(long long ms) {
-    if (ms <= 0) return tr(L"unknown");
-    const unsigned long long t = kUnixEpochFiletime + static_cast<unsigned long long>(ms) * 10000;
-    return long_date(FILETIME{static_cast<DWORD>(t), static_cast<DWORD>(t >> 32)});
-}
 
 // The version in launcher.rc, read from the program's own resource.
 std::wstring version() {
@@ -1146,12 +1128,15 @@ std::vector<App> library() {
 }
 
 // Google's Services Framework, Play services and Play Store are system components of Win.apk's Google services,
-// not apps the user opens: the library, its tiles and the shortcuts leave them out (installed_apps.json keeps
-// them, for the runtime and the system broker); their versions show on the Google services setup page, and
-// Google Play in the pane is the Play Store's one way in.
-bool system_package(const std::string& pkg) {
+// and the Store's app (store_app.h) one of Win.apk itself: not apps the user opens from the library. The library,
+// its tiles and the shortcuts leave them out (installed_apps.json keeps them, for the runtime and the system
+// broker); Google's versions show on the Google services setup page, Google Play in the pane is the Play Store's
+// one way in, and the Store in the pane the Store's.
+bool google_package(const std::string& pkg) {
     return pkg == "com.google.android.gsf" || pkg == "com.google.android.gms" || pkg == "com.android.vending";
 }
+
+bool system_package(const std::string& pkg) { return google_package(pkg) || pkg == winapk::launcher::kStorePackage; }
 
 bool system_app(const std::wstring& name) {
     const std::vector<std::string> p = package_of(name);
@@ -1531,7 +1516,7 @@ void expect_run_end(const std::wstring& name) {
 struct InstallJob {
     fs::path source;
     std::wstring name;
-    bool temporary;     // the store's download, removed once it is in the library
+    bool temporary;     // the Store's app as Win.apk downloaded it, removed once it is in the library
 };
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
@@ -1918,27 +1903,7 @@ DWORD WINAPI install_thread(void* param) {
 }
 
 // ---------------------------------------------------------------------------
-// The store: F-Droid's catalog, its icons and its APKs
-
-constexpr wchar_t kRepo[] = L"https://f-droid.org/repo/";
-// The SHA-256 of the certificate f-droid.org's repository signs its index with: the fingerprint F-Droid's client
-// pins for this repository (its default_repos.xml), and the one f-droid.org/docs publishes.
-constexpr char kFdroidSigner[] = "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab";
-// In 100 ns units; f-droid.org publishes a few times a day.
-constexpr unsigned long long kCatalogMaxAge = 6ull * 3600 * 10000000;
-
-fs::path store_dir() { return data_dir() / L"store"; }
-fs::path catalog_file() { return store_dir() / L"catalog.tsv"; }
-fs::path catalog_etag_file() { return store_dir() / L"catalog.etag"; }
-fs::path store_icon_file(const std::string& pkg) { return store_dir() / L"icons" / (utf8_to_wide(pkg) + L".png"); }
-fs::path downloads_dir() { return store_dir() / L"downloads"; }
-
-struct StoreApp {
-    std::string pkg, icon, apk, sha256;  // icon: a URL; apk: the file's name in the repo
-    std::wstring name, summary, name_he, summary_he, version, license;
-    std::vector<std::wstring> categories;
-    long long code = 0, size = 0, updated = 0;  // versionCode, bytes, ms since 1970
-};
+// HTTP: WinHTTP downloads, and a reader for the JSON GitHub answers with
 
 // A WinHTTP session; `agent` is the User-Agent its requests send.
 HINTERNET open_http_session(const wchar_t* agent) {
@@ -1948,7 +1913,7 @@ HINTERNET open_http_session(const wchar_t* agent) {
         s = WinHttpOpen(agent, WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     }
     if (s) {
-        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // the catalog is 70 MB of JSON, a fifth of that gzipped
+        DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;  // GitHub's JSON comes gzipped
         WinHttpSetOption(s, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
         DWORD per_server = 8;
         WinHttpSetOption(s, WINHTTP_OPTION_MAX_CONNS_PER_SERVER, &per_server, sizeof(per_server));
@@ -1957,8 +1922,7 @@ HINTERNET open_http_session(const wchar_t* agent) {
     return s;
 }
 
-// One WinHTTP session for the store, so the icons' requests reuse their
-// connections to f-droid.org rather than each making its own.
+// The default WinHTTP session, for a request that names none.
 HINTERNET http_session() {
     static const HINTERNET session = open_http_session(L"Win.apk");
     return session;
@@ -1967,8 +1931,8 @@ HINTERNET http_session() {
 // GETs `url` into `out`, through <out>.part so a broken download never looks
 // whole. With an `etag` the server may answer 304, not modified. `progress`
 // gets the bytes so far and the total (0 when unknown); `headers` are more
-// request headers ("Name: value", CRLF between); `session` defaults to the
-// store's. Returns the HTTP status, 0 when the server could not be reached or
+// request headers ("Name: value", CRLF between); `session` defaults to
+// http_session(). Returns the HTTP status, 0 when the server could not be reached or
 // the body broke off.
 int http_get(const std::wstring& url, const fs::path& out, const std::wstring& etag, std::wstring* new_etag,
              const std::function<void(uint64_t, uint64_t)>& progress, const std::wstring& headers = L"",
@@ -2062,7 +2026,7 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
     return status;
 }
 
-// The file's SHA-256 in lower-case hex, as F-Droid's index gives it.
+// The file's SHA-256 in lower-case hex, as GitHub's asset digests give it.
 std::string sha256_of(const fs::path& file) {
     std::string out;
     BCRYPT_ALG_HANDLE alg = nullptr;
@@ -2093,9 +2057,9 @@ std::string sha256_of(const fs::path& file) {
     return out;
 }
 
-// A pull parser for the one JSON file the store reads, F-Droid's
-// index-v1.json: it walks the 70 MB once without building a tree, and the
-// callers keep only the fields the store shows.
+// A pull parser for the JSON the launcher reads (GitHub's releases, the
+// installed-apps registry): it walks the text once without building a tree,
+// and the callers keep only the fields they need.
 struct Json {
     const char* p;
     const char* end;
@@ -2213,355 +2177,7 @@ struct Json {
         else if (p < end && *p == '[') array([this] { skip(); });
         else scalar(nullptr);
     }
-    std::vector<std::string> strings() {
-        std::vector<std::string> out;
-        array([&] {
-            out.emplace_back();
-            str(&out.back());
-        });
-        return out;
-    }
 };
-
-// One APK of an app in the index.
-struct IndexApk {
-    std::string file, sha256, version;
-    long long code = 0, size = 0;
-    bool arm_only = false;  // native code for arm64 and not x86_64: it runs, translated, but an x86_64 build is better
-};
-
-// The fields of index-v1.json's app entry the store keeps; the names and
-// summaries per language come from `localized` when the entry has none of
-// its own.
-struct IndexApp {
-    std::string pkg, name, summary, name_he, summary_he, icon, license, suggested, updated;
-    std::vector<std::string> categories;
-};
-
-void read_index_app(Json& j, IndexApp* a) {
-    std::string top_icon, any_icon_lang, any_icon;
-    std::map<std::string, std::pair<std::string, std::string>> names;  // language: name, summary
-    j.object([&](const std::string& k) {
-        if (k == "packageName") j.str(&a->pkg);
-        else if (k == "name") j.str(&a->name);
-        else if (k == "summary") j.str(&a->summary);
-        else if (k == "icon") j.str(&top_icon);
-        else if (k == "license") j.str(&a->license);
-        else if (k == "suggestedVersionCode") j.scalar(&a->suggested);
-        else if (k == "lastUpdated") j.scalar(&a->updated);
-        else if (k == "categories") a->categories = j.strings();
-        else if (k == "localized") {
-            j.object([&](const std::string& lang) {
-                std::string name, summary, icon;
-                j.object([&](const std::string& f) {
-                    if (f == "name") j.str(&name);
-                    else if (f == "summary") j.str(&summary);
-                    else if (f == "icon") j.str(&icon);
-                    else j.skip();
-                });
-                if (!icon.empty() && (any_icon.empty() || lang == "en-US")) any_icon_lang = lang, any_icon = icon;
-                names[lang] = {name, summary};
-            });
-        } else {
-            j.skip();
-        }
-    });
-    auto pick = [&](std::string* out, bool summary, std::initializer_list<const char*> langs, bool any) {
-        for (const char* lang : langs) {
-            const auto it = names.find(lang);
-            const std::string& v = it == names.end() ? std::string() : summary ? it->second.second : it->second.first;
-            if (out->empty() && !v.empty()) *out = v;
-        }
-        for (const auto& n : names) {
-            if (!any || !out->empty()) break;
-            *out = summary ? n.second.second : n.second.first;
-        }
-    };
-    pick(&a->name, false, {"en-US", "en", "en-GB"}, true);
-    pick(&a->summary, true, {"en-US", "en", "en-GB"}, true);
-    pick(&a->name_he, false, {"he", "iw", "he-IL", "iw-IL"}, false);
-    pick(&a->summary_he, true, {"he", "iw", "he-IL", "iw-IL"}, false);
-    if (!top_icon.empty()) a->icon = wide_to_utf8(kRepo) + "icons-240/" + top_icon;
-    else if (!any_icon.empty()) a->icon = wide_to_utf8(kRepo) + a->pkg + "/" + any_icon_lang + "/" + any_icon;
-}
-
-// An APK entry; false when it cannot run here: native code for neither
-// x86_64 nor arm64-v8a (Win.apk translates arm64), or no SHA-256 to check.
-bool read_index_apk(Json& j, IndexApk* apk) {
-    std::string hash_type, code, size;
-    std::vector<std::string> abis;
-    j.object([&](const std::string& k) {
-        if (k == "apkName") j.str(&apk->file);
-        else if (k == "hash") j.str(&apk->sha256);
-        else if (k == "hashType") j.str(&hash_type);
-        else if (k == "versionName") j.str(&apk->version);
-        else if (k == "versionCode") j.scalar(&code);
-        else if (k == "size") j.scalar(&size);
-        else if (k == "nativecode") abis = j.strings();
-        else j.skip();
-    });
-    apk->code = std::atoll(code.c_str());
-    apk->size = std::atoll(size.c_str());
-    const bool x64 = std::find(abis.begin(), abis.end(), "x86_64") != abis.end();
-    const bool arm64 = std::find(abis.begin(), abis.end(), "arm64-v8a") != abis.end();
-    apk->arm_only = arm64 && !x64;
-    return (abis.empty() || x64 || arm64) && hash_type == "sha256" && apk->sha256.size() == 64 && !apk->file.empty();
-}
-
-std::string tsv_field(std::string s) {
-    for (char& c : s) {
-        if (c == '\t' || c == '\n' || c == '\r') c = ' ';
-    }
-    return s;
-}
-
-// Turns index-v1.json into catalog.tsv: a line per app that can run here,
-// with the APK the store installs. That is F-Droid's suggested version (the
-// newest, unless it marks a newer one as not ready) and, where an app is
-// built per ABI, its x86_64 build. Returns the number of apps.
-size_t convert_index(const fs::path& json_file, const fs::path& out) {
-    std::string json;
-    {
-        std::ifstream f(json_file, std::ios::binary);
-        json.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
-    }
-    Json j{json.data(), json.data() + json.size()};
-    std::vector<IndexApp> apps;
-    std::map<std::string, std::vector<IndexApk>> apks;
-    j.object([&](const std::string& key) {
-        if (key == "apps") {
-            j.array([&] {
-                apps.emplace_back();
-                read_index_app(j, &apps.back());
-            });
-        } else if (key == "packages") {
-            j.object([&](const std::string& pkg) {
-                std::vector<IndexApk>& list = apks[pkg];
-                j.array([&] {
-                    IndexApk apk;
-                    if (read_index_apk(j, &apk)) list.push_back(apk);
-                });
-            });
-        } else {
-            j.skip();
-        }
-    });
-    if (!j.ok) return 0;
-    std::string text = "winapk-catalog 1\n";
-    size_t count = 0;
-    for (const IndexApp& a : apps) {
-        const auto it = apks.find(a.pkg);
-        if (a.pkg.empty() || a.name.empty() || it == apks.end() || it->second.empty()) continue;
-        const long long suggested = std::atoll(a.suggested.c_str());
-        const IndexApk* best = nullptr;
-        for (int pass = 0; pass < 2 && !best; ++pass) {  // the suggested version or older, else any
-            for (const IndexApk& apk : it->second) {
-                if (pass == 0 && suggested > 0 && apk.code > suggested) continue;
-                if (!best || apk.code > best->code) best = &apk;
-            }
-        }
-        if (best->arm_only) {
-            for (const IndexApk& apk : it->second) {
-                if (!apk.arm_only && apk.version == best->version) best = &apk;
-            }
-        }
-        std::string cats;
-        for (const std::string& c : a.categories) cats += (cats.empty() ? "" : ";") + c;
-        const std::string fields[] = {a.pkg, std::to_string(best->code), std::to_string(best->size), a.updated,
-                                      best->file, best->sha256, a.icon, best->version, a.license, cats,
-                                      a.name, a.summary, a.name_he, a.summary_he};
-        for (size_t i = 0; i < std::size(fields); ++i) text += (i ? "\t" : "") + tsv_field(fields[i]);
-        text += "\n";
-        ++count;
-    }
-    const fs::path tmp = out.wstring() + L".tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        f << text;
-        if (!f) return 0;
-    }
-    return count && MoveFileExW(tmp.c_str(), out.c_str(), MOVEFILE_REPLACE_EXISTING) ? count : 0;
-}
-
-std::vector<StoreApp> read_catalog() {
-    std::vector<StoreApp> out;
-    std::ifstream f(catalog_file(), std::ios::binary);
-    std::string line;
-    if (!std::getline(f, line) || line != "winapk-catalog 1") return out;
-    while (std::getline(f, line)) {
-        std::vector<std::string> v;
-        for (size_t from = 0;;) {
-            const size_t tab = line.find('\t', from);
-            v.push_back(line.substr(from, tab == std::string::npos ? std::string::npos : tab - from));
-            if (tab == std::string::npos) break;
-            from = tab + 1;
-        }
-        if (v.size() != 14) continue;
-        StoreApp a;
-        a.pkg = v[0];
-        a.code = std::atoll(v[1].c_str());
-        a.size = std::atoll(v[2].c_str());
-        a.updated = std::atoll(v[3].c_str());
-        a.apk = v[4];
-        a.sha256 = v[5];
-        a.icon = v[6];
-        a.version = utf8_to_wide(v[7]);
-        a.license = utf8_to_wide(v[8]);
-        for (size_t from = 0; from < v[9].size();) {
-            const size_t semi = (std::min)(v[9].find(';', from), v[9].size());
-            a.categories.push_back(utf8_to_wide(v[9].substr(from, semi - from)));
-            from = semi + 1;
-        }
-        a.name = utf8_to_wide(v[10]);
-        a.summary = utf8_to_wide(v[11]);
-        a.name_he = utf8_to_wide(v[12]);
-        a.summary_he = utf8_to_wide(v[13]);
-        out.push_back(std::move(a));
-    }
-    return out;
-}
-
-unsigned long long file_age(const fs::path& p) {
-    WIN32_FILE_ATTRIBUTE_DATA a{};
-    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a)) return ~0ull;
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    const auto t = [](const FILETIME& f) {
-        return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime;
-    };
-    return t(now) > t(a.ftLastWriteTime) ? t(now) - t(a.ftLastWriteTime) : 0;
-}
-
-void touch(const fs::path& p) {
-    HANDLE f = CreateFileW(p.c_str(), FILE_WRITE_ATTRIBUTES, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-    FILETIME now;
-    GetSystemTimeAsFileTime(&now);
-    SetFileTime(f, nullptr, nullptr, &now);
-    CloseHandle(f);
-}
-
-enum { kCatalogList, kCatalogDone, kCatalogFailed };
-
-// Shows the catalog kept from last time, then fetches F-Droid's index when
-// that is older than kCatalogMaxAge (or `param` asks to), unless the server
-// says it has not changed.
-DWORD WINAPI catalog_thread(void* param) {
-    const bool force = param != nullptr;
-    std::error_code ec;
-    fs::create_directories(store_dir(), ec);
-    // A kept catalog with no app in it (cut short, emptied) is none: it is fetched whole, without its ETag,
-    // which would only get "not modified" for the list that is missing.
-    std::vector<StoreApp> kept;
-    if (fs::exists(catalog_file(), ec)) kept = read_catalog();
-    const bool have = !kept.empty();
-    if (have) {
-        PostMessageW(g_main, kStoreCatalog, kCatalogList,
-                     reinterpret_cast<LPARAM>(new std::vector<StoreApp>(std::move(kept))));
-    }
-    int result = kCatalogDone;
-    if (!have || force || file_age(catalog_file()) > kCatalogMaxAge) {
-        std::wstring etag, new_etag;
-        if (have) {
-            std::ifstream f(catalog_etag_file(), std::ios::binary);
-            std::string s;
-            std::getline(f, s);
-            etag = utf8_to_wide(s);
-        }
-        const fs::path jar = store_dir() / L"index-v1.jar", raw = store_dir() / L"index-v1.json";
-        ULONGLONG last = 0;
-        const int status = http_get(std::wstring(kRepo) + L"index-v1.jar", jar, etag, &new_etag,
-                                    [&](uint64_t got, uint64_t) {
-                                        if (GetTickCount64() - last < 100) return;
-                                        last = GetTickCount64();
-                                        PostMessageW(g_main, kStoreProgress, static_cast<WPARAM>(got >> 10), 0);
-                                    });
-        // The index is read only out of the jar F-Droid's key signed (signed_jar.h); a catalog from anything
-        // else would name APKs, and their SHA-256s, that no one vouched for.
-        const bool verified =
-            status == 200 && winapk::launcher::verify_signed_jar(jar, "index-v1.json", kFdroidSigner, raw, nullptr);
-        if (status == 304) {
-            touch(catalog_file());
-        } else if (verified && convert_index(raw, catalog_file())) {
-            std::ofstream(catalog_etag_file(), std::ios::binary | std::ios::trunc) << wide_to_utf8(new_etag);
-            PostMessageW(g_main, kStoreCatalog, kCatalogList,
-                         reinterpret_cast<LPARAM>(new std::vector<StoreApp>(read_catalog())));
-        } else {
-            result = kCatalogFailed;
-        }
-        fs::remove(raw, ec);
-        fs::remove(jar, ec);
-    }
-    PostMessageW(g_main, kStoreCatalog, result, 0);
-    return 0;
-}
-
-enum { kIconFailed, kIconSaved, kIconDropped };
-
-// Icons are fetched by a few threads from a queue, the newest request first:
-// the cards on screen now come before those scrolled past.
-SRWLOCK g_icon_lock = SRWLOCK_INIT;
-CONDITION_VARIABLE g_icon_wake = CONDITION_VARIABLE_INIT;
-std::vector<std::pair<std::string, std::string>> g_icon_queue;  // package, URL
-int g_icon_threads = 0;
-
-DWORD WINAPI icon_thread(void*) {
-    for (;;) {
-        AcquireSRWLockExclusive(&g_icon_lock);
-        while (g_icon_queue.empty()) SleepConditionVariableSRW(&g_icon_wake, &g_icon_lock, INFINITE, 0);
-        const auto [pkg, url] = g_icon_queue.back();
-        g_icon_queue.pop_back();
-        ReleaseSRWLockExclusive(&g_icon_lock);
-        const bool ok = http_get(utf8_to_wide(url), store_icon_file(pkg), L"", nullptr, {}) == 200;
-        PostMessageW(g_main, kStoreIcon, ok ? kIconSaved : kIconFailed, reinterpret_cast<LPARAM>(new std::string(pkg)));
-    }
-}
-
-void request_icon(const std::string& pkg, const std::string& url) {
-    AcquireSRWLockExclusive(&g_icon_lock);
-    g_icon_queue.emplace_back(pkg, url);
-    if (g_icon_queue.size() > 48) {  // long scrolled past: asked for again if it comes back into view
-        PostMessageW(g_main, kStoreIcon, kIconDropped,
-                     reinterpret_cast<LPARAM>(new std::string(g_icon_queue.front().first)));
-        g_icon_queue.erase(g_icon_queue.begin());
-    }
-    if (g_icon_threads < 4) {
-        if (HANDLE t = CreateThread(nullptr, 0, icon_thread, nullptr, 0, nullptr)) {
-            CloseHandle(t);
-            ++g_icon_threads;
-        }
-    }
-    ReleaseSRWLockExclusive(&g_icon_lock);
-    WakeConditionVariable(&g_icon_wake);
-}
-
-struct Download {
-    std::string pkg, sha256;
-    std::wstring url, label;
-    fs::path file;
-};
-
-SRWLOCK g_download_lock = SRWLOCK_INIT;  // one download at a time; the installs after them go one at a time too
-
-DWORD WINAPI download_thread(void* param) {
-    std::unique_ptr<Download> d(static_cast<Download*>(param));
-    AcquireSRWLockExclusive(&g_download_lock);
-    int shown = -1;
-    const int status = http_get(d->url, d->file, L"", nullptr, [&](uint64_t got, uint64_t total) {
-        const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
-        if (pct == shown) return;
-        shown = pct;
-        PostMessageW(g_main, kStoreDownload, static_cast<WPARAM>(pct),
-                     reinterpret_cast<LPARAM>(new std::string(d->pkg)));
-    });
-    // The APK must be the one F-Droid's index names; anything else is not installed.
-    const bool ok = status == 200 && sha256_of(d->file) == d->sha256;
-    std::error_code ec;
-    if (!ok) fs::remove(d->file, ec);
-    ReleaseSRWLockExclusive(&g_download_lock);
-    PostMessageW(g_main, kStoreDownloaded, ok, reinterpret_cast<LPARAM>(d.release()));
-    return 0;
-}
 
 // ---------------------------------------------------------------------------
 // Software updates: the newest release on GitHub and its installer
@@ -3065,7 +2681,7 @@ std::unique_ptr<Gdiplus::Font> glyph_font(float size) {
 constexpr wchar_t kGlyphSettings[] = L"\uE713", kGlyphDownload[] = L"\uE896", kGlyphSearch[] = L"\uE721",
                   kGlyphChevron[] = L"\uE70D", kGlyphCheck[] = L"\uE73E", kGlyphError[] = L"\uE783",
                   kGlyphClock[] = L"\uE823", kGlyphStop[] = L"\uE71A", kGlyphLibrary[] = L"\uE8F1",
-                  kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710", kGlyphRefresh[] = L"\uE72C",
+                  kGlyphStore[] = L"\uE719", kGlyphAdd[] = L"\uE710",
                   kGlyphClear[] = L"\uE894", kGlyphLog[] = L"\uE8A5", kGlyphPackage[] = L"\uE7B8",
                   kGlyphChevronUp[] = L"\uE70E", kGlyphBack[] = L"\uE72B", kGlyphForward[] = L"\uE72A",
                   kGlyphContact[] = L"\uE77B", kGlyphPlay[] = L"\uE768", kGlyphInfo[] = L"\uE946",
@@ -3375,45 +2991,36 @@ float g_scroll = 0;
 bool g_drag_over = false, g_tracking = false;
 bool g_focus_visible = false;  // the selection was reached with the keyboard: it shows a focus ring
 
-// The library and the store share the window's scrolling (the store alone has the search box);
-// the view not shown keeps its own query and scroll position here.
-enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kStoreAppView, kGmsSetupView, kPlayView } g_view = kLibraryView;
+// The library's grid, a page (Settings, an app's details, the Google services setup), or an app shown in the window
+// (the Store, Google Play).
+enum View { kLibraryView, kStoreView, kSettingsView, kAppView, kGmsSetupView, kPlayView } g_view = kLibraryView;
 void set_view(View view);
-std::map<View, std::wstring> g_queries;  // the search of a grid view not shown
-std::map<View, float> g_scrolls;         // and its scroll position
 bool g_setup_from_settings = false;      // the Google services setup was opened from Settings (it goes back there)
 std::set<std::wstring> g_setup_names;    // installs the setup page started: system components, never a tile
 bool google_services_on();
 void open_google_play();
 
-struct StoreState {
-    std::vector<StoreApp> apps;  // the catalog, the most recently updated first
-    std::vector<int> shown;      // what the grid shows: the search and the category applied
-    std::wstring category;       // empty: every category
-    // The catalog's fetch: not asked for yet (the store was never opened), under way (catalog_thread), or
-    // over, well or not. `apps` may hold a list in any of them: the one kept from the last fetch.
-    enum class Fetch { kNotStarted, kLoading, kDone, kFailed } fetch = Fetch::kNotStarted;
-    bool loading() const { return fetch == Fetch::kLoading; }
-    // No list to show yet, and one is on its way (or will be, once the store is opened).
-    bool first_load() const { return apps.empty() && (fetch == Fetch::kLoading || fetch == Fetch::kNotStarted); }
-    uint64_t got_kb = 0;  // of the catalog, while it loads
-    std::map<std::string, std::pair<std::wstring, long long>> installed;  // package: library name, versionCode
-    std::map<std::string, int> downloads;                                  // package: percent, -1 waiting
-    std::map<std::string, std::unique_ptr<Gdiplus::Bitmap>> icons;         // rounded; null: none
-    std::set<std::string> icon_wait;                                       // being fetched
-} g_store;
-
-// Google Play in the window (see "Google Play, in the window" below).
-struct PlayState {
-    HWND panel = nullptr;  // the host panel over the content area; the Play Store's window is its child
-    std::wstring name;     // the Play Store's library name, while it runs (or last ran) in the panel
+// An app shown in the window (see "Apps in the window" below): the Store and Google Play.
+struct Embedded {
+    View view;              // the view it fills
+    const wchar_t* title;   // that view's title
+    const wchar_t* starting;  // under the spinner while it starts
+    HWND panel = nullptr;   // the host panel over the content area; the app's window is its child
+    std::wstring name;      // the app's library name, while it runs (or last ran) in the panel
     enum State { kIdle, kStarting, kShown, kClosed, kFailed } state = kIdle;
-} g_play;
+    bool up() const { return state == kStarting || state == kShown; }
+};
+Embedded g_store_app{kStoreView, L"Store", L"Starting the Store…"};
+Embedded g_play{kPlayView, L"Google Play", L"Starting Google Play…"};
+
+// Where getting and updating the Store's app stands (store_app.h). The library's thread only.
+winapk::launcher::StoreSetup g_store_setup;
 
 // What the mouse is over. kHitNav's `tile` is the pane's item: 0 Library, 1 Store, 2 Settings, 3 Google Play.
-enum HitKind { kHitNone, kHitNav, kHitAdd, kHitClear, kHitRefresh, kHitTile, kHitThumb, kHitTrack, kHitCategory,
-               kHitCard, kHitCardButton, kHitRetry, kHitInfoClose, kHitInfoLink, kHitBack, kHitPage, kHitAccount,
-               kHitPlayOpen, kHitPlayLog };
+// kHitRetry: the Store's Try again; kHitPanelOpen and kHitPanelLog: an app shown in the window that ended, opened again
+// or its log.
+enum HitKind { kHitNone, kHitNav, kHitAdd, kHitTile, kHitThumb, kHitTrack, kHitRetry, kHitInfoClose, kHitInfoLink,
+               kHitBack, kHitPage, kHitAccount, kHitPanelOpen, kHitPanelLog };
 enum NavItem { kNavLibrary, kNavStore, kNavSettings, kNavPlay, kNavCount };
 struct Hit {
     HitKind kind = kHitNone;
@@ -3428,12 +3035,12 @@ float g_thumb_y0 = 0, g_thumb_scroll0 = 0;
 // the content layer beside it, with the page's title and toolbar above the
 // grid, or a page (Settings, an app's details) in its place.
 struct Layout {
-    RectF rail, nav[kNavCount], content, title, account, search, clear, add, category, refresh, grid, drop, retry, infobar,
+    RectF rail, nav[kNavCount], content, title, account, add, grid, drop, retry, infobar,
         info_close, info_link,  // info_link: measured when the InfoBar is painted
-        play, play_open, play_log;  // Google Play's panel, and its Open and Show log once it closed
+        panel, panel_open, panel_log;  // an app shown in the window, and its Open and Show log once it closed
     bool compact = false;  // a narrow window: the pane shows icons only
     int cols = 1;
-    float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles or the store's cards
+    float tile_w = 0, tile_h = 0, gap = 0, content_h = 0, max_scroll = 0;  // the library's tiles
 } g_l;
 
 // The signed-in Google account the toolbar's account button shows; empty when there is none
@@ -3605,52 +3212,16 @@ void info(const std::wstring& text, StatusKind kind, const std::wstring& link = 
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
-// A store app's name and summary in Hebrew when F-Droid has them.
-const std::wstring& store_name(const StoreApp& a) { return g_rtl && !a.name_he.empty() ? a.name_he : a.name; }
-const std::wstring& store_summary(const StoreApp& a) {
-    return g_rtl && !a.summary_he.empty() ? a.summary_he : a.summary;
-}
+// Which library app has each package: an install of a package the library has updates that app, and Google's
+// apps and the Store are found by package.
+std::map<std::string, std::wstring> g_packages;  // package: library name
 
-// The icon kept from the store, fetched the first time a card asks for it; null meanwhile.
-Gdiplus::Bitmap* store_icon(const StoreApp& a) {
-    const auto it = g_store.icons.find(a.pkg);
-    if (it != g_store.icons.end()) return it->second.get();
-    if (g_store.icon_wait.count(a.pkg)) return nullptr;
-    std::error_code ec;
-    if (a.icon.empty() || fs::exists(store_icon_file(a.pkg), ec)) {
-        Gdiplus::Bitmap* raw = (g_store.icons[a.pkg] = rounded_icon(store_icon_file(a.pkg), ipx(56))).get();
-        return raw;
-    }
-    g_store.icon_wait.insert(a.pkg);
-    request_icon(a.pkg, a.icon);
-    return nullptr;
-}
-
-// Which packages the library has, and at which version, for the store's buttons.
-void scan_installed() {
-    g_store.installed.clear();
+void scan_packages() {
+    g_packages.clear();
     for (const App& app : g_apps) {
         const std::vector<std::string> p = package_of(app.name);
-        if (p.empty() || p[0].empty()) continue;
-        g_store.installed[p[0]] = {app.name, p.size() > 1 ? std::atoll(p[1].c_str()) : 0};
+        if (!p.empty() && !p[0].empty()) g_packages[p[0]] = app.name;
     }
-}
-
-enum Offer { kOfferInstall, kOfferUpdate, kOfferOpen, kOfferDownloading, kOfferInstalling };
-
-// What the store offers for an app: to install it, update it (the library's
-// version is older; unknown counts as current) or open it, or its progress.
-Offer offer_for(const StoreApp& a, int* percent = nullptr) {
-    const auto dl = g_store.downloads.find(a.pkg);
-    if (dl != g_store.downloads.end()) {
-        if (percent) *percent = dl->second;
-        return kOfferDownloading;
-    }
-    const auto it = g_store.installed.find(a.pkg);
-    const std::wstring name = it != g_store.installed.end() ? it->second.first : file_name_safe(utf8_to_wide(a.pkg));
-    if (is_pending(name)) return kOfferInstalling;
-    if (it == g_store.installed.end()) return kOfferInstall;
-    return it->second.second > 0 && a.code > it->second.second ? kOfferUpdate : kOfferOpen;
 }
 
 // ---------------------------------------------------------------------------
@@ -3660,11 +3231,6 @@ RectF tile_rect(int i) {
     const int col = i % g_l.cols, row = i / g_l.cols;
     return RectF(g_l.grid.X + px(8) + col * (g_l.tile_w + g_l.gap),
                  g_l.grid.Y + px(4) + row * (g_l.tile_h + g_l.gap) - g_scroll, g_l.tile_w, g_l.tile_h);
-}
-
-// The store card's button, in its bottom corner.
-RectF card_button(const RectF& card) {
-    return RectF(card.GetRight() - px(16) - px(104), card.GetBottom() - px(12) - px(32), px(104), px(32));
 }
 
 RectF thumb_rect() {
@@ -3689,13 +3255,13 @@ float measure(const std::wstring& s, const Gdiplus::Font* f) {
     return w;
 }
 
-void place_play_panel();
+void place_panels();
+bool panel_shows_log();
 
 void compute_layout() {
     RECT rc;
     GetClientRect(g_main, &rc);
     const float W = static_cast<float>(rc.right), H = static_cast<float>(rc.bottom);
-    const bool store = g_view == kStoreView;
 
     // The pane: the brand row, Library and Store (and Google Play under it while Google services are on),
     // Settings at the bottom.
@@ -3716,26 +3282,12 @@ void compute_layout() {
     const float m = px(24), cx = g_l.content.X + m, cw = g_l.content.Width - 2 * m;
     g_l.title = RectF(cx, px(20), cw, px(44));
     const float ch = px(32), cy = g_l.title.Y + (g_l.title.Height - ch) / 2;
-    float right = cx + cw;
-    if (store) {
-        g_l.refresh = RectF(right - ch, cy, ch, ch);
-        right = g_l.refresh.X - px(8);
-        const float category_w = g_store.apps.empty() ? 0 : (std::min)(px(180), cw * 0.28f);  // none without a catalog
-        g_l.category = RectF(right - category_w, cy, category_w, ch);
-        if (category_w > 0) right = g_l.category.X - px(8);
-    } else {
-        const float add_w = measure(tr(L"Install app"), g_f.body_semi.get()) + px(50);
-        g_l.add = RectF(right - add_w, cy, add_w, ch);
-        right = g_l.add.X - px(8);
-    }
-    // Only the store has a search box: the library is short enough to see whole.
-    const float search_w = store ? (std::min)(px(260), (std::max)(px(120), right - cx - px(220))) : 0;
-    g_l.search = RectF(right - search_w, cy, search_w, ch);
-    g_l.clear = RectF(g_l.search.GetRight() - px(30), cy + px(2), px(28), ch - px(4));
+    const float add_w = measure(tr(L"Install app"), g_f.body_semi.get()) + px(50);
+    g_l.add = RectF(cx + cw - add_w, cy, add_w, ch);
     const float top = g_l.title.GetBottom() + px(16);
     g_l.grid = RectF(cx - px(8), top, cw + px(16), (std::max)(0.0f, g_l.content.GetBottom() - top));
 
-    // The empty library's drop card, and the store's Try again.
+    // The empty library's drop card, and the Store's Try again.
     const float dw = (std::min)(px(520), g_l.grid.Width - px(32)), dh = px(200);
     const float dy = g_l.grid.Y + (std::max)(px(8), (g_l.grid.Height - dh) / 2 - px(40));
     g_l.drop = RectF(g_l.grid.X + (g_l.grid.Width - dw) / 2, dy, dw, dh);
@@ -3745,71 +3297,23 @@ void compute_layout() {
     g_l.info_close = RectF(g_l.infobar.GetRight() - px(40), g_l.infobar.Y + px(8), px(32), px(32));
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
                       g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
-    // Google Play: the Play Store's own window, a child of the panel under the title, edge to edge in the layer.
-    g_l.play = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
-    const bool play_log = g_play.state == PlayState::kFailed;  // Show log beside Open; else Open alone, centred
-    g_l.play_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (play_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
-    g_l.play_log = RectF(g_l.play_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
-    place_play_panel();
+    // The Store and Google Play: the app's own window, a child of the panel under the title, edge to edge in the
+    // layer. Once it ended (or the Store could not be set up), Show log beside Open; else Open alone, centred.
+    g_l.panel = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
+    const bool panel_log = panel_shows_log();
+    g_l.panel_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (panel_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
+    g_l.panel_log = RectF(g_l.panel_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
+    place_panels();
 
-    size_t items = g_tiles.size();
-    if (store) {  // cards, as many across as fit at 300 px or more
-        g_l.gap = px(8);
-        g_l.tile_h = px(112);
-        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (px(300) + g_l.gap)));
-        g_l.tile_w = (g_l.grid.Width - px(26) - (g_l.cols - 1) * g_l.gap) / g_l.cols;
-        items = g_store.shown.size();
-    } else {
-        g_l.tile_w = px(112);
-        g_l.tile_h = px(132);
-        g_l.gap = px(8);
-        g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (g_l.tile_w + g_l.gap)));
-    }
+    const size_t items = g_tiles.size();
+    g_l.tile_w = px(112);
+    g_l.tile_h = px(132);
+    g_l.gap = px(8);
+    g_l.cols = (std::max)(1, static_cast<int>((g_l.grid.Width - px(26) + g_l.gap) / (g_l.tile_w + g_l.gap)));
     const int rows = (static_cast<int>(items) + g_l.cols - 1) / g_l.cols;
     g_l.content_h = rows ? rows * (g_l.tile_h + g_l.gap) - g_l.gap + px(12) : 0;
     g_l.max_scroll = (std::max)(0.0f, g_l.content_h - g_l.grid.Height);
     clamp_scroll();
-    const int edit_h = ipx(20);
-    MoveWindow(g_search, static_cast<int>(g_l.search.X + px(32)),
-               static_cast<int>(g_l.search.Y + (g_l.search.Height - edit_h) / 2),
-               static_cast<int>(g_l.search.Width - px(32) - px(30)), edit_h, TRUE);
-}
-
-std::wstring query(View view) {
-    if (view != g_view) return g_queries[view];
-    wchar_t buf[256] = {};
-    GetWindowTextW(g_search, buf, 256);
-    return buf;
-}
-
-// The store's cards for the search and category: by name first (the exact
-// name, those starting with the words, then those containing them), then by summary or
-// package; with no search, the most recently updated first.
-void rebuild_store() {
-    const std::wstring q = lower(query(kStoreView));
-    std::vector<std::pair<int, int>> ranked;  // rank, index
-    for (size_t i = 0; i < g_store.apps.size(); ++i) {
-        const StoreApp& a = g_store.apps[i];
-        if (!g_store.category.empty() &&
-            std::find(a.categories.begin(), a.categories.end(), g_store.category) == a.categories.end()) {
-            continue;
-        }
-        int rank = 0;
-        if (!q.empty()) {
-            const std::wstring name = lower(store_name(a));
-            const size_t at = name.find(q);
-            if (name == q) rank = 0;
-            else if (at == 0) rank = 1;
-            else if (at != std::wstring::npos || lower(a.name).find(q) != std::wstring::npos) rank = 2;
-            else if (lower(store_summary(a)).find(q) != std::wstring::npos ||
-                     lower(utf8_to_wide(a.pkg)).find(q) != std::wstring::npos) rank = 3;
-            else continue;
-        }
-        ranked.emplace_back(rank, static_cast<int>(i));
-    }
-    std::stable_sort(ranked.begin(), ranked.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-    g_store.shown.clear();
-    for (const auto& r : ranked) g_store.shown.push_back(r.second);
 }
 
 void rebuild_tiles() {
@@ -3821,7 +3325,6 @@ void rebuild_tiles() {
     for (size_t i = 0; i < g_apps.size(); ++i) {
         if (!system_app(g_apps[i].name)) g_tiles.push_back({static_cast<int>(i), L""});
     }
-    rebuild_store();
     compute_layout();
     InvalidateRect(g_main, nullptr, FALSE);
 }
@@ -3842,7 +3345,7 @@ uint64_t g_library_stamp = 0;
 void refresh() {
     g_library_stamp = library_stamp();
     g_apps = library();
-    scan_installed();
+    scan_packages();
     g_icons.clear();
     if (!find_app(g_selected)) g_selected.clear();
     rebuild_tiles();
@@ -3875,11 +3378,12 @@ const App* selected() { return g_selected.empty() ? nullptr : find_app(g_selecte
 bool empty_library() { return g_view == kLibraryView && g_tiles.empty(); }
 
 bool page_view() {
-    return g_view == kSettingsView || g_view == kAppView || g_view == kStoreAppView || g_view == kGmsSetupView;
+    return g_view == kSettingsView || g_view == kAppView || g_view == kGmsSetupView;
 }
 
+Hit panel_hit(float x, float y);
+
 Hit hit_test(float x, float y) {
-    const bool store = g_view == kStoreView;
     for (int i = 0; i < kNavCount; ++i) {
         if (g_l.nav[i].Width > 0 && contains(g_l.nav[i], x, y)) return {kHitNav, i};
     }
@@ -3892,34 +3396,12 @@ Hit hit_test(float x, float y) {
         if (contains(g_l.content, x, y)) return {kHitPage, -1};
         return {};
     }
-    if (g_view == kPlayView) {  // the panel takes the mouse while it is up; once Google Play closed, its buttons
-        const bool ended = g_play.state == PlayState::kClosed || g_play.state == PlayState::kFailed;
-        if (ended && contains(g_l.play_open, x, y)) return {kHitPlayOpen, -1};
-        if (g_play.state == PlayState::kFailed && contains(g_l.play_log, x, y)) return {kHitPlayLog, -1};
-        return {};
-    }
-    if (store && !query(g_view).empty() && contains(g_l.clear, x, y)) return {kHitClear, -1};
-    if (!store && contains(g_l.add, x, y)) return {kHitAdd, -1};
-    if (store && contains(g_l.refresh, x, y)) return {kHitRefresh, -1};
-    if (store && !g_store.apps.empty() && contains(g_l.category, x, y)) return {kHitCategory, -1};
+    if (g_view == kPlayView || g_view == kStoreView) return panel_hit(x, y);
+    if (contains(g_l.add, x, y)) return {kHitAdd, -1};
     if (!contains(g_l.grid, x, y)) return {};
     if (empty_library()) return {};
     if (g_l.max_scroll > 0 && x >= g_l.grid.GetRight() - px(12)) {
         return {contains(inset(thumb_rect(), -px(4), 0), x, y) ? kHitThumb : kHitTrack, -1};
-    }
-    if (store) {
-        // Wherever paint_store_grid draws "Try again": no list, and none on its way.
-        if (g_store.apps.empty() && !g_store.first_load() && contains(g_l.retry, x, y)) return {kHitRetry, -1};
-        const int col = static_cast<int>((x - g_l.grid.X - px(8)) / (g_l.tile_w + g_l.gap));
-        const int row = static_cast<int>((y - g_l.grid.Y - px(4) + g_scroll) / (g_l.tile_h + g_l.gap));
-        const int i = row * g_l.cols + col;
-        if (col < 0 || col >= g_l.cols || row < 0 || i >= static_cast<int>(g_store.shown.size())) return {};
-        const RectF r = tile_rect(i);
-        if (!contains(r, x, y)) return {};
-        const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
-        const Offer offer = offer_for(a);
-        const bool button = offer == kOfferInstall || offer == kOfferUpdate;
-        return {button && contains(card_button(r), x, y) ? kHitCardButton : kHitCard, i};
     }
     for (size_t i = 0; i < g_tiles.size(); ++i) {
         if (contains(tile_rect(static_cast<int>(i)), x, y)) return {kHitTile, static_cast<int>(i)};
@@ -3954,7 +3436,7 @@ void paint_rail(Graphics& g) {
         // The setup page belongs to Google Play when that opened it, and to Settings when its switch did.
         const bool setup = g_view == kGmsSetupView;
         const bool on = (i == kNavLibrary && (g_view == kLibraryView || g_view == kAppView)) ||
-                        (i == kNavStore && (g_view == kStoreView || g_view == kStoreAppView)) ||
+                        (i == kNavStore && g_view == kStoreView) ||
                         (i == kNavSettings && (g_view == kSettingsView || (setup && g_setup_from_settings))) ||
                         (i == kNavPlay && ((setup && !g_setup_from_settings) || g_view == kPlayView));
         const bool hot = g_hot.kind == kHitNav && g_hot.tile == i;
@@ -3979,19 +3461,6 @@ void paint_layer(Graphics& g) {
     fill_round(g, card, px(kRadiusCard), g_t.layer);
     stroke_round(g, card, px(kRadiusCard), g_t.border);
     g.ResetClip();
-}
-
-void paint_search_box(Graphics& g) {
-    const bool focused = GetFocus() == g_search;
-    fill_round(g, g_l.search, px(kRadiusControl), g_t.card);
-    stroke_round(g, g_l.search, px(kRadiusControl), focused ? g_t.accent : g_t.border, focused ? px(1.5f) : 1);
-    draw_text(g, kGlyphSearch, g_f.glyph12.get(), g_t.text2,
-              RectF(g_l.search.X + px(10), g_l.search.Y, px(16), g_l.search.Height), kCenter);
-    if (!query(g_view).empty()) {
-        const bool hot = g_hot.kind == kHitClear;
-        if (hot) fill_round(g, g_l.clear, px(4), g_t.hover);
-        draw_text(g, kGlyphClear, g_f.glyph12.get(), hot ? g_t.text : g_t.text2, g_l.clear, kCenter);
-    }
 }
 
 fs::path gms_dir();
@@ -4048,47 +3517,18 @@ void paint_account_button(Graphics& g) {
 // The page's title and what it holds, with the toolbar's controls at the end of the row.
 void paint_toolbar(Graphics& g) {
     const RectF& t = g_l.title;
-    const bool store = g_view == kStoreView;
-    std::wstring sub;
-    if (store) {
-        if (g_store.first_load()) sub = tr(L"Getting the app catalog from F-Droid…");
-        else if (g_store.apps.empty()) sub = tr(L"F-Droid could not be reached");
-        else if (g_store.loading()) sub = tr(L"Checking F-Droid for new apps…");
-        else sub = app_count(g_store.shown.size()) + L"  ·  f-droid.org";
-    } else {
-        size_t shown = 0, running = 0;  // the library's own apps: not Google's system components
-        for (const Tile& tile : g_tiles) shown += tile.app >= 0;
-        for (const std::wstring& r : run_names()) running += !system_app(r);
-        sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
-        if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
-        if (const std::wstring now = current_install(); !now.empty()) {
-            sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(now)});
-        }
+    size_t shown = 0, running = 0;  // the library's own apps: not the system components
+    for (const Tile& tile : g_tiles) shown += tile.app >= 0;
+    for (const std::wstring& r : run_names()) running += !system_app(r);
+    std::wstring sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
+    if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
+    if (const std::wstring now = current_install(); !now.empty() && !system_app(now) && !g_setup_names.count(now)) {
+        sub += L"  ·  " + fmt(L"Installing {0}…", {job_label(now)});
     }
-    const float tw = (std::max)(px(60), g_l.search.X - t.X - px(16));
-    draw_text(g, tr(store ? L"Store" : L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
+    const float tw = (std::max)(px(60), g_l.add.X - t.X - px(16));
+    draw_text(g, tr(L"Library"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, tw, px(26)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), tw, px(18)));
-    if (store) {
-        paint_search_box(g);
-        if (!g_store.apps.empty()) {
-            const RectF& c = g_l.category;
-            const bool hot = g_hot.kind == kHitCategory;
-            fill_round(g, c, px(kRadiusControl), hot ? g_t.hover : g_t.card);
-            stroke_round(g, c, px(kRadiusControl), g_store.category.empty() ? g_t.border : g_t.accent);
-            const std::wstring text = g_store.category.empty() ? tr(L"All categories") : g_store.category;
-            draw_text(g, text, g_f.body.get(), g_store.category.empty() ? g_t.text2 : g_t.text,
-                      RectF(c.X + px(12), c.Y, c.Width - px(40), c.Height));
-            draw_text(g, kGlyphChevron, g_f.glyph12.get(), g_t.text2,
-                      RectF(c.GetRight() - px(30), c.Y, px(22), c.Height), kCenter);
-        }
-        if (g_store.loading() && !g_store.apps.empty()) {
-            spinner(g, inset(g_l.refresh, px(8), px(8)), g_t.accent, px(2));
-        } else {
-            draw_icon_button(g, g_l.refresh, kGlyphRefresh, g_hot.kind == kHitRefresh, g_t.text2);
-        }
-    } else {
-        draw_button(g, g_l.add, tr(L"Install app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
-    }
+    draw_button(g, g_l.add, tr(L"Install app"), g_hot.kind == kHitAdd, true, false, kGlyphAdd);
 }
 
 void paint_scrollbar(Graphics& g, bool nearby) {
@@ -4186,88 +3626,6 @@ void paint_grid(Graphics& g) {
     paint_scrollbar(g, g_hot.kind == kHitTile);
 }
 
-void paint_card(Graphics& g, int i) {
-    const RectF r = tile_rect(i);
-    if (r.GetBottom() < g_l.grid.Y || r.Y > g_l.grid.GetBottom()) return;
-    const StoreApp& a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(i)])];
-    const bool hot = (g_hot.kind == kHitCard || g_hot.kind == kHitCardButton) && g_hot.tile == i;
-    fill_round(g, r, px(kRadiusCard), hot ? mix(g_t.card, g_t.hover, 0.5f) : g_t.card);
-    stroke_round(g, r, px(kRadiusCard), hot ? mix(g_t.border, g_t.accent, 0.4f) : g_t.border);
-    const float s = px(56);
-    const RectF ir(r.X + px(16), r.Y + px(16), s, s);
-    draw_icon(g, store_icon(a), store_name(a), ir);
-    const float tx = ir.GetRight() + px(16), tw = r.GetRight() - px(16) - tx;
-    draw_text(g, store_name(a), g_f.body_semi.get(), g_t.text, RectF(tx, r.Y + px(14), tw, px(22)));
-    draw_text(g, store_summary(a), g_f.caption.get(), g_t.text2, RectF(tx, r.Y + px(37), tw, px(34)), kLeft, true,
-              false);
-    const RectF b = card_button(r);
-    std::wstring meta = a.version;
-    if (a.size > 0) meta += (meta.empty() ? L"" : L"  ·  ") + format_bytes(static_cast<uintmax_t>(a.size));
-    draw_text(g, meta, g_f.caption.get(), g_t.text2, RectF(r.X + px(16), b.Y, b.X - r.X - px(24), b.Height));
-    int percent = 0;
-    const bool on_button = g_hot.kind == kHitCardButton && g_hot.tile == i;
-    switch (offer_for(a, &percent)) {
-        case kOfferInstall: draw_button(g, b, tr(L"Install"), on_button, true, false); break;
-        case kOfferUpdate: draw_button(g, b, tr(L"Update"), on_button, true, false); break;
-        case kOfferOpen:  // installed: the library opens it
-            draw_text(g, kGlyphCheck, g_f.glyph12.get(), g_t.success, RectF(b.X, b.Y, px(20), b.Height), kCenter);
-            draw_text(g, tr(L"Installed"), g_f.caption.get(), g_t.text2, RectF(b.X + px(22), b.Y, b.Width - px(22), b.Height));
-            break;
-        case kOfferDownloading: {
-            fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 40 : 24));
-            if (percent > 0) {
-                const RectF bar(b.X, b.Y, b.Width * static_cast<float>(percent) / 100.0f, b.Height);
-                g.SetClip(bar, Gdiplus::CombineModeIntersect);
-                fill_round(g, b, px(kRadiusControl), with_alpha(g_t.accent, g_t.dark ? 120 : 80));
-                g.SetClip(g_l.grid);
-            }
-            draw_text(g, percent > 0 ? std::to_wstring(percent) + L"%" : std::wstring(tr(L"Waiting")),
-                      g_f.caption_semi.get(), g_t.text, b, kCenter);
-            break;
-        }
-        case kOfferInstalling: {
-            spinner(g, RectF(b.X + px(10), b.Y + b.Height / 2 - px(7), px(14), px(14)), g_t.accent, px(2));
-            draw_text(g, tr(L"Installing…"), g_f.caption.get(), g_t.text2,
-                      RectF(b.X + px(30), b.Y, b.Width - px(30), b.Height));
-            break;
-        }
-    }
-}
-
-void paint_store_grid(Graphics& g) {
-    const RectF& gr = g_l.grid;
-    if (g_store.shown.empty()) {
-        const std::wstring q = query(kStoreView);
-        if (g_store.first_load()) {
-            const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
-            spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
-            wchar_t mb[32];
-            swprintf(mb, 32, L"%.1f", static_cast<double>(g_store.got_kb) / 1024.0);
-            paint_empty(g, nullptr, tr(L"Getting the app catalog from F-Droid…"),
-                        fmt(L"{0} MB so far. This happens once; later the store opens at once.", {mb}));
-        } else if (g_store.apps.empty()) {
-            paint_empty(g, kGlyphError, tr(L"F-Droid could not be reached"),
-                        tr(L"Check the internet connection, then try again."));
-            draw_button(g, g_l.retry, tr(L"Try again"), g_hot.kind == kHitRetry, true, false);
-        } else {
-            paint_empty(g, kGlyphSearch, fmt(L"No apps match “{0}”", {q.empty() ? g_store.category : q}),
-                        tr(L"Try other words, or every category."));
-        }
-        return;
-    }
-    g.SetClip(gr);
-    const int first_row = (std::max)(0, static_cast<int>(g_scroll / (g_l.tile_h + g_l.gap)));
-    const int last = (std::min)(static_cast<int>(g_store.shown.size()),
-                                (first_row + static_cast<int>(gr.Height / (g_l.tile_h + g_l.gap)) + 2) * g_l.cols);
-    for (int i = first_row * g_l.cols; i < last; ++i) paint_card(g, i);
-    g.ResetClip();
-    if (g_scroll > 0) {
-        Gdiplus::Pen line(g_t.border, 1);
-        g.DrawLine(&line, gr.X + px(8), gr.Y, gr.GetRight() - px(8), gr.Y);
-    }
-    paint_scrollbar(g, g_hot.kind == kHitCard || g_hot.kind == kHitCardButton);
-}
-
 // While a file is dragged over the window the whole content area is the drop target.
 void paint_drop_overlay(Graphics& g) {
     const RectF& c = g_l.content;
@@ -4321,6 +3679,7 @@ void paint_infobar(Graphics& g) {
 void paint_page(Graphics& g);
 
 void paint_play(Graphics& g);
+void paint_store(Graphics& g);
 
 void paint_main(Graphics& g, float, float) {
     g.Clear(g_t.bg);
@@ -4330,19 +3689,21 @@ void paint_main(Graphics& g, float, float) {
         paint_page(g);
     } else if (g_view == kPlayView) {
         paint_play(g);
+    } else if (g_view == kStoreView) {
+        paint_store(g);
     } else {
         paint_toolbar(g);
-        if (g_view == kStoreView) paint_store_grid(g);
-        else paint_grid(g);
+        paint_grid(g);
     }
     if (g_drag_over) paint_drop_overlay(g);
     paint_infobar(g);
 }
 
-// Only what spins: an install's veil, the store's first load, Google Play starting. A running app's
+// Only what spins: an install's veil, the Store being set up, the Store or Google Play starting. A running app's
 // badge is still, and its starting window keeps its own timer, so a run alone repaints nothing.
 void update_timer() {
-    if (any_pending() || (g_view == kStoreView && g_store.loading()) || g_play.state == PlayState::kStarting) {
+    if (any_pending() || g_store_setup.busy() || g_store_app.state == Embedded::kStarting ||
+        g_play.state == Embedded::kStarting) {
         SetTimer(g_main, kAnimTimer, 16, nullptr);
     }
     else KillTimer(g_main, kAnimTimer);
@@ -4962,15 +4323,15 @@ std::wstring install_name(const fs::path& source) {
         while (!name.empty() && name.back() == L' ') name.pop_back();
         if (name.empty()) name = stem;
     }
-    const auto it = g_store.installed.find(wide_to_utf8(name));
-    if (it != g_store.installed.end() && find_app(it->second.first)) return it->second.first;
+    const auto it = g_packages.find(wide_to_utf8(name));
+    if (it != g_packages.end() && find_app(it->second)) return it->second;
     return file_name_safe(name);
 }
 
-// Queues an install. The store's (`from_store`) installs a download it then
-// removes, and shows its progress on the app's card rather than in the
-// install window.
-void install(const fs::path& source, std::wstring name = L"", bool from_store = false) {
+// Queues an install. A quiet one (the Store's own app, which Win.apk downloads)
+// installs a download it then removes, and shows no install window: the Store's
+// page shows its progress.
+void install(const fs::path& source, std::wstring name = L"", bool quiet = false) {
     if (name.empty()) name = install_name(source);
     if (is_pending(name)) return;  // the same file twice
     if (!any_pending() && !g_install_wnd) g_jobs.clear();
@@ -4979,11 +4340,10 @@ void install(const fs::path& source, std::wstring name = L"", bool from_store = 
     job.file = source.filename().wstring();
     job.update = find_app(name) != nullptr;
     g_jobs.push_back(job);
-    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, from_store}, 0,
-                             nullptr));
+    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, quiet}, 0, nullptr));
     update_timer();
     rebuild_tiles();
-    if (!from_store || g_install_wnd) show_install_window();
+    if (!quiet || g_install_wnd) show_install_window();
 }
 
 void add_from_dialog() {
@@ -5274,47 +4634,6 @@ void set_orientation(const App& app, int o) {
                kSuccess);
 }
 
-// Fetches the catalog: the one kept from last time at once, F-Droid's when
-// that is old or `force` asks for it.
-void store_start(bool force) {
-    if (g_store.loading()) return;
-    g_store.fetch = StoreState::Fetch::kLoading;
-    g_store.got_kb = 0;
-    if (HANDLE t = CreateThread(nullptr, 0, catalog_thread, force ? &g_store : nullptr, 0, nullptr)) CloseHandle(t);
-    else g_store.fetch = StoreState::Fetch::kFailed;  // no thread: nothing was fetched
-    update_timer();
-    InvalidateRect(g_main, nullptr, FALSE);
-}
-
-// The card's button: install or update the app (download, check, then the
-// library's install).
-void store_get(const StoreApp& a) {
-    const Offer offer = offer_for(a);
-    if (offer != kOfferInstall && offer != kOfferUpdate) return;
-    g_store.downloads[a.pkg] = -1;
-    CloseHandle(CreateThread(nullptr, 0, download_thread,
-                             new Download{a.pkg, a.sha256, std::wstring(kRepo) + utf8_to_wide(a.apk), store_name(a),
-                                          downloads_dir() / utf8_to_wide(a.apk)},
-                             0, nullptr));
-    info(fmt(L"Downloading {0}…", {store_name(a)}), kInfo);
-    InvalidateRect(g_main, nullptr, FALSE);
-}
-
-// A download is in and checked: it is installed as the app the library has
-// with that package, if any, else as a new one named after the package.
-void store_downloaded(const Download& d, bool ok) {
-    g_store.downloads.erase(d.pkg);
-    if (!ok) {
-        info(fmt(L"Downloading {0} failed. Check the internet connection, then try again.", {d.label}), kError);
-        return;
-    }
-    const auto it = g_store.installed.find(d.pkg);
-    const App* existing = it == g_store.installed.end() ? nullptr : find_app(it->second.first);
-    const std::wstring name = existing ? existing->name : file_name_safe(utf8_to_wide(d.pkg));
-    if (!existing) g_job_labels[name] = d.label;
-    install(d.file, name, true);
-}
-
 // ---------------------------------------------------------------------------
 // Menus
 //
@@ -5565,35 +4884,6 @@ int run_choice_menu(const std::vector<std::wstring>& choices, int current, const
     ClientToScreen(g_main, &pt);
     ClientToScreen(g_main, &top);
     return run_menu(m, pt, top.y);
-}
-
-// The categories, in a menu of a few columns so that a hundred of them fit.
-void choose_category() {
-    std::set<std::wstring, bool (*)(const std::wstring&, const std::wstring&)> all(
-        [](const std::wstring& a, const std::wstring& b) {
-            return CompareStringEx(LOCALE_NAME_USER_DEFAULT, NORM_IGNORECASE, a.c_str(), -1, b.c_str(), -1, nullptr,
-                                   nullptr, 0) == CSTR_LESS_THAN;
-        });
-    for (const StoreApp& a : g_store.apps) all.insert(a.categories.begin(), a.categories.end());
-    const std::vector<std::wstring> list(all.begin(), all.end());
-    HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | (g_store.category.empty() ? MF_CHECKED : 0), 1, tr(L"All categories"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    const size_t per_column = (std::max)(size_t{20}, (list.size() + 4) / 5);
-    for (size_t i = 0; i < list.size(); ++i) {
-        const UINT flags = MF_STRING | (list[i] == g_store.category ? MF_CHECKED : 0) |
-                           (i > 0 && i % per_column == 0 ? MF_MENUBARBREAK : 0);
-        AppendMenuW(menu, flags, i + 2, list[i].c_str());
-    }
-    POINT pt{static_cast<LONG>(g_l.category.X), static_cast<LONG>(g_l.category.GetBottom() + px(2))};
-    ClientToScreen(g_main, &pt);
-    const int pick = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_TOPALIGN | menu_flags(true), pt.x, pt.y, 0, g_main,
-                                    nullptr);
-    DestroyMenu(menu);
-    if (pick <= 0) return;
-    g_store.category = pick == 1 ? L"" : list[static_cast<size_t>(pick - 2)];
-    g_scroll = 0;
-    rebuild_tiles();
 }
 
 // ---------------------------------------------------------------------------
@@ -6277,8 +5567,8 @@ bool google_services_on() { return setting(L"GoogleServices", 0) != 0; }
 
 // The library app that is this package, or null.
 const App* app_of_package(const std::string& pkg) {
-    const auto it = g_store.installed.find(pkg);
-    return it == g_store.installed.end() ? nullptr : find_app(it->second.first);
+    const auto it = g_packages.find(pkg);
+    return it == g_packages.end() ? nullptr : find_app(it->second);
 }
 
 bool google_apps_ready() {
@@ -6681,111 +5971,146 @@ void show_gms_setup(bool from_settings) {
     open_page(kGmsSetupView, std::move(p));
 }
 
-// ---- Google Play, in the window ---------------------------------------------------
+// ---- Apps in the window: the Store and Google Play ------------------------------------------------
 //
-// Google Play in the pane opens the Play Store inside the library window, in the content area as the Store tab
-// is, not in a window of its own. The launcher puts a host panel (a child window, play_panel_proc) over the
-// content area under the title and starts the runtime with WINAPK_EMBED_PARENT=<the panel's handle> and
-// WINAPK_PHONE_SIZE the panel's size in dp; the runtime then makes its window a child of the panel
-// (win32_window.cpp, "embedded in the launcher") that fills it and follows its size, so the app lays itself
-// out for the area as it does for a resized window. The two processes' input queues are joined, as Windows
-// does for any parent and child, so the panel gives the app the keyboard focus when it is shown.
+// The Store and Google Play in the pane open their app inside the library window, in the content area, not in a
+// window of its own. The launcher puts a host panel (a child window, panel_proc) over the content area under the
+// title and starts the runtime with WINAPK_EMBED_PARENT=<the panel's handle> and WINAPK_PHONE_SIZE the panel's
+// size in dp; the runtime then makes its window a child of the panel (win32_window.cpp, "embedded in the
+// launcher") that fills it and follows its size, so the app lays itself out for the area as it does for a resized
+// window. The two processes' input queues are joined, as Windows does for any parent and child, so the panel gives
+// the app the keyboard focus when it is shown.
 //
-// Leaving for another tab hides the panel and the app keeps running, as a phone keeps an app in the
-// background; Google Play again shows it at once. Closing the library window stops it. If it exits, the area
-// says so, with Open Google Play (and Show log when it never came up). If the runtime could not embed its
-// window (an older runtime, or one already running in its own window), the window is a normal one: the
-// launcher sees the panel has no child once the app is up, says so and leaves the window as it is.
+// Leaving for another tab hides the panel and the app keeps running, as a phone keeps an app in the background;
+// its item again shows it at once. Closing the library window stops it. If it exits, the area says so, with Open
+// (and Show log when it never came up). If the runtime could not embed its window (an older runtime, or one
+// already running in its own window), the window is a normal one: the launcher sees the panel has no child once
+// the app is up, says so and leaves the window as it is.
 
-constexpr wchar_t kPlayPanelClass[] = L"WinApkPlayPanel";
+constexpr wchar_t kPanelClass[] = L"WinApkAppPanel";
 
-HWND play_window() { return g_play.panel ? GetWindow(g_play.panel, GW_CHILD) : nullptr; }
+HWND embedded_window(const Embedded& e) { return e.panel ? GetWindow(e.panel, GW_CHILD) : nullptr; }
 
-// The panel's place and visibility: over the content under the title while Google Play is the view and the app
-// is starting or up.
-void place_play_panel() {
-    if (!g_play.panel) return;
-    const RectF& r = g_l.play;
-    MoveWindow(g_play.panel, static_cast<int>(r.X), static_cast<int>(r.Y), static_cast<int>(r.Width),
-               static_cast<int>(r.Height), TRUE);
-    const bool show = g_view == kPlayView &&
-                      (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
-    if (show != (IsWindowVisible(g_play.panel) != FALSE)) ShowWindow(g_play.panel, show ? SW_SHOW : SW_HIDE);
+// The app in the window that runs as `name`, or null.
+Embedded* embedded_of(const std::wstring& name) {
+    for (Embedded* e : {&g_store_app, &g_play}) {
+        if (!e->name.empty() && e->name == name) return e;
+    }
+    return nullptr;
 }
 
-// Gives the app the keyboard while Google Play is the view.
-void focus_play() {
-    if (g_view != kPlayView) return;
-    if (HWND w = play_window()) SetFocus(w);
+// The app the view is, while the view is the Store or Google Play.
+Embedded* shown_embedded() {
+    if (g_view == kStoreView) return &g_store_app;
+    if (g_view == kPlayView) return &g_play;
+    return nullptr;
+}
+
+// Each panel's place and visibility: over the content under the title while its view is shown and the app is
+// starting or up.
+void place_panels() {
+    const RectF& r = g_l.panel;
+    for (Embedded* e : {&g_store_app, &g_play}) {
+        if (!e->panel) continue;
+        MoveWindow(e->panel, static_cast<int>(r.X), static_cast<int>(r.Y), static_cast<int>(r.Width),
+                   static_cast<int>(r.Height), TRUE);
+        const bool show = g_view == e->view && e->up();
+        if (show != (IsWindowVisible(e->panel) != FALSE)) ShowWindow(e->panel, show ? SW_SHOW : SW_HIDE);
+    }
+}
+
+// Gives the shown app the keyboard.
+void focus_embedded() {
+    if (Embedded* e = shown_embedded()) {
+        if (HWND w = embedded_window(*e)) SetFocus(w);
+    }
 }
 
 // The app's window fills the panel. Asynchronous: a busy app never holds the launcher's thread up.
-void fit_play_window() {
-    HWND w = play_window();
+void fit_embedded_window(const Embedded& e) {
+    HWND w = embedded_window(e);
     if (!w) return;
     RECT rc;
-    GetClientRect(g_play.panel, &rc);
+    GetClientRect(e.panel, &rc);
     SetWindowPos(w, nullptr, 0, 0, rc.right, rc.bottom, SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS);
 }
 
-LRESULT CALLBACK play_panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+LRESULT CALLBACK panel_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_NCCREATE) {
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                          reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+    }
+    Embedded* e = reinterpret_cast<Embedded*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (!e) return DefWindowProcW(hwnd, msg, wp, lp);
     switch (msg) {
         case WM_ERASEBKGND: return 1;
         case WM_PAINT:  // under the app's window: the spinner until it is up
-            buffered_paint(hwnd, [](Graphics& g, float w, float h) {
+            buffered_paint(hwnd, [e](Graphics& g, float w, float h) {
                 g.Clear(g_t.layer);
-                if (g_play.state != PlayState::kStarting) return;
+                if (e->state != Embedded::kStarting) return;
                 const float s = px(32), cy = (std::min)(h / 2, px(220));
                 spinner(g, RectF((w - s) / 2, cy - px(48), s, s), g_t.accent, px(3));
-                draw_text(g, tr(L"Starting Google Play…"), g_f.body.get(), g_t.text2, RectF(0, cy, w, px(24)), kCenter);
+                draw_text(g, tr(e->starting), g_f.body.get(), g_t.text2, RectF(0, cy, w, px(24)), kCenter);
             });
             return 0;
-        case WM_SIZE: fit_play_window(); return 0;
+        case WM_SIZE: fit_embedded_window(*e); return 0;
         case WM_PARENTNOTIFY:  // the runtime made its window: it fills the panel at once
-            if (LOWORD(wp) == WM_CREATE) fit_play_window();
+            if (LOWORD(wp) == WM_CREATE) fit_embedded_window(*e);
             return 0;
-        case WM_SETFOCUS: focus_play(); return 0;
+        case WM_SETFOCUS: focus_embedded(); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-void ensure_play_panel() {
-    if (g_play.panel) return;
+void ensure_panel(Embedded& e) {
+    if (e.panel) return;
     static bool registered = false;
     if (!registered) {
         WNDCLASSEXW wc{sizeof(wc)};
-        wc.lpfnWndProc = play_panel_proc;
+        wc.lpfnWndProc = panel_proc;
         wc.hInstance = g_inst;
         wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        wc.lpszClassName = kPlayPanelClass;
+        wc.lpszClassName = kPanelClass;
         RegisterClassExW(&wc);
         registered = true;
     }
     // WS_EX_NOINHERITLAYOUT: the panel is mirrored with the window in Hebrew, the app's window in it never (the
     // app lays out its own right to left).
-    g_play.panel = CreateWindowExW(layout_style() | WS_EX_NOINHERITLAYOUT | WS_EX_CONTROLPARENT, kPlayPanelClass,
-                                   L"Google Play", WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, g_main,
-                                   nullptr, g_inst, nullptr);
+    e.panel = CreateWindowExW(layout_style() | WS_EX_NOINHERITLAYOUT | WS_EX_CONTROLPARENT, kPanelClass, e.title,
+                              WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS, 0, 0, 1, 1, g_main, nullptr, g_inst, &e);
 }
 
-void start_play(const App& store) {
-    ensure_play_panel();
-    if (!g_play.panel) {  // no panel: Google Play in its own window, as any app
-        launch(store);
+void start_embedded(Embedded& e, const App& app) {
+    ensure_panel(e);
+    if (!e.panel) {  // no panel: the app in its own window, as any app
+        launch(app);
         return;
     }
     compute_layout();
-    const int w = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Width), 96, static_cast<int>(g_dpi)));
-    const int h = (std::max)(1, MulDiv(static_cast<int>(g_l.play.Height), 96, static_cast<int>(g_dpi)));
-    g_play.name = store.name;
-    g_play.state = PlayState::kStarting;
-    begin_run(store.name);  // open_google_play starts it only when it has no run
-    auto* job = new RunJob{store.name, store.apk, {}};
-    job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(g_play.panel)),
+    const int w = (std::max)(1, MulDiv(static_cast<int>(g_l.panel.Width), 96, static_cast<int>(g_dpi)));
+    const int h = (std::max)(1, MulDiv(static_cast<int>(g_l.panel.Height), 96, static_cast<int>(g_dpi)));
+    e.name = app.name;
+    e.state = Embedded::kStarting;
+    begin_run(app.name);  // open_store and open_google_play start it only when it has no run
+    auto* job = new RunJob{app.name, app.apk, {}};
+    job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(e.panel)),
                 L"WINAPK_PHONE_SIZE=" + std::to_wstring(w) + L"x" + std::to_wstring(h)};
     CloseHandle(CreateThread(nullptr, 0, run_thread, job, 0, nullptr));
-    place_play_panel();
+    place_panels();
     update_timer();
+}
+
+// Shows `app` in the window as `e`: at once when it is there already, else started there; an app running in a
+// window of its own is brought forward instead.
+void show_embedded(Embedded& e, const App& app) {
+    const bool here = e.name == app.name && e.up();
+    if (!here && run_active(app.name)) {
+        bring_forward(app.name);
+        return;
+    }
+    set_view(e.view);
+    if (!here) start_embedded(e, app);
+    focus_embedded();
 }
 
 // Google Play in the pane: the Play Store in the window once the three apps are installed, else the setup.
@@ -6795,62 +6120,388 @@ void open_google_play() {
         show_gms_setup(false);
         return;
     }
-    const bool here = g_play.name == store->name &&
-                      (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown);
-    if (!here && run_active(store->name)) {  // running in a window of its own
-        bring_forward(store->name);
-        return;
-    }
-    set_view(kPlayView);
-    if (!here) start_play(*store);
-    focus_play();
+    show_embedded(g_play, *store);
 }
 
 // The app's window is up (kRunReady): in the panel, or, when the runtime did not embed it, on its own.
-void play_ready() {
-    if (play_window()) {
-        g_play.state = PlayState::kShown;
-        InvalidateRect(g_play.panel, nullptr, FALSE);
-        fit_play_window();
-        place_play_panel();
-        focus_play();
+void embedded_ready(Embedded& e) {
+    if (embedded_window(e)) {
+        e.state = Embedded::kShown;
+        InvalidateRect(e.panel, nullptr, FALSE);
+        fit_embedded_window(e);
+        place_panels();
+        if (g_view == e.view) focus_embedded();
     } else {
-        g_play.state = PlayState::kIdle;
-        g_play.name.clear();
-        place_play_panel();
-        if (g_view == kPlayView) set_view(kLibraryView);
-        info(tr(L"Google Play opened in its own window."), kInfo);
+        e.state = Embedded::kIdle;
+        e.name.clear();
+        place_panels();
+        if (g_view == e.view) set_view(kLibraryView);
+        info(tr(&e == &g_store_app ? L"The Store opened in its own window." : L"Google Play opened in its own window."),
+             kInfo);
     }
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
 }
 
-// The Play Store's runtime ended (kRunExited); `failed`: before its window came up, and not stopped by the
-// launcher (the window closing), which is simply over.
-void play_exited(bool failed) {
-    g_play.state = failed ? PlayState::kFailed : PlayState::kClosed;
+void store_app_may_install();
+
+// The app's runtime ended (kRunExited); `failed`: before its window came up, and not stopped by the launcher (the
+// window closing), which is simply over.
+void embedded_exited(Embedded& e, bool failed) {
+    e.state = failed ? Embedded::kFailed : Embedded::kClosed;
     compute_layout();
     update_timer();
     InvalidateRect(g_main, nullptr, FALSE);
+    if (&e == &g_store_app) store_app_may_install();  // an update of the Store waited for it to stop
 }
 
-// The view under the panel: the title, and once Google Play closed, what happened and Open Google Play.
-void paint_play(Graphics& g) {
+// The view's title, and under it what it is starting or the app's version.
+void paint_embedded_title(Graphics& g, const Embedded& e, const App* app, const std::wstring& doing) {
     const RectF& t = g_l.title;
-    std::wstring sub;
-    if (g_play.state == PlayState::kStarting) {
-        sub = tr(L"Starting Google Play…");
-    } else if (const App* store = app_of_package("com.android.vending")) {
-        const std::vector<std::string> p = package_of(store->name);
+    std::wstring sub = doing;
+    if (sub.empty() && e.state == Embedded::kStarting) sub = tr(e.starting);
+    if (sub.empty() && app) {
+        const std::vector<std::string> p = package_of(app->name);
         if (p.size() > 2 && !p[2].empty()) sub = fmt(L"Version {0}", {utf8_to_wide(p[2])});
     }
-    draw_text(g, tr(L"Google Play"), g_f.title.get(), g_t.text, RectF(t.X, t.Y, t.Width, px(26)));
+    draw_text(g, tr(e.title), g_f.title.get(), g_t.text, RectF(t.X, t.Y, t.Width, px(26)));
     draw_text(g, sub, g_f.caption.get(), g_t.text2, RectF(t.X, t.Y + px(26), t.Width, px(18)));
-    const bool failed = g_play.state == PlayState::kFailed;
-    if (!failed && g_play.state != PlayState::kClosed) return;
-    paint_empty(g, kGlyphPlay, tr(failed ? L"Google Play didn't start" : L"Google Play closed"), L"");
-    draw_button(g, g_l.play_open, tr(L"Open Google Play"), g_hot.kind == kHitPlayOpen, true, false);
-    if (failed) draw_button(g, g_l.play_log, tr(L"Show log"), g_hot.kind == kHitPlayLog, false, false);
+}
+
+// Under the panel once the app ended: what happened, its Open, and Show log when it never came up.
+void paint_embedded_end(Graphics& g, const Embedded& e, const wchar_t* glyph, const wchar_t* closed,
+                        const wchar_t* failed_to_start, const wchar_t* open) {
+    const bool failed = e.state == Embedded::kFailed;
+    if (!failed && e.state != Embedded::kClosed) return;
+    paint_empty(g, glyph, tr(failed ? failed_to_start : closed), L"");
+    draw_button(g, g_l.panel_open, tr(open), g_hot.kind == kHitPanelOpen, true, false);
+    if (failed) draw_button(g, g_l.panel_log, tr(L"Show log"), g_hot.kind == kHitPanelLog, false, false);
+}
+
+// The view under Google Play's panel.
+void paint_play(Graphics& g) {
+    paint_embedded_title(g, g_play, app_of_package("com.android.vending"), L"");
+    paint_embedded_end(g, g_play, kGlyphPlay, L"Google Play closed", L"Google Play didn't start", L"Open Google Play");
+}
+
+// ---- the Store ---------------------------------------------------------------------------------------------
+//
+// The Store is Win.apk's own store app (israel2176/win.apk-store), a system component as Google's three apps are:
+// no tile, no shortcut, the Store item its one way in. The first opening of the Store item finds no store app: the
+// newest release is read from GitHub's REST API (GET /repos/israel2176/win.apk-store/releases/latest), its
+// apk-store.apk downloaded and kept only at the size and SHA-256 GitHub lists for it (store_app.h), then installed
+// quietly (install(..., quiet)); the page shows each step, then the app. The daily update check reads the release
+// again, and a release whose apk-store.apk is not the one installed (store-app\installed.sha256) is downloaded and
+// installed the same way, once the store app is not running. Nothing of what the user does is sent: the request is
+// GitHub's public list of releases.
+//
+// What the store app installs goes through the install helper (helper_main): the confirmation, the progress and
+// "App installed." with Open and Done, and the installer of record its runtime writes (PackageInstallerBackend).
+// Its "Install unknown apps" is allowed from its first install (grant_builtin_store), as a device's preinstalled
+// store is; the user's later answer to that switch is kept across its updates.
+
+constexpr wchar_t kStoreReleaseUrl[] = L"https://api.github.com/repos/israel2176/win.apk-store/releases/latest";
+
+fs::path store_app_dir() { return data_dir() / L"store-app"; }
+fs::path store_app_download() { return store_app_dir() / winapk::launcher::kStoreAsset; }
+fs::path store_app_sha_file() { return store_app_dir() / L"installed.sha256"; }
+
+// The release's apk-store.apk, as the check read it.
+struct StoreRelease {
+    std::wstring tag, url;
+    std::string sha256;
+    uint64_t size = 0;
+};
+
+// One check, from the library's thread to its thread and back (kStoreAppChecked).
+struct StoreAppCheck {
+    bool reached = false;  // GitHub answered with the release
+    bool found = false;    // it has an apk-store.apk with GitHub's SHA-256 of it
+    StoreRelease release;
+};
+
+// The Store's release being downloaded or waiting to be installed: the library's thread only.
+StoreRelease g_store_release;
+
+std::string installed_store_sha() {
+    std::ifstream f(store_app_sha_file(), std::ios::binary);
+    std::string s;
+    std::getline(f, s);
+    return s;
+}
+
+DWORD WINAPI store_app_check_thread(void* param) {
+    std::unique_ptr<StoreAppCheck> c(static_cast<StoreAppCheck*>(param));
+    const fs::path file = store_app_dir() / L"release.json";
+    const int status = http_get(kStoreReleaseUrl, file, L"", nullptr, {},
+                                L"Accept: application/vnd.github+json\r\nX-GitHub-Api-Version: 2022-11-28",
+                                updater_session());
+    if (status == 200) {
+        std::ifstream f(file, std::ios::binary);
+        const std::string json((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        f.close();
+        Json j{json.data(), json.data() + json.size()};
+        auto text = [&j](std::string* out) {  // a string, or skips a null
+            j.ws();
+            if (j.p < j.end && *j.p == '"') j.str(out);
+            else j.skip();
+        };
+        winapk::launcher::ListedRelease l;
+        std::string url;
+        j.object([&](const std::string& key) {
+            std::string v;
+            if (key == "tag_name") {
+                text(&v);
+                l.tag = utf8_to_wide(v);
+            } else if (key == "draft" || key == "prerelease") {
+                j.scalar(&v);
+                (key == "draft" ? l.draft : l.prerelease) = v == "true";
+            } else if (key == "assets") {
+                j.array([&] {
+                    std::string name, link, size, digest, state;
+                    j.object([&](const std::string& k) {
+                        if (k == "name") text(&name);
+                        else if (k == "browser_download_url") text(&link);
+                        else if (k == "size") j.scalar(&size);
+                        else if (k == "digest") text(&digest);
+                        else if (k == "state") text(&state);
+                        else j.skip();
+                    });
+                    if (utf8_to_wide(name) == winapk::launcher::kStoreAsset && !link.empty() && !l.asset) {
+                        l.asset = true;
+                        l.asset_state = state;
+                        l.digest = digest;
+                        l.size = std::strtoull(size.c_str(), nullptr, 10);
+                        url = link;
+                    }
+                });
+            } else {
+                j.skip();
+            }
+        });
+        c->reached = j.ok;
+        // Only an https link on GitHub: the digest is GitHub's, so the file must come from GitHub too.
+        const bool github = url.rfind("https://github.com/", 0) == 0;
+        c->found = j.ok && !l.draft && github && winapk::launcher::store_asset_checkable(l);
+        if (c->found) c->release = {l.tag, utf8_to_wide(url), winapk::launcher::asset_sha256(l.digest), l.size};
+    }
+    std::error_code ec;
+    fs::remove(file, ec);
+    StoreAppCheck* out = c.release();
+    if (!PostMessageW(g_main, kStoreAppChecked, 0, reinterpret_cast<LPARAM>(out))) delete out;
+    return 0;
+}
+
+enum StoreAppDownload : WPARAM { kStoreDownloadBroke, kStoreDownloadUnverified, kStoreDownloadOk };
+
+// Downloads the release's apk-store.apk and keeps it only at the release's size and SHA-256.
+DWORD WINAPI store_app_download_thread(void* param) {
+    std::unique_ptr<StoreRelease> r(static_cast<StoreRelease*>(param));
+    const fs::path file = store_app_download();
+    int shown = -1;
+    const int status = http_get(r->url, file, L"", nullptr, [&](uint64_t got, uint64_t total) {
+        if (!total) total = r->size;
+        const int pct = total ? static_cast<int>((std::min)(got * 100 / total, uint64_t{99})) : 0;
+        if (pct == shown) return;
+        shown = pct;
+        PostMessageW(g_main, kStoreAppProgress, static_cast<WPARAM>(pct), 0);
+    }, L"", updater_session());
+    StoreAppDownload result = kStoreDownloadBroke;
+    if (status == 200) {
+        std::error_code ec;
+        uint64_t size = fs::file_size(file, ec);
+        if (ec) size = 0;
+        // The size first: a file of another size is refused without being hashed.
+        const std::string sha = size == r->size ? sha256_of(file) : std::string();
+        result = winapk::launcher::judge_store_file(size, sha, r->size, r->sha256) == winapk::launcher::StoreFile::kOk
+                     ? kStoreDownloadOk
+                     : kStoreDownloadUnverified;
+        if (result != kStoreDownloadOk) fs::remove(file, ec);
+    }
+    PostMessageW(g_main, kStoreAppDownloaded, result, 0);
+    return 0;
+}
+
+const App* store_app() { return app_of_package(winapk::launcher::kStorePackage); }
+
+// The library name the Store's app has, or is installed under.
+std::wstring store_app_name() {
+    const App* app = store_app();
+    return app ? app->name : file_name_safe(utf8_to_wide(winapk::launcher::kStorePackage));
+}
+
+bool store_app_running() {
+    const std::wstring name = store_app_name();
+    return run_active(name) || app_running(name);
+}
+
+// Reads the newest release: the Store item with no store app, Try again, or the daily update check.
+void store_app_check() {
+    if (!g_store_setup.begin_check()) return;  // one is under way
+    std::error_code ec;
+    fs::create_directories(store_app_dir(), ec);
+    auto* c = new StoreAppCheck;
+    if (HANDLE t = CreateThread(nullptr, 0, store_app_check_thread, c, 0, nullptr)) {
+        CloseHandle(t);
+    } else {
+        delete c;
+        g_store_setup.checked(false, false, false, store_app() != nullptr);
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+void store_app_checked(const StoreAppCheck& c) {
+    const bool installed = store_app() != nullptr;
+    const bool same = c.found && c.release.sha256 == installed_store_sha();
+    if (g_store_setup.checked(c.reached, c.found, same, installed)) {
+        g_store_release = c.release;
+        if (HANDLE t = CreateThread(nullptr, 0, store_app_download_thread, new StoreRelease(c.release), 0, nullptr)) {
+            CloseHandle(t);
+        } else {
+            g_store_setup.downloaded(false, false, false);
+        }
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// Installs the checked download, quietly: a system component, never a tile (g_setup_names) and never a shortcut
+// (system_app).
+void store_app_install() {
+    const std::wstring name = store_app_name();
+    g_setup_names.insert(name);
+    install(store_app_download(), name, true);
+}
+
+void store_app_downloaded(StoreAppDownload result) {
+    if (g_store_setup.downloaded(result != kStoreDownloadBroke, result == kStoreDownloadOk, store_app_running())) {
+        store_app_install();
+    }
+    update_timer();
+    InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// A checked update waited for the store app to stop: it has.
+void store_app_may_install() {
+    if (g_store_setup.may_install(store_app_running())) store_app_install();
+}
+
+namespace appops {
+void grant_builtin_store();
+}
+
+void open_store();
+
+// kInstalled: true when `name` was the Store's own install, which the Store's page reports, not the library. Once
+// installed, its "Install unknown apps" is allowed (the first time) and the APK's SHA-256 noted for the daily check;
+// the page then shows the app.
+bool store_app_installed(const std::wstring& name, InstallEnd::Kind how) {
+    if (g_store_setup.step() != winapk::launcher::StoreSetup::Step::kInstalling || name != store_app_name())
+        return false;
+    const bool ok = how == InstallEnd::kDone;
+    g_store_setup.installed(ok);
+    if (ok) {
+        std::error_code ec;
+        fs::create_directories(store_app_dir(), ec);
+        std::ofstream(store_app_sha_file(), std::ios::binary | std::ios::trunc) << g_store_release.sha256;
+        appops::grant_builtin_store();
+        if (g_view == kStoreView && !g_store_app.up()) open_store();
+    }
+    InvalidateRect(g_main, nullptr, FALSE);
+    return true;
+}
+
+// The Store in the pane: the store app in the window; with none, it is got first (the page shows how far).
+void open_store() {
+    set_view(kStoreView);
+    const App* app = store_app();
+    if (!app) {
+        if (!g_store_setup.busy()) store_app_check();
+        return;
+    }
+    store_app_may_install();  // an update that waited for the store app to stop
+    if (g_store_setup.step() == winapk::launcher::StoreSetup::Step::kInstalling) return;  // shown once installed
+    show_embedded(g_store_app, *app);
+}
+
+// Whether the area under the panel offers Show log beside Open: the app never came up, or the Store's install
+// failed.
+bool panel_shows_log() {
+    if (g_view == kStoreView && !store_app() &&
+        g_store_setup.failure() == winapk::launcher::StoreSetup::Failure::kInstall)
+        return true;
+    const Embedded* e = shown_embedded();
+    return e && e->state == Embedded::kFailed;
+}
+
+void show_panel_log() {
+    if (g_view == kStoreView && !store_app()) show_logs(install_log(store_app_name()));
+    else if (const Embedded* e = shown_embedded()) show_logs(run_log(e->name));
+}
+
+// What the mouse is over in the Store's or Google Play's area: the panel takes it while it is up; else the
+// buttons under it.
+Hit panel_hit(float x, float y) {
+    const Embedded* e = shown_embedded();
+    const bool setup_failed = g_view == kStoreView && !store_app() &&
+                              g_store_setup.step() == winapk::launcher::StoreSetup::Step::kFailed;
+    const bool ended = e && (e->state == Embedded::kClosed || e->state == Embedded::kFailed) &&
+                       !(g_view == kStoreView && !store_app());
+    if ((setup_failed || ended) && contains(g_l.panel_open, x, y)) return {setup_failed ? kHitRetry : kHitPanelOpen, -1};
+    if (panel_shows_log() && (setup_failed || ended) && contains(g_l.panel_log, x, y)) return {kHitPanelLog, -1};
+    return {};
+}
+
+// The view under the Store's panel: while the store app is got or updated before it shows, how far that is; if
+// that failed, why and Try again; once it ran and ended, Open.
+void paint_store(Graphics& g) {
+    using Step = winapk::launcher::StoreSetup::Step;
+    using Failure = winapk::launcher::StoreSetup::Failure;
+    const App* app = store_app();
+    const Step step = g_store_setup.step();
+    const bool before = !app || (step == Step::kInstalling && !g_store_app.up());  // nothing to show yet
+    std::wstring doing;
+    if (before && step == Step::kChecking) doing = tr(L"Getting the Store…");
+    else if (before && step == Step::kDownloading)
+        doing = fmt(L"Downloading the Store… {0}%", {std::to_wstring((std::max)(0, g_store_setup.percent()))});
+    else if (before && (step == Step::kWaiting || step == Step::kInstalling)) doing = tr(L"Installing the Store…");
+    paint_embedded_title(g, g_store_app, before ? nullptr : app, doing);
+    if (before && !doing.empty()) {
+        const RectF& gr = g_l.grid;
+        const float cy = gr.Y + (std::min)(gr.Height / 2, px(110));
+        spinner(g, RectF(gr.X + gr.Width / 2 - px(20), cy - px(58), px(40), px(40)), g_t.accent, px(3.5f));
+        paint_empty(g, nullptr, doing, tr(L"Win.apk's own store, from its page on GitHub. This happens once."));
+        return;
+    }
+    if (!app && step == Step::kFailed) {
+        const Failure f = g_store_setup.failure();
+        paint_empty(g, kGlyphError, tr(L"The Store couldn't be set up"),
+                    tr(f == Failure::kUnreached    ? L"GitHub could not be reached, or did not answer. Check the internet "
+                                                     L"connection, then try again later."
+                       : f == Failure::kNoRelease  ? L"GitHub lists no release of the Store that Win.apk can check."
+                       : f == Failure::kUnverified ? L"The downloaded file is not the one GitHub lists. It was deleted "
+                                                     L"and not installed."
+                                                   : L"Installing it failed. Its log says why."));
+        draw_button(g, g_l.panel_open, tr(L"Try again"), g_hot.kind == kHitRetry, true, false);
+        if (f == Failure::kInstall) draw_button(g, g_l.panel_log, tr(L"Show log"), g_hot.kind == kHitPanelLog, false, false);
+        return;
+    }
+    paint_embedded_end(g, g_store_app, kGlyphStore, L"The Store closed", L"The Store didn't start", L"Open the Store");
+}
+
+// The F-Droid catalog earlier versions kept in store\ (catalog.tsv, its icons, downloads): gone with the F-Droid
+// store, removed once, in the background.
+void remove_old_store_data() {
+    std::error_code ec;
+    if (!fs::exists(data_dir() / L"store", ec)) return;
+    if (HANDLE t = CreateThread(nullptr, 0, [](void*) -> DWORD {
+            std::error_code e;
+            fs::remove_all(data_dir() / L"store", e);
+            return 0;
+        }, nullptr, 0, nullptr)) {
+        CloseHandle(t);
+    }
 }
 
 // ---- Software updates ----------------------------------------------------------
@@ -6918,8 +6569,12 @@ bool update_check_due() {
 void auto_update_check() {
     static bool read_kept = false;
     if (!g_main || !IsWindowVisible(g_main)) return;
-    if (setting(L"AutoUpdate", 1) && update_check_due()) start_update_check(true, false);
-    else if (!read_kept) start_update_check(false, false);
+    if (setting(L"AutoUpdate", 1) && update_check_due()) {
+        start_update_check(true, false);
+        if (store_app()) store_app_check();  // the Store's app is updated with Win.apk's own check (store_app.h)
+    } else if (!read_kept) {
+        start_update_check(false, false);
+    }
     read_kept = true;
 }
 
@@ -6960,7 +6615,7 @@ void update_checked(UpdateCheck& c) {
 // Whether the installer may run now, else says why in the InfoBar: it replaces the runtime that running apps
 // use and the launcher that installs go through.
 bool update_can_start() {
-    if (installs_active() || any_pending() || !g_store.downloads.empty()) {
+    if (installs_active() || any_pending()) {
         info(tr(L"Wait for the installs to finish, then update Win.apk."), kError);
         return false;
     }
@@ -7522,47 +7177,6 @@ void show_info(const App& app) {
     open_page(kAppView, std::move(p));
 }
 
-// A store app's details. Install and Update are the card's button; this says where the app stands.
-void show_store_info(const StoreApp& app) {
-    const StoreApp a = app;  // the catalog may be replaced while the page is open
-    Page p;
-    p.title = store_name(a);
-    p.sub = store_summary(a);
-    p.icon = [a] { return store_icon(a); };
-    p.back = true;
-    p.from = kStoreView;
-    p.build = [a] {
-        std::wstring cats;
-        for (const std::wstring& c : a.categories) cats += (cats.empty() ? L"" : L", ") + c;
-        std::wstring state;
-        int percent = 0;
-        switch (offer_for(a, &percent)) {
-            case kOfferInstall: state = tr(L"Not installed"); break;
-            case kOfferUpdate: state = tr(L"A newer version is out"); break;
-            case kOfferOpen: state = tr(L"Installed"); break;
-            case kOfferDownloading: state = tr(L"Downloading…"); break;
-            case kOfferInstalling: state = tr(L"Installing…"); break;
-        }
-        std::vector<Section> out;
-        out.push_back({tr(L"Details"),
-                       {text_row(tr(L"In your library"), state), text_row(tr(L"Version"), a.version),
-                        text_row(tr(L"Size"), format_bytes(static_cast<uintmax_t>(a.size))),
-                        text_row(tr(L"Updated"), java_date(a.updated)), text_row(tr(L"License"), a.license),
-                        text_row(tr(L"Categories"), cats), text_row(tr(L"Package"), utf8_to_wide(a.pkg))},
-                       L""});
-        const std::wstring page = L"https://f-droid.org/packages/" + utf8_to_wide(a.pkg) + L"/";
-        out.push_back({L"",
-                       {button_row(tr(L"F-Droid page"), tr(L"The app's description, screenshots and source code."),
-                                   tr(L"Open"),
-                                   [page] {
-                                       ShellExecuteW(nullptr, L"open", page.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                                   })},
-                       L""});
-        return out;
-    };
-    open_page(kStoreAppView, std::move(p));
-}
-
 // ---------------------------------------------------------------------------
 // Shared by the install and log windows
 
@@ -7793,7 +7407,9 @@ void paint_install(Graphics& g, float W, float H) {
                     sub = tr(hero->update ? L"App updated." : L"App installed.");
                 } else {
                     title = fmt(L"{0} is ready", {name});
-                    sub = tr(system_app(hero->name)                ? L"It's part of Google services."
+                    const std::vector<std::string> pkg = package_of(hero->name);
+                    sub = tr(!pkg.empty() && pkg[0] == winapk::launcher::kStorePackage ? L"It's part of Win.apk."
+                             : system_app(hero->name)                ? L"It's part of Google services."
                              : setting(L"DesktopShortcut", 1) != 0 ? L"It's in the Start menu and on the desktop."
                                                                    : L"It's in the Start menu.");
                 }
@@ -9963,7 +9579,6 @@ void apply_theme() {
         show_debugger(app);
     }
     InvalidateRect(g_main, nullptr, FALSE);
-    InvalidateRect(g_search, nullptr, TRUE);
 }
 
 void command(int id);
@@ -10037,11 +9652,9 @@ std::wstring tooltip_text(const Hit& h) {
                       : h.tile == kNavStore ? L"Store"
                       : h.tile == kNavPlay  ? L"Google Play"
                                             : L"Settings");
-        case kHitClear: return tr(L"Clear the search");
         case kHitAccount:
             return g_account.empty() ? std::wstring(tr(L"Google account: not signed in"))
                                      : fmt(L"Google account: {0}", {g_account});
-        case kHitRefresh: return tr(L"Check F-Droid for new apps");
         case kHitTile: {
             const Tile& t = g_tiles[static_cast<size_t>(h.tile)];
             if (t.app < 0) return fmt(L"Installing {0}…", {job_label(t.job)});
@@ -10068,67 +9681,19 @@ void create_tooltip() {
     SendMessageW(g_tip, TTM_SETMAXTIPWIDTH, 0, ipx(320));
 }
 
-LRESULT CALLBACK search_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR, DWORD_PTR) {
-    if (msg == WM_KEYDOWN && wp == VK_ESCAPE) {
-        SetWindowTextW(hwnd, L"");
-        SetFocus(g_main);
-        return 0;
-    }
-    if (msg == WM_KEYDOWN && (wp == VK_DOWN || wp == VK_RETURN)) {
-        SetFocus(g_main);
-        if (g_view == kLibraryView && !selected()) move_selection(0, 0);
-        return 0;
-    }
-    if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;  // no beep
-    return DefSubclassProc(hwnd, msg, wp, lp);
-}
-
-// The search box, made again when the language changes so it takes the new direction.
-void create_search() {
-    wchar_t text[256] = {};
-    if (g_search) {
-        GetWindowTextW(g_search, text, 256);
-        DestroyWindow(g_search);
-    }
-    g_search = CreateWindowExW(g_rtl ? WS_EX_RTLREADING : 0, L"EDIT", text, WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
-                               0, 0, 0, 0, g_main, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kIdSearch)), g_inst,
-                               nullptr);
-    SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
-    SendMessageW(g_search, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(tr(L"Search F-Droid")));
-    SetWindowSubclass(g_search, search_proc, 1, 0);
-    if (g_view != kStoreView) ShowWindow(g_search, SW_HIDE);
-}
-
-bool grid_view(View v) { return v == kLibraryView || v == kStoreView; }
-
-// Shows a view. The library and the store share the scrolling: each keeps its own place. Only the
-// store has the search box; the library and a page (Settings, an app's details) hide it.
+// Shows a view. The library keeps its scroll position while another is shown; a page scrolls on its own, from its
+// top.
 void set_view(View view) {
-    if (view == g_view && grid_view(view)) return;
-    if (grid_view(g_view)) {
-        g_queries[g_view] = query(g_view);
-        g_scrolls[g_view] = g_scroll;
+    if (view == g_view && view == kLibraryView) return;
+    // Leaving the Store or Google Play: its panel hides (compute_layout) and the keyboard comes back to the window.
+    for (const Embedded* e : {&g_store_app, &g_play}) {
+        const HWND w = embedded_window(*e);
+        if (view != e->view && w && GetFocus() == w) SetFocus(g_main);
     }
-    // Leaving Google Play: the panel hides (compute_layout) and the keyboard comes back to the window.
-    if (view != kPlayView && play_window() && GetFocus() == play_window()) SetFocus(g_main);
     g_view = view;
     g_hot = {};
     setup_watch(view == kGmsSetupView);
-    if (grid_view(view)) {
-        const float scroll = g_scrolls[view];
-        SetWindowTextW(g_search, g_queries[view].c_str());  // its EN_CHANGE starts at the top; this view keeps its place
-        g_scroll = scroll;
-        if (view == kStoreView) {
-            ShowWindow(g_search, SW_SHOW);
-            InvalidateRect(g_search, nullptr, TRUE);
-            if (g_store.fetch == StoreState::Fetch::kNotStarted) store_start(false);
-        } else {
-            if (GetFocus() == g_search) SetFocus(g_main);
-            ShowWindow(g_search, SW_HIDE);
-        }
-    } else {
-        if (GetFocus() == g_search) SetFocus(g_main);
-        ShowWindow(g_search, SW_HIDE);
+    if (page_view()) {
         g_page.scroll = 0;
         g_page.hot = g_page.focus = -1;
     }
@@ -10138,7 +9703,7 @@ void set_view(View view) {
 
 void apply_language() {
     pick_language();
-    for (HWND w : {g_main, g_install_wnd, g_play.panel}) {
+    for (HWND w : {g_main, g_install_wnd, g_store_app.panel, g_play.panel}) {
         if (!w) continue;
         const LONG_PTR ex = GetWindowLongPtrW(w, GWL_EXSTYLE);
         SetWindowLongPtrW(w, GWL_EXSTYLE, g_rtl ? (ex | WS_EX_LAYOUTRTL) : (ex & ~WS_EX_LAYOUTRTL));
@@ -10148,7 +9713,6 @@ void apply_language() {
     if (g_install_wnd) SetWindowTextW(g_install_wnd, install_title().c_str());
     if (g_log_wnd) DestroyWindow(g_log_wnd);
     if (g_debug_wnd) DestroyWindow(g_debug_wnd);
-    create_search();
     create_tooltip();
     // A page holds its words: Settings (where the language is picked) is made again, a details page goes back.
     if (g_view == kSettingsView) show_settings();
@@ -10181,13 +9745,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_main = hwnd;
             g_dpi = static_cast<float>(GetDpiForWindow(hwnd));
             make_fonts();
-            create_search();
             create_tooltip();
             apply_theme();
             g_drop_target = new DropTarget;
             RegisterDragDrop(hwnd, g_drop_target);
             refresh();
             refresh_account();
+            remove_old_store_data();
             SetTimer(hwnd, kUpdateTimer, 3600 * 1000, nullptr);
             SetTimer(hwnd, kMaintenanceTimer, mw::kCheckMinutes * 60 * 1000, nullptr);
             return 0;
@@ -10199,9 +9763,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DPICHANGED: {
             g_dpi = HIWORD(wp);
             make_fonts();
-            SendMessageW(g_search, WM_SETFONT, reinterpret_cast<WPARAM>(g_edit_font), FALSE);
             g_icons.clear();
-            g_store.icons.clear();
             g_brand.reset();
             const RECT* r = reinterpret_cast<const RECT*>(lp);
             SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top,
@@ -10229,15 +9791,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_COMMAND:
-            if (LOWORD(wp) == kIdSearch) {
-                if (HIWORD(wp) == EN_CHANGE) {
-                    g_scroll = 0;
-                    rebuild_tiles();
-                } else if (HIWORD(wp) == EN_SETFOCUS || HIWORD(wp) == EN_KILLFOCUS) {
-                    InvalidateRect(hwnd, nullptr, FALSE);
-                }
-                return 0;
-            }
             command(LOWORD(wp));
             return 0;
         case WM_MOUSEMOVE: {
@@ -10279,11 +9832,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_SETCURSOR:
             if (LOWORD(lp) == HTCLIENT && reinterpret_cast<HWND>(wp) == hwnd) {
-                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAccount || g_hot.kind == kHitAdd || g_hot.kind == kHitClear ||
-                                  g_hot.kind == kHitRefresh || g_hot.kind == kHitCategory || g_hot.kind == kHitCard ||
-                                  g_hot.kind == kHitCardButton || g_hot.kind == kHitRetry ||
-                                  g_hot.kind == kHitInfoClose || g_hot.kind == kHitInfoLink ||
-                                  g_hot.kind == kHitPlayOpen || g_hot.kind == kHitPlayLog ||
+                const bool hand = g_hot.kind == kHitNav || g_hot.kind == kHitAccount || g_hot.kind == kHitAdd ||
+                                  g_hot.kind == kHitRetry || g_hot.kind == kHitInfoClose || g_hot.kind == kHitInfoLink ||
+                                  g_hot.kind == kHitPanelOpen || g_hot.kind == kHitPanelLog ||
                                   (g_hot.kind == kHitPage && g_page.hot != -1 && g_page.hot != kPageThumb);
                 SetCursor(LoadCursorW(nullptr, hand ? IDC_HAND : IDC_ARROW));
                 return TRUE;
@@ -10292,7 +9843,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_TIMER:
             if (wp == kAnimTimer) {
                 InvalidateRect(hwnd, nullptr, FALSE);
-                if (g_play.panel && g_play.state == PlayState::kStarting) InvalidateRect(g_play.panel, nullptr, FALSE);
+                for (const Embedded* e : {&g_store_app, &g_play}) {
+                    if (e->panel && e->state == Embedded::kStarting) InvalidateRect(e->panel, nullptr, FALSE);
+                }
             }
             if (wp == kInfoBarTimer) info(L"", kInfo);
             if (wp == kUpdateTimer) auto_update_check();
@@ -10314,19 +9867,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 case kHitNav:
                     if (h.tile == kNavSettings) show_settings();
                     else if (h.tile == kNavPlay) open_google_play();
-                    else set_view(h.tile == kNavStore ? kStoreView : kLibraryView);
+                    else if (h.tile == kNavStore) open_store();
+                    else set_view(kLibraryView);
                     break;
                 case kHitAdd: add_from_dialog(); break;
-                case kHitPlayOpen: open_google_play(); break;
-                case kHitPlayLog: show_logs(run_log(g_play.name)); break;
+                case kHitPanelOpen:
+                case kHitRetry: g_view == kStoreView ? open_store() : open_google_play(); break;
+                case kHitPanelLog: show_panel_log(); break;
                 case kHitAccount: show_account(); break;
-                case kHitClear:
-                    SetWindowTextW(g_search, L"");
-                    SetFocus(g_search);
-                    break;
-                case kHitRefresh:
-                case kHitRetry: store_start(true); break;
-                case kHitCategory: choose_category(); break;
                 case kHitInfoClose: info(L"", kInfo); break;
                 case kHitInfoLink: {
                     const std::function<void()> act = g_status_act;
@@ -10343,14 +9891,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                         SetCapture(hwnd);
                     }
                     InvalidateRect(hwnd, nullptr, FALSE);
-                    break;
-                }
-                case kHitCardButton:
-                case kHitCard: {
-                    // a copy: opening the app or the page runs messages that may replace the catalog
-                    const StoreApp a = g_store.apps[static_cast<size_t>(g_store.shown[static_cast<size_t>(h.tile)])];
-                    if (h.kind == kHitCardButton) store_get(a);
-                    else show_store_info(a);
                     break;
                 }
                 case kHitThumb:
@@ -10428,6 +9968,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 page_scroll(-GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60));
                 return 0;
             }
+            if (g_view != kLibraryView) return 0;  // the Store and Google Play scroll in their own windows
             g_scroll -= GET_WHEEL_DELTA_WPARAM(wp) / 120.0f * px(60);
             clamp_scroll();
             InvalidateRect(hwnd, nullptr, FALSE);
@@ -10445,7 +9986,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case WM_KEYDOWN: {
             const bool ctrl = GetKeyState(VK_CONTROL) < 0;
             if (ctrl && (wp == '1' || wp == '2')) {
-                set_view(wp == '2' ? kStoreView : kLibraryView);
+                if (wp == '2') open_store();
+                else set_view(kLibraryView);
                 return 0;
             }
             if (ctrl && wp == VK_OEM_COMMA) {
@@ -10482,26 +10024,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 return 0;
             }
-            if (ctrl && wp == 'F' && g_view == kStoreView) {
-                SetFocus(g_search);
-                return 0;
-            }
-            if (g_view == kStoreView) {
-                switch (wp) {
-                    case VK_UP:
-                    case VK_DOWN:
-                    case VK_PRIOR:
-                    case VK_NEXT: {
-                        const float page = wp == VK_PRIOR || wp == VK_NEXT ? g_l.grid.Height * 0.9f : px(60);
-                        g_scroll += wp == VK_UP || wp == VK_PRIOR ? -page : page;
-                        clamp_scroll();
-                        InvalidateRect(hwnd, nullptr, FALSE);
-                        return 0;
-                    }
-                    case VK_F5: store_start(true); return 0;
-                }
-                break;
-            }
+            if (g_view != kLibraryView) break;  // the Store and Google Play take their keys in their own windows
             switch (wp) {
                 case VK_LEFT: move_selection(g_rtl ? 1 : -1, 0); return 0;
                 case VK_RIGHT: move_selection(g_rtl ? -1 : 1, 0); return 0;
@@ -10523,12 +10046,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         }
-        case WM_CHAR:  // typing in the store searches it
-            if (wp > 32 && GetKeyState(VK_CONTROL) >= 0 && g_view == kStoreView) {
-                SetFocus(g_search);
-                SendMessageW(g_search, WM_CHAR, wp, lp);
-            }
-            return 0;
+        case WM_CHAR: return 0;  // no beep
         case kInstallStarted: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             for (Job& j : g_jobs) {
@@ -10550,15 +10068,17 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const InstallEnd end = finish_install(*name);
             const InstallEnd::Kind how = end.kind();
             refresh();
+            // The Store's own app: no word in the library, the Store's page says how it went.
+            const bool store = store_app_installed(*name, how);
             // The last of Google's three apps installed: background updates can start.
-            if (how == InstallEnd::kDone) maintenance_check();
+            if (how == InstallEnd::kDone && !store) maintenance_check();
             job_ended(*name, how);
             update_timer();
-            if (how == InstallEnd::kDone) {
+            if (how == InstallEnd::kDone && !store) {
                 select_app(*name);
-                // A store install has no install window: the library says it.
+                // The install window closed meanwhile: the library says it.
                 if (!g_install_wnd) info(fmt(L"{0} is installed.", {label_of(*name)}), kSuccess);
-            } else if (how != InstallEnd::kCancelled && !g_install_wnd) {
+            } else if (how != InstallEnd::kCancelled && !g_install_wnd && !store) {
                 info(fmt(L"{0} could not be installed.", {job_label(*name)}), kError);
             }
             if (!any_pending()) {
@@ -10571,8 +10091,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         case kRunReady: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
-            if (*name == g_play.name && g_play.state == PlayState::kStarting) {
-                play_ready();
+            if (Embedded* e = embedded_of(*name); e && e->state == Embedded::kStarting) {
+                embedded_ready(*e);
             } else {
                 bring_forward(*name);  // the app's window, over the starting window, before that one goes
                 close_splash(*name);
@@ -10585,9 +10105,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             update_timer();
             InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
-            if (*name == g_play.name &&
-                (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
-                play_exited(end.kind() == RunEnd::kDidNotStart);
+            if (Embedded* e = embedded_of(*name); e && e->up()) {
+                embedded_exited(*e, end.kind() == RunEnd::kDidNotStart);
             } else {
                 switch (end.kind()) {
                     case RunEnd::kQuiet: break;
@@ -10650,44 +10169,16 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             return 0;
         }
-        case kStoreCatalog:
-            if (wp == kCatalogList) {
-                std::unique_ptr<std::vector<StoreApp>> list(reinterpret_cast<std::vector<StoreApp>*>(lp));
-                g_store.apps = std::move(*list);
-                std::stable_sort(g_store.apps.begin(), g_store.apps.end(),
-                                 [](const StoreApp& a, const StoreApp& b) { return a.updated > b.updated; });
-                rebuild_tiles();
-            } else {
-                const bool failed = wp == kCatalogFailed;
-                g_store.fetch = failed ? StoreState::Fetch::kFailed : StoreState::Fetch::kDone;
-                if (failed && !g_store.apps.empty() && g_view == kStoreView) {
-                    info(tr(L"F-Droid could not be checked for new apps."), kError);
-                }
-                update_timer();
-                InvalidateRect(hwnd, nullptr, FALSE);
-            }
+        case kStoreAppChecked: {
+            std::unique_ptr<StoreAppCheck> c(reinterpret_cast<StoreAppCheck*>(lp));
+            store_app_checked(*c);
             return 0;
-        case kStoreProgress:
-            g_store.got_kb = wp;
-            return 0;
-        case kStoreIcon: {
-            std::unique_ptr<std::string> pkg(reinterpret_cast<std::string*>(lp));
-            g_store.icon_wait.erase(*pkg);
-            if (wp == kIconFailed) g_store.icons[*pkg] = nullptr;  // the monogram, for this session
+        }
+        case kStoreAppProgress:
+            g_store_setup.progress(static_cast<int>(wp));
             if (g_view == kStoreView) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        }
-        case kStoreDownload: {
-            std::unique_ptr<std::string> pkg(reinterpret_cast<std::string*>(lp));
-            g_store.downloads[*pkg] = static_cast<int>(wp);
-            InvalidateRect(hwnd, nullptr, FALSE);
-            return 0;
-        }
-        case kStoreDownloaded: {
-            std::unique_ptr<Download> d(reinterpret_cast<Download*>(lp));
-            store_downloaded(*d, wp != 0);
-            return 0;
-        }
+        case kStoreAppDownloaded: store_app_downloaded(static_cast<StoreAppDownload>(wp)); return 0;
         case kUpdateChecked: {
             std::unique_ptr<UpdateCheck> c(reinterpret_cast<UpdateCheck*>(lp));
             update_checked(*c);
@@ -10733,17 +10224,17 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
         }
-        case WM_ACTIVATE:  // back to the window: the keyboard goes to Google Play when it is the view
-            if (LOWORD(wp) != WA_INACTIVE && g_view == kPlayView && play_window()) {
-                focus_play();
+        case WM_ACTIVATE:  // back to the window: the keyboard goes to the Store or Google Play when it is the view
+            if (LOWORD(wp) != WA_INACTIVE && shown_embedded()) {
+                focus_embedded();
                 return 0;
             }
             break;
         case WM_CLOSE:
             save_window_size();
-            // Google Play lives in this window: it closes with it.
-            if (!g_play.name.empty() && (g_play.state == PlayState::kStarting || g_play.state == PlayState::kShown)) {
-                stop_run(g_play.name);
+            // The Store and Google Play live in this window: they close with it.
+            for (const Embedded* e : {&g_store_app, &g_play}) {
+                if (!e->name.empty() && e->up()) stop_run(e->name);
             }
             // Work still under way (an install, a splash) keeps the process; the library only hides.
             if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || g_debug_wnd || any_runs()) {
@@ -12307,6 +11798,16 @@ bool installs_allowed_from_caller() {
                            {{kSettings, tr(L"Settings")}, {kAnswerDeny, tr(L"Cancel")}}, kSettings);
     if (answer != kSettings) return false;
     return special_access_switch(c, kInstallApps, &why) == 0;
+}
+
+// Win.apk's own Store (store_app.h) may install apps from its first install, as a device's preinstalled store
+// may: its "Install unknown apps" is set to allow while no answer is stored for it. A later "Don't allow" stays
+// (an update keeps installedAt, so the entry); a removal forgets it with the app.
+void grant_builtin_store() {
+    Identity id;
+    std::string why;
+    if (!identity_of(winapk::launcher::kStorePackage, &id) || !mode(id, kInstallApps).empty()) return;
+    record(id, {}, {{kInstallApps, "allow"}}, "system", &why);
 }
 
 // ---- app-details --------------------------------------------------------------------
