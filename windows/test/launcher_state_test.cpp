@@ -225,6 +225,43 @@ void test_runs() {
         t.ended(other, false);
         check("and excuses only its end", kind_of(t, app) == RunEnd::kStopped && kind_of(t, other) == RunEnd::kFailed);
     }
+    {  // The exit codes Android's dialogs go by (include/winapk/app_exit.h)
+        RunTable t;
+        t.begin(app);
+        t.attach(app, kA);
+        t.ready(app);
+        t.ended_with(app, winapk::kExitAppCrashed);
+        check("the framework's crash handler ended it: crashed", kind_of(t, app) == RunEnd::kCrashed);
+        t.begin(app);
+        t.attach(app, kA);
+        t.ended_with(app, winapk::kExitAppCrashed);
+        check("a crash before its window is a crash too", kind_of(t, app) == RunEnd::kCrashed);
+        t.begin(app);
+        t.attach(app, kA);
+        t.ready(app);
+        t.ended_with(app, 0xC0000005UL);
+        check("a native fault is a crash", kind_of(t, app) == RunEnd::kCrashed);
+        t.begin(app);
+        t.attach(app, kA);
+        t.ended_with(app, 0xC0000135UL);
+        check("a DLL that would not load is not the app's crash", kind_of(t, app) == RunEnd::kDidNotStart);
+        t.begin(app);
+        t.attach(app, kA);
+        t.ready(app);
+        t.ended_with(app, 10);
+        check("the app's own System.exit(10) is no crash", kind_of(t, app) == RunEnd::kFailed);
+        t.begin(app);
+        t.attach(app, kA);
+        t.ready(app);
+        t.ended_with(app, winapk::kExitClosedNotResponding);
+        check("Close app in the not-responding dialog: the user's word", kind_of(t, app) == RunEnd::kStopped);
+        Killer kill;
+        t.begin(app);
+        t.attach(app, kA);
+        t.stop(app, kill);
+        t.ended_with(app, winapk::kExitAppCrashed);
+        check("a crash while being stopped: stopped", kind_of(t, app) == RunEnd::kStopped);
+    }
 }
 
 using winapk::launcher::InstallEnd;
