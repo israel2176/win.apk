@@ -59,20 +59,6 @@ public class Resources {
      *  range return the app's own package. */
     private static String macapkPackageName = "";
 
-    /** ATTRSTYLE lane, 2026-08-13 (v1.0.968). Default ON; `MACAPK_ATTRSTYLE=0`
-     *  restores the pre-lane behaviour of all three fixes in ONE run:
-     *    1. `style="?attr"` refs resolving at all (here + ResourceIndex)
-     *    2. the Widget.Material.EditText framework-style rows (ResourceIndex)
-     *    3. the @android:drawable/edit_text_material underline (below)
-     *  A single-binary A/B is the point: fix 3 changes EVERY EditText in every
-     *  app, and the fleet capture that measures it takes ~13 minutes per side --
-     *  long enough for another lane to land render-affecting work between two
-     *  builds and silently confound the delta. Declared separately from
-     *  ResourceIndex's identically-named switch because android.content.res and
-     *  com.macapk.loader must not have a compile-time dependency in either
-     *  direction (see macapkThemeColor's note below); they read the same env var. */
-    public static final boolean MACAPK_ATTRSTYLE =
-        !"0".equals(System.getenv("MACAPK_ATTRSTYLE"));
 
     /** Boot-time hook: set the resource index used by openRawResource etc. */
     public static void macapkSetResourceIndex(Object index) {
@@ -241,25 +227,8 @@ public class Resources {
         return openRawResource(id);
     }
 
-    /** Return an XmlResourceParser positioned at the start of the XML
-     *  resource identified by `id`. AOSP signature; throws
-     *  NotFoundException if the id isn't a known XML resource.
-     *  androidx.preference.PreferenceManager.inflateFromResource calls
-     *  this; without it, F-Droid (and any preference-XML-driven app)
-     *  fails Application onCreate with NoSuchMethodError.
-     *
-     *  Resolution:
-     *  1. Route through the ResourceIndex's openXml(id) -- it locates
-     *     the file under apktoolDir/res/xml/ (or res/layout/, etc.)
-     *     by the type/name registered in public.xml.
-     *  2. Construct a DomXmlResourceParser over the returned stream.
-     *  3. The parser is loaded reflectively so this framework class
-     *     stays decoupled from com.macapk.loader at link time. */
-    private static final boolean sXmlTrace = System.getenv("MACAPK_MENU_TRACE") != null;
     public XmlResourceParser getXml(int id)
         throws android.content.res.Resources.NotFoundException {
-        if (sXmlTrace) com.macapk.loader.NativeLog.i("Mac.apk.Menu",
-            "Resources.getXml(0x" + Integer.toHexString(id) + ")");
         // MACAPK_PLATFORM_LAYOUTS: a framework LAYOUT file answers the same
         // XmlBlock-semantics parser getLayout does. On a device the two are one
         // call -- getXml is loadXmlResourceParser(id, "xml") and getLayout is
@@ -270,7 +239,7 @@ public class Resources {
         // "@0x01020014", which the inflater can only hash. Layout files only:
         // the framework res/xml, res/color, res/menu and drawable consumers were
         // verified on the DOM parser and keep it. =0 restores the old path.
-        if (MACAPK_PLATFORM_LAYOUTS && (id >>> 24) == 0x01) {
+        if ((id >>> 24) == 0x01) {
             XmlResourceParser p = macapkPlatformXmlParser(id, true);
             if (p != null) return p;
         }
@@ -526,7 +495,7 @@ public class Resources {
         // macapkFwValueOf hands back the settled (type, data) pair, and the
         // complex encoding decodes exactly as AOSP's getDimension does
         // (TypedValue.complexToDimension).
-        if (MACAPK_FW_XML_NUMERIC && (id >>> 24) == 0x01) {
+        if ((id >>> 24) == 0x01) {
             Object[] fw = macapkFwSimpleValue(id);
             if (fw != null && fw[0] instanceof Integer t && fw[1] instanceof Integer d) {
                 if (t == android.util.TypedValue.TYPE_DIMENSION) {
@@ -966,21 +935,6 @@ public class Resources {
         // Diagnostic (MACAPK_TRACE_GETVALUE): log the id + resolved
         // type/name whenever we can't resolve a path, so the exact
         // painterResource(id) drawable an app fails to load is visible
-        // (this is how Reddit's split-only welcome_background_2 was found).
-        if (System.getenv("MACAPK_TRACE_GETVALUE") != null && id != 0) {
-            try {
-                Object ri = macapkResourceIndex;
-                String tn = "?";
-                if (ri != null) {
-                    java.lang.reflect.Method m = ri.getClass().getMethod("macapkTypeNameOf", int.class);
-                    Object v = m.invoke(ri, id);
-                    if (v instanceof String[] arr && arr.length >= 2) tn = arr[0] + "/" + arr[1];
-                }
-                Class<?> log = Class.forName("com.macapk.loader.NativeLog");
-                log.getMethod("i", String.class, String.class).invoke(null,
-                    "Mac.apk.getValue", "UNRESOLVED id=0x" + Integer.toHexString(id) + " -> " + tn);
-            } catch (Throwable ignored) {}
-        }
         outValue.type = android.util.TypedValue.TYPE_NULL;
         outValue.data = 0;
     }
@@ -1021,7 +975,7 @@ public class Resources {
     private static boolean macapkFwTypeAccepted(int t) {
         Boolean wide = macapkFwWideTypes;
         if (wide == null) {
-            wide = !"0".equals(System.getenv("MACAPK_FW_SIMPLE_VALUES"));
+            wide = true;
             macapkFwWideTypes = wide;
         }
         if (t >= android.util.TypedValue.TYPE_FIRST_COLOR_INT
@@ -1304,9 +1258,6 @@ public class Resources {
     // MACAPK_DRAWABLE_CACHE_TRACE=1: log every DrawableCache hit/miss.
     // Mirrors sXmlTrace's MACAPK_MENU_TRACE pattern above -- default OFF,
     // opt-in for verifying/debugging the cache, never on the hot path
-    // otherwise.
-    private static final boolean sDrawableCacheTrace =
-        System.getenv("MACAPK_DRAWABLE_CACHE_TRACE") != null;
 
     // MACAPK_TRACE_ZERO_DRAWABLE=1: log any getDrawable(id) that returns a
     // drawable whose getIntrinsicWidth()/Height() is <= 0. That is the exact
@@ -1315,9 +1266,6 @@ public class Resources {
     // X.5nS.A00 sizes a tint bitmap to a getDrawable(resId) drawable's
     // intrinsic size). Names the resource + drawable class so the failing
     // resource is identified without disassembling the app. Default OFF,
-    // sweep-safe, diagnostic only.
-    private static final boolean sZeroDrawableTrace =
-        "1".equals(System.getenv("MACAPK_TRACE_ZERO_DRAWABLE"));
 
     /** v1.0.95: return a non-null VectorDrawable stub for any
      *  drawable resource ID. This unblocks androidx's
@@ -1347,23 +1295,6 @@ public class Resources {
      *  branches are unchanged and theme-independent. */
     public android.graphics.drawable.Drawable getDrawable(int id, Theme theme) {
         android.graphics.drawable.Drawable macapkD = macapkGetDrawableImpl(id, theme);
-        if (sZeroDrawableTrace && macapkD != null) {
-            try {
-                int iw = macapkD.getIntrinsicWidth();
-                int ih = macapkD.getIntrinsicHeight();
-                if (iw <= 0 || ih <= 0) {
-                    String nm; try { nm = getResourceName(id); }
-                    catch (Throwable t) { nm = "?"; }
-                    String pth; try { pth = macapkResourcePath(id); }
-                    catch (Throwable t) { pth = "?"; }
-                    com.macapk.loader.NativeLog.w("Mac.apk.Resources",
-                        "ZERO-DRAWABLE getDrawable(0x" + Integer.toHexString(id)
-                        + " " + nm + ") -> " + macapkD.getClass().getName()
-                        + " intrinsic=" + iw + "x" + ih
-                        + " bounds=" + macapkD.getBounds() + " path=" + pth);
-                }
-            } catch (Throwable ignored) {}
-        }
         return macapkD;
     }
 
@@ -1449,16 +1380,14 @@ public class Resources {
         // rows, so a framework colour file keeps its current path.
         // MACAPK_COLOR_FILE_DRAWABLE=0 restores the flattening (the same env var
         // gates LayoutInflater.applyBackground and ColorStateListDrawable.isStateful).
-        if (MACAPK_COLOR_FILE_DRAWABLE) {
-            try {
-                String[] tn = macapkTypeNameOf(id);
-                String path = (tn != null && "color".equals(tn[0])) ? macapkResourcePath(id) : null;
-                if (path != null && path.endsWith(".xml")) {
-                    ColorStateList csl = getColorStateList(id, theme);
-                    if (csl != null) return new android.graphics.drawable.ColorStateListDrawable(csl);
-                }
-            } catch (Throwable ignored) {}
-        }
+        try {
+            String[] tn = macapkTypeNameOf(id);
+            String path = (tn != null && "color".equals(tn[0])) ? macapkResourcePath(id) : null;
+            if (path != null && path.endsWith(".xml")) {
+                ColorStateList csl = getColorStateList(id, theme);
+                if (csl != null) return new android.graphics.drawable.ColorStateListDrawable(csl);
+            }
+        } catch (Throwable ignored) {}
         try {
             Integer col = macapkColorDrawableValue(id);
             if (col != null) return new android.graphics.drawable.ColorDrawable(col);
@@ -1473,8 +1402,6 @@ public class Resources {
             macapkDrawableCache.get(cacheKey);
         MacapkDrawableConstantState cached = cachedRef != null ? cachedRef.get() : null;
         if (cached != null) {
-            if (sDrawableCacheTrace) com.macapk.loader.NativeLog.d("Mac.apk.Resources",
-                "getDrawable(0x" + Integer.toHexString(id) + ") DrawableCache HIT");
             return cached.newDrawable(this);
         }
 
@@ -1533,11 +1460,6 @@ public class Resources {
                             }
                             macapkDrawableCache.put(cacheKey,
                                 new java.lang.ref.WeakReference<>(state));
-                            if (sDrawableCacheTrace) com.macapk.loader.NativeLog.d("Mac.apk.Resources",
-                                "getDrawable(0x" + Integer.toHexString(id)
-                                + ") DrawableCache MISS -> decoded"
-                                + (state.isNinePatch ? " (9-patch)" : "")
-                                + ", cached");
                             return state.newDrawable(this);
                         }
                     }
@@ -1562,15 +1484,7 @@ public class Resources {
         return GfxBackend.get().vectorFromResource(this, id, theme);
     }
 
-    /** Wave 5 F6 gate; see the colour-file branch in macapkGetDrawableImpl. */
-    private static final boolean MACAPK_COLOR_FILE_DRAWABLE =
-        !"0".equals(System.getenv("MACAPK_COLOR_FILE_DRAWABLE"));
 
-    /** Cluster D1 (v1.0.1649, docs/widget-fidelity-cluster_2026-09-25.md).
-     *  Default ON; `MACAPK_DRAWABLE_COLOR_BY_TYPE=0` restores the name-keyed
-     *  colour branch, so the A/B comes from one binary. */
-    private static final boolean MACAPK_DRAWABLE_COLOR_BY_TYPE =
-        !"0".equals(System.getenv("MACAPK_DRAWABLE_COLOR_BY_TYPE"));
 
     /** The colour a DRAWABLE lookup of `id` must become, or null when `id` is
      *  not colour-valued and has to load as a file.
@@ -1615,7 +1529,6 @@ public class Resources {
      *  (macapkFwSimpleValue), which chases references the way
      *  AssetManager2::ResolveReference does. */
     private Integer macapkColorDrawableValue(int id) {
-        if (!MACAPK_DRAWABLE_COLOR_BY_TYPE) return macapkResolveColorById(id);
         String[] tn = macapkTypeNameOf(id);
         if (tn == null || "color".equals(tn[0])) return macapkResolveColorById(id);
         return macapkTypedColorValue(id, 0);
@@ -1929,9 +1842,6 @@ public class Resources {
     // Default ON; `MACAPK_FW_XML_NUMERIC=0` restores the pre-change path at
     // every site below (the raw parse, the unnamed attribute ref, the
     // app-table dimen lookup, the text-only enum and gravity parsers), for a
-    // one-binary bisect. Gate: debug/fwxml_gate.sh.
-    static final boolean MACAPK_FW_XML_NUMERIC =
-        !"0".equals(System.getenv("MACAPK_FW_XML_NUMERIC"));
 
     /** BinaryXmlParser.MACAPK_TYPE_NS: the sibling annotation attributes it
      *  adds next to each typed value ("macapkType:color" = "attribute").
@@ -1948,7 +1858,7 @@ public class Resources {
         Class<?> bxp = Class.forName("com.macapk.loader.BinaryXmlParser");
         org.w3c.dom.Document doc = (org.w3c.dom.Document) bxp
             .getMethod("parse", byte[].class).invoke(null, (Object) bytes);
-        if (MACAPK_FW_XML_NUMERIC && doc != null && doc.getDocumentElement() != null) {
+        if (doc != null && doc.getDocumentElement() != null) {
             macapkTypeCompiledElement(doc.getDocumentElement());
         }
         return doc;
@@ -2005,7 +1915,7 @@ public class Resources {
      *  BinaryXmlParser's numeric attribute spelling ("?0x" + 8 hex digits), or
      *  an id no table names as an attr, which then keeps its old answer. */
     static String macapkNamedAttrRef(String v) {
-        if (!MACAPK_FW_XML_NUMERIC || v == null) return null;
+        if (v == null) return null;
         v = v.trim();
         if (v.length() != 11 || !v.startsWith("?0x")) return null;
         int id;
@@ -2028,7 +1938,7 @@ public class Resources {
      *  it, or null when `v` is not numeric (a text symbol, which the caller
      *  maps itself). Gate off: always null, the text-only parse. */
     private static Integer macapkCompiledInt(String v) {
-        if (!MACAPK_FW_XML_NUMERIC || v == null) return null;
+        if (v == null) return null;
         String t = v.trim();
         if (t.isEmpty()) return null;
         char c0 = t.charAt(0);
@@ -2073,7 +1983,6 @@ public class Resources {
     }
 
     private android.graphics.drawable.Drawable macapkInflateXmlDrawable(int id, Theme theme) {
-        if ("0".equals(System.getenv("MACAPK_XML_DRAWABLE"))) return null;
         int depth = sXmlDrawableDepth.get();
         if (depth > 8) return null;  // cycle / pathological nesting guard
         sXmlDrawableDepth.set(depth + 1);
@@ -2844,7 +2753,7 @@ public class Resources {
         // bitmaps) is a theme float; AOSP reads it with a.getFloat after
         // obtainAttributes resolved the reference. Resolve it the same way,
         // then parse the literal as before.
-        if (MACAPK_FW_XML_NUMERIC && alpha != null && alpha.trim().startsWith("?")) {
+        if (alpha != null && alpha.trim().startsWith("?")) {
             String raw = macapkResolveThemeAttrRaw(alpha.trim(), theme);
             alpha = raw;
         }
@@ -2929,19 +2838,6 @@ public class Resources {
         return ld.getNumberOfLayers() > 0 ? ld : null;
     }
 
-    /** AOSP LayerDrawable.inflateLayers reads EVERY item's id
-     *  (android14-release LayerDrawable.java updateLayerFromTypedArray:
-     *  `layer.mId = a.getResourceId(R.styleable.LayerDrawableItem_id, layer.mId);`),
-     *  and findDrawableByLayerId depends on it. We recorded only the ripple mask,
-     *  so every framework progress drawable (progress_horizontal_material: items
-     *  @android:id/background, secondaryProgress, progress) had three NO_ID
-     *  layers; ProgressBar's setVisualProgress then fell back to the WHOLE
-     *  drawable for both progress and secondaryProgress, the second call reset
-     *  the level to 0, and a SeekBar/ProgressBar drew an empty track (lanes19
-     *  media-playback, 2026-09-29; debug/progressdrawable_gate.sh D4).
-     *  MACAPK_LAYER_ITEM_IDS=0: only the mask id is recorded, as before. */
-    static final boolean MACAPK_LAYER_ITEM_IDS =
-        !"0".equals(System.getenv("MACAPK_LAYER_ITEM_IDS"));
 
     /** An <item android:id> value as an int: the resolved-id forms
      *  BinaryXmlParser produces ("@0x0102000d", "0x0102000d", decimal) or the
@@ -3044,11 +2940,6 @@ public class Resources {
         macapkFillLayerList(root, theme, ld, keepMask, false);
     }
 
-    /** Default ON; `MACAPK_RIPPLE_MASK_BY_ID=0` restores the gate-off <ripple>'s
-     *  `contains("mask")`-only test (which paints a compiled platform ripple's
-     *  mask), for a one-binary bisect. See macapkInflateRipple. */
-    private static final boolean MACAPK_RIPPLE_MASK_BY_ID =
-        !"0".equals(System.getenv("MACAPK_RIPPLE_MASK_BY_ID"));
 
     /** `rippleMaskById`: the element is a <ripple> being rendered as a plain
      *  layer list, so its mask is DROPPED when recognised in either spelling
@@ -3087,7 +2978,7 @@ public class Resources {
             if (layer == null) continue;
             int idx = ld.addLayer(layer);
             if (isMask) ld.setId(idx, android.R.id.mask);
-            else if (MACAPK_LAYER_ITEM_IDS) {
+            else {
                 int rid = macapkLayerItemId(idv);
                 if (rid != 0) ld.setId(idx, rid);
             }
@@ -3173,8 +3064,7 @@ public class Resources {
             // drawable=mtrl_switch_thumb_checked> sorts before the unchecked item,
             // so every OFF MaterialSwitch drew the big checked thumb (ytdlnis,
             // issue #5, 2026-10-19). MACAPK_SELECTOR_APP_STATES=0 restores the skip.
-            boolean appNs = MACAPK_SELECTOR_APP_STATES
-                && "http://schemas.android.com/apk/res-auto".equals(n.getNamespaceURI());
+            boolean appNs = "http://schemas.android.com/apk/res-auto".equals(n.getNamespaceURI());
             if (!MACAPK_ANDROID_NS.equals(n.getNamespaceURI()) && !appNs) continue;
             String local = n.getLocalName();
             if (local == null || !local.startsWith("state_")) continue;
@@ -3602,7 +3492,6 @@ public class Resources {
             // ResourceIndex.macapkFrameworkStyleDef) is that a row pointing at a
             // framework asset we do not ship is worse than no row.
             case "edit_text_material": {
-                if (!MACAPK_ATTRSTYLE) return null;
                 MacapkEditTextBar bar = new MacapkEditTextBar(d, theme);
                 return new android.graphics.drawable.InsetDrawable(bar,
                     Math.round(4f * d), Math.round(10f * d),
@@ -3702,7 +3591,7 @@ public class Resources {
             // the table face column matches the AVD's to within 1 level
             // (docs/drawable-color-filter-ring-sysres_2026-09-26.md).
             case "btn_default": {
-                if (MACAPK_FW_BTN_TABLE) {
+                {
                     android.graphics.drawable.Drawable t = macapkFrameworkTableDrawable(name, theme);
                     if (t != null) return t;
                 }
@@ -3736,7 +3625,7 @@ public class Resources {
             // guess where this one was measured off the reference AVD.
             case "btn_default_small": {
                 // Table first under MACAPK_FW_BTN_TABLE; see btn_default above.
-                if (MACAPK_FW_BTN_TABLE) {
+                {
                     android.graphics.drawable.Drawable t = macapkFrameworkTableDrawable(name, theme);
                     if (t != null) return t;
                 }
@@ -3806,7 +3695,7 @@ public class Resources {
             // face reads (173,225,245). Padding/intrinsic become the 9-patch's
             // (24,16,24,16 / 52x64) instead of the 4dp inset's 8,8,8,8 / none.
             case "btn_default_holo_dark": {
-                if (MACAPK_FW_HOLO_BTN_TABLE) {
+                {
                     android.graphics.drawable.Drawable t = macapkFrameworkTableDrawable(name, theme);
                     if (t != null) return t;
                 }
@@ -3823,26 +3712,8 @@ public class Resources {
         }
     }
 
-    /** Cluster D2 (v1.0.1649, docs/widget-fidelity-cluster_2026-09-25.md).
-     *  Default ON; `MACAPK_FW_DRAWABLE_TABLE=0` restores the hand-written list
-     *  as the ONLY source of `@android:drawable/<name>` (anything unlisted then
-     *  answers null again), and restores the app-table-first lookup in
-     *  macapkResolveDrawableRef, for a one-binary bisect. */
-    private static final boolean MACAPK_FW_DRAWABLE_TABLE =
-        !"0".equals(System.getenv("MACAPK_FW_DRAWABLE_TABLE"));
 
-    /** Default ON. `MACAPK_FW_BTN_TABLE=0` restores the synthesized
-     *  btn_default / btn_default_small rows as the first (and only) answer for
-     *  those two names -- the exact pre-change path. The table is also skipped
-     *  when MACAPK_FW_DRAWABLE_TABLE=0 (macapkFrameworkTableDrawable answers
-     *  null), and whenever it cannot answer, so the rows stay the fallback. */
-    static final boolean MACAPK_FW_BTN_TABLE =
-        !"0".equals(System.getenv("MACAPK_FW_BTN_TABLE"));
 
-    /** Default ON. `MACAPK_FW_HOLO_BTN_TABLE=0` restores the single-state
-     *  btn_default_holo_dark row as the first answer -- the pre-change path. */
-    static final boolean MACAPK_FW_HOLO_BTN_TABLE =
-        !"0".equals(System.getenv("MACAPK_FW_HOLO_BTN_TABLE"));
 
     /** `@android:drawable/<name>` from the platform resource table
      *  (tools/framework-res.apk), through the SAME id path a
@@ -3885,7 +3756,7 @@ public class Resources {
      *  invisible one that suppresses every fallback. */
     private android.graphics.drawable.Drawable macapkFrameworkTableDrawable(String name,
                                                                           Theme theme) {
-        if (!MACAPK_FW_DRAWABLE_TABLE || name == null || name.isEmpty()) return null;
+        if (name == null || name.isEmpty()) return null;
         int fid = getIdentifier(name, "drawable", "android");
         if (fid == 0 || (fid >>> 24) != 0x01) return null;
         android.graphics.drawable.Drawable dr;
@@ -3974,7 +3845,7 @@ public class Resources {
             // package was stripped and getIdentifier(X, "drawable", null) asked
             // the app first. Hand rows first, then the platform table, exactly
             // as macapkFrameworkDrawableByName serves a bare name.
-            if (MACAPK_FW_DRAWABLE_TABLE && "android".equals(pkg) && "drawable".equals(type)) {
+            if ("android".equals(pkg) && "drawable".equals(type)) {
                 return macapkFrameworkDrawable(name, theme);
             }
             if ("color".equals(type)) {
@@ -4025,10 +3896,6 @@ public class Resources {
         return null;
     }
 
-    /** Default ON; `MACAPK_SHAPE_SOLID_CSL=0` restores the flattened solid for a
-     *  one-binary bisect. See macapkShapeSolidSelector. */
-    private static final boolean MACAPK_SHAPE_SOLID_CSL =
-        !"0".equals(System.getenv("MACAPK_SHAPE_SOLID_CSL"));
 
     /** The ColorStateList a `<shape><solid android:color="@color/x">` must keep
      *  when x is a res/color SELECTOR, or null to take the flat-colour path.
@@ -4067,7 +3934,7 @@ public class Resources {
      *  the answer it had. A stateless list also keeps the flat path, which
      *  resolves to the same single colour. */
     private android.content.res.ColorStateList macapkShapeSolidSelector(String v, Theme theme) {
-        if (!MACAPK_SHAPE_SOLID_CSL || v == null || theme == null) return null;
+        if (v == null || theme == null) return null;
         v = v.trim();
         if (!v.startsWith("@")) return null;
         int cid = macapkResRefToId(v);
@@ -4409,7 +4276,7 @@ public class Resources {
      *  "?0x01010575") came out square. Gate off: `?` keeps answering `def`. */
     private int macapkDimAttr(org.w3c.dom.Element e, String name, int def, Theme theme) {
         String v = e.getAttributeNS(MACAPK_ANDROID_NS, name);
-        if (MACAPK_FW_XML_NUMERIC && v != null && v.trim().startsWith("?")) {
+        if (v != null && v.trim().startsWith("?")) {
             Float px = macapkThemeDimenPx(v.trim(), theme);
             return px != null ? Math.round(px) : def;
         }
@@ -4421,19 +4288,9 @@ public class Resources {
         return px != null ? (int) (float) px : def;
     }
 
-    /** macapkDimAttr for an attribute AOSP reads with getDimensionPixelSize
-     *  (GradientDrawable <stroke android:width>, <size>): round to nearest, and
-     *  a non-zero value never becomes 0 px (TypedValue.complexToDimensionPixelSize:
-     *  `res != 0 ? res : value == 0 ? 0 : value > 0 ? 1 : -1`). The truncating
-     *  read above turned a 0.5dp hairline at 1x into a 0 px stroke, which is not
-     *  drawn: underline-only input fields (a stroked rectangle with negative
-     *  left/top/right insets; Paz Yellow's phone field, 2026-10-28) showed no
-     *  line at all. MACAPK_DIM_PIXEL_SIZE=0 restores the truncation. */
-    static final boolean MACAPK_DIM_PIXEL_SIZE =
-            !"0".equals(System.getenv("MACAPK_DIM_PIXEL_SIZE"));
     private int macapkDimSizeAttr(org.w3c.dom.Element e, String name, int def, Theme theme) {
         String v = e.getAttributeNS(MACAPK_ANDROID_NS, name);
-        if (!MACAPK_DIM_PIXEL_SIZE || v == null || v.isEmpty()
+        if (v == null || v.isEmpty()
                 || v.trim().startsWith("?") || v.startsWith("@")) {
             return macapkDimAttr(e, name, def, theme);   // the reference paths already round
         }
@@ -4465,17 +4322,15 @@ public class Resources {
         // APP's table, where it is absent or, worse, a different value that
         // merely shares the name. AOSP resolves both by id against the table
         // that owns the id (ResourcesImpl.getValue -> AssetManager2).
-        if (MACAPK_FW_XML_NUMERIC) {
-            int rid = 0;
-            if (body.startsWith("0x") || body.startsWith("0X")) {
-                try { rid = (int) Long.parseLong(body.substring(2), 16); }
-                catch (NumberFormatException nfe) { return null; }
-                if (rid == 0) return null;
-            } else if (body.startsWith("android:")) {
-                rid = macapkResRefToId(ref);
-            }
-            if (rid != 0) return macapkDimenPx(rid);
+        int rid = 0;
+        if (body.startsWith("0x") || body.startsWith("0X")) {
+            try { rid = (int) Long.parseLong(body.substring(2), 16); }
+            catch (NumberFormatException nfe) { return null; }
+            if (rid == 0) return null;
+        } else if (body.startsWith("android:")) {
+            rid = macapkResRefToId(ref);
         }
+        if (rid != 0) return macapkDimenPx(rid);
         String type = "dimen";
         String name = body;
         int slash = body.indexOf('/');
@@ -4550,13 +4405,6 @@ public class Resources {
             // and opencalculator renders proof that one of them resolves while
             // the other does not -- its `android:backgroundTint="?button_X_color"`
             // buttons are correct while the identical `?button_color` inside
-            // @drawable/circle's <solid> paints opaque black.
-            if ("1".equals(System.getenv("MACAPK_TRACE_ATTRCOLOR"))) {
-                android.util.Log.i("Mac.apk.AttrColor", "?" + attr
-                    + " theme=" + (theme == null ? "NULL" : "obj")
-                    + " -> 0x" + Integer.toHexString(out)
-                    + (out == def ? "  (== DEFAULT, i.e. UNRESOLVED)" : ""));
-            }
             return out;
         }
         if (v.startsWith("@")) {
@@ -5174,40 +5022,6 @@ public class Resources {
         } catch (Throwable ignored) {}
         return null;
     }
-    /** v1.0.933: Theme-taking overload of the resolver above -- chase the
-     *  `?attr` chain against THE THEME the TypedArray was obtained from,
-     *  mirroring macapkResolveRawToTypedValue's hop loop (kMaxIterations=20,
-     *  AssetManager2), instead of the static application-theme anchor. AOSP
-     *  resolves a style item's attribute reference against the theme under
-     *  resolution (AttributeResolution.cpp ApplyStyle -> Theme::GetAttribute);
-     *  the static anchor is only right when no Theme exists. This was the one
-     *  residual pre-v913 static-anchor site: macapkRecordAt and the colour
-     *  getters already thread `theme`, so getResourceId disagreed with
-     *  getColor on any ContextThemeWrapper whose overlay REBINDS an attr
-     *  (materialThemeOverlay: 23 of 63 corpus apps rebind, F-Droid's nav
-     *  pill green-vs-blue was the visible case).
-     *
-     *  DEAD-END TERMINUS: when the theme walk answers null, fall back to the
-     *  application-theme anchor (the 1-arg form). Our Theme.setTo copies the
-     *  appliedStyles cascade LIST, and a manifest-only Activity theme has an
-     *  EMPTY cascade (the manifest theme lives in ResourceIndex as a NAME;
-     *  applyStyle drops framework style ids it cannot name), so a wrapper
-     *  over such an Activity carries ONLY the overlay -- the un-rebound half
-     *  of a chain would dead-end where AOSP's merged-table setTo still holds
-     *  the base. The terminus is the SAME compensation resolveAttrRaw already
-     *  applies to an empty cascade, extended to the copied-cascade case, and
-     *  it preserves today's static-anchor answer everywhere the theme cannot
-     *  answer. KNOWN DEVIATION: a genuinely-fresh standalone theme
-     *  (newTheme+applyStyle(X)) reading an attr X never declared now answers
-     *  the app theme where a device answers absent -- the same deviation
-     *  window the empty-cascade compensation already owns.
-     *  RETIRE both together: when applyStyle can NAME framework styles by
-     *  default (macapkTypeNameOf already can under the MacapkFwView gate),
-     *  every real base enters the cascade and the dead-end disappears.
-     *  MACAPK_ATTR_RESID_THEME=0 restores the pre-fix static anchor (bisect
-     *  gate for the 23-app recapture, not a supported mode). */
-    private static final boolean MACAPK_ATTR_RESID_THEME =
-        !"0".equals(System.getenv("MACAPK_ATTR_RESID_THEME"));
     /** macapkResolveThemeAttrRaw for callers outside this package (the inflater's own
      *  attribute readers): what `expr` ("?attr/x", "?android:attr/x", "?0x...") ends at in
      *  `theme`'s cascade, or null. */
@@ -5216,7 +5030,7 @@ public class Resources {
     }
 
     static String macapkResolveThemeAttrRaw(String expr, Theme theme) {
-        if (theme == null || !MACAPK_ATTR_RESID_THEME) {
+        if (theme == null) {
             return macapkResolveThemeAttrRaw(expr);
         }
         if (expr == null) return null;
@@ -5299,15 +5113,13 @@ public class Resources {
         // DOM with every value spelled numerically ("-1", "0x10",
         // "@0x01020014"), which our text-keyed inflater could not read. =0
         // restores it. See docs/platform-layouts-axml_2026-09-26.md.
-        if (MACAPK_PLATFORM_LAYOUTS && (id >>> 24) == 0x01) {
+        if ((id >>> 24) == 0x01) {
             XmlResourceParser p = macapkPlatformXmlParser(id, false);
             if (p != null) return p;
         }
         return getXml(id);
     }
 
-    static final boolean MACAPK_PLATFORM_LAYOUTS =
-        !"0".equals(System.getenv("MACAPK_PLATFORM_LAYOUTS"));
     private static volatile java.lang.reflect.Method macapkPlatformOpenMethod;
     private static volatile java.lang.reflect.Method macapkPlatformOpenLayoutMethod;
 
@@ -5444,7 +5256,7 @@ public class Resources {
         // one colour: @android:color/text_color_primary came back a single
         // black row for a dark theme) and at worst an unrelated app file that
         // shares the name.
-        if (MACAPK_FW_XML_NUMERIC && (id >>> 24) == 0x01) {
+        if ((id >>> 24) == 0x01) {
             android.content.res.ColorStateList fw = macapkLoadFwCslFile(id, theme);
             if (fw == null) macapkCslFileMiss.add(id);
             return fw;
@@ -5455,7 +5267,7 @@ public class Resources {
             // value and goes by its root tag, whatever the type: a textColor of
             // @drawable/x where x is a <selector> of colours is a ColorStateList
             // (Cal's buttons: white on black came out black on black).
-            if (tn != null && "drawable".equals(tn[0]) && !MACAPK_NO_DRAWABLE_CSL) {
+            if (tn != null && "drawable".equals(tn[0])) {
                 byte[] xml = null;
                 java.io.InputStream in = macapkOpenResFileByName("drawable", tn[1]);
                 if (in != null) {
@@ -5484,9 +5296,6 @@ public class Resources {
         return null;
     }
 
-    /** MACAPK_NO_DRAWABLE_CSL=1: a drawable-typed <selector> is never a colour list. */
-    private static final boolean MACAPK_NO_DRAWABLE_CSL =
-        "1".equals(System.getenv("MACAPK_NO_DRAWABLE_CSL"));
 
     /** A <selector> whose every <item> names an android:color: what AOSP's
      *  ColorStateList inflates (an item without one is an error there). A
@@ -5545,10 +5354,6 @@ public class Resources {
         }
     }
 
-    /** Default ON; `MACAPK_FW_XML_CACHE=0` re-reads and re-parses every
-     *  framework XML entry per call, the pre-change cost (see macapkFwXmlDoc). */
-    static final boolean MACAPK_FW_XML_CACHE =
-        !"0".equals(System.getenv("MACAPK_FW_XML_CACHE"));
 
     /** Framework XML entries by their in-apk path ("res/color/text_color_primary.xml"):
      *  the compiled bytes, and the DOM macapkParseCompiledXml made of them. */
@@ -5563,7 +5368,7 @@ public class Resources {
      *  chain and picks the configuration's entry), so a night / density /
      *  version variant is its own key. */
     private String macapkFwXmlPath(int id) {
-        if (!MACAPK_FW_XML_CACHE || (id >>> 24) != 0x01) return null;
+        if ((id >>> 24) != 0x01) return null;
         Object[] fv = macapkFwSimpleValue(id);
         if (fv == null || !(fv[0] instanceof Integer ft)
                 || ft != android.util.TypedValue.TYPE_STRING
@@ -5780,10 +5585,6 @@ public class Resources {
                 if (id instanceof Integer && (Integer) id != 0) return (Integer) id;
             } catch (Throwable ignored) {}
         }
-        if (System.getenv("MACAPK_TRACE_GETID") != null) {
-            com.macapk.loader.NativeLog.i("Mac.apk.Res", "getIdentifier(" + name + ", " + defType + ", "
-                + defPackage + ") -> 0" + (macapkResourceIndex == null ? " (no index)" : ""));
-        }
         return 0;
     }
 
@@ -5817,12 +5618,6 @@ public class Resources {
         return r;
     }
 
-    /** Default ON. `MACAPK_SYSTEM_RES_FOLLOW=0` makes updateSystemConfiguration
-     *  a no-op again, so Resources.getSystem() keeps the frozen
-     *  DisplayMetrics.setToDefaults() answer (720x1280, orientation 0, sw 0)
-     *  from boot onward -- the exact pre-change path, for a one-binary bisect. */
-    public static final boolean MACAPK_SYSTEM_RES_FOLLOW =
-        !"0".equals(System.getenv("MACAPK_SYSTEM_RES_FOLLOW"));
 
     /** AOSP Resources.updateSystemConfiguration (android14-release
      *  Resources.java:2189-2196, a hidden public static):
@@ -5865,7 +5660,6 @@ public class Resources {
      *  configuration they hold is the APP's. */
     public static void updateSystemConfiguration(Configuration config, DisplayMetrics metrics,
                                                  Object compat) {
-        if (!MACAPK_SYSTEM_RES_FOLLOW) return;
         getSystem().updateConfiguration(config, metrics, compat);
     }
 
@@ -5898,7 +5692,6 @@ public class Resources {
      *  their copy and their push; both callers run on the owner thread today. */
     public static void macapkEditSystemConfiguration(
             java.util.function.Consumer<Configuration> edit, DisplayMetrics metrics) {
-        if (!MACAPK_SYSTEM_RES_FOLLOW) return;
         synchronized (MACAPK_SYSTEM_EDIT_LOCK) {
             final Resources sys = getSystem();
             final Configuration next = new Configuration(sys.getConfiguration());
@@ -5919,15 +5712,7 @@ public class Resources {
      *  OFF). Read from the environment here rather than importing the view
      *  class so android.content.res keeps no dependency on android.view; it is
      *  the SAME env var and must stay in step with the canonical declaration. */
-    static final boolean MACAPK_VIEW_THEME_FLAG = macapkViewThemeFlag();
-    private static boolean macapkViewThemeFlag() {
-        // lane layout, 2026-08-01: default ON, matching the canonical
-        // declaration in android.view.ContextThemeWrapper (see its comment
-        // for the measured rationale). MACAPK_VIEW_THEME=0 opts out.
-        String v = System.getenv("MACAPK_VIEW_THEME");
-        if (v == null || v.isEmpty()) return true;
-        return !"0".equals(v) && !"false".equalsIgnoreCase(v);
-    }
+    static final boolean MACAPK_VIEW_THEME_FLAG = true;
 
     /** AOSP :2541 -- `mResourcesImpl.finishPreloading()`. On a device this
      *  ends the zygote's drawable/colour preload phase and freezes the
@@ -5960,26 +5745,10 @@ public class Resources {
                 "Flag android.content.res.register_resource_paths is disabled.");
     }
 
-    /** MACAPK_THEME_APP_ATTR_CASCADE (default ON): see
-     *  Theme.macapkResolveAppAttrRawHonest. =0 restores the per-style cascade
-     *  walk for every caller, exactly as before. */
-    static final boolean MACAPK_SELECTOR_APP_STATES =
-        !"0".equals(System.getenv("MACAPK_SELECTOR_APP_STATES"));
-    static final boolean MACAPK_THEME_SELECTOR_ATTR_ROW =
-        !"0".equals(System.getenv("MACAPK_THEME_SELECTOR_ATTR_ROW"));
-    static final boolean MACAPK_THEME_APP_ATTR_CASCADE =
-        !"0".equals(System.getenv("MACAPK_THEME_APP_ATTR_CASCADE"));
     /** ResourceIndex.resolveAttrInThemeExact, looked up once (the same cached
      *  reflective-handle idiom as macapkThemeRawMethod): the app-attr path runs
      *  inside every resolveAttribute a widget constructor makes. */
     private static volatile java.lang.reflect.Method macapkThemeExactMethod;
-    /** StyleBackedAttributeSet answers an app-package (res-auto) slot by the
-     *  app attribute's identity only; see its getAttributeValue. Off under
-     *  MACAPK_ATTR_IDENTITY=0 too, so that gate keeps restoring every
-     *  pre-identity answer. */
-    static final boolean MACAPK_STYLE_APP_SLOT_EXACT =
-        !"0".equals(System.getenv("MACAPK_ATTR_IDENTITY"))
-        && !"0".equals(System.getenv("MACAPK_STYLE_APP_SLOT_EXACT"));
     private static final String MACAPK_NS_RES_AUTO =
         "http://schemas.android.com/apk/res-auto";
 
@@ -6030,16 +5799,6 @@ public class Resources {
                 //       ThemeOverlay that legitimately sets three attributes
                 //       hijacks every attribute of the theme, and AppCompat and
                 //       Material push overlays constantly.
-                // Logging tn[0] tests (a); logging force tests (b).
-                if (System.getenv("MACAPK_TRACE_WINDOW_FLAGS") != null) {
-                    try {
-                        com.macapk.loader.NativeLog.i("Mac.apk.Theme",
-                            "applyStyle id=0x" + Integer.toHexString(resId)
-                            + " type=" + ((tn instanceof String[]) ? ((String[]) tn)[0] : "?")
-                            + " name=" + styleName
-                            + " force=" + force);
-                    } catch (Throwable ignored2) {}
-                }
                 if (styleName != null && !styleName.isEmpty()) {
                     // v1.0.893: HONOUR `force`. The list is a priority stack and
                     // resolution walks it head-to-tail, so head == highest.
@@ -6084,10 +5843,7 @@ public class Resources {
             // R.attr.postSplashScreenTheme here and only calls activity.setTheme() if this returns
             // true). A silent false there strands the app on its SPLASH theme for the rest of the
             // session, which is invisible in every log we had.
-            final String trAttr = System.getenv("MACAPK_TRACE_RESOLVEATTR");
             if (macapkResourceIndex == null) {
-                if (trAttr != null) com.macapk.loader.NativeLog.i("Mac.apk.ResolveAttr",
-                    "resolveAttribute(0x" + Integer.toHexString(resId) + ") -> NO INDEX");
                 return false;
             }
             if (outValue == null) return false;
@@ -6104,8 +5860,7 @@ public class Resources {
                 if (!(tn instanceof String[])) return false;
                 String attrType = ((String[]) tn)[0];
                 String attrName = ((String[]) tn)[1];
-                final boolean trHit = trAttr != null
-                    && ("*".equals(trAttr) || trAttr.equals(attrName));
+                final boolean trHit = false;
                 if (!"attr".equals(attrType)) {
                     if (trHit) com.macapk.loader.NativeLog.i("Mac.apk.ResolveAttr",
                         attrName + ": type is '" + attrType + "', not attr -> false");
@@ -6386,7 +6141,7 @@ public class Resources {
                     // under any other theme (a dark activity in a light app, a themed dialog
                     // or toolbar) the text took the application theme's colour: black on a
                     // dark screen (uiprobe dark_list, dark_appbar).
-                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && depth < 4 && raw.startsWith("@color/")) {
+                    if (depth < 4 && raw.startsWith("@color/")) {
                         Integer themed = macapkSelectorAttrRowColor(raw.substring(7), depth);
                         if (themed != null) return themed;
                     }
@@ -6396,7 +6151,7 @@ public class Resources {
                     // theme inherits. Inflated against this theme (macapkLoadCslFile, as
                     // AOSP's loadComplexColorForCookie does), its default row is this
                     // theme's foreground: white under a dark theme.
-                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && raw.charAt(0) == '@' && !raw.startsWith("@color/")) {
+                    if (raw.charAt(0) == '@' && !raw.startsWith("@color/")) {
                         int[] nesting = macapkThemedFileDepth.get();
                         if (nesting[0] < 4) {
                             nesting[0]++;
@@ -6423,7 +6178,7 @@ public class Resources {
                     // answered null -- the stroke-only bottom-nav icons painted
                     // transparent (issue #5, 2026-10-19).
                     // MACAPK_THEME_SELECTOR_ATTR_ROW=0 restores the null.
-                    if (MACAPK_THEME_SELECTOR_ATTR_ROW && depth < 4 && raw.startsWith("@color/")) {
+                    if (depth < 4 && raw.startsWith("@color/")) {
                         Integer sc = macapkSelectorAttrRowColor(raw.substring(7), depth);
                         if (sc != null) return sc;
                     }
@@ -6561,7 +6316,7 @@ public class Resources {
          *  none on an activity or a widget materialThemeOverlay context
          *  (debug/dialogtheme_gate.sh --overlays). */
         public String macapkResolveAppAttrRawHonest(String attrName) {
-            if (MACAPK_THEME_APP_ATTR_CASCADE && attrName != null
+            if (attrName != null
                     && !attrName.startsWith("android:")
                     && appliedStyles.size() > 1 && macapkResourceIndex != null) {
                 try {
@@ -6591,8 +6346,6 @@ public class Resources {
             // the same root name that answers 'false' (wikipedia
             // AppTheme.ActionBar, fdroid Theme.AppCompat.*). So a wrong answer
             // is one bad appliedStyles head away, and this trace names the head.
-            final boolean trace = System.getenv("MACAPK_TRACE_WINDOW_FLAGS") != null
-                                  && attrName.startsWith("window");
             String answer = null, from = null;
             try {
                 java.lang.reflect.Method mResolve = macapkResourceIndex.getClass()
@@ -6601,8 +6354,7 @@ public class Resources {
                     Object r = mResolve.invoke(macapkResourceIndex, style, attrName);
                     if (r instanceof String s && !s.isEmpty()) {
                         answer = s; from = style;
-                        if (!trace) return s;
-                        break;
+                        return s;
                     }
                 }
                 if (answer == null) {
@@ -6613,19 +6365,11 @@ public class Resources {
                         Object r = mResolve.invoke(macapkResourceIndex, an, attrName);
                         if (r instanceof String s && !s.isEmpty()) {
                             answer = s; from = "APPTHEME:" + an;
-                            if (!trace) return s;
+                            return s;
                         }
                     }
                 }
             } catch (Throwable ignored) {}
-            if (trace) {
-                try {
-                    com.macapk.loader.NativeLog.i("Mac.apk.Theme",
-                        "resolveAttrRaw " + attrName + " -> " + answer
-                        + "  from=" + from
-                        + "  appliedStyles=" + appliedStyles);
-                } catch (Throwable ignored2) {}
-            }
             return answer;
         }
         // (parseHexColorStatic died with v1.0.913: resolveAttribute's hex
@@ -6868,17 +6612,6 @@ public class Resources {
             String defStyleName = resolveDefStyleName(defStyleAttr, defStyleRes);
             // Diagnostic (env-gated, zero cost unset): show the defStyle
             // resolution per 4-arg parse so a token-delivery failure names
-            // its broken link instead of hiding behind a caller default.
-            if (System.getenv("MACAPK_TRACE_DEFSTYLE") != null && defStyleAttr != 0) {
-                try {
-                    com.macapk.loader.NativeLog.i("Mac.apk.TypedArray",
-                        "oSA4 dsa=0x" + Integer.toHexString(defStyleAttr)
-                        + " dsr=0x" + Integer.toHexString(defStyleRes)
-                        + " styleAttr=" + mergedStyle
-                        + " defStyle=" + defStyleName
-                        + " nAttrs=" + (attrs == null ? 0 : attrs.length));
-                } catch (Throwable ignored) {}
-            }
             android.util.AttributeSet layered = set;
             if (mergedStyle != null)
                 layered = new StyleMergedAttributeSet(layered, mergedStyle);
@@ -6921,7 +6654,7 @@ public class Resources {
                 if (macapkResourceIndex == null || set == null) return null;
                 String ref = set.getAttributeValue(null, "style");
                 if (ref == null || ref.isEmpty()) return null;
-                if (MACAPK_ATTRSTYLE) ref = macapkFollowThemeAttrRef(ref.trim());
+                ref = macapkFollowThemeAttrRef(ref.trim());
                 Object n = macapkResourceIndex.getClass()
                     .getMethod("styleNameForIdRefPublic", String.class)
                     .invoke(macapkResourceIndex, ref);
@@ -6991,7 +6724,7 @@ public class Resources {
          *  that exact key, or null (also for a one-style cascade, where the
          *  per-style walk already asks that style first). */
         private String macapkResolveAppAttrExact(String attrName) {
-            if (!MACAPK_THEME_APP_ATTR_CASCADE || attrName == null
+            if (attrName == null
                     || attrName.startsWith("android:") || appliedStyles.size() <= 1
                     || macapkResourceIndex == null) {
                 return null;
@@ -7015,10 +6748,6 @@ public class Resources {
          *  or defStyleRes (a style id) to the style's NAME, walking this Theme's
          *  applied-style cascade then the application theme (mirrors
          *  resolveAttribute). Returns null when no style is found. */
-        /** MACAPK_DEFSTYLE_BARE=1 asks a framework defStyleAttr by its bare name
-         *  again, as before resolveDefStyleName kept the `android:` namespace. */
-        private static final boolean MACAPK_DEFSTYLE_FW_NS =
-            !"1".equals(System.getenv("MACAPK_DEFSTYLE_BARE"));
 
         private String resolveDefStyleName(int defStyleAttr, int defStyleRes) {
             if (macapkResourceIndex == null) return null;
@@ -7076,7 +6805,7 @@ public class Resources {
                         // measured 48x48 where Android has 32x32 (the screens sweep).
                         // resolveAttrInTheme("android:X") finds the leaf-most app
                         // android:X first and the platform theme's value last.
-                        if (MACAPK_DEFSTYLE_FW_NS && (defStyleAttr >>> 24) == 0x01
+                        if ((defStyleAttr >>> 24) == 0x01
                                 && !attrName.startsWith("android:")) {
                             attrName = "android:" + attrName;
                         }
@@ -7124,7 +6853,7 @@ public class Resources {
                         // `?android:buttonStyle` names the framework attribute: ask it
                         // as such (see MACAPK_DEFSTYLE_FW_NS above), not by the bare
                         // name an app or library theme also uses.
-                        if (MACAPK_DEFSTYLE_FW_NS && !appHop && !refAttr.startsWith("android:")) {
+                        if (!appHop && !refAttr.startsWith("android:")) {
                             refAttr = "android:" + refAttr;
                         }
                         String next = appHop ? macapkResolveAppAttrExact(refAttr) : null;
@@ -7252,7 +6981,7 @@ public class Resources {
             // which asks this set for `android:X` and is unaffected.
             // MACAPK_STYLE_APP_SLOT_EXACT=0 (or MACAPK_ATTR_IDENTITY=0) restores
             // the aliasing walk: a labelled bisect gate.
-            if (MACAPK_STYLE_APP_SLOT_EXACT && MACAPK_NS_RES_AUTO.equals(namespace)
+            if (MACAPK_NS_RES_AUTO.equals(namespace)
                     && !name.startsWith("android:")) {
                 try {
                     java.lang.reflect.Method mExact = macapkThemeExactMethod;
@@ -7863,123 +7592,10 @@ public class Resources {
     public void parseBundleExtra(String tagName, android.util.AttributeSet attrs, android.os.Bundle outBundle) {}
     public void parseBundleExtras(android.content.res.XmlResourceParser parser, android.os.Bundle outBundle) {}
 
-    /** AOSP Resources.updateConfiguration(Configuration, DisplayMetrics):
-     *  copies the incoming configuration into this Resources' live
-     *  Configuration so subsequent getConfiguration() reads reflect a
-     *  configuration change (rotation / night-mode / locale / density). The
-     *  field reference is final, so we copy fields in place via setTo rather
-     *  than swapping the object -- callers (Activity.dispatchConfigurationChanged)
-     *  and any cached getConfiguration() result therefore observe the update.
-     *  A non-null DisplayMetrics is copied in (see the v1.0.1637 note in the
-     *  body); passing null leaves it unchanged, matching AOSP's tolerance of a
-     *  null metrics argument.
-     *
-     *  v1.0.1047: this used to be the field copy and NOTHING ELSE, which made
-     *  it a lie for any config change that a cached artifact depends on. AOSP's
-     *  ResourcesImpl.updateConfiguration (android14-release
-     *  ResourcesImpl.java:371-497) computes the changed bits first
-     *  (`final @Config int configChanges = calcConfigChanges(config);`), pushes
-     *  the new configuration into the AssetManager
-     *  (`mAssets.setConfiguration(... mConfiguration.uiMode, ...)`, :461-474)
-     *  and then INVALIDATES, at :482-488:
-     *      mDrawableCache.onConfigurationChange(configChanges);
-     *      mColorDrawableCache.onConfigurationChange(configChanges);
-     *      mComplexColorCache.onConfigurationChange(configChanges);
-     *      mAnimatorCache.onConfigurationChange(configChanges);
-     *      mStateListAnimatorCache.onConfigurationChange(configChanges);
-     *      flushLayoutCache();
-     *  Our AssetManager half is the ResourceIndex, which Boot rebuilds and
-     *  swaps for a night flip (a ResourceIndex bakes its qualifiers at
-     *  construction, so there is no setConfiguration to call). What was missing
-     *  is the invalidation, so a drawable decoded before the change kept being
-     *  served after it.
-     *
-     *  We drop the WHOLE drawable cache rather than filtering by
-     *  changingConfigurations the way AOSP's ThemedResourceCache does, because
-     *  we do not track per-entry changingConfigurations. That is conservative in
-     *  the safe direction: AOSP guarantees no entry survives a change it depends
-     *  on, and evicting extra entries costs only a re-decode.
-     *
-     *  Wave 7 (2026-09-26, MACAPK_RES_CONFIG_MERGE): the update MERGES, it does
-     *  not copy. AOSP Resources.updateConfiguration (android14-release
-     *  Resources.java:2170-2180) forwards to ResourcesImpl.updateConfiguration
-     *  (ResourcesImpl.java:371-497), whose change set comes from
-     *  calcConfigChanges (:507-525):
-     *      mTmpConfig.setTo(config);
-     *      ...
-     *      if (mTmpConfig.getLocales().isEmpty()) {
-     *          mTmpConfig.setLocales(LocaleList.getDefault());
-     *      }
-     *      return mConfiguration.updateFrom(mTmpConfig);
-     *  and updateFrom skips every UNDEFINED field of the delta. The copy that
-     *  was here made a PARTIAL configuration wipe the rest: the classic locale
-     *  idiom `c = new Configuration(); c.locale = X; res.updateConfiguration(c,
-     *  dm)` -- Aegis on every activity create, Telegram's applyLanguage,
-     *  Minecraft, HCR 1.8.1's getjar SDK -- replaced the app's density, uiMode,
-     *  screen sizes, screen layout and window bounds with the delta's values
-     *  (the phone defaults of our old no-arg constructor, or zeros once that
-     *  constructor is AOSP's unset()). Measured by debug/w7rescfg_gate.sh.
-     *  After the merge AOSP (:402-407) gives an empty locale list the default
-     *  one, then (:432-441) derives the DisplayMetrics density from the merged
-     *  configuration and the scaled density from its font scale:
-     *      if (mConfiguration.densityDpi != Configuration.DENSITY_DPI_UNDEFINED) {
-     *          mMetrics.densityDpi = mConfiguration.densityDpi;
-     *          mMetrics.density =
-     *                  mConfiguration.densityDpi * DisplayMetrics.DENSITY_DEFAULT_SCALE;
-     *      }
-     *      // Protect against an unset fontScale.
-     *      mMetrics.scaledDensity = mMetrics.density *
-     *              (mConfiguration.fontScale != 0 ? mConfiguration.fontScale : 1.0f);
-     *  (DENSITY_DEFAULT_SCALE is 1.0f / DENSITY_DEFAULT, DisplayMetrics.java:225.)
-     *  Not mirrored, with reasons: the CompatibilityInfo SCALING (we have no
-     *  compat mode, so isScalingRequired() and !supportsScreen() never hold;
-     *  what the default CompatibilityInfo still does, the density write, is
-     *  mirrored in macapkCalcConfigChanges); the CONFIG_LOCALE best-match of a multi-locale list against the
-     *  AssetManager's locales (:409-429, our ResourceIndex selects its locale at
-     *  construction and exposes no locale set to match against); the
-     *  fontScaleConverter and the plural-rule refresh (no such state here).
-     *  MACAPK_RES_CONFIG_MERGE=0 restores the pre-change copy exactly. It is a
-     *  member of Configuration's STAGED merge family (see the gate block in
-     *  Configuration.java): unset, it follows MACAPK_CONFIG_MERGE_FAMILY, and
-     *  that unset, Configuration.MACAPK_CONFIG_MERGE_DEFAULT_ON -- false until
-     *  the enable bundle (debug/w7rescfg_verify/enable.py) wires the
-     *  macapkPhoneDefaults() sites and flips it; `=1` forces it on. */
-    static final boolean MACAPK_RES_CONFIG_MERGE =
-        Configuration.macapkMergeFamilyGate("MACAPK_RES_CONFIG_MERGE");
 
     public void updateConfiguration(Configuration config, DisplayMetrics metrics) {
-        if (MACAPK_RES_CONFIG_MERGE) {
-            macapkUpdateConfigurationMerge(config, metrics);
-            return;
-        }
-        // v1.0.1637: honour `metrics`. AOSP ResourcesImpl.updateConfiguration
-        // (android14-release) copies it FIRST, unconditionally and before any
-        // config early-out:
-        //     if (metrics != null) { mMetrics.setTo(metrics); }
-        // This method used to ignore the argument, which is why getDisplayMetrics()
-        // could never follow a display resize (the field is final, so setTo in
-        // place is also how every holder of the returned object sees the change).
-        // A caller passing getDisplayMetrics() itself (the common locale-switch
-        // idiom) is a harmless self-copy.
-        if (metrics != null && metrics != this.metrics) {
-            try { this.metrics.setTo(metrics); } catch (Throwable ignored) {}
-        }
-        if (config == null || this.config == null || config == this.config) return;
-        // AOSP calcConfigChanges runs BEFORE the copy, against the old values.
-        int configChanges;
-        try {
-            configChanges = this.config.diff(config);
-        } catch (Throwable t) {
-            // AOSP's calcConfigChanges(null) returns 0xFFFFFFFF, i.e. "assume
-            // everything changed". A diff we could not compute is the same
-            // state of knowledge, so invalidate rather than skip.
-            configChanges = 0xFFFFFFFF;
-        }
-        try { this.config.setTo(config); } catch (Throwable ignored) {}
-        if (configChanges == 0) return;
-        try { macapkDrawableCache.clear(); } catch (Throwable ignored) {}
-        macapkCslFileMiss.clear();
-        try { flushLayoutCache(); } catch (Throwable ignored) {}
+        macapkUpdateConfigurationMerge(config, metrics);
+        return;
     }
 
     /** MACAPK_RES_CONFIG_MERGE: AOSP ResourcesImpl.updateConfiguration's order

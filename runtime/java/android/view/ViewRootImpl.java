@@ -89,11 +89,11 @@ public final class ViewRootImpl {
     public boolean consumeLayoutRequested() { return mLayoutRequested.getAndSet(false); }
 
     /** Convenience for the single-window case: schedule a DRAW (invalidate). */
-    public static void schedule() { if (INVAL_CENSUS) census(""); getInstance().scheduleTraversal(); }
+    public static void schedule() {  getInstance().scheduleTraversal(); }
     /** An invalidation that asked for no frame because the view cannot be drawn
      *  (View.macapkCannotBeDrawn). Only counted: the census lists it as
      *  `skipped <entry> | <app frame>`, so a run shows what it saved. */
-    static void macapkInvalidateSkipped() { if (INVAL_CENSUS) census("skipped "); }
+    static void macapkInvalidateSkipped() {  }
     // MACAPK_TRACE_INVALIDATE=1 (diagnostic): WHO keeps the window dirty. Every
     // schedule() is attributed to its framework entry (View.invalidate,
     // Drawable.invalidateSelf ...) and the first APP frame that called it, and every
@@ -101,36 +101,6 @@ public final class ViewRootImpl {
     // A pair that starts with `skipped` asked for no frame (macapkInvalidateSkipped).
     // An app that redraws every frame on a static screen shows its animators here:
     // Telegram's chat list (2026-10-01) is a SpoilerEffect cell, ActionBar
-    // .setTranslationY and MainTabsActivity's blur fade, 36 each per 5 s -- small
-    // views, so the whole-window repaint each of them causes is OUR cost (no damage
-    // rects yet: docs/damage-aware-partial-redraw-design_2026-08-30.md S1).
-    static final boolean INVAL_CENSUS = "1".equals(System.getenv("MACAPK_TRACE_INVALIDATE"));
-    private static final java.util.HashMap<String, int[]> sCensus = new java.util.HashMap<>();
-    private static long sCensusT0;
-    private static void census(String prefix) {
-        StackTraceElement[] st = new Throwable().getStackTrace();
-        String entry = "?", app = "?";
-        for (int i = 2; i < st.length; i++) {
-            String c = st[i].getClassName();
-            if (st[i].getMethodName().equals("macapkScheduleRedraw")) continue;   // name its caller
-            boolean fw = c.startsWith("android.") || c.startsWith("com.macapk.") || c.startsWith("java.") || c.startsWith("androidx.");
-            if (entry.equals("?")) entry = c.substring(c.lastIndexOf('.') + 1) + "." + st[i].getMethodName();
-            if (!fw) { app = c + "." + st[i].getMethodName() + ":" + st[i].getLineNumber()
-                    + (i + 1 < st.length ? " <- " + st[i + 1].getClassName() + "." + st[i + 1].getMethodName() : ""); break; }
-        }
-        long now = System.nanoTime();
-        synchronized (sCensus) {
-            sCensus.computeIfAbsent(prefix + entry + " | " + app, k -> new int[1])[0]++;
-            if (sCensusT0 == 0) sCensusT0 = now;
-            if (now - sCensusT0 > 5_000_000_000L) {
-                StringBuilder sb = new StringBuilder("[inval-census] 5s:");
-                sCensus.entrySet().stream().sorted((a, b) -> b.getValue()[0] - a.getValue()[0]).limit(8)
-                    .forEach(e -> sb.append("\n  ").append(e.getValue()[0]).append("  ").append(e.getKey()));
-                com.macapk.loader.NativeLog.i("Mac.apk.Inval", sb.toString());
-                sCensus.clear(); sCensusT0 = now;
-            }
-        }
-    }
     /** Convenience for the single-window case: schedule a measure+layout+draw. */
     public static void scheduleLayout() { getInstance().requestLayoutTraversal(); }
 
@@ -170,10 +140,9 @@ public final class ViewRootImpl {
     // both halves off together: no record is taken and every frame is ALL.
     // MACAPK_TRACE_DAMAGE=1 logs every 5 s what the frames' damage was.
     // ------------------------------------------------------------------
-    public static final boolean MACAPK_DAMAGE = macapkDamageGate(System.getenv("MACAPK_FRAMESPEED_DAMAGE"));
+    public static final boolean MACAPK_DAMAGE = macapkDamageGate(null);
     /** The flag's reading; ViewCanvasDriver gates S2 on the same answer. */
     public static boolean macapkDamageGate(String env) { return "1".equals(env); }
-    static final boolean TRACE_DAMAGE = "1".equals(System.getenv("MACAPK_TRACE_DAMAGE"));
     private static final int DAMAGE_NONE = 0, DAMAGE_RECT = 1, DAMAGE_ALL = 2;   // S2's DAMAGE_*
 
     private final Object mDamageLock = new Object();
@@ -216,17 +185,14 @@ public final class ViewRootImpl {
 
     /** View.invalidate's request for a frame that redraws this device rectangle. */
     void macapkScheduleDamage(int l, int t, int r, int b) {
-        if (INVAL_CENSUS) census("");
         synchronized (mDamageLock) {
             macapkUnion(DAMAGE_RECT, l, t, r, b);
-            if (TRACE_DAMAGE) sDamageStats[3]++;
         }
         mTraversalScheduled.set(true);
     }
 
     /** A view whose damage is already in this frame's rectangle asks again. */
     public void macapkScheduleSameDamage() {
-        if (INVAL_CENSUS) census("");
         mTraversalScheduled.set(true);
     }
 
@@ -293,7 +259,6 @@ public final class ViewRootImpl {
             mCarryKind = mDamageKind;
             mCarryL = mDamageL; mCarryT = mDamageT; mCarryR = mDamageR; mCarryB = mDamageB;
             mDamageKind = DAMAGE_NONE;
-            if (TRACE_DAMAGE && escaped) sDamageStats[4]++;
             return escaped;
         }
     }
@@ -309,7 +274,6 @@ public final class ViewRootImpl {
         if (!partial) sMacapkEpoch++;
         sMacapkUnderSource = 0;
         root.macapkBeforeDraw(canvas);
-        if (TRACE_DAMAGE) damageStats(partial, kind, rect, canvas);
     }
 
     public static void macapkEndDraw() {
@@ -318,27 +282,6 @@ public final class ViewRootImpl {
         sMacapkUnderSource = 0;
     }
 
-    /** `[damage] 5s: frames none=.. rect=.. all=.. drawn-partial=.. (x% of the frame each), rect requests=..,
-     *  follow-up frames=..` */
-    private static int sDamageStatsPartial;
-    private static void damageStats(boolean partial, int kind, int[] rect, android.graphics.Canvas canvas) {
-        final long now = System.nanoTime();
-        if (kind >= 0 && kind <= 2) sDamageStats[kind]++;
-        if (partial && rect != null) {
-            sDamageStatsPartial++;
-            sDamageStatsArea += (long) (rect[2] - rect[0]) * (rect[3] - rect[1]);
-        }
-        if (sDamageStatsT0 == 0) sDamageStatsT0 = now;
-        if (now - sDamageStatsT0 < 5_000_000_000L) return;
-        final double frame = Math.max(1.0, (double) canvas.getWidth() * canvas.getHeight());
-        com.macapk.loader.NativeLog.i("Mac.apk.Damage", "[damage] 5s: frames none=" + sDamageStats[0]
-            + " rect=" + sDamageStats[1] + " all=" + sDamageStats[2] + " drawn-partial=" + sDamageStatsPartial
-            + (sDamageStatsPartial > 0 ? String.format(" (%.1f%% of the frame each)",
-                    100.0 * sDamageStatsArea / sDamageStatsPartial / frame) : "")
-            + ", rect requests=" + sDamageStats[3] + ", follow-up frames=" + sDamageStats[4]);
-        java.util.Arrays.fill(sDamageStats, 0);
-        sDamageStatsPartial = 0; sDamageStatsArea = 0; sDamageStatsT0 = now;
-    }
 
     // ------------------------------------------------------------------
     // TOUCH MODE (AOSP ViewRootImpl.ensureTouchMode / enterTouchMode /

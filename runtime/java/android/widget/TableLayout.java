@@ -355,24 +355,9 @@ public class TableLayout extends LinearLayout {
         for (int i = 0; i < count; i++) {
             final View child = getChildAt(i);
             if (!(child instanceof TableRow row)) continue;
-            if (LAYOUT_AOSP_1643) { row.setColumnsWidthConstraints(mMaxWidths); continue; }
-            // Pre-1643 path (MACAPK_LAYOUT_AOSP_1643=0 bisect gate only).
-            final int numColumns = row.getVirtualChildCount();
-            final int limit = Math.min(numColumns, mMaxWidths.length);
-            for (int col = 0; col < limit; col++) {
-                final View cell = row.getVirtualChildAt(col);
-                if (cell == null) continue;
-                final ViewGroup.LayoutParams lp = cell.getLayoutParams();
-                if (lp == null) continue;
-                final int span = (lp instanceof TableRow.LayoutParams trlp) ? trlp.span : 1;
-                if (span != 1) continue;
-                lp.width = mMaxWidths[col];
-            }
+            row.setColumnsWidthConstraints(mMaxWidths); continue;
         }
     }
-    /** See LayoutInflater.LAYOUT_AOSP_1643 (bisect gate, default ON). */
-    private static final boolean LAYOUT_AOSP_1643 =
-        !"0".equals(System.getenv("MACAPK_LAYOUT_AOSP_1643"));
 
     /** Inner LayoutParams type used by TableLayout's direct children
      *  (typically TableRow). AOSP has a richer set (span, weight, etc.
@@ -388,11 +373,8 @@ public class TableLayout extends LinearLayout {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof TableLayout.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
     /** AOSP TableLayout.generateLayoutParams(ViewGroup.LayoutParams). */
     @Override
     protected LinearLayout.LayoutParams generateLayoutParams(android.view.ViewGroup.LayoutParams p) {

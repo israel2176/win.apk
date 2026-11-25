@@ -35,8 +35,6 @@ public class ViewTreeObserver {
     // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
     // "subsequent calls to putenv/setenv from C will not be visible from Java
     // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_AGDK_TRACE = System.getenv("MACAPK_AGDK_TRACE");
 
     public ViewTreeObserver() {}
 
@@ -116,7 +114,7 @@ public class ViewTreeObserver {
         // MC's android_main waits on after INIT_WINDOW to start rendering). Log
         // WHICH observer instance receives it so we can tell whether it lands in
         // the driven root observer or a floating pre-attach one.
-        if (l != null && "1".equals(ENV_MACAPK_AGDK_TRACE)) {
+        if (l != null && false) {
             try { com.macapk.loader.NativeLog.i("AGDKtrace",
                 "addOnGlobalLayoutListener " + l.getClass().getName()
                 + " -> observer@" + Integer.toHexString(System.identityHashCode(this))
@@ -174,26 +172,8 @@ public class ViewTreeObserver {
 
     public boolean isAlive() { return mAlive; }
 
-    /** Called after performLayout. AOSP iterates the listeners and invokes
-     *  onGlobalLayout() on each. */
-    private long macapkGlDispatchCount = 0;
     public void dispatchOnGlobalLayout() {
         // v1.0.584 AGDK diagnostic: confirm this (the driven root) observer holds
-        // GameActivity's listener and actually fires it each traversal.
-        if ("1".equals(ENV_MACAPK_AGDK_TRACE)) {
-            long c = macapkGlDispatchCount++;
-            if (c == 0 || c == 5 || (c % 300) == 0) {
-                StringBuilder sb = new StringBuilder();
-                for (OnGlobalLayoutListener l : mOnGlobalLayoutListeners) {
-                    sb.append(l.getClass().getName()).append(' ');
-                }
-                try { com.macapk.loader.NativeLog.i("AGDKtrace",
-                    "dispatchOnGlobalLayout #" + c + " observer@"
-                    + Integer.toHexString(System.identityHashCode(this))
-                    + " listeners=[" + sb.toString().trim() + "]"); }
-                catch (Throwable ignored) {}
-            }
-        }
         for (OnGlobalLayoutListener l : mOnGlobalLayoutListeners) {
             try { l.onGlobalLayout(); } catch (Throwable ignored) {}
         }

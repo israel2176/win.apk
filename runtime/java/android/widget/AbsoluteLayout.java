@@ -82,11 +82,8 @@ public class AbsoluteLayout extends ViewGroup {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof AbsoluteLayout.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
     /** AOSP AbsoluteLayout.generateLayoutParams(ViewGroup.LayoutParams). */
     @Override
     protected android.view.ViewGroup.LayoutParams generateLayoutParams(android.view.ViewGroup.LayoutParams p) {

@@ -213,31 +213,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
     //   configuration and stays lazy through the framework's own copies and
     //   comparisons, because materialising it runs `defaults read` once
     //   (LocaleList.getDefault) and those sit on every app's boot path.
-    /** The merge family's default (see STAGED ROLLOUT above). The enable
-     *  bundle flips it to true in the same edit that wires the
-     *  macapkPhoneDefaults() sites; never flip it on its own. */
-    // STATUS: ENABLED -- flipped by the enable bundle, with the wiring.
-    static final boolean MACAPK_CONFIG_MERGE_DEFAULT_ON = true;
 
-    /** One merge-family gate: `name` if set, else MACAPK_CONFIG_MERGE_FAMILY if
-     *  set, else MACAPK_CONFIG_MERGE_DEFAULT_ON; a set value is off for `0` and
-     *  on for anything else. Resources reads MACAPK_RES_CONFIG_MERGE through
-     *  this too, so the family moves as one. */
-    static boolean macapkMergeFamilyGate(String name) {
-        String v = System.getenv(name);
-        if (v == null || v.isEmpty()) v = System.getenv("MACAPK_CONFIG_MERGE_FAMILY");
-        if (v == null || v.isEmpty()) return MACAPK_CONFIG_MERGE_DEFAULT_ON;
-        return !"0".equals(v);
-    }
-
-    static final boolean MACAPK_CONFIG_UPDATE_FROM =
-        macapkMergeFamilyGate("MACAPK_CONFIG_UPDATE_FROM");
-    static final boolean MACAPK_CONFIG_UNSET_CTOR =
-        MACAPK_CONFIG_UPDATE_FROM
-        && macapkMergeFamilyGate("MACAPK_RES_CONFIG_MERGE")
-        && macapkMergeFamilyGate("MACAPK_CONFIG_UNSET_CTOR");
-    static final boolean MACAPK_CONFIG_LOCALE_LIST =
-        !"0".equals(System.getenv("MACAPK_CONFIG_LOCALE_LIST"));
 
     /** AOSP @hide ActivityInfo.CONFIG_WINDOW_CONFIGURATION (android14-release
      *  ActivityInfo.java:976), the bit updateFrom reports when the window
@@ -292,8 +268,6 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  checks the framework itself makes must not force it. */
     boolean macapkLocalesEmpty() {
         // With the list off, getLocales() is LocaleList.getDefault(), which is
-        // never empty (its fallback is the JVM's own locale).
-        if (!MACAPK_CONFIG_LOCALE_LIST) return false;
         if (mLocaleList == null) return locale == null;
         fixUpLocaleList();
         return mLocaleList.isEmpty();
@@ -349,26 +323,18 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  locales, Aegis on API 24+, AnkiDroid, F-Droid) never saw the value it
      *  set, and a configuration with no locale reported the host's. */
     public android.os.LocaleList getLocales() {
-        if (!MACAPK_CONFIG_LOCALE_LIST) return android.os.LocaleList.getDefault();
         fixUpLocaleList();
         return mLocaleList;
     }
     /** AOSP :2324-2328 -- replaces the list, sets `locale` to its head (null for
      *  an empty list) and the layout direction from it. */
     public void setLocales(android.os.LocaleList locales) {
-        if (!MACAPK_CONFIG_LOCALE_LIST) {
-            if (locales != null && locales.size() > 0) {
-                this.locale = locales.get(0);
-            }
-            return;
-        }
         mLocaleList = locales == null ? android.os.LocaleList.getEmptyLocaleList() : locales;
         locale = mLocaleList.get(0);
         setLayoutDirection(locale);
     }
     /** AOSP :2342-2344 -- a one-locale list through setLocales. */
     public void setLocale(Locale loc) {
-        if (!MACAPK_CONFIG_LOCALE_LIST) { this.locale = loc; return; }
         setLocales(loc == null ? android.os.LocaleList.getEmptyLocaleList()
                                : new android.os.LocaleList(loc));
     }
@@ -435,7 +401,6 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  doing the same here is what makes the port faithful rather than
      *  approximate. Kill switch: MACAPK_SCREENLAYOUT_DERIVE=0. */
     public void macapkDeriveScreenLayout() {
-        if ("0".equals(System.getenv("MACAPK_SCREENLAYOUT_DERIVE"))) return;
         int w = screenWidthDp, h = screenHeightDp;
         if (w <= 0 || h <= 0) return;
         int longDp = Math.max(w, h), shortDp = Math.min(w, h);
@@ -509,7 +474,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  Configuration object." (MACAPK_CONFIG_UNSET_CTOR; with it off, the field
      *  initializers' phone defaults stand, as before.) */
     public Configuration() {
-        if (MACAPK_CONFIG_UNSET_CTOR) unset();
+        unset();
     }
     /** AOSP :1043-1045 -- a deep copy. The field initializers run first and
      *  setTo overwrites every field it copies. */
@@ -558,13 +523,12 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  AOSP's screen sizes stay UNDEFINED for such a caller here too, since
      *  setToDefaults leaves them undefined and nothing fills them. */
     static void macapkApplyResourcesDefaults(Configuration c, android.util.DisplayMetrics m) {
-        if (!MACAPK_CONFIG_UNSET_CTOR || c == null) return;
+        if (c == null) return;
         if (!(c.fontScale > 0)) c.fontScale = 1.0f;
         if (c.densityDpi == DENSITY_DPI_UNDEFINED && m != null && m.densityDpi > 0) {
             c.densityDpi = m.densityDpi;
         }
-        final boolean noLocales = MACAPK_CONFIG_LOCALE_LIST ? c.macapkLocalesEmpty()
-                                                            : c.locale == null;
+        final boolean noLocales = c.macapkLocalesEmpty();
         if (noLocales) c.setLocales(macapkDefaultLocales());
     }
 
@@ -636,28 +600,24 @@ public final class Configuration implements Comparable<Configuration>, android.o
     public void setTo(Configuration o) {
         if (o == null) return;
         locale = o.locale;
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            // AOSP :1072-1073: `o.fixUpLocaleList(); mLocaleList = o.mLocaleList;`
-            // A lazy source list stays lazy in the copy: `locale` was copied
-            // above, so the copy derives exactly the list the source would.
-            if (o.mLocaleList == null) {
-                mLocaleList = null;
-            } else {
-                o.fixUpLocaleList();
-                mLocaleList = o.mLocaleList;
-            }
+        // AOSP :1072-1073: `o.fixUpLocaleList(); mLocaleList = o.mLocaleList;`
+        // A lazy source list stays lazy in the copy: `locale` was copied
+        // above, so the copy derives exactly the list the source would.
+        if (o.mLocaleList == null) {
+            mLocaleList = null;
+        } else {
+            o.fixUpLocaleList();
+            mLocaleList = o.mLocaleList;
         }
-        if (MACAPK_CONFIG_UNSET_CTOR) {
-            // AOSP :1074 and :1096 copy both. Before the unset constructor
-            // every configuration held the field initializers' 0 / UNDEFINED,
-            // so leaving them out was invisible. An unset delta now holds
-            // FONT_WEIGHT_ADJUSTMENT_UNDEFINED, and a copy of it (Resources'
-            // calcConfigChanges works on one) that fell back to the
-            // initializer's 0 would stop being a delta for this field and
-            // reset an adjusted weight to 0.
-            mGrammaticalGender = o.mGrammaticalGender;
-            fontWeightAdjustment = o.fontWeightAdjustment;
-        }
+        // AOSP :1074 and :1096 copy both. Before the unset constructor
+        // every configuration held the field initializers' 0 / UNDEFINED,
+        // so leaving them out was invisible. An unset delta now holds
+        // FONT_WEIGHT_ADJUSTMENT_UNDEFINED, and a copy of it (Resources'
+        // calcConfigChanges works on one) that fell back to the
+        // initializer's 0 would stop being a delta for this field and
+        // reset an adjusted weight to 0.
+        mGrammaticalGender = o.mGrammaticalGender;
+        fontWeightAdjustment = o.fontWeightAdjustment;
         orientation = o.orientation;
         screenLayout = o.screenLayout;
         screenWidthDp = o.screenWidthDp;
@@ -691,13 +651,9 @@ public final class Configuration implements Comparable<Configuration>, android.o
         if (delta.fontScale != 0 && fontScale != delta.fontScale) changed |= CONFIG_FONT_SCALE;
         if (delta.mcc != 0 && mcc != delta.mcc) changed |= CONFIG_MCC;
         if (delta.mnc != 0 && mnc != delta.mnc) changed |= CONFIG_MNC;
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            // AOSP diff (android14-release :1906-1912): the LISTS, after both
-            // are reconciled with their `locale` field.
-            if (!delta.macapkLocalesEmpty() && !macapkSameLocales(delta)) {
-                changed |= CONFIG_LOCALE | CONFIG_LAYOUT_DIRECTION;
-            }
-        } else if (delta.locale != null && (locale == null || !locale.equals(delta.locale))) {
+        // AOSP diff (android14-release :1906-1912): the LISTS, after both
+        // are reconciled with their `locale` field.
+        if (!delta.macapkLocalesEmpty() && !macapkSameLocales(delta)) {
             changed |= CONFIG_LOCALE | CONFIG_LAYOUT_DIRECTION;
         }
         if (delta.touchscreen != TOUCHSCREEN_UNDEFINED && touchscreen != delta.touchscreen) changed |= CONFIG_TOUCHSCREEN;
@@ -723,13 +679,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
         if (n != 0) return n < 0 ? -1 : 1;
         int d = mcc - that.mcc;                                   if (d != 0) return d;
         d = mnc - that.mnc;                                       if (d != 0) return d;
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            d = macapkCompareLocaleLists(that);                   if (d != 0) return d;
-        } else {
-            String la = locale != null ? locale.toString() : "";
-            String lb = that.locale != null ? that.locale.toString() : "";
-            d = la.compareTo(lb);                                 if (d != 0) return d;
-        }
+        d = macapkCompareLocaleLists(that);                   if (d != 0) return d;
         d = touchscreen - that.touchscreen;                       if (d != 0) return d;
         d = keyboard - that.keyboard;                             if (d != 0) return d;
         d = keyboardHidden - that.keyboardHidden;                 if (d != 0) return d;
@@ -800,10 +750,7 @@ public final class Configuration implements Comparable<Configuration>, android.o
      *  in to the current Configuration." MACAPK_CONFIG_UPDATE_FROM=0 restores the
      *  pre-change diff-then-copy. */
     public int updateFrom(Configuration delta) {
-        if (MACAPK_CONFIG_UPDATE_FROM) return macapkMergeFrom(delta);
-        int changed = diff(delta);
-        setTo(delta);
-        return changed;
+        return macapkMergeFrom(delta);
     }
 
     /** The AOSP merge itself, field for field in AOSP's order, for updateFrom
@@ -826,28 +773,20 @@ public final class Configuration implements Comparable<Configuration>, android.o
             changed |= CONFIG_MNC;
             mnc = delta.mnc;
         }
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            if (!delta.macapkLocalesEmpty() && !macapkSameLocales(delta)) {
-                changed |= CONFIG_LOCALE;
-                delta.fixUpLocaleList();
-                mLocaleList = delta.mLocaleList;
-                // "delta.locale can't be null, since delta.mLocaleList is not
-                // empty" -- true after the fix-up for AOSP's LocaleList; ours
-                // admits a null element, hence the null-safe compare.
-                if (!java.util.Objects.equals(delta.locale, locale)) {
-                    locale = delta.locale != null ? (Locale) delta.locale.clone() : null;
-                    // "If locale has changed, then layout direction is also changed ..."
-                    changed |= CONFIG_LAYOUT_DIRECTION;
-                    // "... and we need to update the layout direction"
-                    setLayoutDirection(locale);
-                }
+        if (!delta.macapkLocalesEmpty() && !macapkSameLocales(delta)) {
+            changed |= CONFIG_LOCALE;
+            delta.fixUpLocaleList();
+            mLocaleList = delta.mLocaleList;
+            // "delta.locale can't be null, since delta.mLocaleList is not
+            // empty" -- true after the fix-up for AOSP's LocaleList; ours
+            // admits a null element, hence the null-safe compare.
+            if (!java.util.Objects.equals(delta.locale, locale)) {
+                locale = delta.locale != null ? (Locale) delta.locale.clone() : null;
+                // "If locale has changed, then layout direction is also changed ..."
+                changed |= CONFIG_LAYOUT_DIRECTION;
+                // "... and we need to update the layout direction"
+                setLayoutDirection(locale);
             }
-        } else if (delta.locale != null && !delta.locale.equals(locale)) {
-            // The list-free form of the same step, for MACAPK_CONFIG_LOCALE_LIST=0:
-            // only the primary locale exists to compare.
-            changed |= CONFIG_LOCALE | CONFIG_LAYOUT_DIRECTION;
-            locale = (Locale) delta.locale.clone();
-            setLayoutDirection(locale);
         }
         final int deltaScreenLayoutDir = delta.screenLayout & SCREENLAYOUT_LAYOUTDIR_MASK;
         if (deltaScreenLayoutDir != SCREENLAYOUT_LAYOUTDIR_UNDEFINED
@@ -1076,14 +1015,10 @@ public final class Configuration implements Comparable<Configuration>, android.o
         // locale list (`fixUpLocaleList(); dest.writeTypedObject(mLocaleList,
         // flags)`); the primary-locale string above stays for the gate-off
         // reader, and the list carries the secondaries it cannot.
-        if (MACAPK_CONFIG_UNSET_CTOR) {
-            dest.writeInt(fontWeightAdjustment);
-            dest.writeInt(mGrammaticalGender);
-        }
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            fixUpLocaleList();
-            dest.writeString(mLocaleList.toLanguageTags());
-        }
+        dest.writeInt(fontWeightAdjustment);
+        dest.writeInt(mGrammaticalGender);
+        fixUpLocaleList();
+        dest.writeString(mLocaleList.toLanguageTags());
     }
     /** getAppBounds() is legitimately nullable in AOSP, so the null is encoded rather
      *  than assumed away -- reading back a Rect that was never written would desync
@@ -1114,15 +1049,11 @@ public final class Configuration implements Comparable<Configuration>, android.o
         smallestScreenWidthDp = source.readInt(); densityDpi = source.readInt();
         windowConfiguration.setBounds(readRect(source));
         windowConfiguration.setAppBounds(readRect(source));
-        if (MACAPK_CONFIG_UNSET_CTOR) {
-            fontWeightAdjustment = source.readInt();
-            mGrammaticalGender = source.readInt();
-        }
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            // AOSP readFromParcel (:2106-2107): the list, then `locale = mLocaleList.get(0)`.
-            mLocaleList = android.os.LocaleList.forLanguageTags(source.readString());
-            locale = mLocaleList.get(0);
-        }
+        fontWeightAdjustment = source.readInt();
+        mGrammaticalGender = source.readInt();
+        // AOSP readFromParcel (:2106-2107): the list, then `locale = mLocaleList.get(0)`.
+        mLocaleList = android.os.LocaleList.forLanguageTags(source.readString());
+        locale = mLocaleList.get(0);
     }
     public static final android.os.Parcelable.Creator<Configuration> CREATOR =
         new android.os.Parcelable.Creator<Configuration>() {
@@ -1193,15 +1124,11 @@ public final class Configuration implements Comparable<Configuration>, android.o
         if (base.fontScale != change.fontScale) delta.fontScale = change.fontScale;
         if (base.mcc != change.mcc) delta.mcc = change.mcc;
         if (base.mnc != change.mnc) delta.mnc = change.mnc;
-        if (MACAPK_CONFIG_LOCALE_LIST) {
-            // AOSP generateDelta (android14-release :2798-2802): compare the
-            // reconciled LISTS and hand over both halves.
-            if (!base.macapkSameLocales(change)) {
-                change.fixUpLocaleList();
-                delta.mLocaleList = change.mLocaleList;
-                delta.locale = change.locale;
-            }
-        } else if (!java.util.Objects.equals(base.locale, change.locale)) {
+        // AOSP generateDelta (android14-release :2798-2802): compare the
+        // reconciled LISTS and hand over both halves.
+        if (!base.macapkSameLocales(change)) {
+            change.fixUpLocaleList();
+            delta.mLocaleList = change.mLocaleList;
             delta.locale = change.locale;
         }
         if (base.mGrammaticalGender != change.mGrammaticalGender) {

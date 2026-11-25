@@ -78,11 +78,8 @@ public class TableRow extends LinearLayout {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof TableRow.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
     /** AOSP TableRow.generateLayoutParams(ViewGroup.LayoutParams). */
     @Override
     protected LinearLayout.LayoutParams generateLayoutParams(android.view.ViewGroup.LayoutParams p) {

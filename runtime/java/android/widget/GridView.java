@@ -106,7 +106,7 @@ public class GridView extends AbsListView {
     public int  getRequestedColumnWidth() { return mRequestedColumnWidth; }
     public void setHorizontalSpacing(int hs) { mRequestedHorizontalSpacing = hs; requestLayout(); }
     public int  getHorizontalSpacing() {
-        return MACAPK_GRID_MEASURE_AOSP ? mResolvedHorizontalSpacing : mRequestedHorizontalSpacing;
+        return mResolvedHorizontalSpacing;
     }
     public int  getRequestedHorizontalSpacing() { return mRequestedHorizontalSpacing; }
     public void setVerticalSpacing(int vs) { mVerticalSpacing = vs; requestLayout(); }
@@ -182,17 +182,7 @@ public class GridView extends AbsListView {
         return didNotInitiallyFit;
     }
 
-    /** AOSP GridView.onMeasure (android14 :1134-1214). A wrap_content grid
-     *  measured AT_MOST is as tall as its rows (row height = the first item's
-     *  height), capped at the offered size; UNSPECIFIED is one row. Ours
-     *  inherited AbsListView.onMeasure, which fills the offered height, so a
-     *  grid in a dialog stretched the dialog to the whole window (Privacy Friendly Notes'
-     *  category colour picker: five rows of swatches over a screen of blank).
-     *  MACAPK_GRID_MEASURE_AOSP=0 restores the old measure. */
-    static final boolean MACAPK_GRID_MEASURE_AOSP =
-        !"0".equals(System.getenv("MACAPK_GRID_MEASURE_AOSP"));
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        if (!MACAPK_GRID_MEASURE_AOSP) { super.onMeasure(widthMeasureSpec, heightMeasureSpec); return; }
         final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
         int widthSize = MeasureSpec.getSize(widthMeasureSpec);
@@ -242,7 +232,7 @@ public class GridView extends AbsListView {
 
     private void layoutGrid() {
         if (getAdapter() == null) {
-            if (AbsListView.ITEMCLICK_AOSP) removeAllViewsInLayout();  // AOSP resetList()
+            removeAllViewsInLayout();  // AOSP resetList()
             macapkGridLayoutDone();
             return;
         }
@@ -256,23 +246,15 @@ public class GridView extends AbsListView {
         final int avail = getWidth() - paddingLeft - paddingRight;
         final int cols;
         final int hs;
-        if (MACAPK_GRID_MEASURE_AOSP) {
-            determineColumns(avail);
-            cols = Math.max(1, mResolvedNumColumns);
-            hs = mResolvedHorizontalSpacing;
-        } else {
-            cols = Math.max(1, getNumColumns());
-            hs = mRequestedHorizontalSpacing;
-            mColumnWidth = mRequestedColumnWidth > 0 && mStretchMode == NO_STRETCH
-                    ? mRequestedColumnWidth
-                    : Math.max(1, (avail - hs * (cols - 1)) / cols);
-        }
+        determineColumns(avail);
+        cols = Math.max(1, mResolvedNumColumns);
+        hs = mResolvedHorizontalSpacing;
         // AOSP GridView.makeRow (android14 :303-345): under RTL the first
         // column is the RIGHT-most one and the row grows leftwards; the cell's
         // child is placed in its column by mGravity resolved against the
         // layout direction (setupChild :1471-1486). Ours always ran
         // left-to-right with the child stretched over the column.
-        final boolean rtl = MACAPK_GRID_MEASURE_AOSP && isLayoutRtl();
+        final boolean rtl = isLayoutRtl();
         final int uniform = (mStretchMode == STRETCH_SPACING_UNIFORM) ? hs : 0;
         final int absH = Gravity.getAbsoluteGravity(mGravity,
                 rtl ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR) & Gravity.HORIZONTAL_GRAVITY_MASK;
@@ -290,25 +272,17 @@ public class GridView extends AbsListView {
                 final ViewGroup.LayoutParams p = child.getLayoutParams();
                 int childWidthSpec;
                 int childHeightSpec;
-                if (MACAPK_GRID_MEASURE_AOSP) {
-                    childWidthSpec = ViewGroup.getChildMeasureSpec(
-                            MeasureSpec.makeMeasureSpec(mColumnWidth, MeasureSpec.EXACTLY), 0,
-                            p != null ? p.width : ViewGroup.LayoutParams.MATCH_PARENT);
-                    childHeightSpec = ViewGroup.getChildMeasureSpec(
-                            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED), 0,
-                            p != null ? p.height : ViewGroup.LayoutParams.WRAP_CONTENT);
-                } else {
-                    childWidthSpec = MeasureSpec.makeMeasureSpec(mColumnWidth, MeasureSpec.EXACTLY);
-                    childHeightSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
-                }
+                childWidthSpec = ViewGroup.getChildMeasureSpec(
+                        MeasureSpec.makeMeasureSpec(mColumnWidth, MeasureSpec.EXACTLY), 0,
+                        p != null ? p.width : ViewGroup.LayoutParams.MATCH_PARENT);
+                childHeightSpec = ViewGroup.getChildMeasureSpec(
+                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED), 0,
+                        p != null ? p.height : ViewGroup.LayoutParams.WRAP_CONTENT);
                 child.measure(childWidthSpec, childHeightSpec);
                 int w = child.getMeasuredWidth();
                 int h = child.getMeasuredHeight();
                 int x;
-                if (!MACAPK_GRID_MEASURE_AOSP) {
-                    x = paddingLeft + c * (mColumnWidth + hs);
-                    w = mColumnWidth;
-                } else if (absH == Gravity.CENTER_HORIZONTAL) {
+                if (absH == Gravity.CENTER_HORIZONTAL) {
                     x = nextLeft + (mColumnWidth - w) / 2;
                 } else if (absH == Gravity.RIGHT) {
                     x = nextLeft + mColumnWidth - w;
@@ -327,11 +301,7 @@ public class GridView extends AbsListView {
     }
 
     private void bindGridClick(final View cell, final int position) {
-        if (AbsListView.ITEMCLICK_AOSP) return;  // AbsListView.onTouchEvent clicks cells, as in AOSP
-        final long id = getAdapter().getItemId(position);
-        cell.setOnClickListener(new View.OnClickListener() {
-            @Override public void onClick(View v) { performItemClick(cell, position, id); }
-        });
+        return;  // AbsListView.onTouchEvent clicks cells, as in AOSP
     }
 
     /** AOSP GridView :882 -- a public override of AbsListView's

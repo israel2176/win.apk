@@ -133,8 +133,6 @@ public class TabHost extends FrameLayout
     private interface IndicatorStrategy { View createIndicatorView(); }
     private interface ContentStrategy { View getContentView(); void tabClosed(); }
 
-    static final boolean MACAPK_TABHOST_LABEL_APPEARANCE =
-        !"0".equals(System.getenv("MACAPK_TABHOST_LABEL_APPEARANCE"));
 
     /** An AttributeSet holding one layout element's android: attributes, so a
      *  stand-in for a platform layout we cannot inflate hands its widget the
@@ -180,14 +178,10 @@ public class TabHost extends FrameLayout
                     // grey small appearance instead. Exact for Material themes
                     // only (Holo / classic use tab_indicator_holo / tab_indicator).
                     // MACAPK_TABHOST_LABEL_APPEARANCE=0 restores the bare view.
-                    TextView tv = new TextView(getContext(), MACAPK_TABHOST_LABEL_APPEARANCE
-                        ? macapkElementAttrs(
-                            "android:textAppearance=\"@android:style/TextAppearance.Material.Widget.TabWidget\"")
-                        : null);
-                    if (MACAPK_TABHOST_LABEL_APPEARANCE) {
-                        tv.setMaxLines(2);
-                        tv.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
-                    }
+                    TextView tv = new TextView(getContext(), macapkElementAttrs(
+                            "android:textAppearance=\"@android:style/TextAppearance.Material.Widget.TabWidget\""));
+                    tv.setMaxLines(2);
+                    tv.setEllipsize(android.text.TextUtils.TruncateAt.MARQUEE);
                     tv.setText(label);
                     return tv;
                 }

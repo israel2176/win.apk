@@ -35,9 +35,9 @@ public class TimePickerDialog extends AlertDialog
         // (the picker is inflated in themeContext). We called super(context) and
         // built the picker on the caller's Context. MACAPK_DIALOG_THEME_WRAPPER=0
         // restores that exactly (AlertDialog(context, 0) keeps the Context).
-        super(context, MACAPK_DIALOG_THEME_WRAPPER ? resolveDialogTheme(context, themeResId) : 0);
+        super(context, resolveDialogTheme(context, themeResId));
         mListener = listener;
-        mTimePicker = new TimePicker(MACAPK_DIALOG_THEME_WRAPPER ? getContext() : context);
+        mTimePicker = new TimePicker(getContext());
         try {
             mTimePicker.setIs24HourView(is24HourView);
             mTimePicker.setCurrentHour(hourOfDay);

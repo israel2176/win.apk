@@ -173,7 +173,6 @@ public class GridLayout extends ViewGroup {
      *  base answer here AND the unseeded 0x0 LayoutParams(Context, AttributeSet). */
     @Override
     public ViewGroup.LayoutParams generateLayoutParams(android.util.AttributeSet attrs) {
-        if (!LayoutParams.MACAPK_GENLP_ATTRS) return super.generateLayoutParams(attrs);
         return new LayoutParams(getContext(), attrs);
     }
 
@@ -249,17 +248,10 @@ public class GridLayout extends ViewGroup {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof GridLayout.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
 
     public static class LayoutParams extends ViewGroup.MarginLayoutParams {
-        /** The MACAPK_GRID_GENLP_ATTRS bisect gate (see
-         *  GridLayout.generateLayoutParams(AttributeSet)). */
-        static final boolean MACAPK_GENLP_ATTRS =
-            !"0".equals(System.getenv("MACAPK_GRID_GENLP_ATTRS"));
 
         private static final Interval DEFAULT_SPAN = new Interval(UNDEFINED, UNDEFINED + 1);
 
@@ -293,7 +285,7 @@ public class GridLayout extends ViewGroup {
          *  MACAPK_GRID_GENLP_ATTRS=0 restores the old unseeded 0x0. */
         public LayoutParams(Context context, android.util.AttributeSet attrs) {
             super(context, attrs);
-            if (MACAPK_GENLP_ATTRS) { width = WRAP_CONTENT; height = WRAP_CONTENT; }
+            width = WRAP_CONTENT; height = WRAP_CONTENT;
         }
 
         // AOSP folds gravity into the row/column alignment; our placement is

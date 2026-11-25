@@ -131,11 +131,8 @@ public class RadioGroup extends LinearLayout {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof RadioGroup.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
 
     /** AOSP RadioGroup.generateLayoutParams(AttributeSet) / generateDefaultLayoutParams
      *  (android14 :260-276). See TableRow for why this matters since v1.0.1643. */

@@ -45,12 +45,6 @@ public final class ViewStub extends View {
         this(context, attrs, defStyleAttr, 0);
     }
 
-    /** BISECT GATE (2026-09-26, default ON; lane B-inflater, cluster B4 of
-     *  docs/widget-fidelity-cluster_2026-09-25.md). MACAPK_VIEWSTUB_THEMED=0
-     *  restores the pre-change read: the hand parse alone, which has no `?`
-     *  branch. */
-    static final boolean MACAPK_VIEWSTUB_THEMED =
-        !"0".equals(System.getenv("MACAPK_VIEWSTUB_THEMED"));
 
     /** AOSP ViewStub(Context, AttributeSet, int, int) (android14-release
      *  core/java/android/view/ViewStub.java:106-121):
@@ -86,7 +80,7 @@ public final class ViewStub extends View {
         // app that does findViewById(stub).inflate() (e.g. Reddit's
         // MainActivity.onCreate) would hit mLayoutResource==0 and abort.
         if (attrs != null) {
-            if (MACAPK_VIEWSTUB_THEMED && context != null) {
+            if (context != null) {
                 try {
                     android.content.res.TypedArray a = context.obtainStyledAttributes(attrs,
                         new int[] { 0x010100f3 /*inflatedId*/, 0x010100f2 /*layout*/ },

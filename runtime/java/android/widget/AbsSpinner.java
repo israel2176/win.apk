@@ -17,53 +17,6 @@ import android.view.View;
 import android.view.ViewGroup;
 
 public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
-    /** Labelled bisect gate (wave 5, 2026-09-26): AOSP AbsSpinner's RecycleBin,
-     *  onMeasure (android14-release AbsSpinner.java:178-247), getSelectedView
-     *  (:317-319) and Spinner.layout / makeView / setUpChild (Spinner.java
-     *  :631-758). The legacy getSelectedView() answered
-     *  `mAdapter.getView(pos, null, this)` -- a FRESH inflate on every call --
-     *  and both onMeasure (when the height was not EXACTLY) and onLayout (after
-     *  removeAllViewsInLayout) called it, so every traversal inflated several
-     *  item views per spinner, the on-screen child changed identity on every
-     *  layout, and getSelectedView() / onItemSelected handed the app a DETACHED
-     *  view that was never on screen. AOSP inflates at most one view per
-     *  spinner per forced measure (RecycleBin.get REMOVES the entry, so a second
-     *  measure in the same traversal takes the same view back), and layout
-     *  recycles the current child into the bin and takes it straight back out,
-     *  so the shown child keeps its identity. MEASURED victim:
-     *  org.bobstuff.bobball's level-select screen, 7 fresh inflates per spinner
-     *  per traversal (13.4 ms of a 13.7 ms traversal), and the step-1 dumps show
-     *  the same spinner's child as FrameLayout@35efb834 then @4f73c916
-     *  (docs/fleet-misc-shatteredpd-retrowars-bobball-bouncy-unciv_2026-09-26.md,
-     *  E1). MACAPK_SPINNER_RECYCLE=0 restores the legacy AbsSpinner and Spinner
-     *  (and disables the two sub-gates below). Offline gate:
-     *  debug/w5widgets_gate.sh (rows sp-*). */
-    static final boolean MACAPK_SPINNER_RECYCLE =
-            !"0".equals(System.getenv("MACAPK_SPINNER_RECYCLE"));
-    /** Sub-gate, only meaningful with MACAPK_SPINNER_RECYCLE on: the WIDTH half
-     *  of the AOSP measure. AbsSpinner.onMeasure answers
-     *  resolveSizeAndState(childWidth + padding, widthSpec) (:238-244), and
-     *  Spinner.onMeasure widens an AT_MOST spinner to its widest item
-     *  (measureContentWidth, :613-622 / :859-899). The legacy measure took the
-     *  whole spec width, so a wrap_content spinner filled its parent.
-     *  MACAPK_SPINNER_WIDTH=0 keeps the legacy spec-size width inside the
-     *  ported measure. This is the one pixel-visible part of the port, hence
-     *  its own switch. */
-    static final boolean MACAPK_SPINNER_WIDTH = MACAPK_SPINNER_RECYCLE
-            && !"0".equals(System.getenv("MACAPK_SPINNER_WIDTH"));
-    /** Sub-gate, only meaningful with MACAPK_SPINNER_RECYCLE on: AOSP's
-     *  selection notification. AOSP fires onItemSelected from
-     *  AdapterView.checkSelectionChanged at the END of a layout, POSTED when in
-     *  layout (AdapterView.selectionChanged), with the view actually on screen
-     *  -- including the famous first callback for position 0 after setAdapter,
-     *  because setAdapter resets mOldSelectedPosition to INVALID_POSITION.
-     *  setSelection(int) itself only records the next position and requests a
-     *  layout. The legacy code fired synchronously inside setSelection with a
-     *  freshly inflated detached view, and never fired for the initial
-     *  selection. MACAPK_SPINNER_SELECT_NOTIFY=0 keeps that legacy synchronous
-     *  notification on top of the ported measure/layout. */
-    static final boolean MACAPK_SPINNER_SELECT_NOTIFY = MACAPK_SPINNER_RECYCLE
-            && !"0".equals(System.getenv("MACAPK_SPINNER_SELECT_NOTIFY"));
 
     SpinnerAdapter mAdapter;
     int mSelectedPosition = INVALID_POSITION;
@@ -103,37 +56,27 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
 
     private final DataSetObserver mObserver = new DataSetObserver() {
         @Override public void onChanged() {
-            if (MACAPK_SPINNER_RECYCLE) {
-                // AOSP AdapterView.AdapterDataSetObserver.onChanged.
-                mDataChanged = true;
-                mOldItemCount = mItemCount;
-                mItemCount = mAdapter != null ? mAdapter.getCount() : 0;
-                rememberSyncState();
-                requestLayout();
-                return;
-            }
-            if (mSelectedPosition == INVALID_POSITION && getCount() > 0) {
-                mSelectedPosition = 0;
-            }
+            // AOSP AdapterView.AdapterDataSetObserver.onChanged.
+            mDataChanged = true;
+            mOldItemCount = mItemCount;
+            mItemCount = mAdapter != null ? mAdapter.getCount() : 0;
+            rememberSyncState();
             requestLayout();
-            invalidate();
+            return;
         }
         @Override public void onInvalidated() {
-            if (MACAPK_SPINNER_RECYCLE) {
-                // AOSP AdapterView.AdapterDataSetObserver.onInvalidated.
-                mDataChanged = true;
-                mOldItemCount = mItemCount;
-                mItemCount = 0;
-                mSelectedPosition = INVALID_POSITION;
-                mSelectedRowId = INVALID_ROW_ID;
-                mNextSelectedPosition = INVALID_POSITION;
-                mNextSelectedRowId = INVALID_ROW_ID;
-                selectedPosition = INVALID_POSITION;
-                mNeedSync = false;
-                requestLayout();
-                return;
-            }
-            requestLayout(); invalidate();
+            // AOSP AdapterView.AdapterDataSetObserver.onInvalidated.
+            mDataChanged = true;
+            mOldItemCount = mItemCount;
+            mItemCount = 0;
+            mSelectedPosition = INVALID_POSITION;
+            mSelectedRowId = INVALID_ROW_ID;
+            mNextSelectedPosition = INVALID_POSITION;
+            mNextSelectedRowId = INVALID_ROW_ID;
+            selectedPosition = INVALID_POSITION;
+            mNeedSync = false;
+            requestLayout();
+            return;
         }
     };
 
@@ -155,19 +98,7 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     @Override public SpinnerAdapter getAdapter() { return mAdapter; }
 
     @Override public void setAdapter(SpinnerAdapter adapter) {
-        if (MACAPK_SPINNER_RECYCLE) { macapkSetAdapterAosp(adapter); return; }
-        if (mAdapter != null) {
-            try { mAdapter.unregisterDataSetObserver(mObserver); } catch (Throwable ignored) {}
-        }
-        mAdapter = adapter;
-        this.adapter = adapter;
-        if (adapter != null) {
-            try { adapter.registerDataSetObserver(mObserver); } catch (Throwable ignored) {}
-            mSelectedPosition = adapter.getCount() > 0 ? 0 : INVALID_POSITION;
-        } else {
-            mSelectedPosition = INVALID_POSITION;
-        }
-        requestLayout();
+        macapkSetAdapterAosp(adapter); return;
     }
 
     /** AOSP AbsSpinner.setAdapter (:114-154). The observer registration keeps
@@ -214,72 +145,38 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     }
 
     @Override public int getCount() {
-        if (MACAPK_SPINNER_RECYCLE) return mItemCount;   // AOSP :344-346
-        return mAdapter != null ? mAdapter.getCount() : 0;
+        return mItemCount;   // AOSP :344-346
     }
 
     /** AOSP AdapterView.getSelectedItemPosition answers mNextSelectedPosition:
      *  the position the app asked for, before the layout that shows it. */
     @Override public int getSelectedItemPosition() {
-        return MACAPK_SPINNER_RECYCLE ? mNextSelectedPosition : mSelectedPosition;
+        return mNextSelectedPosition;
     }
 
     @Override public View getSelectedView() {
-        if (MACAPK_SPINNER_RECYCLE) {
-            // AOSP :317-319: the child actually on screen.
-            if (mItemCount > 0 && mSelectedPosition >= 0) {
-                return getChildAt(mSelectedPosition - mFirstPosition);
-            }
-            return null;
-        }
-        if (mAdapter != null && mSelectedPosition >= 0
-                && mSelectedPosition < mAdapter.getCount()) {
-            return mAdapter.getView(mSelectedPosition, null, this);
+        // AOSP :317-319: the child actually on screen.
+        if (mItemCount > 0 && mSelectedPosition >= 0) {
+            return getChildAt(mSelectedPosition - mFirstPosition);
         }
         return null;
     }
 
     @Override public void setSelection(int position) {
-        if (MACAPK_SPINNER_RECYCLE) {
-            // AOSP :289-293.
-            setNextSelectedPositionInt(position);
-            requestLayout();
-            invalidate();
-            if (!MACAPK_SPINNER_SELECT_NOTIFY) macapkLegacyNotify(position);
-            return;
-        }
-        mSelectedPosition = position;
-        super.setSelection(position);
+        // AOSP :289-293.
+        setNextSelectedPositionInt(position);
         requestLayout();
         invalidate();
-        if (onItemSelectedListener != null && mAdapter != null
-                && position >= 0 && position < mAdapter.getCount()) {
-            onItemSelectedListener.onItemSelected(this, getSelectedView(),
-                    position, mAdapter.getItemId(position));
-        }
+        return;
     }
     public void setSelection(int position, boolean animate) {
-        if (MACAPK_SPINNER_RECYCLE) {
-            // AOSP :281-286: animate only if the position is already on screen.
-            final boolean shouldAnimate = animate && mFirstPosition <= position
-                    && position <= mFirstPosition + getChildCount() - 1;
-            setSelectionInt(position, shouldAnimate);
-            if (!MACAPK_SPINNER_SELECT_NOTIFY) macapkLegacyNotify(position);
-            return;
-        }
-        setSelection(position);
+        // AOSP :281-286: animate only if the position is already on screen.
+        final boolean shouldAnimate = animate && mFirstPosition <= position
+                && position <= mFirstPosition + getChildCount() - 1;
+        setSelectionInt(position, shouldAnimate);
+        return;
     }
 
-    /** MACAPK_SPINNER_SELECT_NOTIFY=0 only: the legacy synchronous callback,
-     *  with the legacy freshly inflated view. */
-    private void macapkLegacyNotify(int position) {
-        if (onItemSelectedListener != null && mAdapter != null
-                && position >= 0 && position < mAdapter.getCount()) {
-            onItemSelectedListener.onItemSelected(this,
-                    mAdapter.getView(position, null, this),
-                    position, mAdapter.getItemId(position));
-        }
-    }
 
     /** AOSP AbsSpinner.setSelectionInt (:303-312): lay out the new selection
      *  immediately (the layout requests it would make are blocked). */
@@ -304,26 +201,13 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     /** AOSP AbsSpinner.generateDefaultLayoutParams (:259-263). Public here
      *  because our ViewGroup declares the base public. */
     @Override public ViewGroup.LayoutParams generateDefaultLayoutParams() {
-        if (!MACAPK_SPINNER_RECYCLE) return super.generateDefaultLayoutParams();
         return new ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT);
     }
 
     @Override protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        if (MACAPK_SPINNER_RECYCLE) { macapkOnMeasureAosp(widthMeasureSpec, heightMeasureSpec); return; }
-        int width = MeasureSpec.getSize(widthMeasureSpec);
-        int height = MeasureSpec.getSize(heightMeasureSpec);
-        if (MeasureSpec.getMode(heightMeasureSpec) != MeasureSpec.EXACTLY) {
-            View sel = getSelectedView();
-            if (sel != null) {
-                sel.measure(widthMeasureSpec,
-                        MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-                height = sel.getMeasuredHeight()
-                        + getPaddingTop() + getPaddingBottom();
-            }
-        }
-        setMeasuredDimension(width, height);
+        macapkOnMeasureAosp(widthMeasureSpec, heightMeasureSpec); return;
     }
 
     /** AOSP AbsSpinner.onMeasure (android14-release :178-247), verbatim apart
@@ -387,9 +271,7 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
         preferredWidth = Math.max(preferredWidth, getSuggestedMinimumWidth());
 
         heightSize = resolveSizeAndState(preferredHeight, heightMeasureSpec, 0);
-        widthSize = MACAPK_SPINNER_WIDTH
-                ? resolveSizeAndState(preferredWidth, widthMeasureSpec, 0)
-                : MeasureSpec.getSize(widthMeasureSpec);
+        widthSize = resolveSizeAndState(preferredWidth, widthMeasureSpec, 0);
 
         setMeasuredDimension(widthSize, heightSize);
         mHeightMeasureSpec = heightMeasureSpec;
@@ -412,29 +294,12 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     }
 
     @Override protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        if (MACAPK_SPINNER_RECYCLE) {
-            // AOSP Spinner.onLayout (:631-636) / Gallery.onLayout: the same
-            // three lines in both AOSP subclasses.
-            mInLayout = true;
-            layout(0, false);
-            mInLayout = false;
-            return;
-        }
-        removeAllViewsInLayout();
-        View sel = getSelectedView();
-        if (sel == null) return;
-        int w = getWidth() - getPaddingLeft() - getPaddingRight();
-        sel.measure(MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
-        int h = sel.getMeasuredHeight();
-        if (sel.getLayoutParams() == null) {
-            sel.setLayoutParams(new ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT));
-        }
-        addViewInLayout(sel, 0, sel.getLayoutParams());
-        sel.layout(getPaddingLeft(), getPaddingTop(),
-                getPaddingLeft() + w, getPaddingTop() + h);
+        // AOSP Spinner.onLayout (:631-636) / Gallery.onLayout: the same
+        // three lines in both AOSP subclasses.
+        mInLayout = true;
+        layout(0, false);
+        mInLayout = false;
+        return;
     }
 
     /** The horizontal gravity layout(int, boolean) places the selected child
@@ -699,11 +564,6 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
      *  the old position still tracks (setSelectionInt compares against it) but
      *  nothing fires: the legacy callback runs from setSelection instead. */
     void checkSelectionChanged() {
-        if (!MACAPK_SPINNER_SELECT_NOTIFY) {
-            mOldSelectedPosition = mSelectedPosition;
-            mOldSelectedRowId = mSelectedRowId;
-            return;
-        }
         if ((mSelectedPosition != mOldSelectedPosition) || (mSelectedRowId != mOldSelectedRowId)) {
             selectionChanged();
             mOldSelectedPosition = mSelectedPosition;
@@ -777,7 +637,6 @@ public abstract class AbsSpinner extends AdapterView<SpinnerAdapter> {
     /** AOSP AbsSpinner.pointToPosition (:356-375): the child under (x, y). The
      *  legacy answer was a constant INVALID_POSITION. */
     public int pointToPosition(int x, int y) {
-        if (!MACAPK_SPINNER_RECYCLE) return INVALID_POSITION;
         android.graphics.Rect frame = mTouchFrame;
         if (frame == null) {
             mTouchFrame = new android.graphics.Rect();

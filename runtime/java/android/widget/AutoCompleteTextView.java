@@ -294,19 +294,9 @@ public class AutoCompleteTextView extends EditText
         if (editable != null) setSelection(editable.length());
     }
 
-    /** AOSP updateDropDownForFilter (AutoCompleteTextView.java): the drop-down
-     *  opens only `if (hasFocus() && hasWindowFocus() && mPopupCanBeUpdated)`.
-     *  Ours opened for ANY filter result, so programmatic text on an unfocused
-     *  field -- which reaches the watcher since TextView.setText sends
-     *  afterTextChanged like AOSP -- popped the list open by itself (ytdlnis's
-     *  Container exposed-dropdown, issue #5). hasWindowFocus is not required
-     *  here: our dialog windows do not all report it. MACAPK_ACTV_FOCUS_GATE=0
-     *  restores the unconditional show. */
-    static final boolean MACAPK_ACTV_FOCUS_GATE =
-        !"0".equals(System.getenv("MACAPK_ACTV_FOCUS_GATE"));
     @Override public void onFilterComplete(int count) {
         if (count > 0 && getText().length() >= mThreshold
-                && (!MACAPK_ACTV_FOCUS_GATE || hasFocus())) {
+                && (hasFocus())) {
             showDropDown();
         } else {
             dismissDropDown();

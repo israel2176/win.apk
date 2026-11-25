@@ -173,9 +173,6 @@ public class Editor {
     // (position, drawable, visibility, focus) is still computed live.
     // MACAPK_FRAMESPEED_CARET=0 restores the per-draw clock read exactly.
     // Gate: debug/framespeed_gate.sh caret (positive control: the =0 arm must
-    // show the early flip). docs/frame-speed-caret-clip-cull_2026-09-26.md.
-    static final boolean FRAMESPEED_CARET =
-        !"0".equals(System.getenv("MACAPK_FRAMESPEED_CARET"));
     private boolean mMacapkCaretRecorded;
     private boolean mMacapkCaretDrawnOn;
     private long mMacapkCaretShowCursorAtRecord;
@@ -187,7 +184,6 @@ public class Editor {
     /** The draw's "is the caret on" -- shouldRenderCursor() at the recording
      *  draw, replayed until the view is invalidated or the phase restarts. */
     boolean macapkShouldDrawCursor() {
-        if (!FRAMESPEED_CARET) return shouldRenderCursor();
         if (mMacapkCaretRecorded && !mMacapkCaretInvalidated
                 && mMacapkCaretShowCursorAtRecord == mShowCursor && isCursorVisible()) {
             return mMacapkCaretDrawnOn;

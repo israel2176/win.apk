@@ -18,7 +18,6 @@ public class AssetFileDescriptor implements java.io.Closeable, android.os.Parcel
     private final long mLength;
     private final android.os.Bundle mExtras;
 
-    private static final boolean FD_TRACE = System.getenv("MACAPK_FD_TRACE") != null;
 
     public AssetFileDescriptor() { this(null, 0, 0); }
 
@@ -43,15 +42,9 @@ public class AssetFileDescriptor implements java.io.Closeable, android.os.Parcel
         this.mStartOffset = startOffset;
         this.mLength = length;
         this.mExtras = extras;
-        if (FD_TRACE) {
-            System.err.println("[AFD] new AssetFileDescriptor(pfd=" + (fd == null ? "NULL" : "ok")
-                    + ", off=" + startOffset + ", len=" + length + ")");
-            new Throwable("AFD-ctor-stack").printStackTrace();
-        }
     }
 
     public ParcelFileDescriptor getParcelFileDescriptor() {
-        if (FD_TRACE) System.err.println("[AFD] getParcelFileDescriptor() -> " + (mFd == null ? "NULL" : "ok"));
         return mFd;
     }
 

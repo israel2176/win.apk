@@ -28,8 +28,6 @@ public class InputMethodManager {
     // TouchDispatcher + TextView.macapkHandleSoftKey). This is how a Unity
     // InputField (room code, chat, name) receives typing -- Unity's
     // com.unity3d.player.S calls showSoftInput(editText, ...) to open, then
-    // its TextWatcher pushes each change to the engine via nativeSetInputString.
-    private static final boolean sTrace = "1".equals(System.getenv("MACAPK_TRACE_IME"));
     private static volatile android.widget.TextView sActiveInput;
     public static android.widget.TextView macapkActiveInput() {
         android.widget.TextView v = sActiveInput;
@@ -130,13 +128,6 @@ public class InputMethodManager {
             sServedView = view;
             sActiveConnection = ic;   // still null for a plain View / non-editor
             sCurrentEditorInfo = ei;
-            if (sTrace) {
-                System.err.println("[Mac.apk.IME] startInput " + view.getClass().getName()
-                    + " editor=" + safeIsEditor(view)
-                    + " ic=" + (ic == null ? "null" : ic.getClass().getSimpleName())
-                    + " imeOptions=0x" + Integer.toHexString(ei.imeOptions)
-                    + (appRequested ? " (app)" : " (focus)"));
-            }
         } catch (Throwable t) {
             sServedView = view; sActiveConnection = null; sCurrentEditorInfo = null;
         }
@@ -384,10 +375,6 @@ public class InputMethodManager {
     }
 
     public boolean showSoftInput(View view, int flags) {
-        if (sTrace) {
-            System.err.println("[Mac.apk.IME] showSoftInput view="
-                + (view == null ? "null" : view.getClass().getName()));
-        }
         macapkSetActiveInput(view);
         macapkStartInput(view);
         if (view != null) view.requestFocus();
@@ -487,13 +474,6 @@ public class InputMethodManager {
     }
 
     public void toggleSoftInput(int showFlags, int hideFlags) {
-        if (sTrace) {
-            System.err.println("[Mac.apk.IME] toggleSoftInput served="
-                + (sServedView == null ? "null" : sServedView.getClass().getName())
-                + " shown=" + sSoftInputShown
-                + " activeInput=" + (sActiveInput == null ? "null" : "set")
-                + " focused=" + macapkTraceFocused());
-        }
         if (sSoftInputShown) { macapkHideInput(); return; }
         View focused = macapkFocusedView();
         if (focused != null) showSoftInput(focused, showFlags);

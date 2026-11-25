@@ -32,15 +32,12 @@ public class ImageButton extends ImageView {
     // 12,10,12,10). It went unseen while every bare <ImageButton> was swapped for
     // AppCompatImageButton, which brings a style of its own; since that swap only
     // happens where AppCompat's factory would, the framework widget needs its own.
-    // MACAPK_IMAGEBUTTON_NO_DEFSTYLE=1 restores the old two-argument chain.
-    private static final boolean NO_DEFSTYLE =
-        "1".equals(System.getenv("MACAPK_IMAGEBUTTON_NO_DEFSTYLE"));
 
     public ImageButton(Context c) {
         this(c, null);
     }
     public ImageButton(Context c, android.util.AttributeSet a) {
-        super(c, a, NO_DEFSTYLE ? 0 : android.R.attr.imageButtonStyle); initImageButtonDefaults();
+        super(c, a, android.R.attr.imageButtonStyle); initImageButtonDefaults();
     }
     public ImageButton(Context c, android.util.AttributeSet a, int s) {
         super(c, a, s); initImageButtonDefaults();

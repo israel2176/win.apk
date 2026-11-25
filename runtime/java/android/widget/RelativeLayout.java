@@ -34,7 +34,6 @@ import android.view.ViewGroup;
 import com.macapk.loader.NativeLog;
 
 public class RelativeLayout extends ViewGroup {
-    private static final boolean RL_ZERO_FILLS = "1".equals(System.getenv("MACAPK_RL_ZERO_FILLS"));
 
     // Process-environment snapshots for the per-draw / per-frame / per-layout /
     // per-event sites below (debug/w9textdraw_verify/hoist_getenv.py). A
@@ -42,8 +41,6 @@ public class RelativeLayout extends ViewGroup {
     // environment it reads is copied once at JVM start (JDK ProcessEnvironment,
     // "subsequent calls to putenv/setenv from C will not be visible from Java
     // code"), so one read at class init is the same value. First in the body, so
-    // no other static initializer of this class can observe them unset.
-    private static final String ENV_MACAPK_TRACE_RL = System.getenv("MACAPK_TRACE_RL");
 
     private static final String TAG = "Mac.apk.RelativeLayout";
 
@@ -213,11 +210,8 @@ public class RelativeLayout extends ViewGroup {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof RelativeLayout.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
     /** AOSP RelativeLayout.generateLayoutParams(ViewGroup.LayoutParams)
      *  (android14 :1130-1139): keep margins when the source has them. */
     @Override
@@ -750,29 +744,10 @@ public class RelativeLayout extends ViewGroup {
      *  non-filling child is laid out at the parent's top-left at its measured
      *  size, as AOSP does, instead of being deferred to the equal-vertical-stack
      *  fallback. =0 restores the deferral exactly. */
-    /** AOSP positionChildHorizontal, the default case (both edges unset, no
-     *  CENTER_* rule; android14 RelativeLayout.java:~1095):
-     *      // This is the default case. For RTL we start from the right and for
-     *      // LTR we start from the left. This will give LEFT/TOP for LTR and
-     *      // RIGHT/TOP for RTL.
-     *      if (isLayoutRtl()) {
-     *          params.mRight = myWidth - mPaddingRight - params.rightMargin;
-     *          params.mLeft = params.mRight - child.getMeasuredWidth();
-     *      } else { params.mLeft = mPaddingLeft + params.leftMargin; ... }
-     *  Ours always started from the left, so under an RTL locale every
-     *  rule-less wrap_content child sat on the wrong side: androidx
-     *  Preference titles stayed at the left while their summaries (aligned to
-     *  the title's START edge) went right (pf-notes Settings, Hebrew locale).
-     *  LTR is unchanged. MACAPK_RL_RTL_DEFAULT=0 restores the left start. */
-    private static final boolean MACAPK_RL_RTL_DEFAULT =
-        !"0".equals(System.getenv("MACAPK_RL_RTL_DEFAULT"));
     private boolean macapkRtlDefault() {
-        if (!MACAPK_RL_RTL_DEFAULT) return false;
         try { return isLayoutRtl(); } catch (Throwable t) { return false; }
     }
 
-    private static final boolean NORULE_TOPLEFT =
-        !"0".equals(System.getenv("MACAPK_RL_NORULE_TOPLEFT"));
 
     /** Measure-space rule solver: a trimmed copy of onLayout's fixed-point sweep
      *  that writes resolved bounds into the out arrays instead of calling
@@ -817,10 +792,6 @@ public class RelativeLayout extends ViewGroup {
      *  10px above where Android puts it. Asymmetric padding is what makes
      *  this visible, which is why it hides in every zero-padding container. */
 
-    /** MACAPK_RL_MATCH_FILLS=1 brings back the old placement: a MATCH_PARENT child
-     *  stretched to the parent's far edge whatever it measured. */
-    private static final boolean MACAPK_RL_MATCH_FILLS =
-        "1".equals(System.getenv("MACAPK_RL_MATCH_FILLS"));
 
     /** The far edge of a MATCH_PARENT child whose near edge is `start`. AOSP
      *  (positionChildHorizontal / positionChildVertical, positionAtEdge) puts it the
@@ -831,7 +802,7 @@ public class RelativeLayout extends ViewGroup {
      *  edge `fill` stays the answer when the measure gave nothing (0), the case the
      *  old fill was there for. */
     private static int macapkMatchEnd(int start, int measured, int fill) {
-        if (MACAPK_RL_MATCH_FILLS || measured <= 0) return fill;
+        if (measured <= 0) return fill;
         return start + measured;
     }
 
@@ -1191,7 +1162,7 @@ public class RelativeLayout extends ViewGroup {
                 // Resolve START/END to LEFT/RIGHT for this layout's direction.
                 if (lp != null) lp.resolveLayoutDirection(getLayoutDirection());
 
-                if (passes == 1 && "1".equals(ENV_MACAPK_TRACE_RL)) {
+                if (passes == 1 && false) {
                     com.macapk.loader.NativeLog.i("Mac.apk.RelLayout",
                         "child[" + i + "] " + child.getClass().getSimpleName()
                         + " isRLP=" + (lp != null) + " mw=" + child.getMeasuredWidth()
@@ -1252,14 +1223,14 @@ public class RelativeLayout extends ViewGroup {
                         // whole height and pushed what follows off screen (bit's PIN
                         // screen). MACAPK_RL_ZERO_FILLS=1 restores that.
                         int rpos = fillW ? macapkMatchEnd(lpos, cw, parentW - padRight - margR)
-                                         : (cw > 0 || !RL_ZERO_FILLS ? lpos + cw : parentW - padRight - margR);
+                                         : (cw > 0 || true ? lpos + cw : parentW - padRight - margR);
                         int bpos = fillH ? macapkMatchEnd(tpos, ch, parentH - padBottom - margB)
-                                         : (ch > 0 || !RL_ZERO_FILLS ? tpos + ch : parentH - padBottom - margB);
+                                         : (ch > 0 || true ? tpos + ch : parentH - padBottom - margB);
                         child.layout(lpos, tpos, rpos, bpos);
                         positioned[i] = true; hDone[i] = true;
                         positionedCount++;
                         madeProgress = true;
-                    } else if (NORULE_TOPLEFT) {
+                    } else {
                         // AOSP's DEFAULT case for a no-rule child that does not
                         // fill: positionChildHorizontal / positionChildVertical
                         // (android14 RelativeLayout.java), with both edges
@@ -1444,7 +1415,7 @@ public class RelativeLayout extends ViewGroup {
                 // child across the parent and kept it on the left under RTL (the
                 // screens sweep: Fossify's empty settings_language, 328 dp where
                 // Android has 0). MACAPK_RL_MATCH_FILLS=1 restores that.
-                final boolean emptyFills = MACAPK_RL_MATCH_FILLS && childW <= 0;
+                final boolean emptyFills = false;
                 if (leftPos == Integer.MIN_VALUE && rightPos == Integer.MIN_VALUE
                         && macapkRtlDefault() && !widthMatchParent && !emptyFills) {
                     rightPos = parentW - padRight - margR;
@@ -1500,7 +1471,7 @@ public class RelativeLayout extends ViewGroup {
                     topPos = padTop + margT;
                     if (heightMatchParent) {
                         bottomPos = macapkMatchEnd(topPos, childH, parentH - padBottom - margB);
-                    } else if (childH > 0 || !MACAPK_RL_MATCH_FILLS) {
+                    } else if (childH > 0 || true) {
                         bottomPos = topPos + Math.max(0, childH);
                     } else {
                         bottomPos = parentH - padBottom - margB;

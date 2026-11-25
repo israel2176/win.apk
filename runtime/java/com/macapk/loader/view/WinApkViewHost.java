@@ -129,7 +129,7 @@ final class WinApkViewHost implements ViewHost {
 
     // ---- Input ----
 
-    @Override public boolean hoverViews() { return View.HOVER_VIEWS; }
+    @Override public boolean hoverViews() { return true; }
 
     @Override public void setKeySource(KeyEvent event, int source) { event.macapkSetSource(source); }
 

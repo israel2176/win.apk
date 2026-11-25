@@ -66,9 +66,6 @@ import java.util.List;
 public class Toolbar extends ViewGroup {
     private static final String TAG = "Mac.apk.Toolbar";
 
-    /** The labelled bisect gate for the whole port (Toolbar + ActionMenuView). */
-    static final boolean MACAPK_PLATFORM_TOOLBAR =
-        !"0".equals(System.getenv("MACAPK_PLATFORM_TOOLBAR"));
 
     /** android.R.attr.toolbarStyle -- AOSP Toolbar(Context, AttributeSet) passes
      *  com.android.internal.R.attr.toolbarStyle, which IS the public attr. */
@@ -127,10 +124,6 @@ public class Toolbar extends ViewGroup {
     private int titleMarginEnd;
     private int titleMarginBottom;
 
-    // ---- pre-port stub state (MACAPK_PLATFORM_TOOLBAR=0 only) ----
-    private Drawable navigationIcon;
-    private Drawable logo;
-    private View.OnClickListener navigationOnClickListener;
 
     // ---- the port (AOSP :140-221) ----
     private TextView mTitleTextView;
@@ -174,14 +167,14 @@ public class Toolbar extends ViewGroup {
     // reads the default-style cascade when defStyleAttr or defStyleRes is nonzero.
     public Toolbar(Context context) { this(context, null); }
     public Toolbar(Context context, AttributeSet attrs) {
-        this(context, attrs, MACAPK_PLATFORM_TOOLBAR ? ATTR_TOOLBAR_STYLE : 0);
+        this(context, attrs, ATTR_TOOLBAR_STYLE);
     }
     public Toolbar(Context context, AttributeSet attrs, int defStyleAttr) {
         this(context, attrs, defStyleAttr, 0);
     }
     public Toolbar(Context context, AttributeSet attrs, int defStyleAttr, int defStyleRes) {
-        super(context, attrs, defStyleAttr, MACAPK_PLATFORM_TOOLBAR ? defStyleRes : 0);
-        if (MACAPK_PLATFORM_TOOLBAR) macapkInitFromStyle(context, attrs, defStyleAttr, defStyleRes);
+        super(context, attrs, defStyleAttr, defStyleRes);
+        macapkInitFromStyle(context, attrs, defStyleAttr, defStyleRes);
     }
 
     /** The body of AOSP's 4-arg constructor (:235-343). Every read is guarded:
@@ -332,7 +325,6 @@ public class Toolbar extends ViewGroup {
 
     /** AOSP :373-383. The popup context is what the overflow popup inflates in. */
     public void setPopupTheme(int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { if (mPopupTheme != resId) mPopupTheme = resId; return; }
         if (mPopupTheme != resId) {
             mPopupTheme = resId;
             if (resId == 0) {
@@ -348,11 +340,9 @@ public class Toolbar extends ViewGroup {
 
     public CharSequence getTitle() { return title; }
     public void setTitle(int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         setTitle(getContext().getText(resId));
     }
     public void setTitle(CharSequence title) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { this.title = title; return; }
         if (!TextUtils.isEmpty(title)) {
             if (mTitleTextView == null) {
                 final Context context = getContext();
@@ -381,11 +371,9 @@ public class Toolbar extends ViewGroup {
 
     public CharSequence getSubtitle() { return subtitle; }
     public void setSubtitle(int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         setSubtitle(getContext().getText(resId));
     }
     public void setSubtitle(CharSequence subtitle) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { this.subtitle = subtitle; return; }
         if (!TextUtils.isEmpty(subtitle)) {
             if (mSubtitleTextView == null) {
                 final Context context = getContext();
@@ -413,22 +401,18 @@ public class Toolbar extends ViewGroup {
     }
 
     public void setTitleTextAppearance(Context context, int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         mTitleTextAppearance = resId;
         if (mTitleTextView != null) mTitleTextView.setTextAppearance(resId);
     }
     public void setSubtitleTextAppearance(Context context, int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         mSubtitleTextAppearance = resId;
         if (mSubtitleTextView != null) mSubtitleTextView.setTextAppearance(resId);
     }
     public void setTitleTextColor(int color) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         mTitleTextColor = color;
         if (mTitleTextView != null) mTitleTextView.setTextColor(color);
     }
     public void setSubtitleTextColor(int color) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         mSubtitleTextColor = color;
         if (mSubtitleTextView != null) mSubtitleTextView.setTextColor(color);
     }
@@ -436,7 +420,6 @@ public class Toolbar extends ViewGroup {
     // ---- navigation button (AOSP :905-1030) ----
 
     public void setNavigationIcon(Drawable icon) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { this.navigationIcon = icon; return; }
         if (icon != null) {
             ensureNavButtonView();
             if (!isChildOrHidden(mNavButtonView)) {
@@ -451,22 +434,15 @@ public class Toolbar extends ViewGroup {
         }
     }
     public void setNavigationIcon(int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         setNavigationIcon(getContext().getDrawable(resId));
     }
     public Drawable getNavigationIcon() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return navigationIcon;
         return mNavButtonView != null ? mNavButtonView.getDrawable() : null;
     }
     // Pre-port: AOSP hangs the description on the nav BUTTON view, which it
     // lazily creates only for a non-empty description; with no button view the
     // getter answers null. The stub modelled the button with mHasNavButtonView.
     public void setNavigationContentDescription(CharSequence description) {
-        if (!MACAPK_PLATFORM_TOOLBAR) {
-            if (description != null && description.length() > 0) mHasNavButtonView = true;
-            if (mHasNavButtonView) mNavigationContentDescription = description;
-            return;
-        }
         if (!TextUtils.isEmpty(description)) ensureNavButtonView();
         if (mNavButtonView != null) mNavButtonView.setContentDescription(description);
     }
@@ -475,13 +451,9 @@ public class Toolbar extends ViewGroup {
     }
     /** AOSP :912. */
     public CharSequence getNavigationContentDescription() {
-        if (!MACAPK_PLATFORM_TOOLBAR) {
-            return mHasNavButtonView ? mNavigationContentDescription : null;
-        }
         return mNavButtonView != null ? mNavButtonView.getContentDescription() : null;
     }
     public void setNavigationOnClickListener(View.OnClickListener listener) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { this.navigationOnClickListener = listener; return; }
         ensureNavButtonView();
         mNavButtonView.setOnClickListener(listener);
     }
@@ -489,7 +461,6 @@ public class Toolbar extends ViewGroup {
     // ---- logo (AOSP :523-719) ----
 
     public void setLogo(Drawable drawable) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { this.logo = drawable; return; }
         if (drawable != null) {
             ensureLogoView();
             if (!isChildOrHidden(mLogoView)) {
@@ -504,11 +475,9 @@ public class Toolbar extends ViewGroup {
         }
     }
     public void setLogo(int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         setLogo(getContext().getDrawable(resId));
     }
     public Drawable getLogo() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return logo;
         return mLogoView != null ? mLogoView.getDrawable() : null;
     }
 
@@ -558,21 +527,17 @@ public class Toolbar extends ViewGroup {
      *  The pre-port stub answered null, and Mastodon's AppKit dereferences it
      *  unguarded (g0.c.Q: getMenu().clear()). */
     public Menu getMenu() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return null;
         ensureMenu();
         return mMenuView.getMenu();
     }
     public void inflateMenu(int resId) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         getMenuInflater().inflate(resId, getMenu());
     }
     public MenuInflater getMenuInflater() { return new MenuInflater(getContext()); }
     public void setOnMenuItemClickListener(OnMenuItemClickListener listener) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         mOnMenuItemClickListener = listener;
     }
     public void dismissPopupMenus() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         if (mMenuView != null) mMenuView.dismissPopupMenus();
     }
 
@@ -679,21 +644,18 @@ public class Toolbar extends ViewGroup {
      *  were absent before the port too, so nothing that linked then fails now. */
     @Override
     public ViewGroup.LayoutParams generateDefaultLayoutParams() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return super.generateDefaultLayoutParams();
         return macapkDefaultLp();
     }
 
     /** AOSP :2190-2193. Declared type: see generateDefaultLayoutParams. */
     @Override
     public ViewGroup.LayoutParams generateLayoutParams(AttributeSet attrs) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return super.generateLayoutParams(attrs);
         return new LayoutParams(getContext(), attrs);
     }
 
     /** AOSP :1584-1609: "Toolbars always eat touch events". */
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
-        if (!MACAPK_PLATFORM_TOOLBAR) return super.onTouchEvent(ev);
         final int action = ev.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) mEatingTouch = false;
         if (!mEatingTouch) {
@@ -710,7 +672,6 @@ public class Toolbar extends ViewGroup {
     @Override
     public void onRtlPropertiesChanged(int layoutDirection) {
         super.onRtlPropertiesChanged(layoutDirection);
-        if (!MACAPK_PLATFORM_TOOLBAR) return;
         mContentInsets.setDirection(layoutDirection == LAYOUT_DIRECTION_RTL);
     }
 
@@ -785,7 +746,6 @@ public class Toolbar extends ViewGroup {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { super.onMeasure(widthMeasureSpec, heightMeasureSpec); return; }
         macapkConvertChildLayoutParams();
         int width = 0;
         int height = 0;
@@ -901,7 +861,6 @@ public class Toolbar extends ViewGroup {
 
     @Override
     protected void onLayout(boolean changed, int l, int t, int r, int b) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { super.onLayout(changed, l, t, r, b); return; }
         macapkConvertChildLayoutParams();
         final boolean isRtl = getLayoutDirection() == LAYOUT_DIRECTION_RTL;
         final int width = getWidth();
@@ -1260,11 +1219,8 @@ public class Toolbar extends ViewGroup {
      *  accept-anything answer for an A/B. */
     @Override
     protected boolean checkLayoutParams(android.view.ViewGroup.LayoutParams p) {
-        if (!MACAPK_CHECK_LP) return true;
         return p instanceof Toolbar.LayoutParams;
     }
-    private static final boolean MACAPK_CHECK_LP =
-        !"0".equals(System.getenv("MACAPK_CHECK_LAYOUT_PARAMS"));
 
     public static class LayoutParams extends ActionBar.LayoutParams {
         // AOSP :2320-2324: which of the Toolbar's own children this is. The
@@ -1319,14 +1275,6 @@ public class Toolbar extends ViewGroup {
     private int mContentInsetStartWithNavigation = RtlSpacingHelper.UNDEFINED;
     private int mContentInsetEndWithActions = RtlSpacingHelper.UNDEFINED;
 
-    private boolean mHasNavButtonView;
-    private CharSequence mNavigationContentDescription;
-    private boolean mHasLogoView;
-    private CharSequence mLogoDescription;
-    private boolean mHasCollapseButtonView;
-    private Drawable mCollapseButtonDrawable;
-    private CharSequence mCollapseContentDescription;
-    private Drawable mOverflowIcon;
     private int mPopupTheme;
 
     // ---- content insets -----------------------------------------------
@@ -1362,7 +1310,6 @@ public class Toolbar extends ViewGroup {
                 : getContentInsetStart();
     }
     public int getCurrentContentInsetEnd() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return getContentInsetEnd();
         boolean hasActions = false;
         if (mMenuView != null) {
             final Menu mb = mMenuView.peekMenu();
@@ -1382,17 +1329,11 @@ public class Toolbar extends ViewGroup {
     // ---- logo description ---------------------------------------------
     /** AOSP :686 / :674 / :701. */
     public void setLogoDescription(CharSequence description) {
-        if (!MACAPK_PLATFORM_TOOLBAR) {
-            if (description != null && description.length() > 0) mHasLogoView = true;
-            if (mHasLogoView) mLogoDescription = description;
-            return;
-        }
         if (!TextUtils.isEmpty(description)) ensureLogoView();
         if (mLogoView != null) mLogoView.setContentDescription(description);
     }
     public void setLogoDescription(int resId) { setLogoDescription(getContext().getText(resId)); }
     public CharSequence getLogoDescription() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return mHasLogoView ? mLogoDescription : null;
         return mLogoView != null ? mLogoView.getContentDescription() : null;
     }
 
@@ -1400,15 +1341,6 @@ public class Toolbar extends ViewGroup {
     /** AOSP :1117 / :1103 / :1089. AOSP's null case resets the button's image
      *  to the styled mCollapseIcon. */
     public void setCollapseIcon(Drawable icon) {
-        if (!MACAPK_PLATFORM_TOOLBAR) {
-            if (icon != null) {
-                mHasCollapseButtonView = true;
-                mCollapseButtonDrawable = icon;
-            } else if (mHasCollapseButtonView) {
-                mCollapseButtonDrawable = null;
-            }
-            return;
-        }
         if (icon != null) {
             ensureCollapseButtonView();
             mCollapseButtonView.setImageDrawable(icon);
@@ -1418,16 +1350,10 @@ public class Toolbar extends ViewGroup {
     }
     public void setCollapseIcon(int resId) { setCollapseIcon(getContext().getDrawable(resId)); }
     public Drawable getCollapseIcon() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return mHasCollapseButtonView ? mCollapseButtonDrawable : null;
         return mCollapseButtonView != null ? mCollapseButtonView.getDrawable() : null;
     }
     /** AOSP :1043 and its two setters just below it. */
     public void setCollapseContentDescription(CharSequence description) {
-        if (!MACAPK_PLATFORM_TOOLBAR) {
-            if (description != null && description.length() > 0) mHasCollapseButtonView = true;
-            if (mHasCollapseButtonView) mCollapseContentDescription = description;
-            return;
-        }
         if (!TextUtils.isEmpty(description)) ensureCollapseButtonView();
         if (mCollapseButtonView != null) mCollapseButtonView.setContentDescription(description);
     }
@@ -1435,9 +1361,6 @@ public class Toolbar extends ViewGroup {
         setCollapseContentDescription(resId != 0 ? getContext().getText(resId) : null);
     }
     public CharSequence getCollapseContentDescription() {
-        if (!MACAPK_PLATFORM_TOOLBAR) {
-            return mHasCollapseButtonView ? mCollapseContentDescription : null;
-        }
         return mCollapseButtonView != null ? mCollapseButtonView.getContentDescription() : null;
     }
 
@@ -1451,27 +1374,22 @@ public class Toolbar extends ViewGroup {
     // ---- overflow menu -------------------------------------------------
     /** AOSP :538 / :552 / :561 -- each is `mMenuView != null && ...`. */
     public boolean isOverflowMenuShowing() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return false;
         return mMenuView != null && mMenuView.isOverflowMenuShowing();
     }
     public boolean showOverflowMenu() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return false;
         return mMenuView != null && mMenuView.showOverflowMenu();
     }
     public boolean hideOverflowMenu() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return false;
         return mMenuView != null && mMenuView.hideOverflowMenu();
     }
 
     /** AOSP :1144 / :1155 -- "ensureMenu(); mMenuView.setOverflowIcon(icon)". The
      *  pre-port stub kept the icon on the Toolbar itself. */
     public void setOverflowIcon(Drawable icon) {
-        if (!MACAPK_PLATFORM_TOOLBAR) { mOverflowIcon = icon; return; }
         ensureMenu();
         mMenuView.setOverflowIcon(icon);
     }
     public Drawable getOverflowIcon() {
-        if (!MACAPK_PLATFORM_TOOLBAR) return mOverflowIcon;
         ensureMenu();
         return mMenuView.getOverflowIcon();
     }
