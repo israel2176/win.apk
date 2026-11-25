@@ -58,11 +58,32 @@ public final class AccountStore {
 
     /** The store backed by {@code file}; one instance per canonical path. */
     public static AccountStore at(File file) {
+        return of(file, false);
+    }
+
+    /**
+     * The system broker's store (Win.apk): the same rows sealed for the Windows user with
+     * DPAPI (com.macapk.loader.DataProtection) in {@code <name>.dat} beside {@code file}, because
+     * they hold the Google account's master token (Play services' password for the account) and
+     * Play services' own tokens. An older install's plain {@code file} is read once, written
+     * sealed and deleted.
+     */
+    public static AccountStore sealedAt(File file) {
+        String n = file.getName();
+        int dot = n.lastIndexOf('.');
+        File parent = file.getParentFile();
+        String sealedName = (dot > 0 ? n.substring(0, dot) : n) + ".dat";
+        AccountStore s = of(parent == null ? new File(sealedName) : new File(parent, sealedName), true);
+        s.mPlainFrom = file;
+        return s;
+    }
+
+    private static AccountStore of(File file, boolean sealed) {
         String key;
         try { key = file.getCanonicalPath(); } catch (IOException e) { key = file.getAbsolutePath(); }
         synchronized (STORES) {
             AccountStore s = STORES.get(key);
-            if (s == null) { s = new AccountStore(new File(key)); STORES.put(key, s); }
+            if (s == null) { s = new AccountStore(new File(key), sealed); STORES.put(key, s); }
             return s;
         }
     }
@@ -78,14 +99,46 @@ public final class AccountStore {
     }
 
     private final File mFile;
+    /** Sealed with DataProtection (sealedAt), else a plain Properties file. */
+    private final boolean mSealed;
+    /** sealedAt: the plain file an older install wrote, moved into mFile at the first read. */
+    private File mPlainFrom;
+    /** sealedAt: mFile exists and could not be opened; it is not written over. */
+    private boolean mUnreadable;
     private List<Rec> mRecs;   // insertion order, like the accounts table's _id order
 
-    private AccountStore(File file) { mFile = file; }
+    private AccountStore(File file, boolean sealed) { mFile = file; mSealed = sealed; }
 
     public File file() { return mFile; }
 
     private List<Rec> recs() {
-        if (mRecs == null) mRecs = load(mFile);
+        if (mRecs != null) return mRecs;
+        if (!mSealed) {
+            mRecs = load(mFile);
+            return mRecs;
+        }
+        if (mFile.isFile()) {
+            Properties p = new Properties();
+            try {
+                byte[] plain = com.macapk.loader.DataProtection.unseal(Files.readAllBytes(mFile.toPath()));
+                p.load(new java.io.ByteArrayInputStream(plain));
+                java.util.Arrays.fill(plain, (byte) 0);
+            } catch (Throwable t) {
+                System.err.println("[accounts] could not open " + mFile + ": " + t);
+                mUnreadable = true;
+            }
+            mRecs = parse(p);
+        } else if (mPlainFrom != null && mPlainFrom.isFile()) {
+            // An older install's plain rows: sealed now, then the plain file goes.
+            mRecs = load(mPlainFrom);
+            if (save()) {
+                try { Files.deleteIfExists(mPlainFrom.toPath()); } catch (IOException ignored) {}
+                System.err.println("[accounts] moved " + mPlainFrom.getName() + " into " + mFile.getName()
+                        + " (sealed)");
+            }
+        } else {
+            mRecs = new ArrayList<>();
+        }
         return mRecs;
     }
 
@@ -222,15 +275,19 @@ public final class AccountStore {
     // the record prefix is parsed up to the third '.' only.
 
     private static List<Rec> load(File f) {
-        List<Rec> out = new ArrayList<>();
-        if (!f.isFile()) return out;
+        if (!f.isFile()) return new ArrayList<>();
         Properties p = new Properties();
         try (InputStream in = new FileInputStream(f)) {
             p.load(in);
         } catch (IOException e) {
             System.err.println("[accounts] could not read " + f + ": " + e);
-            return out;
+            return new ArrayList<>();
         }
+        return parse(p);
+    }
+
+    private static List<Rec> parse(Properties p) {
+        List<Rec> out = new ArrayList<>();
         int n;
         try { n = Integer.parseInt(p.getProperty("n", "0")); } catch (NumberFormatException e) { n = 0; }
         for (int i = 0; i < n; i++) {
@@ -268,7 +325,12 @@ public final class AccountStore {
         return out;
     }
 
-    private void save() {
+    /** False when nothing was written. */
+    private boolean save() {
+        if (mSealed && mUnreadable) {
+            System.err.println("[accounts] not writing over " + mFile + ", which could not be opened");
+            return false;
+        }
         Properties p = new Properties();
         List<Rec> rs = recs();
         p.setProperty("n", Integer.toString(rs.size()));
@@ -302,13 +364,24 @@ public final class AccountStore {
             Files.deleteIfExists(tmp.toPath());
             Files.createFile(tmp.toPath());
             ownerOnly(tmp, "rw-------");
-            try (OutputStream out = new FileOutputStream(tmp)) {
-                p.store(out, "Mac.apk accounts_ce (AccountManagerService CE rows)");
+            if (mSealed) {
+                java.io.ByteArrayOutputStream text = new java.io.ByteArrayOutputStream();
+                p.store(text, null);
+                byte[] plain = text.toByteArray();
+                byte[] sealed = com.macapk.loader.DataProtection.seal(plain);
+                java.util.Arrays.fill(plain, (byte) 0);
+                Files.write(tmp.toPath(), sealed);
+            } else {
+                try (OutputStream out = new FileOutputStream(tmp)) {
+                    p.store(out, "Mac.apk accounts_ce (AccountManagerService CE rows)");
+                }
             }
             Files.move(tmp.toPath(), mFile.toPath(), StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE);
+            return true;
         } catch (IOException e) {
             System.err.println("[accounts] could not write " + mFile + ": " + e);
+            return false;
         }
     }
 

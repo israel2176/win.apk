@@ -126,8 +126,8 @@ final class AccountsService extends Binder {
     AccountsService(SystemServer system, File storeFile) {
         super(DESCRIPTOR);
         this.system = system;
-        this.store = AccountStore.at(storeFile);
-        SystemServer.log("accounts: store " + storeFile);
+        this.store = AccountStore.sealedAt(storeFile);   // it holds the master token: sealed (DPAPI)
+        SystemServer.log("accounts: store " + store.file());
         syncGoogleAccounts();
         watchGoogleAccounts();
     }
