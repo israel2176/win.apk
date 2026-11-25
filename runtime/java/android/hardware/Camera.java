@@ -280,7 +280,7 @@ public class Camera {
      * on the device. If the device does not have a back-facing camera, this
      * returns null." The scan is AOSP's, verbatim.
      *
-     * Every webcam is offered as a back camera first (the owner's decision: a
+     * Every webcam is offered as a back camera first (by design: a
      * PC's camera serves both roles, so apps that ask for the rear camera --
      * cheque scanners -- work), so this opens the first webcam. Null only when
      * there is no camera at all.

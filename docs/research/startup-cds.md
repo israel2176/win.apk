@@ -167,8 +167,8 @@ the jdk.* agents and the incubator modules: 146 → 122 MB.
   runs that start without CDS (`cds: off: ... not the one baked into the Java
   runtime`), instead of silently using stale classes. A plain JDK
   (`--jdk $JAVA_HOME`) has no record and runs as 0.8 did.
-- The app's own classes are never archived. The earlier research (branch
-  `claude/issue-70-startup`) found that dumping an archive that holds app
+- The app's own classes are never archived. The earlier research (issue #70)
+  found that dumping an archive that holds app
   classes (a per-app dynamic archive, or JDK 25's AOT cache) makes HotSpot
   verify them, and dex-converted code often fails verification: 4 of the 10
   smoke apps threw `VerifyError` and never drew, and the recording start's JVM

@@ -2,7 +2,7 @@
 //
 // A maintenance window is `winapk-runtime --system --maintenance`: the system broker boots Google services,
 // runs the apps' jobs that are due (the Play Store's update check and installs among them) and stops a few
-// minutes after the last. The owner's rule: it runs only while Win.apk itself runs, never from a Windows
+// minutes after the last. The rule: it runs only while Win.apk itself runs, never from a Windows
 // scheduled task or a service. So the launcher, shown or hidden, asks at its start and every kCheckMinutes
 // whether one is due, and opens it when it is; the launcher's exit rule (maybe_quit) is not changed for it,
 // but a window it opened counts as something left, so the launcher waits for its end.

@@ -136,10 +136,10 @@ public class SensorManager {
     //     wire yet. Absent is the truthful answer until there is; see
     //     docs/future_implementations.md.
     //   * GYROSCOPE STAYED upstream, reporting 0,0,0 ("a laptop on a desk does
-    //     not turn"). Win.apk, November 2026 (the owner's decision): GONE as
+    //     not turn"). Win.apk, November 2026: GONE as
     //     well. A PC has no gyroscope, and a gyroscope that can only report
     //     zero is a made-up sensor; Android without one returns null.
-    //   * Win.apk, November 2026 (the owner's decision): the MOTION family
+    //   * Win.apk, November 2026: the MOTION family
     //     (ACCELEROMETER, GRAVITY, LINEAR_ACCELERATION, ROTATION_VECTOR,
     //     GAME_ROTATION_VECTOR, ORIENTATION) is GONE too. It reported a
     //     made-up "phone held upright" gravity vector (upstream's
@@ -588,7 +588,7 @@ public class SensorManager {
     // Build an event for the given sensor. The catalog is empty, so there is
     // no sensor behind any type and none gets an event.
     //
-    // The owner's decision (November 2026): no synthetic accelerometer. The
+    // Win.apk (November 2026): no synthetic accelerometer. The
     // made-up "phone held upright" gravity vector this file used to report
     // (and the gravity, linear-acceleration, rotation-vector and orientation
     // sensors derived from it) is gone. A PC has no accelerometer, so this
@@ -596,8 +596,8 @@ public class SensorManager {
     // getDefaultSensor(TYPE_ACCELEROMETER) is null, the list has none, and
     // PackageManager has no android.hardware.sensor.accelerometer (derived from
     // the catalog). The
-    // gyroscope that reported 0,0,0 went the same way (the owner's decision,
-    // November 2026): a PC has none.
+    // gyroscope that reported 0,0,0 went the same way (November
+    // 2026): a PC has none.
     private SensorEvent makeEvent(Sensor s, long nowNanos) {
         float[] values = readingOf(s);
         if (values == null) return null;

@@ -4,7 +4,7 @@ Status: steps A0 to A4 built ("A1 as built" after section 4, "A2 as built",
 "A3 as built", "A4 as built"): every
 app's process starts on AOSP 14's own `ActivityThread` (`lib/aosp-app.jar`,
 staged by `stage_runtime.sh` and shipped), through the `AppHost` seam, with no
-switch (the owner's decision: a layer lands as the only path). A4 built ("A4
+switch (a project rule: a layer lands as the only path). A4 built ("A4
 as built"): Win.apk's own `Activity`, `Application`, `ActivityThread`,
 `Instrumentation`, `LoadedApk` and framework `Fragment` classes are deleted,
 the framework is compiled against AOSP's, `ActivityHost` keeps only the host's

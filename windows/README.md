@@ -484,7 +484,7 @@ resources call through it. The framework tests that draw run inside
 on" and `WINAPK_AOSP_GFX=1` are what everything runs now, and "off" or
 "Java2D" is history, kept for the numbers.
 
-The history: the default since the owner approved it, then the only graphics
+The history: the default once approved, then the only graphics
 once the Java2D classes went. The JVMs with no app (the install's icon render,
 `--gms`, `--verify-apk`, `--system`) take the same graphics as an app's run.
 Each graphics had its own class-data sharing archive (`framework-aosp-<key>.jsa`,
@@ -1298,7 +1298,7 @@ What was cut, without changing what an app sees (`build_aosp_gfx.sh`):
 - The DLL's COFF symbol table, 3.3 MB, stripped with LLVM's strip (the
   sections stay as lld wrote them; the exports the JVM binds by stay).
 
-And one cut that does change what an app sees, the owner's decision
+And one cut that does change what an app sees, a project decision
 (Hebrew and Latin first): Noto CJK Regular, 19 MB (10.9 MB of `xz -9`),
 fonts 47 to 29 MB. Windows 10 and 11 have CJK fonts of their own, and the
 four CJK families of `fonts.xml` are those at run time (Milestone 2, "Fonts":
@@ -2035,8 +2035,8 @@ every such change is listed here:
   `MacApkPackageManager.getInstallerPackageName` and `getInstallSourceInfo`
   answer: the record when there is one, else Google Play for an app the user
   installed (the running app, or a registry app the caller may see) while
-  `WINAPK_PLAY_INSTALLER` is not `0` (the owner's decision: bit and Bank
-  Hapoalim stop at "reinstall from the store" without a store as installer),
+  `WINAPK_PLAY_INSTALLER` is not `0` (some apps, banking apps among them,
+  stop at "reinstall from the store" without a store as installer),
   as `adb install -i com.android.vending` leaves it; not for Play, Play
   services and GSF themselves, nor when no Play Store package is reported.
   A Play answer has Play's Android 14 shape: installing and initiating Play
@@ -3392,7 +3392,7 @@ every such change is listed here:
   them; `AospGfx.materializeSystemFonts` maps `/system/fonts` before it touches
   `Typeface`. Java2D never calls them.
 - `runtime/java/com/macapk/loader/gfx/HostCjkFonts.java` (new), `AospGfx.java`:
-  the install carries no Noto CJK (the owner's decision), so the four CJK
+  the install carries no Noto CJK (to keep its size down), so the four CJK
   families of `fonts.xml` are Windows' own fonts, in a fonts.xml written to
   `cache\aosp-fonts\` (milestone 2, "Fonts"); `materializeSystemFonts` reads
   that file and passes the Windows files as `updatableFontMap`, and gives
@@ -3691,19 +3691,18 @@ every such change is listed here:
   "off"/"torch", `FLASH_MODE_TORCH`, `setTorchMode`, `.camera.flash`).
   `setParameters` refuses an unsupported focus or flash mode as AOSP's camera
   service does. `MacApkPackageManager.java` declares `android.hardware.camera`
-  (every webcam is also a back camera, the owner's decision). Comments no
+  (every webcam is also a back camera, by design). Comments no
   longer describe a Mac. Test: `CameraOrientationTest`.
 - `runtime/java/android/hardware/SensorManager.java`: no synthetic
-  accelerometer (the owner's decision): the "phone held upright" gravity pose
+  accelerometer: the "phone held upright" gravity pose
   and the sensors derived from it (gravity, linear acceleration, rotation
   vectors, orientation) are gone, so `getDefaultSensor(TYPE_ACCELEROMETER)` is
   null and `android.hardware.sensor.accelerometer` is not declared, as on an
   Android device without one. The gyroscope that reported 0,0,0 is gone as
-  well (the owner's decision): the catalog is empty, so no sensor and no
+  well: the catalog is empty, so no sensor and no
   `android.hardware.sensor.*` feature is reported. Tilt Control
   (`TiltControl`, never in Win.apk's UI) has nothing left to drive.
-- AOSP's resources and views the default, then the only ones (November 2026, the owner's
-  decision): the switches are gone and Win.apk's own `android.content.res`, `android.view` and
+- AOSP's resources and views the default, then the only ones (November 2026): the switches are gone and Win.apk's own `android.content.res`, `android.view` and
   `android.widget` classes leave the shipped `android-framework.jar` (`stage_runtime.sh`; their
   sources stay, the rest compiles against them). `com/macapk/loader/ResourceIndex.java`: should
   anything still ask it for the platform's table, it finds `-Dwinapk.aosp.res.framework`

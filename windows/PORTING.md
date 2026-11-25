@@ -1043,7 +1043,7 @@ GPU->CPU copy (~2.5-3 ms/frame on WARP at 474x630), but every app draws.
 An asynchronous read through two pixel pack buffers (each swap issuing its
 `glReadPixels` into one and presenting the previous frame from the other, one
 frame late) was tried behind an opt-in switch, `WINAPK_GL_ASYNC_READBACK=1`,
-and removed (November 2026: the owner wants no switches). The one-frame
+and removed (November 2026: the project has no switches). The one-frame
 pipeline is wrong for an app that renders on demand: a Flutter UI (Impeller on
 OpenGL ES) draws a startup burst then idles, and its last, settled frame was
 issued into a buffer but never mapped, there being no next swap to map it and

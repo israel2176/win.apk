@@ -1162,7 +1162,7 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
     // window-box layer could misplace, so it gets the view's size, as on AOSP.
     //
     // Always on: its bisect switch (MACAPK_SV_OVERSIZE_HOLDER=0, the window size
-    // for these holders) is gone, as the owner wants no switches.
+    // for these holders) is gone, as Win.apk has no switches.
     static final boolean sOversizeHolderGate = true;
 
     private int[] macapkOversizeUnclaimedViewSize() {

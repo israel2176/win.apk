@@ -5593,7 +5593,7 @@ bool google_apps_ready() {
 // services" and Settings > Google account > "Update apps in the background" on, the launcher opens a
 // maintenance window every few hours while it runs, shown or hidden: `winapk-runtime --system --maintenance`
 // boots Google services, runs the jobs that are due (their own constraints decide: network, unmetered,
-// charging) and stops a few minutes after the last. The owner's rule: only while Win.apk runs, never from a
+// charging) and stops a few minutes after the last. The rule: only while Win.apk runs, never from a
 // Windows scheduled task or a service; the launcher is not kept alive for it, but waits for a window it opened
 // (maybe_quit). When is decided in maintenance.h; the window's conditions are Android's too: only on mains
 // power, with a network. Logs: logs\maintenance.log.

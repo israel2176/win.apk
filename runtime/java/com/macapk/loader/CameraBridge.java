@@ -123,7 +123,7 @@ public final class CameraBridge {
     }
 
     /** One of FACING_*. Win.apk offers every webcam twice, as a BACK and a
-     *  FRONT camera (native_camera.cpp, kRolesPerDevice). The owner's decision:
+     *  FRONT camera (native_camera.cpp, kRolesPerDevice). By design:
      *  a PC's camera serves both roles, so apps that ask for the rear camera
      *  (cheque scanners) work. */
     public static int getDeviceFacing(int index) {
