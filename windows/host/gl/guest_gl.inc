@@ -227,7 +227,6 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglGetSyncAttrib(EGLDisplay dpy, EGLSync sync,
 WINAPK_GUEST_ABI EGLenum guest_eglQueryAPI(void) { return eglQueryAPI(); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglQueryContext(EGLDisplay dpy, EGLContext ctx, EGLint attribute, EGLint *value) { return eglQueryContext(dpy, ctx, attribute, value); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglReleaseThread(void) { return eglReleaseThread(); }
-WINAPK_GUEST_ABI EGLBoolean guest_eglSwapInterval(EGLDisplay dpy, EGLint interval) { return eglSwapInterval(dpy, interval); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglWaitClient(void) { return eglWaitClient(); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglWaitGL(void) { return eglWaitGL(); }
 WINAPK_GUEST_ABI EGLBoolean guest_eglWaitNative(EGLint engine) { return eglWaitNative(engine); }
@@ -1355,7 +1354,6 @@ WINAPK_GUEST_ABI void guest_glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"eglQueryAPI", reinterpret_cast<void*>(&guest_eglQueryAPI)}, \
     {"eglQueryContext", reinterpret_cast<void*>(&guest_eglQueryContext)}, \
     {"eglReleaseThread", reinterpret_cast<void*>(&guest_eglReleaseThread)}, \
-    {"eglSwapInterval", reinterpret_cast<void*>(&guest_eglSwapInterval)}, \
     {"eglWaitClient", reinterpret_cast<void*>(&guest_eglWaitClient)}, \
     {"eglWaitGL", reinterpret_cast<void*>(&guest_eglWaitGL)}, \
     {"eglWaitNative", reinterpret_cast<void*>(&guest_eglWaitNative)}, \

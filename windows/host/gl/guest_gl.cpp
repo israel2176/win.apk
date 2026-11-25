@@ -16,6 +16,10 @@
 //   * eglChooseConfig asks for pbuffer configs instead of window ones and drops
 //     the Android-only attributes ANGLE rejects (upstream drops
 //     EGL_RECORDABLE_ANDROID too);
+//   * eglSwapBuffers on a window surface returns at the display's rate for its
+//     swap interval (eglSwapInterval, 1 unless the app sets it), as a
+//     BufferQueue that SurfaceFlinger empties once per vsync makes it on a
+//     device (swap_pacing.h); a pbuffer has no vsync of its own;
 //   * eglGetProcAddress answers with the System V functions, and the debug
 //     callback, which ANGLE would call with the Microsoft convention, is not
 //     installed.
@@ -34,12 +38,15 @@
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 
+#include <windows.h>
+
 #include "winapk/guest_abi.h"
 
 #include "gl/gl_loader.h"
 #include "gl/gl_surface.h"
 #include "gl/guest_gl_extensions.h"
 #include "native_window.h"
+#include "swap_pacing.h"
 
 typedef khronos_int32_t GLclampx;
 
@@ -76,6 +83,9 @@ struct WindowSurface {
     // its handle is bound by EGL14 itself, which knows no pbuffer behind it,
     // so it is never replaced by a larger one.
     bool fixed = false;
+    // eglSwapInterval's, clamped to the config's range: the vsync periods a
+    // presenting swap takes (swap_pacing.h). EGL's default is 1.
+    int interval = 1;
 };
 
 // The window's size: what the app should draw (eglQuerySurface) and what the
@@ -277,6 +287,40 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglCopyBuffers(EGLDisplay dpy, EGLSurface surf
     return eglCopyBuffers(dpy, real_of(surface), target);
 }
 
+// The swap interval of the surface current on this thread. A window surface
+// keeps it for its swaps (ANGLE's pbuffer would ignore it); any other is
+// ANGLE's.
+WINAPK_GUEST_ABI EGLBoolean guest_eglSwapInterval(EGLDisplay dpy, EGLint interval) {
+    const EGLSurface handle = handle_of(eglGetCurrentSurface(EGL_DRAW));
+    std::lock_guard<std::mutex> hold(g_lock);
+    auto it = g_window_surfaces.find(handle);
+    if (it == g_window_surfaces.end()) return eglSwapInterval(dpy, interval);
+    EGLint lo = 0, hi = 1;
+    eglGetConfigAttrib(dpy, it->second.config, EGL_MIN_SWAP_INTERVAL, &lo);
+    eglGetConfigAttrib(dpy, it->second.config, EGL_MAX_SWAP_INTERVAL, &hi);
+    it->second.interval = interval < lo ? lo : interval > hi ? hi : interval;
+    return EGL_TRUE;
+}
+
+// Blocks the calling thread for ns on a high-resolution waitable timer, the
+// thread's own (Windows 10 1803 and later; a plain one, at the scheduler's
+// granularity, before).
+void wait_ns(int64_t ns) {
+    if (ns <= 0) return;
+    thread_local HANDLE timer = [] {
+        HANDLE t = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* HIGH_RESOLUTION */, TIMER_ALL_ACCESS);
+        return t ? t : CreateWaitableTimerExW(nullptr, nullptr, 0, TIMER_ALL_ACCESS);
+    }();
+    if (!timer) {
+        Sleep(static_cast<DWORD>(ns / 1000000));
+        return;
+    }
+    LARGE_INTEGER due;
+    due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
+    SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+    WaitForSingleObject(timer, INFINITE);
+}
+
 WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
     WindowSurface ws;
     {
@@ -339,6 +383,12 @@ WINAPK_GUEST_ABI EGLBoolean guest_eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
                      frames, read_ns / 120.0 / 1e6, present_ns / 120.0 / 1e6, use_async ? "async" : "sync");
         read_ns = present_ns = 0;
     }
+    // The frame is out; the producer waits for its next vsync slot, as a full
+    // BufferQueue would make it (swap_pacing.h). Timed on this thread, whose
+    // swaps these are.
+    thread_local SwapPacer pacer;
+    const auto now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(clock::now().time_since_epoch()).count();
+    wait_ns(pacer.wait_ns(now_ns, ws.interval));
     // The window outgrew the pbuffer (this frame was read from the part that
     // fits): the next frame gets one that holds it.
     int ww = 0, wh = 0;
@@ -470,6 +520,7 @@ const std::unordered_map<std::string, void*>& symbols() {
         WINAPK_GUEST_GL(eglReleaseTexImage),
         WINAPK_GUEST_GL(eglCopyBuffers),
         WINAPK_GUEST_GL(eglSwapBuffers),
+        WINAPK_GUEST_GL(eglSwapInterval),
         WINAPK_GUEST_GL(eglQuerySurface),
         {"eglSwapBuffersWithDamageKHR", reinterpret_cast<void*>(&guest_eglSwapBuffersWithDamage)},
         {"eglSwapBuffersWithDamageEXT", reinterpret_cast<void*>(&guest_eglSwapBuffersWithDamage)},
