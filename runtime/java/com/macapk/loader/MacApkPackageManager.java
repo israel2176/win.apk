@@ -2441,7 +2441,7 @@ public final class MacApkPackageManager extends PackageManager {
      *
      *  We ignored both, so `getLaunchIntentForPackage(<ANY package>)` resolved
      *  to OUR launcher: Telegram's EmuDetector.checkPackageName read that as
-     *  "BlueStacks / Nox / Genymotion is installed" and picked its emulator
+     *  "an emulator's own app is installed" and picked its emulator
      *  code paths, and every "is app X installed / open app X" check in the
      *  fleet (31 of 60 corpus apps call getLaunchIntentForPackage) was handed
      *  an Intent that relaunches US. queryIntentServices already scoped this

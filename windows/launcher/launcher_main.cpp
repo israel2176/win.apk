@@ -6016,7 +6016,7 @@ void google_signout(const std::wstring& account) {
 // The device ID Google's page for uncertified devices takes (google.com/android/uncertified): the Services
 // Framework's android_id, as `--gms device-id` reads it from gservices.db with the runtime's own SQLite (or the
 // layer's own checkin without the real GSF). Win.apk is not a Play Protect certified device and never claims to
-// be; registering the ID is Google's own way on for such a device (custom ROMs and Waydroid use it). Asked on a
+// be; registering the ID is Google's own way on for such a device (custom ROMs use it). Asked on a
 // thread (a JVM start) once per opening of Settings, and posted to the library's window, which owns these.
 std::wstring g_device_id;
 bool g_device_id_asking = false;

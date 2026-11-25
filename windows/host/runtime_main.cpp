@@ -829,8 +829,8 @@ bool install_app(Options* o, const fs::path& android_root) {
 // another build of the library is no stamp, and a DLL under it must be sealed.
 //
 // Many apps ship the same libraries (libc++_shared.so, libcrashlytics.so,
-// SQLite, ...). As Windows on ARM's translation cache and Box64's DynaCache
-// do, a whole translation is kept in <data>\aot-cache under a key of the
+// SQLite, ...). As Windows on ARM's own translation cache does, a whole
+// translation is kept in <data>\aot-cache under a key of the
 // library's code (the text hash the loader checks), winapk-aot and clang
 // (each by size and date), the flags and the CPU, and an app with the same
 // library links it (a second name for the same file, aot_link_or_copy)

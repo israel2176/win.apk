@@ -397,7 +397,7 @@ public final class GmsCli {
      * exists: nothing to register is an ordinary state, not a failure.
      *
      * Registering is Google's own path for a device that is not Play Protect
-     * certified (custom ROMs and Waydroid use it); nothing here claims a
+     * certified (custom ROMs use it); nothing here claims a
      * certification the device does not have.
      */
     private static int deviceId() {
