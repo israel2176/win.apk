@@ -48,19 +48,23 @@ public class URLSpan extends ClickableSpan implements android.text.ParcelableSpa
         @Override public URLSpan[] newArray(int size) { return new URLSpan[size]; }
     };
 
-    public void onClick(android.view.View widget) {
+    /** AOSP's: an ACTION_VIEW of the URL, named as coming from this app, started from the
+     *  widget's context. It goes through intent resolution like any other start, so the app's
+     *  own filters take its own links, and a URL leaves the app only where a device's would
+     *  (ActivityHost.hostActionFor: web, mailto, tel, geo, behind the user-input gate). A
+     *  link to any other scheme is an ActivityNotFoundException, logged, as on a device; it
+     *  must not reach Windows' protocol handlers (search-ms:, ms-msdt:...) from a message's
+     *  text. */
+    @Override public void onClick(android.view.View widget) {
+        android.net.Uri uri = android.net.Uri.parse(getURL());
+        android.content.Context context = widget.getContext();
+        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_VIEW, uri);
+        intent.putExtra(android.provider.Browser.EXTRA_APPLICATION_ID, context.getPackageName());
         try {
-            String url = getURL();
-            if (url != null && widget != null) {
-                // v1.0.849: through the ONE host-URL policy choke point, not
-                // straight to NativeCocoa -- this path bypassed the launch/
-                // recency guard entirely. A genuine span click always sits
-                // inside the recent-input grace window, so behaviour for real
-                // users is unchanged; harness runs (MACAPK_EXTERNAL_URLS=0)
-                // and programmatic replays are refused like everything else.
-                com.macapk.loader.ActivityHost.openHostUrlGated(url, "URLSpan.onClick");
-            }
-        } catch (Throwable ignored) { }
+            context.startActivity(intent);
+        } catch (android.content.ActivityNotFoundException e) {
+            android.util.Log.w("URLSpan", "Actvity was not found for intent, " + intent.toString());
+        }
     }
 
     // NO updateDrawState override, on purpose. AOSP URLSpan does not declare
