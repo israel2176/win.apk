@@ -13,105 +13,110 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<a class="skip" href="#main" data-i18n="skip">Skip to content</a>
 <header><div class="wrap">
-  <a class="brand" href="#"><img src="images/icon.png" alt="" width="30" height="30">Win.apk</a>
-  <nav><a href="#features" data-i18n="nav_features">Features</a><a href="#how" data-i18n="nav_how">Compared with an emulator</a><a href="#install" data-i18n="nav_install">Download</a></nav>
-  <button class="chip" type="button" data-lang-toggle data-i18n-label="lang_label"><span data-i18n="lang_switch">עברית</span></button>
-  <a class="chip" href="https://github.com/israel2176/win.apk"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span data-i18n="star">GitHub</span></a>
+  <a class="brand" href="#top"><img src="images/icon.png" alt="" width="30" height="30">Win.apk</a>
+  <nav data-i18n-label="nav_label" aria-label="Sections">
+    <a href="#examples" data-i18n="nav_examples">What it does</a>
+    <a href="#apps" data-i18n="nav_apps">Israeli apps</a>
+    <a href="#start" data-i18n="nav_start">Get started</a>
+    <a href="#faq" data-i18n="nav_faq">FAQ</a>
+  </nav>
+  <button class="chip lang" type="button" data-lang-toggle data-i18n-label="lang_label" aria-label="Switch to Hebrew"><span lang="he" data-i18n="lang_switch">עברית</span></button>
 </div></header>
 
-<main>
-<div class="hero"><div class="wrap">
-  <div>
-    <span class="tag" data-i18n="badge"></span>
-    <h1 data-i18n="hero_title"></h1>
-    <p class="sub" data-i18n="hero_sub"></p>
-    <div class="dl">
-      <a class="btn" href="https://github.com/israel2176/win.apk/releases/latest/download/Win.apk-Setup.exe">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8.5v8.5H3zM12.5 3H21v8.5h-8.5zM3 12.5h8.5V21H3zM12.5 12.5H21V21h-8.5z"/></svg>
-        <span><span data-i18n="download"></span><small data-i18n="download_small"></small></span></a>
-      <a class="ghost" href="https://github.com/israel2176/win.apk" data-i18n="source"></a>
-    </div>
-    <p class="fine">
-      <a href="https://github.com/israel2176/win.apk/releases/latest/download/Win.apk-windows-x64.zip" data-i18n="portable"></a>
-      <a href="https://github.com/israel2176/win.apk/releases/latest" data-i18n="whats_new"></a>
-      <a href="https://github.com/israel2176/win.apk/releases" data-i18n="all_releases"></a>
+<main id="main">
+<div class="hero" id="top"><div class="wrap">
+  <div class="pitch">
+    <span class="tag" data-i18n="badge">Free · Open source · Public preview</span>
+    <h1 data-i18n="hero_title">Android apps on your Windows PC, like any other program</h1>
+    <p class="sub" data-i18n="hero_sub">No emulator, no virtual machine. Every app gets its own window, Start menu entry and notifications.</p>
+    <!-- Without script, or until GitHub answers, the buttons go to the releases page: releases/latest/download
+         only works once a release that is not a pre-release exists. site.js points them at the installer. -->
+    <a class="btn" data-dl="setup" href="https://github.com/israel2176/win.apk/releases">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.17l3.59-3.58L18 11l-6 6-6-6 1.41-1.41L11 13.17zM4 19h16v2H4z"/></svg>
+      <span data-i18n="download">Download for Windows</span></a>
+    <p class="meta"><span data-dl-meta data-i18n="meta_default">Windows 10 and 11 · 64-bit · Free</span></p>
+    <p class="more">
+      <a data-dl="releases" href="https://github.com/israel2176/win.apk/releases" data-i18n="all_releases">All releases</a>
+      <a data-dl="zip" href="https://github.com/israel2176/win.apk/releases" data-i18n="portable">Portable ZIP</a>
+      <a data-dl="notes" href="https://github.com/israel2176/win.apk/releases" data-i18n="whats_new">What's new</a>
     </p>
   </div>
-  <div class="screen"><img data-shot="library.png" src="images/library.png" alt="The Win.apk library with installed Android apps" width="972" height="686"></div>
+  <div class="screen"><img data-shot="library.png" data-i18n-alt="alt_library" src="images/library.png" alt="The Win.apk library with installed Android apps" width="972" height="686"></div>
 </div></div>
 
-<div class="stats"><div class="wrap">
-  <div><b data-i18n="stat1_n"></b><span data-i18n="stat1"></span></div>
-  <div><b data-i18n="stat2_n"></b><span data-i18n="stat2"></span></div>
-  <div><b data-i18n="stat3_n"></b><span data-i18n="stat3"></span></div>
-</div></div>
+<section id="examples"><div class="wrap">
+  <h2 data-i18n="ex_title">What you can do</h2>
+  <ul class="cards">
+    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h8l6 6v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V9h5.5zM8 13v2h8v-2zm0 4v2h5v-2z"/></svg>
+      <h3 data-i18n="e1_t"></h3><p data-i18n="e1_d"></p></li>
+    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18v14H3zm2 4v8h14V8zM8 20h8v2H8z"/></svg>
+      <h3 data-i18n="e2_t"></h3><p data-i18n="e2_d"></p></li>
+    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16l-1 13H5zm4 0a4 4 0 0 1 8 0h-2a2 2 0 0 0-4 0z"/></svg>
+      <h3 data-i18n="e3_t"></h3><p data-i18n="e3_d"></p></li>
+    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3l14 9-14 9z"/></svg>
+      <h3 data-i18n="e4_t"></h3><p data-i18n="e4_d"></p></li>
+    <li><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v3H5v3H2v2h3v4H2v2h3v3h3v3h2v-3h4v3h2v-3h3v-3h3v-2h-3v-4h3V8h-3V5h-3V2h-2v3h-4V2zm-1 5h10v10H7z"/></svg>
+      <h3 data-i18n="e5_t"></h3><p data-i18n="e5_d"></p></li>
+  </ul>
+</div></section>
 
-<section id="features"><div class="wrap">
-  <h2 data-i18n="features_title"></h2>
-  <div class="bento">
-    <div class="box"><div class="n">01</div><h3 data-i18n="f1_t"></h3><p data-i18n="f1_d"></p></div>
-    <div class="box"><div class="n">02</div><h3 data-i18n="f2_t"></h3><p data-i18n="f2_d"></p></div>
-    <div class="box"><div class="n">03</div><h3 data-i18n="f3_t"></h3><p data-i18n="f3_d"></p></div>
-    <div class="box"><div class="n">04</div><h3 data-i18n="f4_t"></h3><p data-i18n="f4_d"></p></div>
-    <div class="box"><div class="n">05</div><h3 data-i18n="f5_t"></h3><p data-i18n="f5_d"></p></div>
-    <div class="box"><div class="n">06</div><h3 data-i18n="f6_t"></h3><p data-i18n="f6_d"></p></div>
+<section id="apps" class="alt"><div class="wrap">
+  <h2 data-i18n="apps_title">Israeli apps on Win.apk</h2>
+  <p class="lead" data-i18n="apps_sub"></p>
+  <div class="phones">
+    <figure><img data-shot="apps/waze.png" src="images/apps/waze.png" data-i18n-alt="alt_waze" alt="" width="362" height="832" loading="lazy"><figcaption data-i18n="cap_waze"></figcaption></figure>
+    <figure><img data-shot="apps/moovit.png" src="images/apps/moovit.png" data-i18n-alt="alt_moovit" alt="" width="361" height="832" loading="lazy"><figcaption data-i18n="cap_moovit"></figcaption></figure>
+    <figure><img data-shot="apps/maccabi.png" src="images/apps/maccabi.png" data-i18n-alt="alt_maccabi" alt="" width="360" height="800" loading="lazy"><figcaption data-i18n="cap_maccabi"></figcaption></figure>
+    <figure><img data-shot="apps/hapoalim.png" src="images/apps/hapoalim.png" data-i18n-alt="alt_hapoalim" alt="" width="216" height="480" loading="lazy"><figcaption data-i18n="cap_hapoalim"></figcaption></figure>
   </div>
+  <p class="note"><span data-i18n="apps_note"></span> <a data-doc="compat" data-i18n="compat_link" href="https://github.com/israel2176/win.apk/blob/main/docs/APPS.md">Compatibility table</a></p>
 </div></section>
 
-<section id="how"><div class="wrap">
-  <h2 data-i18n="how_title"></h2>
-  <p class="lead" data-i18n="how_sub"></p>
-  <div class="table"><table>
-    <thead><tr><th></th><th data-i18n="col_emu"></th><th class="win" data-i18n="col_win"></th></tr></thead>
-    <tbody>
-      <tr><th data-i18n="r1"></th><td data-i18n="r1_e"></td><td class="win" data-i18n="r1_w"></td></tr>
-      <tr><th data-i18n="r2"></th><td data-i18n="r2_e"></td><td class="win" data-i18n="r2_w"></td></tr>
-      <tr><th data-i18n="r3"></th><td data-i18n="r3_e"></td><td class="win" data-i18n="r3_w"></td></tr>
-      <tr><th data-i18n="r4"></th><td data-i18n="r4_e"></td><td class="win" data-i18n="r4_w"></td></tr>
-      <tr><th data-i18n="r5"></th><td data-i18n="r5_e"></td><td class="win" data-i18n="r5_w"></td></tr>
-      <tr><th data-i18n="r6"></th><td data-i18n="r6_e"></td><td class="win" data-i18n="r6_w"></td></tr>
-    </tbody>
-  </table></div>
-  <p class="honest"><span data-i18n="honest"></span> <a data-doc="d_compat" data-i18n="compat_link"></a></p>
-</div></section>
-
-<section><div class="wrap">
-  <h2 data-i18n="shots_title"></h2>
+<section id="shots"><div class="wrap">
+  <h2 data-i18n="shots_title">The program</h2>
   <div class="gallery">
-    <figure><img data-shot="library.png" src="images/library.png" alt="" width="972" height="686" loading="lazy"><figcaption data-i18n="shot_library"></figcaption></figure>
-    <figure><img data-shot="store.png" src="images/store.png" alt="" width="972" height="686" loading="lazy"><figcaption data-i18n="shot_store"></figcaption></figure>
-    <figure><img data-shot="dark.png" src="images/dark.png" alt="" width="972" height="686" loading="lazy"><figcaption data-i18n="shot_dark"></figcaption></figure>
+    <figure><img data-shot="library.png" src="images/library.png" data-i18n-alt="alt_library" alt="" width="972" height="686" loading="lazy"><figcaption data-i18n="shot_library"></figcaption></figure>
+    <figure><img data-shot="store.png" src="images/store.png" data-i18n-alt="alt_store" alt="" width="972" height="686" loading="lazy"><figcaption data-i18n="shot_store"></figcaption></figure>
+    <figure><img data-shot="dark.png" src="images/dark.png" data-i18n-alt="alt_dark" alt="" width="972" height="686" loading="lazy"><figcaption data-i18n="shot_dark"></figcaption></figure>
   </div>
 </div></section>
 
-<section id="install"><div class="wrap">
-  <div class="final">
-    <div>
-      <h2 data-i18n="install_title"></h2>
-      <ol class="steps">
-        <li><b data-i18n="s1_t"></b><span data-i18n="s1_d"></span></li>
-        <li><b data-i18n="s2_t"></b><span data-i18n="s2_d"></span></li>
-        <li><b data-i18n="s3_t"></b><span data-i18n="s3_d"></span></li>
-      </ol>
-      <p class="fine"><b data-i18n="req_title"></b>: <span data-i18n="req"></span></p>
-      <p class="fine" data-i18n="preview"></p>
-      <div class="docs">
-        <a class="chip" data-doc="d_start" data-i18n="d_start"></a><a class="chip" data-doc="d_compat" data-i18n="d_compat"></a>
-        <a class="chip" data-doc="d_faq" data-i18n="d_faq"></a><a class="chip" data-doc="d_trouble" data-i18n="d_trouble"></a>
-        <a class="chip" href="https://github.com/israel2176/win.apk/issues/new/choose" data-i18n="d_report"></a>
-      </div>
-    </div>
-    <a class="btn" href="https://github.com/israel2176/win.apk/releases/latest/download/Win.apk-Setup.exe">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3h8.5v8.5H3zM12.5 3H21v8.5h-8.5zM3 12.5h8.5V21H3zM12.5 12.5H21V21h-8.5z"/></svg>
-      <span><span data-i18n="download"></span><small data-i18n="download_small"></small></span></a>
+<section id="start" class="alt"><div class="wrap">
+  <h2 data-i18n="start_title">Get started in three steps</h2>
+  <ol class="steps">
+    <li><b data-i18n="s1_t"></b><span data-i18n="s1_d"></span></li>
+    <li><b data-i18n="s2_t"></b><span data-i18n="s2_d"></span></li>
+    <li><b data-i18n="s3_t"></b><span data-i18n="s3_d"></span></li>
+  </ol>
+  <p class="note"><b data-i18n="req_title"></b> <span data-i18n="req"></span></p>
+  <a class="btn small" data-dl="setup" href="https://github.com/israel2176/win.apk/releases">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 3h2v10.17l3.59-3.58L18 11l-6 6-6-6 1.41-1.41L11 13.17zM4 19h16v2H4z"/></svg>
+    <span data-i18n="download">Download for Windows</span></a>
+  <a class="ghost" data-doc="start" data-i18n="guide_link" href="https://github.com/israel2176/win.apk/blob/main/docs/getting-started.md">Step-by-step guide</a>
+</div></section>
+
+<section id="faq"><div class="wrap">
+  <h2 data-i18n="faq_title">Questions</h2>
+  <div class="faq">
+    <details><summary data-i18n="q1"></summary><p data-i18n="a1"></p></details>
+    <details><summary data-i18n="q2"></summary><p data-i18n="a2"></p></details>
+    <details><summary data-i18n="q3"></summary><p><span data-i18n="a3"></span> <a data-doc="compat" data-i18n="compat_link" href="https://github.com/israel2176/win.apk/blob/main/docs/APPS.md">Compatibility table</a></p></details>
+    <details><summary data-i18n="q4"></summary><p><span data-i18n="a4"></span> <a data-doc="google" data-i18n="google_link" href="https://github.com/israel2176/win.apk/blob/main/docs/google-services.md">Google services</a></p></details>
+    <details><summary data-i18n="q5"></summary><p><span data-i18n="a5"></span> <a data-doc="faq" data-i18n="faq_link" href="https://github.com/israel2176/win.apk/blob/main/docs/faq.md">More questions</a></p></details>
   </div>
 </div></section>
 </main>
 
 <footer><div class="wrap">
-  <p><span data-i18n="footer_1"></span> <a href="https://github.com/israel2176/win.apk/blob/main/LICENSE" data-i18n="license"></a></p>
-  <p data-i18n="footer_2"></p>
+  <p class="links">
+    <a href="https://github.com/israel2176/win.apk" data-i18n="f_github">GitHub</a>
+    <a href="https://github.com/israel2176/win.apk/blob/main/LICENSE" data-i18n="f_license">License: AGPL-3.0</a>
+    <a href="https://github.com/israel2176/win.apk/issues/new/choose" data-i18n="f_report">Report a problem</a>
+    <a data-doc="trouble" href="https://github.com/israel2176/win.apk/blob/main/docs/troubleshooting.md" data-i18n="f_trouble">Troubleshooting</a>
+  </p>
+  <p data-i18n="f_marks">Android is a trademark of Google LLC. App names and screenshots belong to their owners.</p>
 </div></footer>
 <script src="site.js"></script>
 </body>
