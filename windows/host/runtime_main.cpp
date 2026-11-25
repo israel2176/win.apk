@@ -15,7 +15,8 @@
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
 //   winapk-runtime --verify-apk <app>   (the launcher's Google services setup: package and signer, below)
-//   winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] <class> [args...]   (internal: run_java)
+//   winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] [--jvm-option <opt>]... <class> [args...]
+//                  (internal: run_java)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --system [--maintenance]   (the system broker, below)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --cds-prepare   (the framework archive now, cds.h)
 //   winapk-runtime [--data <dir>] [--jdk <dir>] [--lib <dir>] --java-test <class path> <class> [args...]   (tests)
@@ -373,16 +374,17 @@ bool resolve_paths(Options* o) {
 // `max_heap_mb` sets one. The exit code is kJavaMainOutOfMemory when the Java
 // heap ran out at any point, also where the program caught the error and went
 // on: the DEX converter's workers do, leaving that class out of a jar it then
-// calls a success.
+// calls a success. `jvm_opts` are further JVM options (the DEX converter's JIT: dex_jit_options).
 constexpr int kJavaMainOutOfMemory = 77;  // none of a Java tool's own codes, and under 256 for any shell
 int run_java(const Options& o, const fs::path& jar, const wchar_t* main_class, const std::vector<std::wstring>& args,
-             unsigned max_heap_mb = 0) {
+             unsigned max_heap_mb = 0, const std::vector<std::wstring>& jvm_opts = {}) {
     wchar_t self[32768];
     const DWORD n = GetModuleFileNameW(nullptr, self, 32768);
     if (n == 0 || n >= 32768) return -1;
     std::wstring cmdline = quoted(std::wstring(self, n)) + L" --java-main --jdk " + quoted(o.jdk) + L" --cp " +
                            quoted(jar) + L" ";
     if (max_heap_mb) cmdline += L"--max-heap-mb " + std::to_wstring(max_heap_mb) + L" ";
+    for (const std::wstring& j : jvm_opts) cmdline += L"--jvm-option " + quoted(j) + L" ";
     cmdline += main_class;
     for (const std::wstring& a : args) cmdline += L" " + quoted(a);
     std::fflush(stderr);  // our lines first, then the child's
@@ -586,6 +588,43 @@ unsigned dex_retry_heap_mb() {
     return static_cast<unsigned>(std::max<unsigned long long>(2048, quarter));
 }
 
+// The DEX in an installed app: the uncompressed size of base.apk's classes*.dex and its splits' (a feature
+// split may carry code), from the central directories.
+unsigned long long dex_bytes(const fs::path& base) {
+    std::vector<fs::path> apks{base};
+    std::error_code ec;
+    for (fs::directory_iterator it(base.parent_path(), ec), end; !ec && it != end; it.increment(ec)) {
+        const std::wstring n = it->path().filename().wstring();
+        if (n.rfind(L"split_", 0) == 0 && it->path().extension() == L".apk") apks.push_back(it->path());
+    }
+    unsigned long long total = 0;
+    for (const fs::path& apk : apks) {
+        std::vector<std::string> rows;  // "<name> <length> <CRC-32>"
+        if (!jar_entries(apk, "classes", &rows)) continue;
+        for (const std::string& r : rows) {
+            const size_t a = r.find(' '), b = r.rfind(' ');
+            if (a == std::string::npos || a < 4 || a == b || r.compare(a - 4, 4, ".dex") != 0) continue;
+            total += std::strtoull(r.c_str() + a + 1, nullptr, 10);
+        }
+    }
+    return total;
+}
+
+// The converter's JIT. The converter is a short job, and most of its time was HotSpot's warm-up, not
+// the conversion: C2 compiling the converter's own hot methods kept the cores busy while the workers ran
+// slow code (Jerboa's 10.5 MB of DEX: 17 s of CPU for 6.6 s with one worker, and four workers barely
+// faster). With C1 alone (-XX:TieredStopAtLevel=1) the same conversion takes half the time: Jerboa
+// 4.6 -> 2.3 s, Jellyfin 4.8 -> 2.6, Jitsi 3.3 -> 1.4, Fossify Notes 3.0 -> 1.4 (JDK on Linux, 4 cores),
+// Jerboa under Wine with the shipped Temurin 21 11.2 -> 7.4 s. C2's code is faster once compiled (1.45 s
+// against 2.15 s per Jerboa of DEX in a warm JVM), so it wins back its warm-up only past about five
+// Jerboas, ~55 MB of DEX: above kDexC2Above the converter keeps the default tiered JIT. The output is
+// the same either way (the converter's bytes do not depend on the JIT).
+constexpr unsigned long long kDexC2Above = 40ull << 20;
+std::vector<std::wstring> dex_jit_options(const fs::path& apk) {
+    if (dex_bytes(apk) > kDexC2Above) return {};
+    return {L"-XX:TieredStopAtLevel=1"};
+}
+
 // Step 2. Exit codes are com.macapk.dex.Main's: 0 converted, 3 no DEX in the
 // APK (a valid case: the app then has no classes.jar). A failed conversion
 // keeps the cached jar when only the converter changed: the app then runs as
@@ -626,13 +665,14 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     args.push_back(o.apk.wstring());
     args.push_back(tmp.wstring());
     const unsigned heap = dex_heap_mb();
-    int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args, heap);
+    const std::vector<std::wstring> jit = dex_jit_options(o.apk);
+    int rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args, heap, jit);
     if (rc == kJavaMainOutOfMemory) {
         const unsigned retry = std::max(dex_retry_heap_mb(), heap);
         std::fprintf(stderr, "[win.apk] the DEX converter ran out of its %u MB heap; converting again with %u MB\n",
                      heap, retry);
         discard();
-        rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args, retry);
+        rc = run_java(o, o.lib / "macapk-loader.jar", L"com.macapk.dex.Main", args, retry, jit);
     }
     if (rc == 3) {
         jar->clear();
@@ -1809,10 +1849,10 @@ void report_path_encoding(JNIEnv* env) {
     std::fprintf(stderr, "[win.apk] ANSI code page %u; the JVM takes file names in %s\n", GetACP(), jnu.c_str());
 }
 
-// winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] <class> [args...]
+// winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] [--jvm-option <opt>]... <class> [args...]
 //
-// `java -cp <jar> [-Xmx<n>m] <class> args...` for run_java: creates a JVM with
-// the default options (and the heap limit, if given) and calls <class>.main
+// `java -cp <jar> [-Xmx<n>m] [<opt>...] <class> args...` for run_java: creates a JVM with
+// the default options (and the heap limit and options, if given) and calls <class>.main
 // with the arguments as UTF-16 Java strings. A System.exit in main ends the
 // process with its code; otherwise the exit code is 0, or 1 when main throws,
 // as with java.exe. Either way it is kJavaMainOutOfMemory instead once the
@@ -1848,6 +1888,7 @@ void watch_java_heap(JavaVM* vm) {
 struct JavaMainArgs {
     fs::path jdk, cp;
     unsigned max_heap_mb = 0;
+    std::vector<std::string> jvm_opts;
     std::string main_class;  // binary name with '/', "com/macapk/dex/Main"
     std::vector<std::wstring> args;
     int result = 1;
@@ -1859,6 +1900,7 @@ DWORD WINAPI java_main_thread(void* param) {
     if (!jvm) return 1;
     std::vector<std::string> opts{"-Djava.class.path=" + jvm_path(a->cp)};
     if (a->max_heap_mb) opts.push_back("-Xmx" + std::to_string(a->max_heap_mb) + "m");
+    opts.insert(opts.end(), a->jvm_opts.begin(), a->jvm_opts.end());
     JavaVM* vm = nullptr;
     JNIEnv* env = nullptr;
     if (!create_vm(jvm, opts, &vm, &env, &java_main_exit)) return 1;
@@ -1903,11 +1945,12 @@ int java_main(int argc, wchar_t** argv) {
         if (k == L"--jdk") a.jdk = argv[i + 1];
         else if (k == L"--cp") a.cp = argv[i + 1];
         else if (k == L"--max-heap-mb") a.max_heap_mb = static_cast<unsigned>(std::wcstoul(argv[i + 1], nullptr, 10));
+        else if (k == L"--jvm-option") a.jvm_opts.push_back(utf8(argv[i + 1]));
         else break;
     }
     if (a.jdk.empty() || a.cp.empty() || i >= argc) {
-        std::fprintf(stderr, "usage: winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] <class> "
-                             "[args...]\n");
+        std::fprintf(stderr, "usage: winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] "
+                             "[--jvm-option <opt>]... <class> [args...]\n");
         return 2;
     }
     a.main_class = utf8(argv[i++]);
