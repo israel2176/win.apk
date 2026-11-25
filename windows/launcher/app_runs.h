@@ -26,7 +26,8 @@
 // started), expect_end() sets it for a run that something else is ending. Nothing clears it.
 //
 // What the library says once a run is over is RunEnd::kind(), from `stopped`, whether the window ever
-// came up, and the exit code.
+// came up, and the exit code (include/winapk/app_exit.h: a crash, or Close app in the "isn't responding"
+// dialog, are told by it).
 
 #pragma once
 
@@ -35,6 +36,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "../include/winapk/app_exit.h"
 
 namespace winapk::launcher {
 
@@ -45,14 +48,18 @@ struct RunEnd {
     bool stopped = false;    // the user ended it
     bool was_ready = false;  // its window had come up
     bool clean = false;      // exit code 0
+    unsigned long code = 0;  // the exit code (1 for a runtime that never started)
     enum Kind {
         kQuiet,        // closed by the app or its user: nothing to say
-        kStopped,      // stopped from the launcher: nothing to say, and a splash still up goes
+        kStopped,      // stopped from the launcher, or closed from the "isn't responding" dialog: nothing
+                       // to say, and a splash still up goes
+        kCrashed,      // the app crashed (app_exit.h's app_crashed): Android's crash dialog
         kDidNotStart,  // over before its window came up
         kFailed,       // its window was up, and it exited with an error
     };
     Kind kind() const {
-        if (stopped) return kStopped;
+        if (stopped || code == kExitClosedNotResponding) return kStopped;
+        if (app_crashed(code)) return kCrashed;
         if (!was_ready) return kDidNotStart;
         return clean ? kQuiet : kFailed;
     }
@@ -92,11 +99,15 @@ public:
 
     // The run's thread: the runtime is gone (`clean`: exit code 0), or never started. The process is
     // forgotten here, under the caller's lock, so that stop() cannot end a handle about to be closed.
-    bool ended(const std::wstring& name, bool clean) {
+    bool ended(const std::wstring& name, bool clean) { return ended_with(name, clean ? 0 : 1); }
+
+    // The same, with the runtime's exit code.
+    bool ended_with(const std::wstring& name, unsigned long code) {
         Run* r = find(name);
         if (!r || r->state == RunState::kEnded) return false;
         r->was_ready = r->state == RunState::kReady;
-        r->clean = clean;
+        r->clean = code == 0;
+        r->code = code;
         r->state = RunState::kEnded;
         r->process = nullptr;
         return true;
@@ -127,7 +138,7 @@ public:
     std::optional<RunEnd> finish(const std::wstring& name) {
         const auto it = runs_.find(name);
         if (it == runs_.end() || it->second.state != RunState::kEnded) return std::nullopt;
-        const RunEnd end{it->second.stopped, it->second.was_ready, it->second.clean};
+        const RunEnd end{it->second.stopped, it->second.was_ready, it->second.clean, it->second.code};
         runs_.erase(it);
         return end;
     }
@@ -155,6 +166,7 @@ private:
         RunState state = RunState::kStarting;
         Process process = nullptr;
         bool stopped = false, was_ready = false, clean = false;
+        unsigned long code = 0;
     };
     const Run* find(const std::wstring& name) const {
         const auto it = runs_.find(name);

@@ -38,6 +38,18 @@ stops as soon as it loads that code; its log says `this is a 32-bit ARM library
 ([below](#reading-the-log)). The first start of a new or updated app converts
 its code and can take up to a minute.
 
+**"Wiz has stopped" or "Wiz keeps stopping".** The app crashed: an error it
+did not handle, or a fault in its native code. Its log ends with
+`FATAL EXCEPTION` (and the error and where it happened) or a `crash dump:` line.
+**Show log** and **Report a problem** are under the title; report it with the
+log. [More](USER_GUIDE.md#when-an-app-crashes-or-stops-responding)
+
+**"Wiz isn't responding".** The app was given a click, a key or text and did
+not take it for five seconds: its main thread is busy or stuck. **Wait** gives
+it more time; **Close app** ends it. The log has `ANR: input event ... not
+taken by the main thread` from `Win.apk.InputTimeout`. If it happens each time
+at the same place, report it with the log.
+
 **The install failed.** The install window says why in a sentence; **Show log**
 opens the install log and **Copy details** copies what a report needs.
 
@@ -133,7 +145,9 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `TextToSpeech: there is no speech engine here yet` | The app asked Android to read text aloud. Nothing is spoken; the app is told that the utterance failed |
 | `MidiManager: there are no MIDI devices here yet` | The app tried to open a MIDI device; it is told that the open failed |
 | `[win.apk] cannot load <library>` or `UnsatisfiedLinkError` | A native library did not load: 32-bit ARM only (`this is a 32-bit ARM library`), packed or encrypted, or for another CPU |
-| `Exception` or `FATAL` | The app crashed; the lines after it say where |
+| `FATAL EXCEPTION: <thread>` | The app crashed: an exception nothing caught, on that thread; the lines after it say what and where. The app then ends, as on a phone, and the launcher shows **Wiz has stopped** |
+| `Exception` | An error the app reported; it may have handled it |
+| `Win.apk.InputTimeout: ANR:` | The app did not take the input it was given for five seconds; the launcher asked **Wiz isn't responding**, and the next line says the answer (`Close app` or `Wait`) |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed. A minidump was written next to the log (`crash-<app>-<time>.dmp`): attach it too |
 | `[win.apk] guest called abort(); abort message: <text>` | The app's native code ended the app on purpose, and the text says why (what Android shows as "Abort message" in a crash report): `terminating due to uncaught exception of type ...` is a C++ error nothing caught. A `crash dump:` line follows |
 | `[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | This Windows has no `icu.dll` (Windows 10 before version 1903, or Wine). Apps keep working: numbers are still written the language's way, but units are written with their international symbols ("5 km", "3 h") rather than in the language's own words, and some locale details are generic |

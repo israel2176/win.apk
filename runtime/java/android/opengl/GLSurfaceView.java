@@ -186,6 +186,16 @@ public class GLSurfaceView extends SurfaceView
 
     public GLSurfaceView(Context c) {
         super(c);
+        init();
+    }
+    /** AOSP: `super(context, attrs); init();`. The element's attributes reach View (its
+     *  android:id above all: an app finds its GLSurfaceView subclass by id). */
+    public GLSurfaceView(Context c, android.util.AttributeSet a) {
+        super(c, a);
+        init();
+    }
+
+    private void init() {
         // SurfaceView's ctor already pointed nativeHandle at the singleton
         // MTKView. Wire OUR per-frame callback to it so onDrawFrame fires
         // here. If multiple GLSurfaceView instances are constructed (e.g.
@@ -195,7 +205,6 @@ public class GLSurfaceView extends SurfaceView
         long handle = ViewHost.get().nativeHandle(this);
         if (handle != 0) NativeCocoa.setRenderer(handle, this);
     }
-    public GLSurfaceView(Context c, android.util.AttributeSet a) { this(c); }
 
     public void setRenderer(Renderer r) {
         this.renderer = r;

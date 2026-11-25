@@ -22,6 +22,9 @@ public final class AttributionSource implements Parcelable {
     private final String mPackageName;
     private final String mAttributionTag;
     private final AttributionSource mNext;
+    /** The permissions the context this source belongs to renounced (ContextParams'
+     *  setRenouncedPermissions); empty, never null, as AOSP's getter answers. */
+    private final java.util.Set<String> mRenouncedPermissions;
 
     /** AOSP Context.DEVICE_ID_DEFAULT -- the physical device, as opposed to a
      *  virtual (streamed) one. Mac.apk has no VirtualDeviceManager, so every
@@ -36,17 +39,21 @@ public final class AttributionSource implements Parcelable {
 
     public AttributionSource(int uid, String packageName, String attributionTag,
                              AttributionSource next) {
-        this(uid, INVALID_PID, DEVICE_ID_DEFAULT, packageName, attributionTag, next);
+        this(uid, INVALID_PID, DEVICE_ID_DEFAULT, packageName, attributionTag, next, null);
     }
 
     private AttributionSource(int uid, int pid, int deviceId, String packageName,
-                              String attributionTag, AttributionSource next) {
+                              String attributionTag, AttributionSource next,
+                              java.util.Set<String> renouncedPermissions) {
         mUid = uid;
         mPid = pid;
         mDeviceId = deviceId;
         mPackageName = packageName;
         mAttributionTag = attributionTag;
         mNext = next;
+        mRenouncedPermissions = renouncedPermissions == null || renouncedPermissions.isEmpty()
+                ? java.util.Collections.emptySet()
+                : java.util.Collections.unmodifiableSet(new java.util.HashSet<>(renouncedPermissions));
     }
 
     public int getUid() { return mUid; }
@@ -114,7 +121,7 @@ public final class AttributionSource implements Parcelable {
         android.app.Application app = com.macapk.loader.app.Apps.current();
         if (app != null) pkg = app.getPackageName();
         return new AttributionSource(uid, android.os.Process.myPid(), DEVICE_ID_DEFAULT,
-                                     pkg, null, null);
+                                     pkg, null, null, null);
     }
 
     public String getPackageName() { return mPackageName; }
@@ -122,6 +129,12 @@ public final class AttributionSource implements Parcelable {
     public String getAttributionTag() { return mAttributionTag; }
 
     public AttributionSource getNext() { return mNext; }
+
+    /** AOSP :578 -- the permissions this source's context renounced, which the
+     *  system then treats as not held for it; empty, never null. Activity.
+     *  requestPermissions reads it on every request (a renounced one may not be
+     *  asked for). */
+    public java.util.Set<String> getRenouncedPermissions() { return mRenouncedPermissions; }
 
     @Override public boolean equals(Object o) {
         if (this == o) return true;
@@ -150,6 +163,7 @@ public final class AttributionSource implements Parcelable {
         // any round trip, so getNext() came back null. AOSP carries the next
         // link too (as a one-element AttributionSourceState[]).
         dest.writeTypedObject(mNext, flags);
+        dest.writeStringArray(mRenouncedPermissions.toArray(new String[0]));
     }
 
     public static final Creator<AttributionSource> CREATOR = new Creator<AttributionSource>() {
@@ -160,7 +174,9 @@ public final class AttributionSource implements Parcelable {
             String pkg = in.readString();
             String tag = in.readString();
             AttributionSource next = in.readTypedObject(AttributionSource.CREATOR);
-            return new AttributionSource(uid, pid, deviceId, pkg, tag, next);
+            String[] renounced = in.createStringArray();
+            return new AttributionSource(uid, pid, deviceId, pkg, tag, next,
+                    renounced == null ? null : new java.util.HashSet<>(java.util.Arrays.asList(renounced)));
         }
         @Override public AttributionSource[] newArray(int size) {
             return new AttributionSource[size];
@@ -174,6 +190,7 @@ public final class AttributionSource implements Parcelable {
         private String mPackageName;
         private String mAttributionTag;
         private AttributionSource mNext;
+        private java.util.Set<String> mRenouncedPermissions;
 
         public Builder(int uid) { mUid = uid; }
 
@@ -188,6 +205,7 @@ public final class AttributionSource implements Parcelable {
             mPackageName = current.mPackageName;
             mAttributionTag = current.mAttributionTag;
             mNext = current.mNext;
+            mRenouncedPermissions = current.mRenouncedPermissions;
         }
 
         public Builder setPackageName(String v) { mPackageName = v; return this; }
@@ -195,6 +213,12 @@ public final class AttributionSource implements Parcelable {
         public Builder setNext(AttributionSource v) { mNext = v; return this; }
         public Builder setPid(int v) { mPid = v; return this; }
         public Builder setDeviceId(int v) { mDeviceId = v; return this; }
+        /** AOSP :740 (a system API there; the context's own renounced set reaches it
+         *  through ContextImpl.createAttributionSource). */
+        public Builder setRenouncedPermissions(java.util.Set<String> v) {
+            mRenouncedPermissions = v;
+            return this;
+        }
 
         /** AOSP :771 -- the @NonNull variant of setNext(), which rejects null
          *  instead of clearing the chain. The exception message is AOSP's. */
@@ -208,7 +232,7 @@ public final class AttributionSource implements Parcelable {
 
         public AttributionSource build() {
             return new AttributionSource(mUid, mPid, mDeviceId, mPackageName, mAttributionTag,
-                                         mNext);
+                                         mNext, mRenouncedPermissions);
         }
     }
 }
