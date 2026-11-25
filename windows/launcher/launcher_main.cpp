@@ -9446,6 +9446,9 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!s->failed && GetTickCount64() - s->phase_read > 500) {
                 s->phase = run_phase(run_log(s->name));
                 s->phase_read = GetTickCount64();
+                // Converting the app's code or readying Win.apk is an install's work on a phone, before any
+                // input reaches the app: no clock runs for it.
+                if (s->phase) s->input_at = 0;
             }
             if (!s->failed) InvalidateRect(hwnd, nullptr, FALSE);
             if (!s->failed && s->input_at && !s->asking &&
@@ -9486,13 +9489,13 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_LBUTTONDOWN:  // a click on the app's starting window is input for the app
-            if (!s->failed && !s->input_at) s->input_at = GetTickCount64();
+            if (!s->failed && !s->phase && !s->input_at) s->input_at = GetTickCount64();
             return 0;
         case WM_LBUTTONUP: splash_action(*s, find_target(s->targets, lp)); return 0;
         case WM_KEYDOWN:
             if (wp == VK_ESCAPE) splash_action(*s, s->failed ? kSplashClose : kSplashCancel);
             else if (wp == VK_RETURN && s->failed) splash_action(*s, kSplashClose);
-            else if (!s->failed && !s->input_at) s->input_at = GetTickCount64();  // a key for the app
+            else if (!s->failed && !s->phase && !s->input_at) s->input_at = GetTickCount64();  // a key for the app
             return 0;
         case WM_CLOSE:  // its close button, as the app's own: the start is cancelled
             splash_action(*s, s->failed ? kSplashClose : kSplashCancel);

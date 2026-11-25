@@ -233,7 +233,8 @@ Win.apk is in Hebrew):
   ends it, and **Wait** (also Enter and Esc), which leaves it running; if it
   still does not respond, the next input asks again five seconds on. The same
   question comes over the starting window when you click it or press a key
-  and the app has not drawn five seconds later. An app that never draws and
+  and the app has not drawn five seconds later (not while Win.apk converts
+  the app's code, which a phone does when it installs the app). An app that never draws and
   is given no input keeps its starting window, with **Still starting**,
   until you close it.
 
