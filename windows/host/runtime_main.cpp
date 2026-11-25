@@ -2531,8 +2531,8 @@ int wmain(int argc, wchar_t** argv) {
     // the launcher's permission dialogs (Win.apk.exe runtime-permission,
     // special-access, app-details), which sign the answer into
     // <data>\appops\app-ops.json for SpecialAccessStore, as
-    // macapk-installhelper does on the Mac. MACAPK_ALLFILES_HONEST=0 still
-    // restores the old answer: every app holds all files access.
+    // macapk-installhelper does on the Mac. (Upstream's MACAPK_ALLFILES_HONEST=0,
+    // every app holding all files access, is gone.)
 
     if (!b.options.install_only) map_shared_folders(b.options);
 
