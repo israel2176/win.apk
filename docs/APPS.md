@@ -59,7 +59,7 @@ keeping a copy.
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| WebView, Custom Tabs | ✅ | Microsoft Edge WebView2, with `shouldInterceptRequest` (Cordova, Capacitor); `file:///android_asset/` and `file:///android_res/` served from the APK, the app's own files with `setAllowFileAccess` | Needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have. A `file:` page's script sees an https origin (`location.protocol` is `https:`) | `native_webview.cpp`, `webview_file_urls.h` |
+| WebView, Custom Tabs | ✅ | Microsoft Edge WebView2, with `shouldInterceptRequest` (Cordova, Capacitor); `file:///android_asset/` and `file:///android_res/` served from the APK, the app's own files with `setAllowFileAccess`; a download goes to the app's `DownloadListener`, never saved by the engine | Needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have. A `file:` page's script sees an https origin (`location.protocol` is `https:`) | `native_webview.cpp`, `webview_file_urls.h` |
 | Notifications | ⚠️ | Windows notifications with the app's name and icon, text, large icon and progress; a click opens the app while it runs | Action buttons are not shown | `native_notifications.cpp` |
 | Storage | ✅ | Files, SharedPreferences, SQLite. Downloads, Pictures, Documents, Music and Movies are your Windows folders (a setting turns this off) | | `user_folders.cpp` |
 | Permissions | ✅ | Android's dialogs for every dangerous group and special access, remembered per app | | `launcher_main.cpp` (`appops`) |
