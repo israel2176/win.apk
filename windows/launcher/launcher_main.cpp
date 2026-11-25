@@ -109,6 +109,7 @@
 
 #include "app_runs.h"
 #include "debug_threads.h"
+#include "google_apps.h"
 #include "installs.h"
 #include "library_files.h"
 #include "maintenance.h"
@@ -259,9 +260,9 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Install Play services, Services Framework and Play Store from their downloads.", L"התקנת שירותי Play,\x200F Services Framework וחנות Play מההורדות שלהם."},
         {L"Google Play services", L"שירותי Google Play"},
         {L"Google Play Store", L"חנות Google Play"},
-        {L"Pick the newest version for Android 10 or later.", L"יש לבחור בגרסה החדשה ביותר ל-Android 10 ומעלה."},
-        {L"Pick the x86_64 variant, nodpi, for Android 10 or later.", L"יש לבחור בגרסת x86_64,\x200F nodpi, ל-Android 10 ומעלה."},
-        {L"Pick the nodpi variant, for Android 10 or later.", L"יש לבחור בגרסת nodpi, ל-Android 10 ומעלה."},
+        {L"Pick version {0}, for Android 14 or later.", L"יש לבחור בגרסה {0}, ל-Android 14 ומעלה."},
+        {L"Pick version {0}: the x86 + x86_64 variant, nodpi, for Android 7.0 or later.", L"יש לבחור בגרסה {0}: גרסת x86 + x86_64,\x200F nodpi, ל-Android 7.0 ומעלה."},
+        {L"Pick version {0}: the universal variant, nodpi, for Android 7.0 or later.", L"יש לבחור בגרסה {0}: הגרסה האוניברסלית,\x200F nodpi, ל-Android 7.0 ומעלה."},
         {L"The file could not be checked", L"לא ניתן היה לבדוק את הקובץ"},
         {L"Win.apk's runtime did not start.", L"סביבת ההרצה של Win.apk לא הופעלה."},
         {L"{0} is not one of Google's three apps. To add another app, drop it on the library.", L"{0} אינו אחת משלוש האפליקציות של Google. כדי להוסיף אפליקציה אחרת, יש לשחרר אותה בספרייה."},
@@ -273,10 +274,10 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Checking…", L"בודקת…"},
         {L"Win.apk checks that Google signed it.", L"Win.apk בודקת ש-Google חתמה עליה."},
         {L"APKMirror", L"APKMirror"},
-        {L"From APKPure, the x86_64 variant.", L"מ-APKPure, גרסת x86_64."},
+        {L"From APKPure, version {0}.", L"מ-APKPure, גרסה {0}."},
         {L"Win.apk downloads it and checks that Google signed it.", L"Win.apk מורידה אותה ובודקת ש-Google חתמה עליה."},
         {L"{0} could not be downloaded", L"לא ניתן היה להוריד את {0}"},
-        {L"APKPure did not give the app in three tries. Its row's button now opens the app's page on APKMirror, where you can download it yourself.", L"האפליקציה לא התקבלה מ-APKPure בשלושה ניסיונות. הכפתור בשורה שלה פותח עכשיו את הדף שלה ב-APKMirror, שממנו אפשר להוריד אותה בעצמך."},
+        {L"APKPure did not give version {0} in three tries. The app's row now opens its page on APKMirror, where you can download that version yourself.", L"גרסה {0} לא התקבלה מ-APKPure בשלושה ניסיונות. השורה של האפליקציה פותחת עכשיו את הדף שלה ב-APKMirror, שממנו אפשר להוריד את הגרסה הזו בעצמך."},
         {L"Google services are ready", L"שירותי Google מוכנים"},
         {L"From now on the Play Store keeps itself and Play services up to date, as on a phone.", L"מעכשיו חנות Play מעדכנת את עצמה ואת שירותי Play, כמו בטלפון."},
         {L"Download each app to your Downloads folder, or drop it here. Win.apk checks that Google signed it, "
@@ -290,7 +291,8 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Checking {0}…", L"בודק את {0}…"},
         {L"To use Google Play, install the following apps as described.", L"כדי להפעיל את חנות Google Play, יש להתקין את האפליקציות הבאות לפי ההנחיות."},
         {L"{0} has no code for x86_64 processors, only for {1}. On APKMirror, download its x86_64 variant.", L"ב-{0} אין קוד למעבדי x86_64, רק ל-{1}. יש להוריד מ-APKMirror את גרסת x86_64 שלו."},
-        {L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an older version of it.", L"{0} דורש רמת API ‏{1}, ו-Win.apk מציגה רמת API ‏{2}. יש להוריד מ-APKMirror גרסה ישנה יותר שלו."},
+        {L"{0} needs API level {1}, and Win.apk presents API level {2}. Download the version its row names.", L"{0} דורש רמת API ‏{1}, ו-Win.apk מציגה רמת API ‏{2}. יש להוריד את הגרסה שהשורה שלו מציינת."},
+        {L"{0} is built for a preview of Android, which Android does not install on a released version. Download the version its row names.", L"{0} נבנה לגרסת תצוגה מקדימה של Android, ו-Android לא מתקינה אותו בגרסה שיצאה. יש להוריד את הגרסה שהשורה שלו מציינת."},
         {L"It's part of Google services.", L"היא חלק משירותי Google."},
         {L"Starting Google Play…", L"מפעיל את Google Play…"},
         {L"Google Play closed", L"Google Play נסגרה"},
@@ -5563,9 +5565,10 @@ Section google_account_section() {
 //
 // Google's own Play services, Services Framework and Play Store, which "Use Google services" runs, are not
 // shipped with Win.apk (copies published here could be taken down). The page has a row per app with
-// Download, which runs apkeep (bin\tools\apkeep.exe, windows/scripts/fetch_apkeep.sh) to fetch the app's
-// x86_64 variant from APKPure into downloads\google\. APKPure has served altered apps, so what it gives is
-// trusted no more than any other file: every file, fetched or not, is checked by `winapk-runtime
+// Download, which runs apkeep (bin\tools\apkeep.exe, windows/scripts/fetch_apkeep.sh) to fetch the version
+// google_apps.h pins, x86_64 variant, from APKPure into downloads\google\. The pins set only the first install:
+// the Play Store then updates itself and Play services, as on a phone. APKPure has served altered apps, so what
+// it gives is trusted no more than any other file: every file, fetched or not, is checked by `winapk-runtime
 // --verify-apk` (com.winapk.tools.ApkCheck: its package, and whether its signature verifies and Google
 // signed it, as the runtime checks it before it treats the app as Google's), and only one of the three apps
 // that Google signed is installed, through the same install as a dropped APK. When apkeep is missing, or its
@@ -5577,21 +5580,32 @@ struct GoogleApp {
     const char* pkg;
     const wchar_t* name;
     const wchar_t* url;   // APKMirror's page for the app: the user picks the release and variant there
-    const wchar_t* pick;  // which variant to pick, in a sentence
-    // Download fetches it from APKPure with apkeep; false: its row opens APKMirror. (Services Framework's newest on
-    // APKPure is Android 10's preview build, minSdkVersion "Q", which --verify-apk reads as API level 29.)
-    bool apkpure;
+    const wchar_t* pick;  // which release and variant to pick there, in a sentence; {0} is the pinned version
 };
 const GoogleApp kGoogleApps[] = {
     {"com.google.android.gsf", L"Google Services Framework",
      L"https://www.apkmirror.com/apk/google-inc/google-services-framework/",
-     L"Pick the newest version for Android 10 or later.", true},
+     L"Pick version {0}, for Android 14 or later."},
     {"com.google.android.gms", L"Google Play services",
      L"https://www.apkmirror.com/apk/google-inc/google-play-services/",
-     L"Pick the x86_64 variant, nodpi, for Android 10 or later.", true},
+     L"Pick version {0}: the x86 + x86_64 variant, nodpi, for Android 7.0 or later."},
     {"com.android.vending", L"Google Play Store", L"https://www.apkmirror.com/apk/google-inc/google-play-store/",
-     L"Pick the nodpi variant, for Android 10 or later.", true},
+     L"Pick version {0}: the universal variant, nodpi, for Android 7.0 or later."},
 };
+
+// The version google_apps.h pins for a package; empty for none.
+std::string pinned_version(const std::string& pkg) {
+    for (const GooglePin& p : kGooglePins) {
+        if (pkg == p.pkg) return p.version;
+    }
+    return {};
+}
+
+// The pinned version as a left-to-right run, so that a Hebrew sentence keeps "[0] [PR]" and "(040800-...)" as
+// they are written.
+std::wstring pinned_text(const GoogleApp& a) {
+    return L"\x202A" + utf8_to_wide(pinned_version(a.pkg)) + L"\x202C";
+}
 
 const GoogleApp* google_app(const std::string& pkg) {
     for (const GoogleApp& a : kGoogleApps) {
@@ -5755,6 +5769,10 @@ int maintenance_main() {
 
 fs::path setup_log() { return logs_dir() / L"google-setup.log"; }
 
+// The MINSDK --verify-apk gives a minSdkVersion that is a codename (ApkCheck.PREVIEW_MIN_SDK): a preview's build,
+// which a released Android refuses.
+constexpr int kPreviewMinSdk = 10000;
+
 // winapk-runtime --verify-apk's answer for one file.
 struct SetupCheck {
     fs::path file;
@@ -5764,7 +5782,7 @@ struct SetupCheck {
     bool verified = false, google = false;
     std::wstring reason;
     std::wstring abis;  // the ABIs its native code is for, comma-separated; empty: none
-    int min_sdk = 0;    // its minSdkVersion (0: unknown)
+    int min_sdk = 0;    // its minSdkVersion (0: unknown; kPreviewMinSdk and above: a preview's codename)
     int sdk = 0;        // the API level Win.apk presents at most (PresentedSdk's ceiling; 0: unknown)
 };
 
@@ -5935,9 +5953,11 @@ void fetch_log(HANDLE log, const std::string& line) {
 // is a file) and exits 0 either way, so the file alone tells success.
 fs::path fetch_once(const std::string& pkg, const fs::path& part, HANDLE log, DWORD* code) {
     // apkeep's own guard: APKPure is refused unless the caller acknowledges what it has served before. Win.apk
-    // does, because nothing installs here that Google did not sign (setup_checked).
-    std::wstring cmd = L"\"" + apkeep_exe().wstring() + L"\" -a " + utf8_to_wide(pkg) +
-                       L" -d apk-pure -o acknowledge_dangers=true,arch=x86_64 " + gms_arg(part.wstring());
+    // does, because nothing installs here that Google did not sign (setup_checked). The version is google_apps.h's
+    // pin (its name holds spaces and brackets: quoted), asked for as a device of Win.apk's Android 14 (sdk=34,
+    // apkeep-patches/0002) would ask, and only a variant with x86_64 code, or none, is taken.
+    std::wstring cmd = L"\"" + apkeep_exe().wstring() + L"\" -a \"" + utf8_to_wide(pkg + "@" + pinned_version(pkg)) +
+                       L"\" -d apk-pure -o acknowledge_dangers=true,arch=x86_64,sdk=34 " + gms_arg(part.wstring());
     fetch_log(log, "> " + wide_to_utf8(cmd));
     SIZE_T attr_size = 0;
     InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
@@ -5999,7 +6019,8 @@ DWORD WINAPI setup_fetch_thread(void* param) {
                                " left no app file (apkeep exit code " + std::to_string(code) + ")");
             continue;
         }
-        // "com.google.android.gms@x86_64.xapk" -> "com.google.android.gms.xapk": the name install_name reads.
+        // "com.google.android.gms@26.46.32 (...)@x86_64.apk" -> "com.google.android.gms.apk": the name install_name
+        // reads.
         const fs::path keep = dir / (utf8_to_wide(f->pkg) + got.extension().wstring());
         std::error_code fe;
         fs::remove(keep, fe);
@@ -6041,7 +6062,7 @@ void setup_fetch_next() {
 // its copy failed, the app's APKMirror page in the browser.
 void setup_fetch(const GoogleApp& a) {
     if (g_setup.fetching.count(a.pkg)) return;
-    if (!a.apkpure || !apkeep_present() || g_setup.fetch_failed.count(a.pkg)) {
+    if (!apkeep_present() || g_setup.fetch_failed.count(a.pkg)) {
         ShellExecuteW(nullptr, L"open", a.url, nullptr, nullptr, SW_SHOWNORMAL);
         return;
     }
@@ -6065,8 +6086,9 @@ void setup_fetched(std::unique_ptr<SetupFetch> f) {
     } else if (app) {
         g_setup.fetch_failed.insert(f->pkg);
         error_with_log(fmt(L"{0} could not be downloaded", {tr(app->name)}),
-                       tr(L"APKPure did not give the app in three tries. Its row's button now opens the app's page on "
-                          L"APKMirror, where you can download it yourself."),
+                       fmt(L"APKPure did not give version {0} in three tries. The app's row now opens its page on "
+                           L"APKMirror, where you can download that version yourself.",
+                           {pinned_text(*app)}),
                        setup_download_log());
     }
     if (g_view == kGmsSetupView) rebuild_page();
@@ -6117,10 +6139,17 @@ void setup_checked(std::unique_ptr<SetupCheck> c) {
                            L"variant.",
                            {file, c->abis}),
                        setup_log());
+    } else if (c->sdk > 0 && c->min_sdk >= kPreviewMinSdk) {
+        // A minSdkVersion that is a codename: Android installs a preview's build only on that preview.
+        error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
+                       fmt(L"{0} is built for a preview of Android, which Android does not install on a released "
+                           L"version. Download the version its row names.",
+                           {file}),
+                       setup_log());
     } else if (c->sdk > 0 && c->min_sdk > c->sdk) {
         error_with_log(fmt(L"{0} was not installed", {tr(app->name)}),
-                       fmt(L"{0} needs API level {1}, and Win.apk presents API level {2}. On APKMirror, download an "
-                           L"older version of it.",
+                       fmt(L"{0} needs API level {1}, and Win.apk presents API level {2}. Download the version its "
+                           L"row names.",
                            {file, std::to_wstring(c->min_sdk), std::to_wstring(c->sdk)}),
                        setup_log());
     } else {
@@ -6166,7 +6195,7 @@ std::vector<Section> gms_setup_sections() {
                                                     if (app_of_package(a.pkg) ||
                                                         (inst != g_setup.installing.end() &&
                                                          is_pending(inst->second)) ||
-                                                        !a.apkpure || g_setup.fetch_failed.count(a.pkg)) {
+                                                        g_setup.fetch_failed.count(a.pkg)) {
                                                         continue;
                                                     }
                                                     setup_fetch(a);
@@ -6203,15 +6232,16 @@ std::vector<Section> gms_setup_sections() {
             const bool queued = std::find(g_setup.fetch_queue.begin(), g_setup.fetch_queue.end(), a.pkg) !=
                                 g_setup.fetch_queue.end();
             apps.rows.push_back(text_row(tr(a.name), queued ? tr(L"Waiting to download") : tr(L"Downloading…"),
-                                         tr(L"From APKPure, the x86_64 variant.")));
-        } else if (a.apkpure && apkeep_present() && !g_setup.fetch_failed.count(a.pkg)) {
+                                         fmt(L"From APKPure, version {0}.", {pinned_text(a)})));
+        } else if (apkeep_present() && !g_setup.fetch_failed.count(a.pkg)) {
             const GoogleApp* ga = &a;
             apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") +
                                                tr(L"Win.apk downloads it and checks that Google signed it."),
                                            tr(L"Download"), [ga] { setup_fetch(*ga); }));
         } else {
             const GoogleApp* ga = &a;
-            apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") + tr(a.pick),
+            apps.rows.push_back(button_row(tr(a.name), tr(L"Not installed.") + std::wstring(L" ") +
+                                               fmt(a.pick, {pinned_text(a)}),
                                            tr(L"APKMirror"), [ga] { setup_fetch(*ga); }));
         }
     }

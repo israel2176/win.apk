@@ -77,6 +77,7 @@ jobs:
       package: ${{ steps.diff.outputs.package }}
       full_sweep: ${{ steps.diff.outputs.full_sweep }}
       ui: ${{ steps.diff.outputs.ui }}
+      google_apps: ${{ steps.diff.outputs.google_apps }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,12 +85,12 @@ jobs:
       - id: diff
         run: |
           case "${{ github.event_name }}" in
-            workflow_dispatch) build=true tests=true launcher=true ui=true ;;
-            push) build=true tests=false launcher=false ui=false ;;
+            workflow_dispatch) build=true tests=true launcher=true ui=true google_apps=true ;;
+            push) build=true tests=false launcher=false ui=false google_apps=false ;;
             *)
               # A pull request's checkout is its merge commit: the first parent
               # is the base branch, so this is exactly what the merge would add.
-              build=false tests=false launcher=false ui=false
+              build=false tests=false launcher=false ui=false google_apps=false
               while read -r f; do
                 case "$f" in
                   docs/*|*.md) ;;
@@ -107,6 +108,11 @@ jobs:
                   windows/scripts/aosp_gfx_take.sh) ui=true ;;
                   .github/workflows/ci.yml|.github/ci/*|.github/probe/fdroid_fetch.py) ui=true ;;
                 esac
+                # Google's pinned apps: the pins and the apkeep that downloads them.
+                case "$f" in
+                  windows/launcher/google_apps.h|windows/scripts/fetch_apkeep.sh|windows/scripts/apkeep-patches/*)
+                    google_apps=true ;;
+                esac
               done < <(git diff --name-only HEAD^1 HEAD)
               ;;
           esac
@@ -115,8 +121,8 @@ jobs:
           # Only by hand: a pull request gets the smoke set instead.
           full_sweep=false
           [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.full_sweep }}" == true ]] && full_sweep=true
-          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\nui=%s\n' \
-            "$build" "$tests" "$launcher" "$package" "$full_sweep" "$ui" | tee -a "$GITHUB_OUTPUT"
+          printf 'build=%s\ntests=%s\nlauncher=%s\npackage=%s\nfull_sweep=%s\nui=%s\ngoogle_apps=%s\n' \
+            "$build" "$tests" "$launcher" "$package" "$full_sweep" "$ui" "$google_apps" | tee -a "$GITHUB_OUTPUT"
 
   guest:
     name: Guest libraries (x86_64, arm64)
@@ -313,6 +319,76 @@ jobs:
             build/winapk-aot-guard-dll.dll
             build/java/android-framework.jar
           compression-level: 1
+      # The versions of Google's three apps the launcher's Google services setup installs
+      # (windows/launcher/google_apps.h), downloaded from APKPure with the staged apkeep exactly as
+      # the launcher's Download runs it (fetch_once), then checked with --verify-apk as the setup
+      # checks a file (setup_checked): Google's signature, the pinned package and version, x86_64
+      # code or none, and a minSdkVersion of at most 34 (Win.apk presents Android 14). Only when
+      # the pins, fetch_apkeep.sh or apkeep's patches change, and by hand: it asks APKPure.
+      - name: Google's pinned apps (downloaded as the launcher does, then --verify-apk)
+        if: needs.changes.outputs.google_apps == 'true'
+        timeout-minutes: 30
+        run: |
+          set -uo pipefail
+          apkeep="$PWD/stage/bin/tools/apkeep.exe"
+          data="$(cygpath -w "$RUNNER_TEMP/google-apps-data")"
+          mapfile -t pins < <(sed -n 's/^ *{"\([a-z.]*\)", "\([^"]*\)"},.*$/\1\t\2/p' windows/launcher/google_apps.h)
+          [ "${#pins[@]}" = 3 ] || { echo "::error::google_apps.h: ${#pins[@]} pins read, not 3"; exit 1; }
+          echo "### Google's pinned apps" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Package | Pinned | Got | minSdk | targetSdk | ABIs | Google | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|---|---|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          for pin in "${pins[@]}"; do
+            pkg="${pin%%$'\t'*}" ver="${pin#*$'\t'}"
+            echo "::group::$pkg@$ver"
+            dir="$RUNNER_TEMP/google-apps/$pkg.part"
+            file=""
+            # As setup_fetch_thread: three tries, 5 s then 20 s apart, each into an empty folder.
+            for attempt in 1 2 3; do
+              [ "$attempt" = 1 ] || sleep $([ "$attempt" = 2 ] && echo 5 || echo 20)
+              rm -rf "$dir" && mkdir -p "$dir"
+              (cd "$dir" && timeout 900 "$apkeep" -a "$pkg@$ver" -d apk-pure \
+                -o acknowledge_dangers=true,arch=x86_64,sdk=34 "$(cygpath -w "$dir")") || true
+              file=$(find "$dir" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' -o -name '*.apkm' -o -name '*.apks' \) \
+                -size +0 | head -n 1)
+              [ -n "$file" ] && break
+              echo "attempt $attempt left no app file"
+            done
+            if [ -z "$file" ]; then
+              echo "::endgroup::"
+              echo "::error::$pkg@$ver: APKPure gave no file in three tries"
+              echo "| $pkg | $ver | (no file) | | | | | FAIL |" >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+              continue
+            fi
+            ls -l "$file"
+            sha256sum "$file"
+            rc=0
+            timeout 600 ./stage/bin/winapk-runtime.exe --jdk "$JAVA_HOME" --data "$data" \
+              --verify-apk "$(cygpath -w "$file")" > verify.out 2> verify-err.log || rc=$?
+            cat verify.out
+            echo "::endgroup::"
+            get() { sed -n "s/^$1"$'\t'"//p" verify.out | tr -d '\r' | head -n 1; }
+            why=()
+            [ "$rc" = 0 ] || why+=("exit $rc")
+            [ "$(get PACKAGE)" = "$pkg" ] || why+=("package $(get PACKAGE)")
+            [ "$(get VERIFIED)" = 1 ] || why+=("signature does not verify")
+            [ "$(get GOOGLE)" = 1 ] || why+=("not signed by Google")
+            [ "$(get VERSIONNAME)" = "$ver" ] || why+=("version $(get VERSIONNAME)")
+            abis="$(get ABIS)"
+            [ -z "$abis" ] || [[ ",$abis," == *,x86_64,* ]] || why+=("no x86_64 code ($abis)")
+            min="$(get MINSDK)"
+            [[ "$min" =~ ^[0-9]+$ ]] && [ "$min" -le 34 ] || why+=("minSdkVersion $min")
+            if [ "${#why[@]}" = 0 ]; then result=pass; else
+              result="FAIL: $(IFS=';'; echo "${why[*]}")"
+              echo "::error::$pkg@$ver: $result"
+              tail -n 40 verify-err.log
+              failed=1
+            fi
+            echo "| $pkg | $ver | $(get VERSIONNAME) ($(get VERSIONCODE)) | $min | $(get TARGETSDK) | ${abis:-none} | $(get GOOGLE) | $result |" \
+              >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $failed
 
   unit-tests:
     name: Unit tests
@@ -915,6 +991,8 @@ jobs:
           grep -q "^PACKAGE.android" verify.out && grep -q "^VERIFIED.1" verify.out && grep -q "^GOOGLE.0" verify.out
           # and what the setup's other checks read: the native code's ABIs, the minSdkVersion, the presented level
           grep -q "^ABIS" verify.out && grep -q "^MINSDK.[0-9]" verify.out && grep -q "^SDK.3[0-9]" verify.out
+          # and the version and target the pinned Google apps' check compares
+          grep -q "^TARGETSDK.[0-9]" verify.out && grep -q "^VERSIONCODE.[0-9]" verify.out && grep -q "^VERSIONNAME" verify.out
           check "$dir/unsigned.apk" 3
           grep -q "^VERIFIED.0" verify.out && grep -q "^REASON." verify.out
           echo "not an app" > "$dir/not-an-app.apk"

@@ -547,7 +547,9 @@ no one is; the address shows when you point at it) and opens Settings at the
 Google account section. **Use Google
 services (experimental)** runs Google's own Play services and Play Store,
 which the **Google services setup** page downloads and installs (**Download
-all**; a copy is installed only when Google signed it); with it on,
+all**: the versions chosen for Win.apk, [listed here](google-services.md#the-versions-winapk-installs),
+after which the Play Store updates itself and Play services; a copy is
+installed only when Google signed it); with it on,
 **Google Play** appears under **Store** in the navigation pane and opens the
 Play Store inside the Win.apk window, where the library is. Google's three
 apps are system components: they have no tile in the library and no
@@ -770,7 +772,7 @@ bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <
 | `--lib` | The folder with the framework jars (default: `lib` next to `bin`) |
 | `--install-only` | Install and convert the app, write its icon and name, and exit |
 | `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `device-id` (`DEVICE_ID`, the Services Framework's `android_id` from its `gservices.db` as a signed decimal, else the layer's own checkin's, and `gsf` or `checkin`; no line when there is none), `license <package> <versionCode>`, `gcmtoken <package>`, `token-service` (the Google token service apps ask for their tokens, started by the first app that needs one; it exits when idle) and the rest of `com.macapk.gms.GmsCli` |
-| `--verify-apk <file>` | Print an app file's package and whether its signature verifies and Google signed it (`PACKAGE`, `VERIFIED`, `REASON`, `SCHEME`, `LINEAGE`, `GOOGLE` lines), as the Google services setup asks |
+| `--verify-apk <file>` | Print an app file's package and whether its signature verifies and Google signed it (`PACKAGE`, `VERIFIED`, `REASON`, `SCHEME`, `LINEAGE`, `GOOGLE` lines), its native code's ABIs, minSdkVersion, targetSdkVersion and version (`ABIS`, `MINSDK`, `TARGETSDK`, `VERSIONCODE`, `VERSIONNAME`) and the newest API level Win.apk presents (`SDK`), as the Google services setup asks |
 
 Exit codes: 0 done, 2 wrong arguments, 3 when `--install-only` finds the app
 running. `--gms` exits 0 done, 1 error (an `ERROR` line on standard output),

@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # fetch_apkeep.sh -- apkeep (EFF, MIT), the command-line downloader the
-# Google services setup's Download runs: it fetches Google Play services and
-# the Play Store from APKPure, x86_64 variant, into the setup's own folder, and
-# the launcher installs a file only once `--verify-apk` says Google signed it.
+# Google services setup's Download runs: it fetches the versions of Google's
+# three apps that windows/launcher/google_apps.h pins from APKPure, x86_64
+# variant, into the setup's own folder, and the launcher installs a file only
+# once `--verify-apk` says Google signed it. CI's "Google's pinned apps" step
+# downloads them with the apkeep this builds whenever it or the pins change.
 #
 #   windows/scripts/fetch_apkeep.sh [bin dir]
 #
@@ -12,9 +14,11 @@
 # services came as an x86-only build Win.apk cannot run. The source is the
 # fork's branch for EFForg/apkeep#258 and #259 (pick the variant that really
 # holds the requested ABI), pinned by commit, with windows/scripts/
-# apkeep-patches/ applied (Play services' version names hold spaces and
-# parentheses, which that branch did not read). Its dependencies are the
-# ones its Cargo.lock pins (--locked).
+# apkeep-patches/ applied: 0001, Play services' version names hold spaces and
+# parentheses, which that branch did not read; 0002, the sdk= option (the
+# device's API level APKPure is told: Win.apk asks as Android 14, 34, where
+# apkeep always said 29) and the Play Store's version names, which hold
+# brackets. Its dependencies are the ones its Cargo.lock pins (--locked).
 #
 # Needs cargo (rustup's). On Windows (MSYS2) it builds for
 # x86_64-pc-windows-msvc with the Visual Studio tools rustup finds; elsewhere

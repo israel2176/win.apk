@@ -888,7 +888,9 @@ the user installed run as apps, as upstream runs them on the Mac:
   at the broker's boot) only when their APKs' signature verifies and Google's
   certificate made it, as the signer or as an ancestor in the verified v3
   rotation lineage (`GoogleGmsCertificate.isGoogleSigner`). Win.apk ships
-  none of them. The launcher's setup page downloads them with apkeep
+  none of them. The launcher's setup page downloads the versions
+  `windows/launcher/google_apps.h` pins (the first install only: the Play
+  Store then updates itself and Play services) with apkeep
   (`bin\tools\apkeep.exe`, `windows/scripts/fetch_apkeep.sh`) from APKPure
   into `downloads\google\`, or watches the Downloads folder for a copy the
   user fetched from APKMirror, and installs a file only when

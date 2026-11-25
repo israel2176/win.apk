@@ -1,0 +1,70 @@
+From: "Win.apk" <noreply@example.invalid>
+Date: Wed, 25 Nov 2026 17:30:00 +0000
+Subject: [PATCH] APKPure: ask as a device of a given API level; read brackets
+ in version names
+
+APKPure's app tells it the device's API level (x-sv), which apkeep sent as
+29 always. A new option, sdk=<level>, sends another: Win.apk presents
+Android 14 and asks as API level 34, as a device of that level would.
+
+The Play Store's version names hold brackets ("54.3.08-24 [0] [PR]
+1022323148"), which APKPURE_VERSION_REGEX did not allow, so a version asked
+for by name was found only by the fallback regex, past the variant check.
+---
+diff --git a/USAGE-apkpure.md b/USAGE-apkpure.md
+--- a/USAGE-apkpure.md
++++ b/USAGE-apkpure.md
+@@ -18,6 +18,12 @@
+ apkeep -a com.instagram.android -d apk-pure -o 'acknowledge_dangers=true,arch=arm64-v8a;armeabi-v7a;armeabi;x86;x86_64' .
+ ```
+ 
++APKPure is told the Android API level of the device asking, and may leave out the versions and variants a device of that level could not install. By default `apkeep` asks as API level 29 (Android 10); the `sdk=` option asks as another level:
++
++```shell
++apkeep -a com.google.android.gsf -d apk-pure -o 'acknowledge_dangers=true,sdk=34' .
++```
++
+ You can also list the versions available, either specifying a specific architecture or not. This does not require the `acknowledge_dangers=true` option:
+ 
+ ```shell
+diff --git a/src/consts.rs b/src/consts.rs
+--- a/src/consts.rs
++++ b/src/consts.rs
+@@ -1,8 +1,9 @@
+ pub const APKPURE_VERSIONS_URL_FORMAT: &str = "https://api.pureapk.com/m/v3/cms/app_version?hl=en-US&package_name=";
+ pub const APKPURE_DOWNLOAD_URL_REGEX: &str = r"(X?APKJ)..(https?://(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_\+.~#?&//=]*))";
+-// A version name may hold spaces and parentheses ("26.43.30 (040700-1006944126)"); the byte before
+-// it is its length, which `apkpure::version_names` uses to find where it starts.
+-pub const APKPURE_VERSION_REGEX: &str = r"([[:alnum:]][[:alnum:] ._()+-]*):\([[:xdigit:]]{40,}";
++// A version name may hold spaces, parentheses and brackets ("26.43.30 (040700-1006944126)",
++// "54.3.08-24 [0] [PR] 1022323148"); the byte before it is its length, which
++// `apkpure::version_names` uses to find where it starts.
++pub const APKPURE_VERSION_REGEX: &str = r"([[:alnum:]][[:alnum:] ._()\[\]+-]*):\([[:xdigit:]]{40,}";
+ pub const APKPURE_SPLIT_ABIS: &[(&str, &str)] = &[("arm64_v8a", "arm64-v8a"), ("armeabi_v7a", "armeabi-v7a"), ("armeabi", "armeabi"), ("x86", "x86"), ("x86_64", "x86_64"), ("mips", "mips"), ("mips64", "mips64")];
+ pub const FDROID_REPO: &str = "https://f-droid.org/repo";
+ pub const FDROID_INDEX_FINGERPRINT: &[u8] = &[67, 35, 141, 81, 44, 30, 94, 178, 214, 86, 159, 74, 58, 251, 245, 82, 52, 24, 184, 46, 10, 62, 209, 85, 39, 112, 171, 185, 169, 201, 204, 171];
+diff --git a/src/download_sources/apkpure.rs b/src/download_sources/apkpure.rs
+--- a/src/download_sources/apkpure.rs
++++ b/src/download_sources/apkpure.rs
+@@ -18,7 +18,17 @@
+ fn http_headers(options: &HashMap<&str, &str>) -> HeaderMap {
+     let mut headers = HeaderMap::new();
+     headers.insert("x-cv", HeaderValue::from_static("3172501"));
+-    headers.insert("x-sv", HeaderValue::from_static("29"));
++    // The Android API level of the device asking, as APKPure's own app sends it: like a store, APKPure
++    // may leave out what a device of that level could not install.  29 unless `sdk=` gives another.
++    let sdk = match options.get("sdk") {
++        Some(sdk) if !sdk.is_empty() && sdk.chars().all(|c| c.is_ascii_digit()) => sdk.to_string(),
++        Some(_) => {
++            println!("Invalid sdk option specified, asking as API level 29.");
++            "29".to_string()
++        },
++        None => "29".to_string(),
++    };
++    headers.insert("x-sv", HeaderValue::from_str(&sdk).unwrap());
+     let arch = match options.get("arch"){
+         Some(arch) => {
+             arch.split(";").collect::<Vec<_>>().join(",")
+-- 
+2.43.0
+
