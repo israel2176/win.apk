@@ -580,6 +580,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Win.apk could not convert this app. See the log for details.", L"Win.apk לא הצליחה להמיר את האפליקציה. פרטים נוספים ביומן."},
         {L"Win.apk could not copy this file into its library. Check that the disk has free space, then try again.", L"Win.apk לא הצליחה להעתיק את הקובץ לספרייה שלה. בדוק שיש מקום פנוי בדיסק ונסה שוב."},
         {L"Win.apk could not start its runtime. See the log for details.", L"Win.apk לא הצליחה להפעיל את סביבת ההרצה שלה. פרטים נוספים ביומן."},
+        {L"A part of Win.apk is missing or does not load. Install Win.apk again.", L"חלק מ־Win.apk חסר או לא נטען. התקן את Win.apk מחדש."},
         {L"Win.apk still asks you before each app it installs.", L"Win.apk עדיין תשאל אותך לפני כל אפליקציה שתותקן."},
         {L"Win.apk's runtime is missing. Install Win.apk again.", L"סביבת ההרצה של Win.apk חסרה. התקן את Win.apk מחדש."},
         {L"Removes the app and its shortcuts. You can also remove what it saved.", L"מסיר את האפליקציה ואת קיצורי הדרך שלה. אפשר להסיר גם את מה שהיא שמרה."},
@@ -4657,6 +4658,18 @@ bool confirm(const std::wstring& main, const std::wstring& content, const wchar_
 
 std::string read_tail(const fs::path& p, size_t max_bytes);
 
+// A failure of Win.apk itself rather than of the app, from the log's last lines: the runtime did not start
+// (launcher_error_line), or a part of the install is missing or does not load (host/aosp_gfx.cpp's error
+// lines). Empty when it is not one: the app's own failure.
+std::wstring runtime_failure_reason(const fs::path& log) {
+    const std::string tail = read_tail(log, 64 * 1024);
+    if (tail.find("[E] launcher: could not start ") != std::string::npos)
+        return tr(L"Win.apk could not start its runtime. See the log for details.");
+    if (tail.find("[win.apk] error: AOSP graphics:") != std::string::npos)
+        return tr(L"A part of Win.apk is missing or does not load. Install Win.apk again.");
+    return {};
+}
+
 // The lines of a log that say why an app failed: its errors, exceptions and the exit. Each line starts
 // with a left-to-right mark, so a Hebrew (mirrored) dialog keeps an English log line's own order.
 std::wstring log_summary(const fs::path& log, bool* no_native_code) {
@@ -7634,10 +7647,9 @@ std::wstring install_failure_reason(const fs::path& log) {
     }
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
-    // The launcher's own lines (launcher_error_line): the install failed before the runtime ran.
+    if (std::wstring why = runtime_failure_reason(log); !why.empty()) return why;
+    // The launcher's own lines (launcher_error_line): the file did not reach the library.
     const std::string tail = read_tail(log, 4096);
-    if (tail.find("[E] launcher: could not start ") != std::string::npos)
-        return tr(L"Win.apk could not start its runtime. See the log for details.");
     if (tail.find("[E] launcher: could not ") != std::string::npos)
         return tr(L"Win.apk could not copy this file into its library. Check that the disk has free space, then try "
                   L"again.");
@@ -9524,6 +9536,8 @@ std::wstring failure_reason(const fs::path& log, bool clean_exit) {
         return tr(L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes "
                   L"the arm64-v8a part.");
     }
+    // Not the app's fault: say so, rather than "the app stopped with an error".
+    if (std::wstring why = runtime_failure_reason(log); !why.empty()) return why;
     return tr(clean_exit ? L"The app closed before it showed a window." : L"The app stopped with an error.");
 }
 
