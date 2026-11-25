@@ -26,6 +26,12 @@ final class HwuiLayers {
         if (layer != null) nRelease(layer);
     }
 
+    /** A window's layer takes a new size (relayoutAsync: the client keeps its SurfaceControl); HWUI
+     *  makes its surface of the new size at the window's next frame. */
+    static void resize(long layer, int width, int height) {
+        nResize(layer, width, height);
+    }
+
     /** The DLL's: the layer a Surface draws into, by its layer post; 0 for none. Any thread. */
     static synchronized long windowOf(Object post) {
         Long layer = sByPost.get(post);

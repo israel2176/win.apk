@@ -242,6 +242,8 @@ public final class AospWindows {
         WindowManager.LayoutParams attrs;
         Rect frame = new Rect();
         SurfaceControl surface;
+        /** Its layer's size: the control's at first, then what relayoutAsync gave it. */
+        int surfaceWidth, surfaceHeight;
         int seq;
         boolean visible;
         int requestedVisibleTypes = android.view.WindowInsets.Type.defaultVisible();
@@ -381,6 +383,28 @@ public final class AospWindows {
                 w.attrs = new WindowManager.LayoutParams();
                 sWindows.put(window.asBinder(), w);
             }
+            return layOut(w, attrs, requestedWidth, requestedHeight, viewVisibility, seq, outFrames,
+                    outMergedConfiguration, outSurfaceControl, outInsetsState);
+        }
+
+        /** ViewRootImpl's local layout (LOCAL_LAYOUT, on in AOSP 14): a window whose frame changed
+         *  its size or its place, not both, computes the frame itself and only tells the server, which
+         *  lays the window out all the same (WindowManagerService.relayoutWindow with no outputs). Its
+         *  SurfaceControl stays the client's, so a new size is the same layer's new buffer size, as a
+         *  BLASTBufferQueue's update gives it on a device: HWUI sees the layer's size change and makes
+         *  its surface anew at the next frame. */
+        public void relayoutAsync(IWindow window, WindowManager.LayoutParams attrs, int requestedWidth,
+                int requestedHeight, int viewVisibility, int flags, int seq, int lastSyncSeqId) {
+            Win w = sWindows.get(window.asBinder());
+            if (w == null) return;
+            layOut(w, attrs, requestedWidth, requestedHeight, viewVisibility, seq, null, null, null, null);
+        }
+
+        /** relayout's work; the outputs are null for relayoutAsync. */
+        private int layOut(Win w, WindowManager.LayoutParams attrs, int requestedWidth, int requestedHeight,
+                int viewVisibility, int seq, ClientWindowFrames outFrames,
+                MergedConfiguration outMergedConfiguration, SurfaceControl outSurfaceControl,
+                InsetsState outInsetsState) {
             if (attrs != null) w.attrs.copyFrom(attrs);
             w.seq = seq;
             insetsChanged();
@@ -392,11 +416,12 @@ public final class AospWindows {
             mLayout.computeFrames(w.attrs, state, bounds, bounds,
                     android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN, requestedWidth, requestedHeight,
                     w.requestedVisibleTypes, 1f, frames);
+            boolean changed = !frames.frame.equals(w.frame);
             w.frame.set(frames.frame);
             if (Compositor.TRACE) {
-                System.err.println(TAG + "relayout " + w.attrs.getTitle() + " type=" + w.attrs.type + " requested "
-                        + requestedWidth + "x" + requestedHeight + " visibility=" + viewVisibility + " frame="
-                        + frames.frame);
+                System.err.println(TAG + (outFrames == null ? "relayoutAsync " : "relayout ") + w.attrs.getTitle()
+                        + " type=" + w.attrs.type + " requested " + requestedWidth + "x" + requestedHeight
+                        + " visibility=" + viewVisibility + " frame=" + frames.frame);
             }
             if (outMergedConfiguration != null) {
                 outMergedConfiguration.setConfiguration(globalConfiguration(), new Configuration());
@@ -406,40 +431,45 @@ public final class AospWindows {
             boolean wasVisible = w.visible;
             w.visible = viewVisibility == android.view.View.VISIBLE;
             secureChanged();
-            if (w.visible && outSurfaceControl != null) {
+            if (w.visible && (outSurfaceControl != null || w.surface != null)) {
                 // The layer's size: WindowLayout.computeSurfaceSize, the frame and the surface insets
                 // (a floating window's room for its shadow).
                 android.graphics.Point size = new android.graphics.Point();
                 WindowLayout.computeSurfaceSize(w.attrs, bounds, requestedWidth, requestedHeight, frames.frame,
                         false, size);
                 int fw = Math.max(1, size.x), fh = Math.max(1, size.y);
-                if (w.surface == null || w.surface.getWidth() != fw || w.surface.getHeight() != fh) {
-                    if (w.surface != null) { Compositor.detach(w); w.surface.release(); }
-                    final Win win = w;
-                    w.surface = new SurfaceControl.Builder().setName(w.attrs.getTitle() + "")
-                            .setBufferSize(fw, fh).build();
-                    Compositor.attach(w.surface, win);
-                    result |= WindowManagerGlobal.RELAYOUT_RES_SURFACE_CHANGED;
+                if (outSurfaceControl == null) {
+                    // relayoutAsync: the client keeps its control, and its layer takes the size.
+                    if (fw != w.surfaceWidth || fh != w.surfaceHeight) {
+                        w.surfaceWidth = fw;
+                        w.surfaceHeight = fh;
+                        if (w.layer != 0) HwuiLayers.resize(w.layer, fw, fh);
+                        changed = true;
+                    }
+                } else {
+                    if (w.surface == null || w.surfaceWidth != fw || w.surfaceHeight != fh) {
+                        if (w.surface != null) { Compositor.detach(w); w.surface.release(); }
+                        final Win win = w;
+                        w.surface = new SurfaceControl.Builder().setName(w.attrs.getTitle() + "")
+                                .setBufferSize(fw, fh).build();
+                        w.surfaceWidth = fw;
+                        w.surfaceHeight = fh;
+                        Compositor.attach(w.surface, win);
+                        result |= WindowManagerGlobal.RELAYOUT_RES_SURFACE_CHANGED;
+                    }
+                    outSurfaceControl.copyFrom(w.surface, "relayout");
+                    changed = true;
                 }
-                outSurfaceControl.copyFrom(w.surface, "relayout");
                 // Its layer, place or size may be new: the compositor's scene follows.
-                main().post(Compositor::compose);
+                if (changed) main().post(Compositor::compose);
             } else if (!w.visible) {
                 if (w.surface != null) { Compositor.detach(w); w.surface.release(); }
                 w.surface = null;
+                w.surfaceWidth = w.surfaceHeight = 0;
                 w.drew = false;
                 if (wasVisible) main().post(Compositor::compose);
             }
             return result;
-        }
-
-        public void relayoutAsync(IWindow window, WindowManager.LayoutParams attrs, int requestedWidth,
-                int requestedHeight, int viewVisibility, int flags, int seq, int lastSyncSeqId) {
-            Win w = sWindows.get(window.asBinder());
-            if (w != null && attrs != null) {
-                w.attrs.copyFrom(attrs);
-                insetsChanged();
-            }
         }
 
         /** The window asks for the system bars shown or hidden (WindowInsetsController.show/hide,
