@@ -19,6 +19,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -125,11 +126,22 @@ private:
         Com<IAudioCaptureClient> capture;
         WAVEFORMATEX* fmt = nullptr;
         HANDLE ready = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        bool ok = SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator))) &&
-                  SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device)) &&
-                  SUCCEEDED(device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
-                                             reinterpret_cast<void**>(&client))) &&
-                  SUCCEEDED(client->GetMixFormat(&fmt));
+        // Which step failed, and how: the app only sees an AudioRecord that did not initialize, as on a
+        // device whose microphone cannot be opened, so the log is where the cause is told.
+        const char* failed_at = "";
+        HRESULT hr = S_OK;
+        auto check = [&](const char* what, HRESULT r) {
+            failed_at = what;
+            hr = r;
+            return SUCCEEDED(r);
+        };
+        bool ok = check("MMDeviceEnumerator", CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
+                                                               IID_PPV_ARGS(&enumerator))) &&
+                  check("the default microphone", enumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &device)) &&
+                  check("IAudioClient (microphone access in Windows' privacy settings?)",
+                        device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr,
+                                         reinterpret_cast<void**>(&client))) &&
+                  check("GetMixFormat", client->GetMixFormat(&fmt));
         bool is_float = false;
         int dev_channels = 0, dev_rate = 0, bits = 0;
         if (ok) {
@@ -139,11 +151,21 @@ private:
             dev_channels = fmt->nChannels;
             dev_rate = static_cast<int>(fmt->nSamplesPerSec);
             bits = fmt->wBitsPerSample;
-            ok = (is_float ? bits == 32 : bits == 16) &&
-                 SUCCEEDED(client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK, 400000, 0,
-                                              fmt, nullptr)) &&
-                 SUCCEEDED(client->SetEventHandle(ready)) && SUCCEEDED(client->GetService(IID_PPV_ARGS(&capture))) &&
-                 SUCCEEDED(client->Start());
+            ok = check("the device's format (16-bit or float only)", (is_float ? bits == 32 : bits == 16)
+                                                                             ? S_OK
+                                                                             : E_NOTIMPL) &&
+                 check("Initialize", client->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_EVENTCALLBACK,
+                                                        400000, 0, fmt, nullptr)) &&
+                 check("SetEventHandle", client->SetEventHandle(ready)) &&
+                 check("GetService", client->GetService(IID_PPV_ARGS(&capture))) && check("Start", client->Start());
+        }
+        if (!ok) {
+            std::fprintf(stderr, "[win.apk] microphone: cannot open: %s failed (0x%08lx)", failed_at,
+                         static_cast<unsigned long>(hr));
+            if (dev_rate) std::fprintf(stderr, "; the device mixes %d Hz, %d channels, %d bits%s", dev_rate,
+                                       dev_channels, bits, is_float ? " float" : "");
+            std::fprintf(stderr, "\n");
+            std::fflush(stderr);
         }
         if (fmt) CoTaskMemFree(fmt);
         signal(ok);
