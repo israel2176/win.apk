@@ -1490,35 +1490,41 @@ Left, being a matter of direction:
 ## Work started and not merged
 
 - **V3: HWUI's GPU pipeline (November 2026; the owner approved it: exactly as
-  Android, `SkiaOpenGLPipeline` on EGL over ANGLE, the CPU drawing path
-  deleted once it works, no switch, +~1.2 MB installer accepted, no frame-time
-  regression).** Robolectric's DLL has HWUI's render thread but only its own
-  `SkiaHostPipeline` (raster into an `ImageReader`), no Ganesh and no EGL/GL
-  import, and AOSP 14 builds `SkiaOpenGLPipeline`, `EglManager`,
-  `CanvasContext` and Skia's Ganesh only for the device. So the graphics DLL
-  is being rebuilt from AOSP 14 sources: `windows/hwui_build/` (`fetch.sh`
-  the sources, `bp.py` + `gen.py` Android.bp flattened for the Windows host
-  with the android sections of libskia and libhwui, `patch_src.py` the few
-  source edits, `cmake/shim/` what MinGW lacks of Bionic). State: Skia (with
-  Ganesh GL), FreeType, HarfBuzz, ICU 72, minikin, libutils/libbase/liblog,
-  libpng/jpeg/webp/gif/expat/zlib all compile; libhwui compiles but 13 files
-  (EglManager's window surface, `SkiaOpenGLPipeline`, `SkiaPipeline`,
-  `LayerDrawable`, `ShaderCache`'s blob cache, `DeferredLayerUpdater`,
-  `Readback`, the `HardwareRenderer`/`Bitmap`/`Region`/`Gainmap` JNI over
-  Parcel and AHardwareBuffer). A trial link leaves ANativeWindow (14),
-  AChoreographer (5), AHardwareBuffer (3), libjpeg-turbo's SIMD (NASM) and
-  pthread unresolved. Measured: Ganesh + GL for Windows x64 is 2.12 MB
-  (0.86 MB gzip) of code and data. Next, in order: an `ANativeWindow` per
-  window over an ANGLE window surface (D3D11 texture per window, composed on
-  the GPU as SurfaceFlinger composes layers) and EglManager on it; the JNI
-  registered on AOSP's classes by HWUI's own `register_android_graphics_classes`
-  (no Robolectric `*Natives` glue, no API 34 adapters in `aosp_gfx_redirect.cpp`);
-  ICU 72's data file instead of 68's; `ThreadedRenderer` on
-  (`AospViewHost`'s `sRendererEnabled = false` dropped); `Compositor` on the
-  GPU; then the CPU path deleted. Baseline to beat (framebench under Wine,
-  windowed, 1500 frames, before V3): median/p90/p99 total 5.22/6.72/11.03 ms
-  (draw 3.12, pixels 0.88, present 1.12), 60.0 frames/s, CPU 8.95 s user +
-  3.93 s system over 43.9 s; first frame 12.7 s, working set 264 MB.
+  Android, the CPU drawing path deleted once it works, no switch, +~1.2 MB
+  installer accepted, no frame-time regression). Working, on hold for the
+  performance condition.** The graphics DLL is now built from AOSP 14's
+  sources (`windows/hwui_build/`: `fetch.sh`, `build.sh`, Android.bp flattened
+  by `bp.py`/`gen.py`, `patch_src.py`'s edits, `glue/`): `aosp-hwui.dll`, HWUI
+  with its render thread and `SkiaOpenGLPipeline`, Skia with Ganesh GL (N32 is
+  RGBA as on Android), ICU 72 (`icudt72l.dat`), its own JNI registered on AOSP's
+  classes (888 natives, none skipped; the Robolectric `*Natives` mapping and
+  the API 34 adapters in `aosp_gfx_redirect.cpp` are only the Linux tests' now).
+  `ThreadedRenderer` is on; each window's SurfaceControl is a layer in the DLL
+  (`HwuiLayers`): HWUI draws it into a pbuffer of its size, and the DLL's
+  compositor (`glue/layers.cpp`) draws the layers, in `Compositor`'s order with
+  the dim behind dialogs, into the host window's ANGLE surface on the render
+  thread (`host/hwui_host.cpp`, `window_gpu_layout`). A software window posts
+  its bitmap to its layer; what the host has as pixels (native GL, a
+  SurfaceView's canvas) is the layer under the windows. The framebench draws
+  correctly headless and in a window under Wine.
+  Not done: the CPU path is not deleted (GDI's `paint`, `window_present`,
+  `composed_frame` stay for runs without the DLL's compositor); CI does not
+  build the DLL yet (the stage still takes Robolectric's from
+  `build_aosp_gfx.sh`); no AHardwareBuffer (hardware bitmaps stay in memory,
+  TextureView shows nothing, PixelCopy of a window fails), no Vulkan; a
+  setZOrderOnTop surface over the windows; the Linux plain-JVM tests stay on
+  Robolectric's `.so`.
+  Measured under Wine (Xvfb, no GPU: ANGLE's D3D11 is WARP over wined3d over
+  llvmpipe, a GPU emulated on the CPU), framebench 1500 frames, before (CPU
+  raster, Robolectric's DLL) / after (GPU path): in a window, median/p99 frame
+  4.88/10.32 ms / 6.12/17.38 ms, 60.0/59.6 frames/s, CPU 8.1+3.6 s /
+  29.7+4.9 s, working set 265/504 MB, first frame 8.0/8.8 s; headless 720x1600,
+  9.88/20.02 ms / 9.22/199.97 ms, 60.0/58.4 frames/s, CPU 13.9+5.5 s /
+  61.0+5.1 s, 268/503 MB. Size: stage 144.62 -> 144.77 MB; DLL 12.0 -> 10.8 MB
+  (xz 3.75 -> 3.48 MB), ICU data 16.4 -> 17.8 MB (xz 4.69 -> 4.99 MB): the
+  installer about +0.04 MB. On a machine without a GPU (WARP, as CI's Windows
+  runner and many VMs) the GPU path costs ~4x the CPU and ~2x the memory; a
+  real GPU's numbers are not measured yet (the owner's machine or a GPU runner).
 
 - **AOSP's app layer (November 2026; the owner approved the layer, and decided:
   no switch).** Every app's process runs on AOSP 14's own `ActivityThread`,
