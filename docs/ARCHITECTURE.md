@@ -614,16 +614,21 @@ There is no sensor hardware behind `SensorManager`: no accelerometer is reported
 ### The launcher
 
 `Win.apk.exe` (`windows/launcher/launcher_main.cpp`, one file, GDI+; its state
-machines in headers beside it: `app_runs.h`, `installs.h`, `updates.h`) is the
+machines in headers beside it: `app_runs.h`, `installs.h`, `updates.h`, `store_app.h`) is the
 app library, the counterpart of upstream's Swift launcher. It installs APKs
 by copying them into `library\` and running `winapk-runtime --install-only`
 (a bundle then kept as hard links to the APKs it installed, `library_files.h`),
 gives each app its shortcuts, runs apps (`winapk-runtime --apk`), shows
-their logs, and holds the Store (F-Droid's `index-v1.json`, read only out of
-`index-v1.jar` whose JAR signature verifies against f-droid.org's pinned
-signing certificate, `launcher/signed_jar.h`, summarized to
-`store\catalog.tsv`, downloads checked against the index's SHA-256), the
-settings and each app's details. Every user-visible string is in English and
+their logs, and shows the Store (Win.apk's own store app, `app.apkstore`, from
+israel2176/win.apk-store) inside its window, as Google Play is shown with Google
+services on: the runtime's window as a borderless child of a panel over the
+content area (`WINAPK_EMBED_PARENT`). The store app is a system component, no
+tile and no shortcut: at the Store's first opening, and when the daily update
+check finds a newer release, the release's `apk-store.apk` is downloaded, kept
+only at the size and SHA-256 digest GitHub's REST API lists for it
+(`launcher/store_app.h`), and installed quietly; its "Install unknown apps" is
+allowed from its first install. It also holds the settings and each app's
+details. Every user-visible string is in English and
 Hebrew, and in Hebrew the windows are laid out right to left.
 
 One `Win.apk.exe` process serves the library, the install window and the
@@ -655,7 +660,7 @@ documentation).
 
 ### The install helper and the installed-apps registry
 
-An app that installs other apps (F-Droid, through `PackageInstaller`) hands
+An app that installs other apps (the Store, through `PackageInstaller`) hands
 the APK to upstream's `PackageInstallerBackend`, which runs an install
 helper. On Windows the helper is the launcher itself:
 `Win.apk.exe install --apk <file> --source android [--requestor-label <app>] --json`
@@ -751,7 +756,7 @@ the user installed run as apps, as upstream runs them on the Mac:
   first, and every call waits for that read). After that it learns a package
   as PackageManagerService does, at the commit: once the registry holds the
   change, `install_into_library` (every install and update: the library's,
-  the Store tab's, the Google services setup's, the install helper's for an
+  the Store's own app, the Google services setup's, the install helper's for an
   app that installs another) and `remove_app` (Remove, the helper's
   uninstall) call `SystemServer`'s `TX_PACKAGE_CHANGED` with the package and
   the APK the registry names (`windows/include/winapk/package_events.h`),
@@ -1017,7 +1022,7 @@ default; `--data` moves it for a direct run):
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
-| `store\` | `catalog.tsv`, `catalog.etag`, `icons\`, `downloads\` |
+| `store-app\` | The Store's app: `installed.sha256` (the SHA-256 of the release asset installed, for the daily check), and `apk-store.apk` while it downloads or waits to be installed. An older install's `store\` (F-Droid's catalog) is removed at start |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
 | `gms\` | `gms_state.properties`, the `accounts.present` marker |

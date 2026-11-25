@@ -19,7 +19,7 @@ Otherwise, [open an issue](../../issues/new/choose) with that template.
 Hebrew is fine. A report that can be acted on has four things:
 
 1. **Versions.** Win.apk (Settings > About), Windows, the app and its version,
-   and where the APK came from (the Store tab, f-droid.org, an `.apkm` from
+   and where the APK came from (the Store, f-droid.org, an `.apkm` from
    somewhere else). The same app from two sources can be two different
    builds.
 2. **Steps to reproduce.** Numbered, from a fresh start: how you installed

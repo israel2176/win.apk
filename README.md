@@ -32,8 +32,9 @@ Windows notifications. It is an unofficial Windows port of
 - **Apps are Windows programs.** Each app has its own resizable window, Start
   menu shortcut and taskbar icon; its notifications are Windows notifications.
 - **Install the way you expect.** Double-click or drag an `.apk` or a split
-  bundle (`.apkm`, `.xapk`, `.apks`), or install from the built-in
-  [F-Droid](https://f-droid.org) Store.
+  bundle (`.apkm`, `.xapk`, `.apks`), or install from the built-in Store:
+  Win.apk's own Play-style [store](https://github.com/israel2176/win.apk-store),
+  in the Win.apk window, that searches Google Play's catalogue.
 - **Your PC's hardware.** Webcams, the microphone, Windows location, Bluetooth
   devices you paired, Wi-Fi information, Xbox controllers, your Downloads and
   Pictures folders, and the clipboard.
@@ -44,9 +45,9 @@ Windows notifications. It is an unofficial Windows port of
 - **English and Hebrew,** light and dark; in Hebrew everything is laid out
   right to left.
 
-| The Store (F-Droid) | Dark theme | Apps from the automated sweep |
+| The Store | Dark theme | Apps from the automated sweep |
 |---|---|---|
-| ![The Store tab: F-Droid apps as cards with Install buttons](docs/images/store.png) | ![The library in the dark theme](docs/images/dark.png) | ![First screens drawn by six F-Droid apps: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5, Loop Habit Tracker](docs/images/apps.png) |
+| ![The Store: Win.apk's own store app in the Win.apk window, its home page with rows of apps](docs/images/store.png) | ![The library in the dark theme](docs/images/dark.png) | ![First screens drawn by six F-Droid apps: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5, Loop Habit Tracker](docs/images/apps.png) |
 
 ## How it differs from an emulator
 
@@ -181,8 +182,8 @@ app-specific code). Reports in Hebrew are welcome.
   [SQLite](https://sqlite.org/), [stb_vorbis](https://github.com/nothings/stb)
   and [zlib](https://zlib.net/). Each one's licence is in
   [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
-- **[F-Droid](https://f-droid.org)**, whose catalog the Store shows; the apps
-  belong to their authors.
+- **[F-Droid](https://f-droid.org)**, whose free apps the automated sweep and
+  the tests run; the apps belong to their authors.
 
 ## License
 

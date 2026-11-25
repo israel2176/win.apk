@@ -18,7 +18,8 @@ started and drew their first screen. That says they start, not that every
 screen works, and big commercial apps have been tried far less. [Compatibility](APPS.md) lists what works and what does not.
 
 **Where do I get apps?**
-The built-in Store (F-Droid) is the easiest. Files from APKMirror, APKPure or
+The built-in Store is the easiest: Win.apk's own store, which searches Google
+Play's catalogue and downloads free apps. Files from APKMirror, APKPure or
 an app's own site work too: `.apk`, `.apkm`, `.xapk` and `.apks`. Google Play
 works experimentally ([Google services](google-services.md)).
 

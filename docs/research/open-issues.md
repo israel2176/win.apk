@@ -944,31 +944,54 @@ New bugs found with AOSP views:
   (`winapk.iss` now writes `VersionInfoProductTextVersion={#AppVersion}`) and
   Authenticode (WinVerifyTrust: a broken signature is refused; a code-signed
   build takes only an installer by its own signer; unsigned is said in
-  Settings > Updates). The Store reads `index-v1.jar`, its JAR signature
-  verified against f-droid.org's certificate (SHA-256 `43238d51…c9ccab`,
-  `kFdroidSigner`, `launcher/signed_jar.h`), no longer the unsigned
-  `index-v1.json`. Rewritten (2026-11-24) from GitHub's REST API and
+  Settings > Updates). (The F-Droid Store's signed `index-v1.jar`,
+  `signed_jar.h`, went with that Store: the Store is Win.apk's own store app,
+  below.) Rewritten (2026-11-24) from GitHub's REST API and
   Windows' documentation: the signer is the leaf certificate's subject and
   issuer as X.500 names (the same name from another authority is refused),
   WinVerifyTrust fetches nothing from the network, the ProductVersion is read
   in every language the resource lists, a file of the wrong size is refused
   before it is hashed, and a response whose Content-Length is malformed or
   contradictory is refused (RFC 9110; `updates.h` `expected_body`). *Verified*:
-  `launcher_state_test` (the rules, a download's framing, the jar's layout and
-  manifests); under Wine, `verify_signed_jar` accepts f-droid.org's
-  real `index-v1.jar` (SHA1 digests) and `entry.jar` (SHA-256) and refuses a
-  jar with the index changed or a file added; WinVerifyTrust reports an
-  unsigned exe as unsigned and the ProductVersion reads. *Not verified*: on
+  `launcher_state_test` (the rules, a download's framing); under Wine,
+  WinVerifyTrust reports an unsigned exe as unsigned and the ProductVersion
+  reads. *Not verified*: on
   real Windows; a real Inno installer's ProductVersion (the first release built
   with the new `.iss`; one built before it would be refused, as v0.8.0's would);
   a signed installer (no build is signed). *For the owner*: every release is
   published with `--prerelease` (`windows-release.yml`); once a full release
-  exists, pre-releases are no longer offered to anyone. *Later*: F-Droid's
-  `index-v1.jar` is signed over SHA-1 digests; `entry.jar` + `index-v2.json`
-  is SHA-256 throughout but needs the catalog's parser moved to index v2's
-  layout (categories and suggested versions differ). The repository's
-  timestamp is not yet compared with the last one read (F-Droid's client
-  refuses an older index).
+  exists, pre-releases are no longer offered to anyone.
+- **The Store is Win.apk's own store app (November 2026): built, checked
+  under Wine, not yet on Windows.** The owner's request: the F-Droid Store is
+  deleted (no switch: the catalog, `signed_jar.h` and its tests, the search box,
+  the category menu, the store app's details page, `kStore*`; an older
+  install's `store\` is removed at start) and the Store item shows the owner's
+  store app (israel2176/win.apk-store, `app.apkstore`) in the window as Google
+  Play is (the panel code is now shared: `Embedded`, `show_embedded`). It is a
+  system component (no tile, no shortcut): the first opening reads
+  `releases/latest` from GitHub's REST API, downloads `apk-store.apk`, keeps it
+  only at the asset's size and `sha256:` digest (`store_app.h`), installs it
+  quietly, and allows its "Install unknown apps" once
+  (`appops::grant_builtin_store`); the daily update check updates it, waiting
+  while it runs (`StoreSetup`). *Verified*: `launcher_state_test`; under Wine
+  with the real release (v1.0.5): got, verified, installed with no tile and no
+  shortcut, the grant signed into `app-ops.json`, shown in the window with
+  Google Play's catalogue; an app (Utilities) downloaded in it and installed
+  through the install helper with no "unknown apps" stop, "App installed."
+  with Open and Done, `installer-of-record.properties` naming `app.apkstore`;
+  an older `store\` removed at start; GitHub unreachable shows "The Store
+  couldn't be set up" with Try again. *Not verified*: on Windows (Hebrew, the
+  embedding with a real GPU, an update of the store app while it runs, which
+  waits for it to close); the daily update path (checked only by the state
+  test). *Found*: (1) GitHub's API answers 403 to an address over its
+  unauthenticated limit (60 an hour): the Store then cannot be set up until it
+  resets, and says "GitHub could not be reached, or did not answer"; a shared
+  egress address (a school, an office behind one NAT) could meet it. (2) Under
+  Wine, coming back to the Store (or Google Play) shows the tab left before
+  until the app is touched: the re-shown child of another process gets no new
+  frame (an invalidate from the launcher did not help); to check on Windows.
+  (3) The install question says "app.apkstore asks to install it.": the
+  runtime passes the package as `--requestor-label`, not the app's label.
 - **Explorer's thumbnails of the app files (November 2026).**
   `bin\winapk-shell.dll` (`windows/shell/`, about 0.3 MB): each `.apk`,
   `.apkm`, `.xapk`, `.apks` shows its own icon, parsed natively. *Verified*:

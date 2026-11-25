@@ -74,9 +74,10 @@ between apps.** Each app runs with your Windows account's rights, like any
 program you install. Install only apps you trust. See [SECURITY.md](../SECURITY.md).
 
 Win.apk has no telemetry and uploads no logs or crash reports by itself. Its
-own connections are GitHub (the daily update check, which can be turned off),
-f-droid.org (the Store) and Google (when you sign in, or an app uses Google's
-services). The apps you run talk to their own servers, as on a phone.
+own connections are GitHub (the daily update check, which can be turned off,
+and getting the Store's app) and Google (when you sign in, or an app uses
+Google's services). The Store is an app like the others: it talks to Google
+Play's catalogue and to APKPure, where its downloads come from. The apps you run talk to their own servers, as on a phone.
 
 ## Where things are kept
 

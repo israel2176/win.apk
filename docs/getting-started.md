@@ -44,10 +44,10 @@ Windows Features.
 
 There are three ways to add an app:
 
-- **From the Store.** Click **Store** in the left pane. It is the catalog of
-  [F-Droid](https://f-droid.org), free and open-source apps, and the easiest
-  place to start: it lists only apps that can run here and picks the right
-  build for you. Search, then click **Install**.
+- **From the Store.** Click **Store** in the left pane: Win.apk's own store,
+  in the Win.apk window, that searches Google Play's catalogue (the first time
+  it takes a moment to get it). Search, open the app, click **Download**, then
+  **Install**, and confirm.
 - **From a file.** Double-click an `.apk`, `.apkm`, `.xapk` or `.apks` file in
   Explorer, drag it onto the library, or click **Install app**. Before you download
   an app elsewhere, read [which build to install](arm-apps.md#which-build-to-install).
