@@ -24,7 +24,10 @@
 namespace winapk::host {
 
 // The refresh rate the app's display reports, the vsync clock Choreographer runs on
-// (NativeDisplayEventReceiver over NativeCocoa.displayHz) and swaps are paced to.
+// (NativeDisplayEventReceiver over NativeCocoa.displayHz) and swaps are paced to. Fixed at a
+// phone's usual 60, not the monitor's: Android reports the panel's own rate, and whether a faster
+// monitor should give apps more frames (and the host more readbacks to compose) is the owner's to
+// decide (docs/research/open-issues.md, "Decisions for the owner").
 constexpr int kDisplayHz = 60;
 constexpr int64_t kVsyncPeriodNs = 1'000'000'000LL / kDisplayHz;
 
