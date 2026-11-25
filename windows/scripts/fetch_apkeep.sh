@@ -31,7 +31,7 @@ REPO=https://github.com/israel2176/apkeep
 COMMIT=d325ad56b52bb3fae48eb45c77a9456fff9ddd36  # fix-apkpure-arch-variant-selection
 PATCHES=("$HERE"/apkeep-patches/*.patch)
 DIR="$HERE/../../thirdparty/apkeep"
-KEY=$( (echo "$COMMIT"; cat "${PATCHES[@]}") | sha256sum | cut -c1-16)
+KEY=$( (echo "$COMMIT"; echo opt-z-lto-strip; cat "${PATCHES[@]}") | sha256sum | cut -c1-16)
 EXE="$DIR/apkeep-$KEY.exe"
 
 mkdir -p "$DIR"
@@ -53,6 +53,10 @@ if [[ ! -f "$EXE" || ! -f "$DIR/LICENSE-$KEY" ]]; then
     git -C "$SRC" fetch -q --depth 1 "$REPO" "$COMMIT"
     git -C "$SRC" -c advice.detachedHead=false checkout -q FETCH_HEAD
     for p in "${PATCHES[@]}"; do tr -d '\r' < "$p" | git -C "$SRC" apply -; done
+    # Built for size: it only downloads a file now and then, and it ships in every install
+    # (windows/README.md, "Footprint").
+    export CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_LTO=true \
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 CARGO_PROFILE_RELEASE_STRIP=true
     case "$(uname -s)" in
         MINGW*|MSYS*|CYGWIN*)
             target=x86_64-pc-windows-msvc
