@@ -57,9 +57,11 @@ public final class Tasks {
         final ActivityInfo info;
         final Intent intent;
         final String launchedFromPackage;
-        final Record resultTo;
-        final String resultWho;
-        final int requestCode;
+        /** The activity its result goes to (null when started without a request code, or when its
+         *  result was forwarded to the activity it started). */
+        Record resultTo;
+        String resultWho;
+        int requestCode;
         State state = State.INITIALIZING;
         boolean finishing;
         boolean launched;
@@ -379,6 +381,28 @@ public final class Tasks {
 
     // ---- Starting ----
 
+    /** ActivityStarter.executeRequest's result target for a start from `source`: the source itself
+     *  when it asked for a result (a request code, and not finishing); with
+     *  FLAG_ACTIVITY_FORWARD_RESULT the source's own target, which the source then no longer has
+     *  (a trampoline passes its caller's request on). */
+    void startFrom(ActivityInfo info, Intent intent, String from, Record source, String resultWho, int requestCode) {
+        Record resultTo = null;
+        if ((intent.getFlags() & Intent.FLAG_ACTIVITY_FORWARD_RESULT) != 0 && source != null) {
+            resultTo = source.resultTo;
+            resultWho = source.resultWho;
+            requestCode = source.requestCode;
+            source.resultTo = null;
+            if (resultTo != null && resultTo.finishing) resultTo = null;
+        } else if (source != null && requestCode >= 0 && !source.finishing) {
+            resultTo = source;
+        }
+        if (resultTo == null) {
+            resultWho = null;
+            requestCode = -1;
+        }
+        start(info, intent, from, resultTo, resultWho, requestCode);
+    }
+
     /** ActivityStarter.startActivityInner, for the standard launch mode in one task: the record goes
      *  on top; the resumed activity is paused first. */
     void start(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho, int requestCode) {
@@ -611,13 +635,21 @@ public final class Tasks {
         }
         if (r.state == State.RESUMED) {
             pause(r, false);
-        } else if (r.state == State.PAUSED || r.state == State.STOPPED) {
+        } else if (r.state == State.PAUSED || r.state == State.STOPPED || !r.launched && r != pendingLaunch) {
             destroy(r);
         }
         return true;
     }
 
     private void destroy(Record r) {
+        if (!r.launched) {
+            // A record never launched (one startActivities put under the top): the client has no
+            // activity for it, so it leaves the task at once (ActivityRecord.destroyImmediately for a
+            // record with no process).
+            r.state = State.DESTROYED;
+            destroyed(r.token);
+            return;
+        }
         r.state = State.DESTROYING;
         stopping.remove(r);
         ClientTransaction tx = ClientTransaction.obtain(app, r.token);
