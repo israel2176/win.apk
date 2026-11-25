@@ -22,6 +22,15 @@ public final class WinProcesses {
     static native long startTime(int pid);
     /** The pipe-name prefix this user's runtimes share. */
     static native String pipePrefix();
+    /** The pid of a process that is not this user's Win.apk runtime and holds the published binder
+     *  name (another install's or build's broker), seen at the last lookup and still running; 0 for
+     *  none. Win.apk-only (binder_win.cpp). */
+    static native int foreignServer(String name);
+
+    /** foreignServer, 0 where the natives are not bound. */
+    static int foreignServerOf(String name) {
+        try { return foreignServer(name); } catch (UnsatisfiedLinkError e) { return 0; }
+    }
 
     public static boolean available() {
         if (!HostAppSupport.windowsHost()) return false;

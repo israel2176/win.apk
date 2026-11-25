@@ -126,10 +126,18 @@ public final class SystemClient {
                     catch (Throwable t) { sBroker = null; }
                     // Win.apk: no launchd starts the broker on a lookup; the
                     // first app that needs it starts it (WindowsBroker).
-                    if (sBroker == null && enabled() && WinProcesses.available()) {
+                    // A broker of another install or build holds the name: no broker of ours can
+                    // take it while it runs, so there is nothing to wait for.
+                    int foreign = sBroker == null ? WinProcesses.foreignServerOf(systemName()) : 0;
+                    if (foreign > 0) {
+                        NativeLog.w(TAG, "broker " + systemName() + " is held by pid " + foreign
+                                + ", which is not this Win.apk's runtime (another install or build)");
+                    }
+                    if (sBroker == null && foreign == 0 && enabled() && WinProcesses.available()) {
                         WindowsBroker.start();
                         long deadline = System.currentTimeMillis() + WindowsBroker.START_WAIT_MS;
-                        while (sBroker == null && System.currentTimeMillis() < deadline) {
+                        while (sBroker == null && System.currentTimeMillis() < deadline
+                                && WinProcesses.foreignServerOf(systemName()) == 0) {
                             try { Thread.sleep(250); } catch (InterruptedException e) { break; }
                             try { sBroker = MacApkBinderTransport.lookUp(systemName()); }
                             catch (Throwable t) { sBroker = null; }
