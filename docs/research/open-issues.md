@@ -1279,9 +1279,10 @@ density changes with no crash. **Tensy (SDL) ends at the first maximize**: its a
 does not declare `density` (`configChanges` 0x2ff4), so it is relaunched, and SDL's
 activity calls `System.exit(0)` when it is made again in a process whose SDL already ran.
 Android does the same on a display-size change; here maximizing is common, which it was
-not before (the size change alone is declared, so it was not relaunched). **The owner to
-decide** whether that is acceptable or a maximized window should keep such an app's
-density (size compatibility, resampled) instead. **To check on Windows:**
+not before (the size change alone is declared, so it was not relaunched). **Decided by
+the owner (November 2026): keep Android's behaviour** (a density change relaunches an
+activity that does not declare it, even if such an app then ends); no exception that keeps
+an app's density and resamples it. **To check on Windows:**
 
 - `WM_DPICHANGED` (a window dragged to a monitor of another scale): not reachable under
   Wine; the code path is `fit_window` -> `follow_client` with the new monitor's scale.
