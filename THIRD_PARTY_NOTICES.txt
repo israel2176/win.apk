@@ -9,9 +9,9 @@ Win.apk's own code is licensed under the GNU AGPL v3.0 (LICENSE.txt).
 The Android apps you choose to run with Win.apk are not part of Win.apk and are
 not covered by these notices; you are responsible for your rights to them.
 
-The source tree also holds files of upstream Mac.apk that the Windows build
-does not use (its macOS libraries and their notices); Mac.apk's own notices are
-in its repository, https://github.com/kksimp/Mac.apk .
+The source tree keeps only the upstream Mac.apk files the Windows build uses
+(runtime/java and a few native sources, of which the build compiles sections);
+Mac.apk's own notices are in its repository, https://github.com/kksimp/Mac.apk .
 
 Contents
   1. Mac.apk (the Android runtime Win.apk is based on)

@@ -44,7 +44,9 @@ Not in scope for now:
 
 ## 2. How Mac.apk works and what changes on Windows x64
 
-The fork was taken from upstream version 1.0.2238. Upstream has four parts:
+The fork was taken from upstream version 1.0.2238. Upstream has four parts (the
+Mac-only native sources named in this section are no longer in this tree; they
+are in Mac.apk's repository, and Win.apk keeps only the files it compiles):
 
 | Part | Location | Approx. size | Role |
 |---|---|---|---|
@@ -267,7 +269,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
 | `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: Win.apk's own instead, from the 1.0.1 spec and AOSP's behaviour (players pulled by the mixer, file and http players, decoding to a queue, recorders), on `audio_engine.h`, `audio_pcm.h` and `audio_capture.h` | done |
 | `bionic_shim.cpp`: libjnigraphics | - | `AndroidBitmap_*` | `src/jnigraphics.cpp`: upstream's section, extracted at build time | done |
-| `pairip_*`, `art_jni_offsets.h` | 5,286 | Play Integrity emulation | later | - |
+| `pairip_*`, `art_jni_offsets.h` | 5,286 | an anti-tamper check's expectations | not ported: out of scope | - |
 | `arm32_lifter.cpp`, `bionic_shim_arm32*.cpp`, `bionic_shim_gles1.cpp`, `elf_reader.cpp`, `elf64_reader.cpp` | 19,296 | ARM translation | n/a (D8: the ARM stage) | - |
 
 **Launcher** (`launcher/*.swift`, 17,851 lines): the Mac app library, install
