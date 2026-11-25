@@ -7,7 +7,14 @@
 #include "HardwareBitmapUploader.h"
 #include "Readback.h"
 #include "pipeline/skia/LayerDrawable.h"
+#include "renderthread/RenderThread.h"
 #include "renderthread/VulkanManager.h"
+#include "window_surface.h"
+
+#include <SkBitmap.h>
+#include <SkCanvas.h>
+#include <SkImage.h>
+#include <SkPaint.h>
 
 #include <log/log.h>
 #include <surfacetexture/surface_texture_platform.h>
@@ -55,8 +62,33 @@ bool LayerDrawable::DrawLayer(GrRecordingContext*, SkCanvas*, Layer*, const SkRe
 }
 }  // namespace skiapipeline
 
-void Readback::copySurfaceInto(ANativeWindow*, const std::shared_ptr<CopyRequest>& request) {
-    request->onCopyFinished(CopyResult::SourceInvalid);
+// PixelCopy of a window: its last frame, read back from its layer (layers.cpp), scaled into the
+// request's bitmap as Readback.cpp does with a device's buffer.
+void Readback::copySurfaceInto(ANativeWindow* window, const std::shared_ptr<CopyRequest>& request) {
+    std::vector<uint32_t> px;
+    int w = 0, h = 0;
+    if (!window) return request->onCopyFinished(CopyResult::SourceInvalid);
+    mRenderThread.requireGlContext();
+    if (!winapk::hwui::readWindow(window, &px, &w, &h)) return request->onCopyFinished(CopyResult::SourceEmpty);
+    SkBitmap src;
+    src.installPixels(SkImageInfo::Make(w, h, kRGBA_8888_SkColorType, kPremul_SkAlphaType, SkColorSpace::MakeSRGB()),
+                      px.data(), static_cast<size_t>(w) * 4);
+    SkRect srcRect = request->srcRect.toSkRect();
+    const SkRect whole = SkRect::MakeIWH(w, h);
+    if (srcRect.isEmpty()) {
+        srcRect = whole;
+    } else if (!srcRect.intersect(whole)) {
+        return request->onCopyFinished(CopyResult::UnknownError);
+    }
+    SkBitmap dst = request->getDestinationBitmap(srcRect.width(), srcRect.height());
+    if (dst.isNull() || !dst.getPixels()) return request->onCopyFinished(CopyResult::DestinationInvalid);
+    SkCanvas canvas(dst);
+    SkPaint paint;
+    paint.setBlendMode(SkBlendMode::kSrc);
+    canvas.drawImageRect(src.asImage(), srcRect, SkRect::MakeIWH(dst.width(), dst.height()),
+                         SkSamplingOptions(SkFilterMode::kLinear), &paint, SkCanvas::kFast_SrcRectConstraint);
+    dst.notifyPixelsChanged();
+    request->onCopyFinished(CopyResult::Success);
 }
 CopyResult Readback::copyHWBitmapInto(Bitmap*, SkBitmap*) { return CopyResult::UnknownError; }
 CopyResult Readback::copyImageInto(const sk_sp<SkImage>&, SkBitmap*) { return CopyResult::UnknownError; }

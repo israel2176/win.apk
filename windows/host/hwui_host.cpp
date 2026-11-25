@@ -25,10 +25,13 @@ using attach_t = void (*)(const WinApkHwuiHost*);
 using recompose_t = void (*)();
 using host_layer_t = void (*)(const uint32_t*, int, int);
 using refresh_t = void (*)(double);
+using size_t_fn = void (*)(int*, int*);
 
 std::atomic<bool> g_active{false};
 recompose_t g_recompose = nullptr;
 host_layer_t g_host_layer = nullptr;
+host_layer_t g_host_layer_above = nullptr;
+size_t_fn g_display_size = nullptr;
 
 HWND host_window() { return window_running() ? static_cast<HWND>(window_handle()) : nullptr; }
 
@@ -52,7 +55,10 @@ bool hwui_attach() {
     g_recompose = dll ? reinterpret_cast<recompose_t>(GetProcAddress(dll, "winapk_hwui_recompose")) : nullptr;
     g_host_layer = dll ? reinterpret_cast<host_layer_t>(GetProcAddress(dll, "winapk_hwui_host_layer")) : nullptr;
     auto refresh = dll ? reinterpret_cast<refresh_t>(GetProcAddress(dll, "winapk_hwui_refresh_rate")) : nullptr;
-    if (!attach || !g_recompose || !g_host_layer) return false;
+    g_host_layer_above =
+        dll ? reinterpret_cast<host_layer_t>(GetProcAddress(dll, "winapk_hwui_host_layer_above")) : nullptr;
+    g_display_size = dll ? reinterpret_cast<size_t_fn>(GetProcAddress(dll, "winapk_hwui_display_size")) : nullptr;
+    if (!attach || !g_recompose || !g_host_layer || !g_host_layer_above || !g_display_size) return false;
     if (refresh) {
         DEVMODEW mode{};
         mode.dmSize = sizeof mode;
@@ -73,6 +79,16 @@ void hwui_recompose() {
 
 void hwui_host_layer(const uint32_t* argb, int w, int h) {
     if (g_active && g_host_layer) g_host_layer(argb, w, h);
+}
+
+void hwui_host_layer_above(const uint32_t* argb, int w, int h) {
+    if (g_active && g_host_layer_above) g_host_layer_above(argb, w, h);
+}
+
+bool hwui_display_size(int* w, int* h) {
+    *w = *h = 0;
+    if (g_active && g_display_size) g_display_size(w, h);
+    return *w > 0 && *h > 0;
 }
 
 }  // namespace winapk::host

@@ -1068,8 +1068,13 @@ void compose_and_present(JNIEnv* env) {
         if (pl.packed == 0) g_surface_layers.erase(pl.key);
     }
     g_have_surfaces = !g_surface_layers.empty();
-    const int W = g_comp_tree_w > 0 ? g_comp_tree_w : g_comp_gl_w;
-    const int H = g_comp_tree_w > 0 ? g_comp_tree_h : g_comp_gl_h;
+    // With the app's windows composed on the GPU (hwui_host.h) the host's part is two layers at the
+    // display's size: under the windows (the content GL view, the surfaces under their windows,
+    // seen through the holes SurfaceView punches) and over them (setZOrderOnTop surfaces).
+    int dw = 0, dh = 0;
+    const bool gpu = hwui_display_size(&dw, &dh);
+    const int W = gpu ? dw : g_comp_tree_w > 0 ? g_comp_tree_w : g_comp_gl_w;
+    const int H = gpu ? dh : g_comp_tree_w > 0 ? g_comp_tree_h : g_comp_gl_h;
     if (W <= 0 || H <= 0) return;
     g_comp_out.assign(static_cast<size_t>(W) * H, 0xff000000u);
     uint32_t* out = g_comp_out.data();
@@ -1091,6 +1096,20 @@ void compose_and_present(JNIEnv* env) {
         }
     };
     draw_layers(false);
+    if (gpu) {
+        bool any_above = false;
+        for (const auto& pl : places) any_above |= pl.shown() && pl.on_top && g_surface_layers.count(pl.key);
+        hwui_host_layer(out, W, H);
+        if (any_above) {
+            g_comp_out.assign(static_cast<size_t>(W) * H, 0u);
+            out = g_comp_out.data();
+            draw_layers(true);
+            hwui_host_layer_above(g_comp_out.data(), W, H);
+        } else {
+            hwui_host_layer_above(nullptr, 0, 0);
+        }
+        return;
+    }
     if (g_comp_tree_w == W && g_comp_tree_h == H && !g_comp_tree.empty()) {
         blend_over(out, g_comp_tree.data(), g_comp_out.size());
     }
@@ -1571,6 +1590,13 @@ void present_over_guest(const uint32_t* argb, int w, int h);
 void guest_frame_present(const uint32_t* argb, int w, int h) {
     if (g_guest_last_ms.exchange(GetTickCount64()) == 0) {
         std::fprintf(stderr, "[win.apk] native window: first frame from the app's native code (%dx%d)\n", w, h);
+    }
+    // Composed on the GPU (hwui_host.h): under the windows when the native window's SurfaceView is
+    // below its window, else over them.
+    if (hwui_active()) {
+        if (g_guest_layer_z.load() == 1) hwui_host_layer(argb, w, h);
+        else hwui_host_layer_above(argb, w, h);
+        return;
     }
     if (g_guest_layer_z.load() != 1) {
         present_pixels(argb, w, h);

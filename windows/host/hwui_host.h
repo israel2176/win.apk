@@ -19,5 +19,9 @@ bool hwui_active();
 void hwui_recompose();
 // The host's own frame, under the app's windows (0xAARRGGBB, top row first); null drops it.
 void hwui_host_layer(const uint32_t* argb, int w, int h);
+// The same over the app's windows (a setZOrderOnTop surface); alpha 0 where nothing is.
+void hwui_host_layer_above(const uint32_t* argb, int w, int h);
+// The app's display in px (the window manager's); false before the first windows.
+bool hwui_display_size(int* w, int* h);
 
 }  // namespace winapk::host

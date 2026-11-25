@@ -6,6 +6,9 @@
 
 struct ANativeWindow;
 
+#include <cstdint>
+#include <vector>
+
 namespace winapk::hwui {
 
 // The EGL display HWUI renders on: ANGLE on Direct3D 11 (WARP when there is no GPU).
@@ -19,5 +22,8 @@ bool windowResized(ANativeWindow* window, EGLSurface surface);
 void windowPosted(ANativeWindow* window, EGLSurface surface, long long vsyncNs);
 // The surface is about to be destroyed.
 void windowSurfaceDestroyed(EGLSurface surface);
+// The window's last frame (PixelCopy's source, a device's last queued buffer): RGBA, premultiplied,
+// top row first. Render thread only, with HWUI's GL context current; false when it has none.
+bool readWindow(ANativeWindow* window, std::vector<uint32_t>* rgba, int* width, int* height);
 
 }  // namespace winapk::hwui

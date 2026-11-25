@@ -94,6 +94,13 @@ EDITS = [
     ('hwui/apex/android_bitmap.cpp',
      '    if (buffer) {\n        AHardwareBuffer_acquire(buffer);\n    }\n',
      '    // (no buffer to acquire)\n'),
+    # Bitmap.copy(HARDWARE) and a decode to HARDWARE: no gralloc buffer, so a heap bitmap with the
+    # pixels (the host build's branch allocated an empty one: the copy drew nothing).
+    ('hwui/hwui/Bitmap.cpp',
+     '#else\n    return Bitmap::allocateHeapBitmap(bitmap.info());\n#endif\n',
+     '#else\n    sk_sp<Bitmap> heap = Bitmap::allocateHeapBitmap(bitmap.info());\n'
+     '    if (heap && !bitmap.readPixels(heap->info(), heap->pixels(), heap->rowBytes(), 0, 0)) return nullptr;\n'
+     '    return heap;\n#endif\n'),
     # HardwareBufferRenderer (API 34, rendering into an AHardwareBuffer): none here.
     ('hwui/pipeline/skia/SkiaPipeline.cpp',
      '        mBufferSurface = SkSurface::MakeFromAHardwareBuffer(\n'

@@ -42,9 +42,15 @@ typedef struct WinApkHwuiHost {
 __declspec(dllexport) void winapk_hwui_attach(const WinApkHwuiHost* host);
 // Compose again with what each window last posted (the host window was resized or exposed).
 __declspec(dllexport) void winapk_hwui_recompose(void);
-// A frame the host has as pixels (an app's native GL or video surface, read back), shown under every
-// window (0xAARRGGBB, top row first, w x h px at the display's top left); NULL drops it. Copied.
+// A frame the host has as pixels (an app's native GL or video surface read back, a SurfaceView's
+// canvas), shown under every window (0xAARRGGBB, top row first, stretched over the display); NULL
+// drops it. Copied.
 __declspec(dllexport) void winapk_hwui_host_layer(const uint32_t* argb, int w, int h);
+// The same over every window (a setZOrderOnTop surface, a native window on top): 0xAARRGGBB with
+// alpha 0 where nothing is, stretched over the display; NULL drops it.
+__declspec(dllexport) void winapk_hwui_host_layer_above(const uint32_t* argb, int w, int h);
+// The app's display in px, as the window manager last gave it (0 x 0 before).
+__declspec(dllexport) void winapk_hwui_display_size(int* w, int* h);
 // The display's refresh rate, for the render thread's vsync.
 __declspec(dllexport) void winapk_hwui_refresh_rate(double hz);
 
