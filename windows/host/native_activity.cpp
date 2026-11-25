@@ -935,29 +935,42 @@ struct Configuration {
     int32_t screen_width_dp = 0, screen_height_dp = 0, smallest_screen_width_dp = 0;
 };
 
-// The density (dpi) and SDK level the Java side reports, read once.
+// The density (dpi) the Java side reports now -- DisplayConfig's, which changes when the window shows
+// the phone at another scale (maximized, restored, another monitor's), as a relaunched NativeActivity
+// reads it on Android -- and the SDK level, read once.
 void java_config(int32_t* density, int32_t* sdk) {
-    static int32_t s_density = 0, s_sdk = 0;
+    static int32_t s_sdk = 0;
     static std::once_flag once;
-    std::call_once(once, [] {
-        JNIEnv* guest = winapk::guest_env_for_current_thread();
-        JNIEnv* env = guest ? winapk::host_env_of(guest) : nullptr;
-        if (!env) return;
-        if (jclass dm = env->FindClass("android/util/DisplayMetrics")) {
-            if (jmethodID m = env->GetStaticMethodID(dm, "macapkDeviceDensity", "()F")) {
-                const float d = env->CallStaticFloatMethod(dm, m);
-                if (!env->ExceptionCheck() && d > 0) s_density = static_cast<int32_t>(d * 160.0f + 0.5f);
-            }
-            env->DeleteLocalRef(dm);
-        }
-        if (env->ExceptionCheck()) env->ExceptionClear();
+    JNIEnv* guest = winapk::guest_env_for_current_thread();
+    JNIEnv* env = guest ? winapk::host_env_of(guest) : nullptr;
+    if (!env) return;
+    std::call_once(once, [env] {
         if (jclass v = env->FindClass("android/os/Build$VERSION")) {
             if (jfieldID f = env->GetStaticFieldID(v, "SDK_INT", "I")) s_sdk = env->GetStaticIntField(v, f);
             env->DeleteLocalRef(v);
         }
         if (env->ExceptionCheck()) env->ExceptionClear();
     });
-    if (s_density > 0) *density = s_density;
+    int32_t dpi = 0;
+    if (jclass dc = env->FindClass("com/macapk/loader/DisplayConfig")) {
+        if (jmethodID m = env->GetStaticMethodID(dc, "densityDpi", "()I")) {
+            const jint d = env->CallStaticIntMethod(dc, m);
+            if (!env->ExceptionCheck() && d > 0) dpi = d;
+        }
+        env->DeleteLocalRef(dc);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (dpi <= 0) {
+        if (jclass dm = env->FindClass("android/util/DisplayMetrics")) {
+            if (jmethodID m = env->GetStaticMethodID(dm, "macapkDeviceDensity", "()F")) {
+                const float d = env->CallStaticFloatMethod(dm, m);
+                if (!env->ExceptionCheck() && d > 0) dpi = static_cast<int32_t>(d * 160.0f + 0.5f);
+            }
+            env->DeleteLocalRef(dm);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    if (dpi > 0) *density = dpi;
     if (s_sdk > 0) *sdk = s_sdk;
 }
 
