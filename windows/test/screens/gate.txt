@@ -3,4 +3,4 @@
 # <package> <F-Droid versionCode> <the APK's SHA-256>, fetched from f-droid.org (repo/, else archive/).
 # A new version or a new app is a new line: the oracle job builds its oracle once and caches it.
 org.fossify.gallery 30 9a9f2e06882abfdae6f4c86aeaa83ae8102b2e081591df0eb2134a6f629657c7
-org.moire.opensudoku 20261008 ac4c6c8d0bc9058c1cc8d8f4570dc51977b3bc51577a82a12b94e6ec7714b9f0
+org.moire.opensudoku 20260923 c578113c14b7948ab3575ee03a5e1e00be631d73392eefc43bd547ed2073dfc9

@@ -63,7 +63,7 @@ com.agateau.tinywheels.android 33              # libGDX + Bullet physics
 com.unciv.app 1279                             # libGDX, Kotlin
 name.boyle.chris.sgtpuzzles 149                # JNI C, Canvas
 org.petero.droidfish 100                       # Stockfish engine over JNI, targets API 28
-org.moire.opensudoku 20261008                  # arm64-v8a only
+org.moire.opensudoku 20260923                  # arm64-v8a only; 4.11.2 and 4.11.3 crash on a fresh install (#121)
 org.ppsspp.ppsspp 119030000                    # NativeActivity, OpenGL ES
 com.retroarch 1597175267                       # NativeActivity, targets API 28
 net.minetest.minetest 5170000                  # SDL2, OpenGL ES
