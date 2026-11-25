@@ -245,7 +245,7 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `MACAPK_GMS_PRESENT=0`, `MACAPK_GMS_FCM=0`, `MACAPK_GMS_SIGNIN=0`, `MACAPK_GMS_LOCATION=0`, `MACAPK_GMS_DIR` | Upstream's Play services switches and the state folder |
 | `MACAPK_GMS_GOOGLE_CERT=0` | Reports the platform certificate for `com.google.android.gms` and `com.android.vending` instead of Google's (apps then see Play services as invalid) |
 | `MACAPK_LAYOUT_SWEEP=1` | The screens sweep (`runtime/java/com/macapk/loader/LayoutSweep.java`, [Every screen against Android](#every-screen-against-android)): once `Application.onCreate` has returned, every layout resource of the app is inflated, measured, laid out and drawn at the screen's size, left to right and right to left, instead of the launcher activity starting; each view's place is printed as `PROBE <line>` on stdout, then `PROBE done`, and the process ends. `MACAPK_LAYOUT_SWEEP_THEME=<0x7f... or style/Name>` the theme (default the launcher activity's, else the application's), `MACAPK_LAYOUT_SWEEP_FILTER=<regex>` only the layouts whose name matches, `MACAPK_LAYOUT_SWEEP_PICTURES=<dir>` each case as a PNG |
-| `MACAPK_VIRTUAL_CAMERA=0`, `MACAPK_SV_OVERSIZE_HOLDER=0`, `MACAPK_MANIFEST_FEATURE_SPLITS=0` | Switch off individual framework fixes listed under [Changes to the upstream tree](#changes-to-the-upstream-tree) |
+| `MACAPK_VIRTUAL_CAMERA=0` | No virtual camera when the PC has no webcam: apps see no camera, as on a device without one (`CameraBridge`; for the owner to decide which is the default, `docs/research/open-issues.md`) |
 
 The Java framework has many more `MACAPK_*` switches of upstream's; grep
 `runtime/java` for the one you need.
@@ -2172,7 +2172,7 @@ every such change is listed here:
   consumer yet (no renderer, not a `GLSurfaceView`, not the native-window
   owner) reports the view's size and gets `surfaceChanged` for it, as AOSP
   always does. Apps that start their camera preview only after that
-  `surfaceChanged` waited forever. `MACAPK_SV_OVERSIZE_HOLDER=0` turns it off.
+  `surfaceChanged` waited forever.
   Not Windows-specific.
 - `runtime/java/android/webkit/MacApkWebViewBridge.java` and `WebView.java`:
   `macapkWantsIntercept` / `macapkInterceptRequest`, through which an engine
@@ -2306,7 +2306,7 @@ every such change is listed here:
   feature splits (`isFeatureSplit="true"`) are merged into the package, as
   AOSP `parseSplitApplication` does. Chrome keeps its launcher alias and
   `ChromeTabbedActivity` in `split_chrome.apk`, and was rejected with "no
-  launchable activity". `MACAPK_MANIFEST_FEATURE_SPLITS=0` reads the base alone.
+  launchable activity".
   Not Windows-specific.
 - `runtime/java/android/app/HandoffActivityData.java`,
   `HandoffActivityDataRequestInfo.java` (new, API 37 type-only placeholders)
