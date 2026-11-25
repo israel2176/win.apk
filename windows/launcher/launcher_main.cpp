@@ -316,6 +316,7 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Register this device", L"רישום המכשיר הזה"},
         {L"Device ID copied.", L"מזהה המכשיר הועתק."},
         {L"Could not sign out", L"ההתנתקות נכשלה"},
+        {L"Win.apk could not remove the account from this PC. The log says why.", L"Win.apk לא הצליחה להסיר את החשבון מהמחשב הזה. הסיבה כתובה ביומן."},
         {L"Signed in to Google.", L"הכניסה ל-Google הושלמה."},
         {L"Signed in as {0}.", L"מחובר בתור {0}."},
         {L"No account was added.", L"לא נוסף חשבון."},
@@ -5943,6 +5944,12 @@ int run_runtime_captured(const std::wstring& args, std::wstring* out, const fs::
     PROCESS_INFORMATION pi{};
     const BOOL ok = CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr,
                                    root().c_str(), &si, &pi);
+    if (!ok && err != INVALID_HANDLE_VALUE) {
+        // The log would stay empty: the one line that says why.
+        const std::string line = launcher_error_line(L"could not start " + runtime_exe().wstring(), GetLastError());
+        DWORD n = 0;
+        WriteFile(err, line.data(), static_cast<DWORD>(line.size()), &n, nullptr);
+    }
     CloseHandle(write);
     if (err != INVALID_HANDLE_VALUE) CloseHandle(err);
     std::string bytes;
@@ -6058,7 +6065,9 @@ void google_signout(const std::wstring& account) {
         info(fmt(L"Signed out of {0}.", {account}), kInfo);
         refresh_account();
     } else {
-        error_with_log(tr(L"Could not sign out"), tr(L"Google did not answer. Check the internet connection, then try again."), gms_log());
+        // Signing out only removes what this PC keeps (GmsCli signout): no network is asked, so the cause is here.
+        error_with_log(tr(L"Could not sign out"),
+                       tr(L"Win.apk could not remove the account from this PC. The log says why."), gms_log());
     }
 }
 
