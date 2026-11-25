@@ -101,46 +101,58 @@ Source: https://source.android.com/ . The platform resource table is AOSP's
 own (bin\aosp\framework-res-34.apk, under "AOSP resources" below).
 
 AOSP graphics (what apps draw with) --
-lib\aosp-graphics.jar, bin\robolectric-nativeruntime.dll, bin\aosp\
-Built by windows/scripts/build_aosp_gfx.sh from Robolectric's builds of AOSP 14
-(Maven Central: org.robolectric:android-all 14-robolectric-10818077 and
-org.robolectric:nativeruntime-dist-compat 1.0.18), unmodified except that
-the jar holds a selection of android-all's classes plus Win.apk's own
-stand-ins (windows/java/aosp_gfx, AGPL-3.0 as the rest of Win.apk). The jar
-and the library come with no notice file; these entries are written from
-the components they are built from. The licences named "(<file>.txt)" ship
-in full in bin\licenses\aosp-graphics\.
+lib\aosp-graphics.jar, bin\aosp-hwui.dll, bin\aosp\
+aosp-graphics.jar is built by windows/scripts/build_aosp_gfx.sh from Robolectric's
+build of AOSP 14 (Maven Central: org.robolectric:android-all
+14-robolectric-10818077), a selection of its classes plus Win.apk's own
+stand-ins (windows/java/aosp_gfx, AGPL-3.0 as the rest of Win.apk).
+aosp-hwui.dll is built by windows/hwui_build from AOSP 14's sources
+(android-14.0.0_r1, https://android.googlesource.com/), with the edits
+windows/hwui_build/patch_src.py makes and Win.apk's own glue
+(windows/hwui_build/glue, AGPL-3.0). The fonts and hyphenation patterns come
+from Robolectric's org.robolectric:nativeruntime-dist-compat 1.0.18. These
+entries are written from the components they are built from. The licences
+named "(<file>.txt)" ship in full in bin\licenses\aosp-graphics\.
   aosp-graphics.jar: AOSP's android.graphics, android.text and android.util
     classes (frameworks/base). Copyright (C) The Android Open Source Project.
     SPDX-License-Identifier: Apache-2.0 (section 5).
-  robolectric-nativeruntime.dll: Robolectric's native runtime, AOSP's
-    libhwui, minikin and the framework's JNI code built for Windows.
-    Copyright (C) The Android Open Source Project, Copyright (C) Robolectric
-    contributors. Apache-2.0 (section 5). Built into it:
-    - Skia. Copyright (c) 2011 Google Inc. BSD-3-Clause (skia.txt).
-    - HarfBuzz. Copyright the HarfBuzz authors (Behdad Esfahbod, Google,
-      Red Hat and others, as listed in harfbuzz.txt). MIT (harfbuzz.txt).
+  aosp-hwui.dll: AOSP's HWUI (frameworks/base/libs/hwui: the render thread,
+    the GL pipeline, the graphics JNI), the framework's JNI code
+    (frameworks/base/core/jni), minikin, libandroidfw's headers, libutils,
+    libcutils and liblog (system/core, system/logging), libbase,
+    libnativehelper and parts of frameworks/native (libarect, the EGL blob
+    cache). Copyright (C) The Android Open Source Project. Apache-2.0
+    (section 5). Built into it:
+    - Skia (external/skia), with its Ganesh GL backend. Copyright (c) 2011
+      Google Inc. BSD-3-Clause (skia.txt).
+    - HarfBuzz. Copyright the HarfBuzz authors (Google, Ebrahim Byagowi,
+      Facebook, Mozilla, Red Hat and others, as listed in harfbuzz.txt). MIT
+      (harfbuzz.txt).
     - FreeType. Portions of this software are copyright (C) The FreeType
       Project (https://www.freetype.org). All rights reserved. Used under the
       FreeType License (freetype-FTL.txt).
-    - ICU 68 (and its data, bin\aosp\icu\icudt68l.dat). Copyright (C) 1991
-      and later Unicode, Inc. and others. Unicode License / ICU License, with
-      the licences of the data ICU includes (icu.txt).
-    - libpng 1.6.37. Copyright (c) 1995-2019 The PNG Reference Library
-      Authors. PNG Reference Library License version 2 (libpng.txt).
+    - ICU 72 (libicuuc, libicui18n, and its data, bin\aosp\icu\icudt72l.dat).
+      Copyright (C) 2016 and later Unicode, Inc. and others. Unicode License
+      (icu.txt), with the licences of the data ICU includes (icu.txt).
+    - libpng. Copyright (c) 1995-2022 The PNG Reference Library Authors.
+      PNG Reference Library License version 2 (libpng.txt).
     - libjpeg-turbo. Copyright (C) 1991-2021 The libjpeg-turbo Project and
       many others; this software is based in part on the work of the
       Independent JPEG Group. IJG License, BSD-3-Clause and Zlib
       (libjpeg-turbo.txt).
     - libwebp. Copyright (c) 2010, Google Inc. BSD-3-Clause (libwebp.txt).
+    - giflib. Copyright (c) 1997 Eric S. Raymond. MIT (giflib.txt).
+    - Wuffs (wuffs-mirror-release-c). Copyright The Wuffs Authors.
+      Apache-2.0 (section 5).
+    - {fmt} (external/fmtlib). Copyright (c) 2012 - present, Victor
+      Zverovich. MIT (fmt.txt).
     - Expat. Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and
       Clark Cooper, Copyright (c) 2001 and later Expat maintainers. MIT
       (expat.txt).
-    - zlib 1.2.11. Copyright (C) 1995-2017 Jean-loup Gailly and Mark Adler.
-      Zlib (section 5).
-    - SQLite 3.32.2 (public domain; its natives are left unbound: Win.apk
-      keeps its own, section 3).
-    - LLVM libc++, statically linked. Apache-2.0 WITH LLVM-exception.
+    - zlib. Copyright (C) 1995-2022 Jean-loup Gailly and Mark Adler. Zlib
+      (section 5).
+    - The C++ run-time libraries, statically linked as in winapk-runtime.exe
+      (section 3).
   bin\aosp\fonts\ (with fonts.xml) and bin\aosp\hyphen-data\: Android's
     system fonts and hyphenation patterns as AOSP 14 ships them, without
     Noto Sans CJK (Chinese, Japanese and Korean text uses the fonts Windows
@@ -180,6 +192,16 @@ classes (windows/java/aosp_views, AGPL-3.0 as the rest of Win.apk).
     com.android.internal.{view,widget,policy} and the classes they name
     (frameworks/base), Copyright (C) The Android Open Source Project.
     Apache-2.0 (section 5).
+
+AOSP app layer -- lib\aosp-app.jar
+Built by windows/scripts/build_aosp_app.sh from Robolectric's build of AOSP 14
+(org.robolectric:android-all 14-robolectric-10818077), with Win.apk's own
+classes (windows/java/aosp_app, AGPL-3.0 as the rest of Win.apk).
+  aosp-app.jar: AOSP's android.app lifecycle and the classes it names
+    (ActivityThread, Activity, Application, ContextImpl, LoadedApk,
+    Instrumentation, the framework's Fragment and the app's AIDL interfaces
+    to the system; frameworks/base), Copyright (C) The Android Open Source
+    Project. Apache-2.0 (section 5).
 
 --------------------------------------------------------------------------------
 3. Components compiled into winapk-runtime.exe
@@ -239,8 +261,8 @@ Source: https://llvm.org/ , https://www.mingw-w64.org/ .
 4. Components used at run time but not shipped
 --------------------------------------------------------------------------------
 
-- ICU: Windows' own icu.dll (Windows 10 1903 and later); ICU 68 ships only
-  inside robolectric-nativeruntime.dll (section 2).
+- ICU: Windows' own icu.dll (Windows 10 1903 and later); ICU 72 ships only
+  inside aosp-hwui.dll (section 2).
 - The Microsoft Edge WebView2 Runtime, Media Foundation, WASAPI and the other
   Windows APIs: part of Windows.
 - The Store's app (https://github.com/israel2176/win.apk-store): not
@@ -257,7 +279,7 @@ Source: https://llvm.org/ , https://www.mingw-w64.org/ .
 ................................................................................
 Apache License 2.0 (AOSP code and resources, apksig, org.apache.http.legacy,
 SwiftShader, the Vulkan loader; and the AOSP graphics files:
-aosp-graphics.jar, robolectric-nativeruntime.dll, the Apache-licensed fonts of
+aosp-graphics.jar, aosp-hwui.dll, aosp-app.jar, the Apache-licensed fonts of
 bin\aosp\fonts: Roboto, Droid Sans Mono, Coming Soon and others)
 ................................................................................
 
