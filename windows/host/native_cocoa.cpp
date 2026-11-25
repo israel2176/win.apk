@@ -45,6 +45,7 @@
 #include "win32_window.h"
 #include "winapk/arm64_guest.h"
 #include "stub_hits.h"
+#include "swap_pacing.h"
 #include "winapk/mini_bionic.h"
 
 namespace winapk::host {
@@ -584,7 +585,7 @@ void JNICALL Cocoa_setPhoneSize(JNIEnv*, jclass, jint w, jint h) {
 
 jint JNICALL Cocoa_phoneWidth(JNIEnv*, jclass) { return g_phone_w; }
 jint JNICALL Cocoa_phoneHeight(JNIEnv*, jclass) { return g_phone_h; }
-jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return 60; }
+jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return kDisplayHz; }  // swap_pacing.h: what swaps are paced to
 
 // Surface pixels per point. TouchDispatcher multiplies view points by it, and
 // the surface is the phone size at the device density, so the two must agree.

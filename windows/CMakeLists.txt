@@ -171,6 +171,11 @@ target_include_directories(winapk-frame-times-test PRIVATE host)
 add_executable(winapk-machine-load-test test/machine_load_test.cpp)
 target_include_directories(winapk-machine-load-test PRIVATE host)
 
+# When an app's presenting eglSwapBuffers returns (host/swap_pacing.h): producers of several
+# speeds on a simulated clock. No window. test/swap_pacing_test.cpp.
+add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
+target_include_directories(winapk-swap-pacing-test PRIVATE host)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.

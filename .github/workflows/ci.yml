@@ -346,6 +346,8 @@ jobs:
         run: ./build/winapk-frame-times-test.exe
       - name: Run the machine load test (busy shares and the busiest others to the first frame)
         run: ./build/winapk-machine-load-test.exe
+      - name: Run the swap pacing test (a native game's swaps at the display's rate, a slow one never held)
+        run: ./build/winapk-swap-pacing-test.exe
       - name: Run the translation crash guard test (two crashes turn translation off, two on the JIT back on)
         run: |
           mkdir -p aot-guard-scratch

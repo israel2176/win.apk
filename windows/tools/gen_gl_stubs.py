@@ -62,7 +62,7 @@ GUEST_OVERRIDES = {
     "eglGetDisplay", "eglGetPlatformDisplay", "eglInitialize", "eglTerminate", "eglChooseConfig",
     "eglCreateWindowSurface", "eglCreatePlatformWindowSurface", "eglDestroySurface", "eglSwapBuffers", "eglQuerySurface",
     "eglMakeCurrent", "eglGetCurrentSurface", "eglSurfaceAttrib", "eglBindTexImage", "eglReleaseTexImage",
-    "eglCopyBuffers",
+    "eglCopyBuffers", "eglSwapInterval",
     "eglGetProcAddress", "glDebugMessageCallback", "glDebugMessageCallbackKHR",
     # The extension lists, which name only what the guest can call (EXTENSION_SOURCES).
     "glGetString", "glGetStringi", "glGetIntegerv", "eglQueryString",
