@@ -64,9 +64,20 @@ std::atomic<int> g_phone_h{640};
 // derived from it, so a frame is never a pixel off the window.
 std::atomic<int> g_surface_w{0};
 std::atomic<int> g_surface_h{0};
-std::atomic<float> g_density{0.0f};  // px per dp, once Java has said (device_density)
+// px per dp at launch, once Java has said (device_density): DENSITY_DEVICE_STABLE / 160, the unit of
+// the points TouchDispatcher is handed (backingScale), which stays the same for the process.
+std::atomic<float> g_density{0.0f};
+// The app's density now, in dpi: the launch density until the window shows the phone at another
+// scale (maximized, restored, another monitor's scale: WindowInput::resized), when the app hears a
+// density change with its new size (DisplayConfig.macapkNoteDisplay). 0 until the first resize.
+std::atomic<int> g_density_dpi{0};
 
-int px_of(int dp) { return static_cast<int>(static_cast<float>(dp) * g_density.load() + 0.5f); }
+float current_density() {
+    const int dpi = g_density_dpi.load();
+    return dpi > 0 ? static_cast<float>(dpi) / 160.0f : g_density.load();
+}
+
+int px_of(int dp) { return static_cast<int>(static_cast<float>(dp) * current_density() + 0.5f); }
 
 // Whether the app was started landscape (the library opens apps that way
 // unless told otherwise): what an UNSPECIFIED request returns the phone to.
@@ -483,9 +494,10 @@ public:
     void restored() override { call_activity_host("macapkTaskToFront"); }
     // The render thread sees the new surface size on its next tick and reports
     // it (DisplayConfig, then surfaceChanged to every renderer).
-    void resized(int w_dp, int h_dp, int w_px, int h_px) override {
+    void resized(int w_dp, int h_dp, int w_px, int h_px, int density_dpi) override {
         g_phone_w = w_dp;
         g_phone_h = h_dp;
+        g_density_dpi = density_dpi;
         g_surface_w = w_px;
         g_surface_h = h_px;
     }
@@ -1258,32 +1270,36 @@ DWORD WINAPI render_thread(void*) {
     // (macapkNoteSurfaceSize answers true), as cocoa_bridge.mm holds its
     // re-fire, so a surface is never re-created against the old
     // configuration. Bounded: after ~0.5 s the size goes out anyway. The
-    // first size is Boot's own, which it seeds from the canvas.
+    // first size is Boot's own, which it seeds from the canvas. A new density
+    // (the window shows the phone at another scale) goes with its size, as
+    // one display change (macapkNoteDisplay).
     jclass display = env->FindClass("com/macapk/loader/DisplayConfig");
-    const jmethodID note = display ? env->GetStaticMethodID(display, "macapkNoteSurfaceSize", "(II)Z") : nullptr;
+    const jmethodID note = display ? env->GetStaticMethodID(display, "macapkNoteDisplay", "(III)Z") : nullptr;
     if (env->ExceptionCheck()) env->ExceptionClear();
     if (display) display = static_cast<jclass>(env->NewGlobalRef(display));
-    int shown_w = 0, shown_h = 0, asked_w = 0, asked_h = 0, held = 0;
+    int shown_w = 0, shown_h = 0, shown_dpi = 0, asked_w = 0, asked_h = 0, asked_dpi = 0, held = 0;
     TickClock clock;
     for (;;) {
         clock.wait();
         // The surface: the window's box in pixels, or the phone at the density.
+        const int dpi = g_density_dpi.load();
         int w = g_surface_w.load(), h = g_surface_h.load();
         if (w <= 0 || h <= 0) {
             w = px_of(g_phone_w.load());
             h = px_of(g_phone_h.load());
         }
-        if (w != shown_w || h != shown_h) {
+        if (w != shown_w || h != shown_h || dpi != shown_dpi) {
             // The bound is per size: a drag brings a new one every few ticks,
             // and each gets its own wait for the commit.
-            if (w != asked_w || h != asked_h) {
+            if (w != asked_w || h != asked_h || dpi != asked_dpi) {
                 asked_w = w;
                 asked_h = h;
+                asked_dpi = dpi;
                 held = 0;
             }
             bool committed = shown_w == 0 || !note;
             if (!committed) {
-                committed = env->CallStaticBooleanMethod(display, note, w, h) == JNI_TRUE;
+                committed = env->CallStaticBooleanMethod(display, note, w, h, dpi) == JNI_TRUE;
                 if (env->ExceptionCheck()) {
                     env->ExceptionClear();
                     committed = true;
@@ -1292,6 +1308,7 @@ DWORD WINAPI render_thread(void*) {
             if (committed || ++held > 30) {
                 shown_w = w;
                 shown_h = h;
+                shown_dpi = dpi;
                 held = 0;
             } else {
                 w = shown_w;

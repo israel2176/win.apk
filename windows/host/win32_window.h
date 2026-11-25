@@ -89,10 +89,13 @@ public:
     // unhide observer, which brings back a task that went to the back.
     virtual void restored() {}
     // The user gave the window another size (an edge dragged, maximized,
-    // snapped): the app's display is now w by h dp, as an Android desktop
-    // window's is, and its frames are expected w by h pixels. Called for
+    // snapped) or it moved to a monitor of another scale: the app's display
+    // is now w by h dp at density_dpi, as an Android desktop window's is, and
+    // its frames are expected w_px by h_px pixels. The density changes only
+    // with the scale the window shows the phone at (maximized: the phone
+    // turned; restored; another monitor's scale), never in a drag. Called for
     // every step of a drag.
-    virtual void resized(int /*w_dp*/, int /*h_dp*/, int /*w_px*/, int /*h_px*/) {}
+    virtual void resized(int /*w_dp*/, int /*h_dp*/, int /*w_px*/, int /*h_px*/, int /*density_dpi*/) {}
     // A size the user settled on (a drag ended, a snap), to keep for the
     // app's next start; not a maximized window's.
     virtual void remember_size(int /*w_dp*/, int /*h_dp*/) {}
@@ -119,9 +122,12 @@ AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool r
 // the size it was asked to and the box has another: a monitor with another
 // scale, WINAPK_RESIZABLE=0), or copied unscaled at the box's top left (the
 // frame is from before the last resize; the app has not drawn at the new size
-// yet, and a stretched frame would only pretend it has). Pure.
-enum class FramePresent { kExact, kScaled, kStale };
-FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh);
+// yet, and a stretched frame would only pretend it has). A frame of ow by oh,
+// the size asked before the last density change, is rescaled: the same
+// picture at the old density, made larger or smaller by the densities' ratio
+// from the box's top left, shown until the app draws at the new one. Pure.
+enum class FramePresent { kExact, kScaled, kStale, kRescaled };
+FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh, int ow = 0, int oh = 0);
 
 // The scale, in pixels per dp, the window will open at for a phone of phone_w
 // by phone_h dp: the scale of the monitor the app is started on, or less, so
@@ -139,7 +145,8 @@ void window_set_start_maximized(bool maximized);
 int window_density_dpi(float scale);
 
 // Creates the window (hidden) for a phone of phone_w by phone_h points, whose
-// frames come at surface_scale pixels per point (the app's density / 160).
+// frames come at surface_scale pixels per point (the app's density / 160; the
+// density follows the scale the window shows the phone at later on).
 // The window is fitted to its monitor's work area, at launch and whenever the
 // monitor, the work area or the phone's orientation changes. When the user
 // resizes it, the app follows (WindowInput::resized).

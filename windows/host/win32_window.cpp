@@ -164,13 +164,13 @@ UINT window_dpi(HWND hwnd) {
 // density, not a shrunk bitmap, and the app keeps its dp layout (360x800 dp
 // stays 360x800 dp).
 //
-// The density is fixed for the life of the process. When the window later
-// moves to another monitor, the work area changes (the taskbar moved or grew)
-// or the app turns the phone, the window is fitted again: it keeps its size
-// in physical terms, made smaller when that no longer fits, and the frames
-// are resampled to it (the one case a frame is scaled; see "the app follows
-// the window" for why a density change is not done). The next start picks
-// the density that fits.
+// When the window later moves to another monitor, the work area changes (the
+// taskbar moved or grew) or the app turns the phone, the window is fitted
+// again: it keeps the phone's dp at the scale it showed them at, in physical
+// terms, made smaller when that no longer fits. On a monitor with another
+// scale that is another density for the app, changed live as Android changes
+// a display's density (see "the app follows the window"), so the frames stay
+// pixel for pixel.
 
 struct Plan {
     bool set = false;
@@ -189,6 +189,18 @@ Plan g_plan;
 // else (WINAPK_DENSITY) the plan's scale.
 float g_base_scale = 1.0f;
 float g_surface_scale = 1.0f;  // px per dp of the frames (the app's density / 160)
+// The density follows the scale the window shows the phone at (it came from
+// the plan); false when WINAPK_DENSITY pinned it, and the frames are then
+// resampled to the window as before.
+bool g_live_density = false;
+int g_density_dpi = 160;  // the app's density now, as last given to it (WindowInput::resized)
+// The surface's size and density before the last density change, until the
+// app has drawn at the new one: its last frame is shown scaled by the ratio of
+// the two densities meanwhile, the same picture larger or smaller from the
+// box's top left (as the app will draw it, in the shape it had), instead of a
+// small corner of the window.
+SIZE g_before_density{};
+int g_before_dpi = 0;
 HMONITOR g_fit_monitor = nullptr;  // the monitor the window was last fitted for
 bool g_in_size_move = false;
 bool g_refit_pending = false;  // a fit came while minimized or maximized
@@ -204,9 +216,11 @@ int g_orientation_lock = 0;    // 0 any, 1 portrait, 2 landscape (window_set_ori
 // (360x800 dp becomes about 680x360 dp on a 16:9 monitor), instead of the
 // tablet-sized display the window's pixels at the same scale would be, with a
 // phone app's content small in the middle of it. The window shows that display
-// larger: the density is fixed for the process (see above), so the frames are
-// resampled to the window until the next start, which plans the density for the
-// maximized window (window_set_start_maximized) and draws it pixel for pixel.
+// larger: at the density at which the turned phone's dp fill the window's
+// pixels, changed live as a configuration change (see "the app follows the
+// window"), so the maximized window is drawn pixel for pixel; restoring it
+// brings the phone's own size and density back. The next start opens it
+// maximized at that density at once (window_set_start_maximized).
 // An app whose activity is fixed to portrait gets its portrait column, as large
 // as the screen is high. WINAPK_MAXIMIZE_TURNS=0: a maximized window is just a
 // large one, as before.
@@ -350,7 +364,7 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
     if (g_embed_parent) {  // the launcher sizes the window: the app follows the box it has
         g_fit_monitor = mon;
         g_shown_scale = keep_scale(dpi);
-        follow_client(hwnd);
+        follow_client(hwnd);  // at the density for that scale (another monitor's)
         InvalidateRect(hwnd, nullptr, FALSE);
         return;
     }
@@ -404,8 +418,10 @@ void fit_window(HWND hwnd, HMONITOR mon, UINT dpi, const RECT* at, bool keep_ins
                      g_phone_w, g_phone_h, scale, client.cx, client.cy, g_surface.cx, g_surface.cy, dpi,
                      wa.right - wa.left, wa.bottom - wa.top, wa.left, wa.top);
     }
-    // Too big for this work area: the app follows the smaller window.
-    if (follows && fit < keep) follow_client(hwnd);
+    // Too big for this work area: the app follows the smaller window. At a
+    // scale of another density (another monitor's): the app gets it.
+    const bool new_density = g_live_density && window_density_dpi(scale) != g_density_dpi;
+    if (follows && (fit < keep || new_density)) follow_client(hwnd);
 }
 
 void refit(HWND hwnd) {
@@ -496,13 +512,20 @@ RECT client_app_rect(HWND hwnd) {
 // turning the phone) keep the app's size. WINAPK_RESIZABLE=0 keeps the
 // phone's size for good, letterboxed.
 //
-// The density stays what it was at launch. On a monitor with another scale
-// (WM_DPICHANGED) the window keeps its size in physical terms and the frames
-// are resampled to it -- the one place a frame is scaled by design. Android
-// handles that as a density configuration change, relaunching activities
-// that do not declare it; the Java side's density is a process constant
-// (DisplayMetrics.DENSITY_DEVICE_STABLE, read by hundreds of call sites), so
-// a live density change is not done (PORTING.md, "Display").
+// The density follows the scale the window shows the phone at. A drag keeps
+// that scale (more or fewer dp, same density); maximizing (the phone turned,
+// below), restoring and a monitor with another scale (WM_DPICHANGED) change
+// it, and the app then gets a new density with its new size, as an Android
+// display whose density changes does (the user's Display size, a window moved
+// to a display of another density): DisplayConfig makes it a configuration
+// change with a new densityDpi, the resources are reloaded at it, and an
+// activity that does not declare configChanges="density" is relaunched with
+// its saved state (AOSP's app layer, Tasks.configurationChanged); others hear
+// onConfigurationChanged. DENSITY_DEVICE_STABLE stays the launch density, as
+// on Android. Until the app has drawn at the new density its last frame is
+// shown larger or smaller by the densities' ratio (paint). WINAPK_DENSITY
+// pins the density for good: the frames are then resampled to the window
+// instead.
 
 constexpr int kMinDp = 240;  // the smallest display the window gives an app
 
@@ -521,14 +544,18 @@ bool follow_client(HWND hwnd) {
     const RECT box = client_app_rect(hwnd);
     const int bw = box.right - box.left, bh = box.bottom - box.top;
     if (bw <= 0 || bh <= 0) return false;
-    // The surface is the box in pixels; on a monitor the window shows the app
-    // at another scale than its density (see above), the box times that ratio.
-    // A maximized window shows the phone turned, at the scale that takes.
+    // The surface is the box in pixels, at the density for the scale the
+    // window shows the phone at (see above): the dp are the box over it. A
+    // maximized window shows the phone turned, at the scale that takes. With
+    // a pinned density (WINAPK_DENSITY) the surface is the box times the
+    // ratio of the density to that scale, resampled to the box.
     const bool turned = IsZoomed(hwnd) && !g_embed_parent && maximize_turns();
     const float shown = turned ? zoomed_scale(bw, bh, g_shown_scale) : g_shown_scale;
-    const double ratio = static_cast<double>(g_surface_scale) / static_cast<double>(shown);
+    if (g_live_density) g_surface_scale = static_cast<float>(window_density_dpi(shown)) / 160.0f;
+    const float per_dp = g_live_density ? g_surface_scale : shown;
+    const double ratio = static_cast<double>(g_surface_scale) / static_cast<double>(per_dp);
     int pw = static_cast<int>(std::lround(bw * ratio)), ph = static_cast<int>(std::lround(bh * ratio));
-    int w = static_cast<int>(std::lround(bw / shown)), h = static_cast<int>(std::lround(bh / shown));
+    int w = static_cast<int>(std::lround(bw / per_dp)), h = static_cast<int>(std::lround(bh / per_dp));
     if (w < kMinDp) {
         w = kMinDp;
         pw = client_px(kMinDp, g_surface_scale);
@@ -537,7 +564,23 @@ bool follow_client(HWND hwnd) {
         h = kMinDp;
         ph = client_px(kMinDp, g_surface_scale);
     }
-    if (pw == g_surface.cx && ph == g_surface.cy && w == g_phone_w && h == g_phone_h) return false;
+    const int dpi = static_cast<int>(std::lround(g_surface_scale * 160.0f));
+    if (pw == g_surface.cx && ph == g_surface.cy && w == g_phone_w && h == g_phone_h && dpi == g_density_dpi) {
+        return false;
+    }
+    if (dpi != g_density_dpi) {
+        std::fprintf(stderr,
+                     "[win.apk] density: %d -> %d dpi (%s, shown at %.3f px/dp): the app's display is %dx%d dp, "
+                     "%dx%d px\n",
+                     g_density_dpi, dpi, turned ? "maximized: the phone turned" : "the window's scale changed", shown,
+                     w, h, pw, ph);
+        // The frame on screen is the old surface's until the app draws again.
+        if (g_before_density.cx == 0) {
+            g_before_density = g_surface;
+            g_before_dpi = g_density_dpi;
+        }
+        g_density_dpi = dpi;
+    }
     g_phone_w = w;
     g_phone_h = h;
     if (!IsZoomed(hwnd) && !g_embed_parent) {
@@ -550,7 +593,7 @@ bool follow_client(HWND hwnd) {
         std::fprintf(stderr, "[win.apk] window resized: the app's display is %dx%d dp, %dx%d px%s\n", w, h, pw, ph,
                      bw != pw || bh != ph ? " (resampled to the window)" : "");
     }
-    if (g_input) g_input->resized(w, h, pw, ph);
+    if (g_input) g_input->resized(w, h, pw, ph, dpi);
     InvalidateRect(hwnd, nullptr, FALSE);
     return true;
 }
@@ -597,10 +640,34 @@ void paint(HWND hwnd) {
     {
         std::lock_guard<std::mutex> hold(g_frame_lock);
         if (g_frame_w > 0 && g_frame_h > 0 && bw > 0 && bh > 0) {
-            const FramePresent how = window_frame_present(g_frame_w, g_frame_h, bw, bh, g_surface.cx, g_surface.cy);
+            const FramePresent how = window_frame_present(g_frame_w, g_frame_h, bw, bh, g_surface.cx, g_surface.cy,
+                                                          g_before_density.cx, g_before_density.cy);
+            // A frame at the new density: the old one is no longer shown.
+            if (g_frame_w == g_surface.cx && g_frame_h == g_surface.cy) g_before_density = SIZE{};
             const uint32_t* px = composed_frame();
             RECT drawn{};
-            if (how == FramePresent::kScaled) {
+            if (how == FramePresent::kRescaled && g_before_dpi > 0) {
+                // The density's ratio, from the box's top left, cut to the box.
+                const double r = static_cast<double>(g_density_dpi) / static_cast<double>(g_before_dpi);
+                const int dw = static_cast<int>(std::lround(g_frame_w * r));
+                const int dh = static_cast<int>(std::lround(g_frame_h * r));
+                BITMAPINFO bi{};
+                bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+                bi.bmiHeader.biWidth = g_frame_w;
+                bi.bmiHeader.biHeight = -g_frame_h;
+                bi.bmiHeader.biPlanes = 1;
+                bi.bmiHeader.biBitCount = 32;
+                bi.bmiHeader.biCompression = BI_RGB;
+                const int saved = SaveDC(dc);
+                IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
+                SetStretchBltMode(dc, HALFTONE);
+                SetBrushOrgEx(dc, 0, 0, nullptr);
+                StretchDIBits(dc, box.left, box.top, dw, dh, 0, 0, g_frame_w, g_frame_h, px, &bi, DIB_RGB_COLORS,
+                              SRCCOPY);
+                RestoreDC(dc, saved);
+                drawn = RECT{box.left, box.top, std::min(box.left + dw, box.right), std::min(box.top + dh, box.bottom)};
+                g_shown = Shown{box.left, box.top, r, r, true};
+            } else if (how == FramePresent::kScaled) {
                 BITMAPINFO bi{};
                 bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
                 bi.bmiHeader.biWidth = g_frame_w;
@@ -631,7 +698,8 @@ void paint(HWND hwnd) {
                 drawn = RECT{x0, y0, x0 + dw, y0 + dh};
                 g_shown = Shown{x, y, 1.0, 1.0, true};
             }
-            if (how != FramePresent::kStale && g_followed_at != 0) {
+            const bool at_surface = std::abs(g_frame_w - g_surface.cx) <= 2 && std::abs(g_frame_h - g_surface.cy) <= 2;
+            if (how != FramePresent::kStale && at_surface && g_followed_at != 0) {
                 const ULONGLONG took = GetTickCount64() - g_followed_at;
                 g_followed_at = 0;
                 if (!g_in_size_move) {
@@ -1983,7 +2051,7 @@ AppBox window_app_box(int cw, int ch, int phone_w, int phone_h, int lock, bool r
     return AppBox{(cw - w) / 2, (ch - h) / 2, w, h};
 }
 
-FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh) {
+FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh, int ow, int oh) {
     // The box's size, up to a pixel or two of rounding on either side: pixel
     // for pixel. (A window fitted at a scale the density does not divide can
     // be a pixel off; a maximized one at a non-integer scale too.)
@@ -1991,6 +2059,10 @@ FramePresent window_frame_present(int fw, int fh, int bw, int bh, int sw, int sh
     // The size the app was asked to draw at (the box is another size on
     // purpose): scaled to the box.
     if (fw == sw && fh == sh) return FramePresent::kScaled;
+    // The last frame from before a density change: the same picture at the
+    // old density, scaled by the densities' ratio until the app draws at the
+    // new one.
+    if (ow > 0 && oh > 0 && fw == ow && fh == oh) return FramePresent::kRescaled;
     return FramePresent::kStale;
 }
 
@@ -2008,8 +2080,12 @@ bool window_start(int phone_w, int phone_h, float surface_scale, WindowInput* in
     // the frames pixel for pixel.
     const bool planned = std::fabs(g_surface_scale * 160.0f - static_cast<float>(window_density_dpi(g_plan.scale))) < 0.5f;
     // Planned maximized: out of it the window shows the phone at the normal
-    // scale, its larger frames resampled down.
+    // scale, and the app gets that scale's density.
     g_base_scale = g_plan.maximized ? g_plan.normal : planned ? g_surface_scale : g_plan.scale;
+    // WINAPK_DENSITY pins it even when it equals the plan's.
+    const char* pinned = std::getenv("WINAPK_DENSITY");
+    g_live_density = planned && !(pinned && *pinned);
+    g_density_dpi = static_cast<int>(std::lround(g_surface_scale * 160.0f));
     g_awaiting_maximize = g_plan.maximized;
     StartArgs args{CreateEventW(nullptr, TRUE, FALSE, nullptr), false};
     HANDLE t = CreateThread(nullptr, 0, ui_thread, &args, 0, nullptr);
@@ -2189,7 +2265,8 @@ void window_snapshot(HWND hwnd) {
     const bool window_ok = !shown.empty() && save_png(base + L"-window.png", shown.data(), cw, ch);
     if (SUCCEEDED(co)) CoUninitialize();
     const UINT dpi = window_dpi(hwnd);
-    const char* kind = how == FramePresent::kExact ? "pixel for pixel" : how == FramePresent::kScaled
+    const char* kind = how == FramePresent::kExact ? "pixel for pixel" : how == FramePresent::kScaled ||
+                                                                             how == FramePresent::kRescaled
                                                                              ? "resampled to the box"
                                                                              : "stale (not the box's size)";
     std::fprintf(stderr,

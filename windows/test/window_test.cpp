@@ -72,6 +72,11 @@ int main() {
     check("the phone letterboxed (WINAPK_RESIZABLE=0) is scaled", window_frame_present(720, 1600, 468, 1040, 720, 1600) == FramePresent::kScaled);
     check("a frame from before a resize is not stretched", window_frame_present(720, 1600, 1300, 900, 1300, 900) == FramePresent::kStale);
     check("a frame from before a resize, smaller box", window_frame_present(1300, 900, 720, 1600, 720, 1600) == FramePresent::kStale);
+    // Maximized at a new density: the last frame at the old one is the same
+    // picture, rescaled by the densities' ratio until the app draws at the new one.
+    check("a frame from before a density change is rescaled", window_frame_present(360, 800, 1920, 1009, 1920, 1009, 360, 800) == FramePresent::kRescaled);
+    check("the new density's frame is copied", window_frame_present(1920, 1009, 1920, 1009, 1920, 1009, 800, 360) == FramePresent::kExact);
+    check("a frame of neither size is not stretched", window_frame_present(700, 360, 1920, 1009, 1920, 1009, 800, 360) == FramePresent::kStale);
 
     // The size a window opens at (window_fit.h), which the launcher's starting window takes too.
     std::printf("the size a window opens at\n");
