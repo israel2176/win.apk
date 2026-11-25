@@ -1054,15 +1054,32 @@ a message, an APK only installed, a downloaded file Explorer looks at) can do.
   the WebView's external schemes cancelled and its file origin rule; the
   thumbnail parser (1.2 million mutated APKs and bundles under ASan/UBSan, no
   fault); no log line found with a token's value.
-- *Not fixed, needs a decision*: the broker enforces `android:exported` only,
-  not a component's `android:permission` / a provider's `readPermission` and
-  `writePermission`, and `RemoteProviders.Transport` calls the provider
-  directly, past `ContentProvider`'s own checks: any app reaches another's
-  exported component guarded by a signature permission. Doing it as AMS does
-  needs the callers' grants and signers in the broker, and GMS's broadcasts
-  (`c2dm.permission.SEND`) to come from a caller that holds them. And the
-  Google master token is in `gms\gms_state.properties`, which every app's
-  process reads directly (on Android only GMS holds it).
+- *Fixed (the owner approved it)*: the broker enforced `android:exported`
+  only, and `RemoteProviders.Transport` called the provider past its checks.
+  Now `BrokerPermissions` decides as system_server does (ARCHITECTURE.md,
+  "What a caller may reach"): a component's `android:permission`; a
+  permission held by its level (normal requested, dangerous from the signed
+  app-ops store, signature by the declarer's verified signer, privileged for
+  Google's verified apps, the platform's levels from `framework-res-34.apk`);
+  a provider's read/write permissions, path-permissions and URI grants at open
+  and on every operation; URI grants from intents the broker delivers and
+  `Context.grantUriPermission`; a broadcast's required permissions both ways.
+  The in-process `checkUriPermission` answered "granted" to everything; it is
+  the broker's answer now. Tested by `BrokerPermissionsTest` (signed APKs) and
+  `BinderTransportTest` (the wire). *To check on a real PC*: Google Play
+  services, the Play Store and an app's FCM messages with the checks on
+  (c2dm `SEND` must be requested by Play services, as it is on a device); an
+  app's share of a FileProvider uri to another app (an activity start across
+  apps does not go through the broker on Windows, so its URI grant is not
+  made: only services, explicit broadcasts and `grantUriPermission` grant).
+  `Context.checkPermission(perm, pid, uid)` for another app's process
+  answered with the app's own grants; it is the broker's answer for that
+  process now (`checkCallingPermission`, `enforceCallingPermission`). Not
+  done: a custom dangerous permission an app declares has no prompt (held
+  only by legacy targets).
+- *Not fixed, needs a decision*: the Google master token is in
+  `gms\gms_state.properties`, which every app's process reads directly (on
+  Android only GMS holds it).
 - *Not looked at closely*: the background arm64 translation parses an
   installed app's ELF files before the app is ever run (upstream's
   translator); the AOSP graphics' native decoders render an icon at install.

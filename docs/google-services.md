@@ -179,7 +179,12 @@ installed again, it gets a new ID, which has to be registered again.
 - Each app runs in its own process. A small background process, the system
   broker (`winapk-runtime --system`), lets one app reach another's services,
   as Android's system server does. The first app that needs it starts it, and
-  it exits a minute after the last app closes.
+  it exits a minute after the last app closes. It checks what Android checks
+  before one app reaches another: a service, data or message that an app
+  keeps for apps signed by the same key, or for apps that asked for a
+  permission, is refused to the others. Google's apps reach each other, and
+  deliver your apps' notifications (Firebase Cloud Messaging), because their
+  signatures really match.
 - Only copies whose signature verifies with Google's key (or a newer Google
   key that took over from it) are treated as Google's apps. An app that only
   uses their package names is an ordinary app.
