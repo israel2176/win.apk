@@ -24,7 +24,7 @@ public final class ActivityManagerService {
     public void attachApplication(IApplicationThread thread, long startSeq) {
         try {
             thread.bindApplication(app.info.processName, app.info, null, null,
-                    ProviderInfoList.fromList(Collections.emptyList()), null /* instrumentation */, null, null,
+                    ProviderInfoList.fromList(app.providers), null /* instrumentation */, null, null,
                     null, null, 0 /* debugMode */, false, false, false /* restrictedBackupMode */, false,
                     app.config, CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null /* services */,
                     new Bundle() /* coreSettings */, "unknown", null, null, new long[0] /* disabledCompatChanges */, null,
@@ -36,6 +36,56 @@ public final class ActivityManagerService {
     }
 
     public void finishAttachApplication(long startSeq) {}
+
+    // ---- Providers ----
+
+    /** ActivityThread.installProvider published the app's providers (installContentProviders): the
+     *  process resolves their authorities to them (ContentProviderRegistry, which ContentResolver
+     *  reads). */
+    public void publishContentProviders(IApplicationThread caller, java.util.List<android.app.ContentProviderHolder> providers) {
+        if (providers == null) return;
+        for (android.app.ContentProviderHolder h : providers) {
+            if (h == null || h.info == null || h.provider == null) continue;
+            android.content.ContentProvider p = android.content.ContentProvider.coerceToLocalContentProvider(h.provider);
+            if (p == null) continue;
+            android.content.ContentProviderRegistry.register(h.info.authority, p);
+            synchronized (published) {
+                for (String a : h.info.authority.split(";")) published.put(a.trim(), h.info);
+            }
+        }
+    }
+
+    private final java.util.Map<String, android.content.pm.ProviderInfo> published = new java.util.HashMap<>();
+
+    /** A provider by authority (ContextImpl's ApplicationContentResolver, ActivityThread.acquireProvider):
+     *  this process's, with its local provider so the client calls it directly. */
+    public android.app.ContentProviderHolder getContentProvider(IApplicationThread caller, String callingPackage,
+            String name, int userId, boolean stable) {
+        android.content.ContentProvider p = android.content.ContentProviderRegistry.get(name);
+        if (p == null) return null;
+        android.content.pm.ProviderInfo info;
+        synchronized (published) {
+            info = published.get(name);
+        }
+        if (info == null) {
+            // One the host installed in the process (the system's media, documents, settings...).
+            info = new android.content.pm.ProviderInfo();
+            info.authority = name;
+            info.name = p.getClass().getName();
+            info.packageName = app.info.packageName;
+            info.applicationInfo = app.info;
+        }
+        android.app.ContentProviderHolder h = new android.app.ContentProviderHolder(info);
+        h.provider = p.getIContentProvider();
+        h.noReleaseNeeded = true;
+        return h;
+    }
+
+    public boolean refContentProvider(android.os.IBinder connection, int stableDelta, int unstableDelta) {
+        return true;
+    }
+
+    public void removeContentProvider(android.os.IBinder connection, boolean stable) {}
 
     // ---- Broadcasts (ActiveBroadcasts) ----
 

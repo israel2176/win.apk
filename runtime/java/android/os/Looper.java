@@ -247,7 +247,7 @@ public final class Looper {
      *  on the JVM's primordial thread, name "main") routinely touches
      *  getMainLooper() first (root-caused 2026-07-28: Firebase's
      *  `UiExecutor` static initializer, called from
-     *  FirebaseInitProvider.onCreate() during Boot.installAutoInitProviders(),
+     *  FirebaseInitProvider.onCreate() during ActivityThread.installContentProviders(),
      *  is one concrete trigger, but any library doing the same during that
      *  window would have won the same race). Every androidx main-thread
      *  assertion that compares identity against

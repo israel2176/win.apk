@@ -5,6 +5,7 @@
 // (build_aosp_app.sh lists what is left) and by running the lifecycle.
 package com.winapk.aospapp;
 
+import android.app.ActivityThread;
 import android.app.IActivityManager;
 import android.app.LoadedApk;
 import android.content.Intent;
@@ -245,11 +246,43 @@ public final class Compat {
 
     private static boolean sBeforeOnCreateRan;
 
+    /** ActivityThread.installContentProviders (private; handleBindApplication calls it after the
+     *  Application is made and attached, when the app has providers), with the host's work right
+     *  before it (AppHost.Start.afterApplicationAttach). */
+    public static void installContentProviders(ActivityThread thread, android.content.Context context,
+            java.util.List<android.content.pm.ProviderInfo> providers) {
+        afterAttach(context);
+        try {
+            java.lang.invoke.MethodHandle h = java.lang.invoke.MethodHandles
+                    .privateLookupIn(ActivityThread.class, java.lang.invoke.MethodHandles.lookup())
+                    .findVirtual(ActivityThread.class, "installContentProviders",
+                            java.lang.invoke.MethodType.methodType(void.class, android.content.Context.class,
+                                    java.util.List.class));
+            h.invoke(thread, context, providers);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static boolean sAfterAttachRan;
+
+    private static void afterAttach(android.content.Context context) {
+        AospApp a = AospApp.get();
+        if (sAfterAttachRan || a == null || a.afterAttach == null) return;
+        sAfterAttachRan = true;
+        android.app.Application app = context instanceof android.app.Application
+                ? (android.app.Application) context : ActivityThread.currentApplication();
+        a.afterAttach.accept(app);
+    }
+
     /** Instrumentation.callApplicationOnCreate, with the host's work right before the first one
-     *  (AppHost.Start.beforeApplicationOnCreate: the app's providers, where handleBindApplication
-     *  installs them, until they are AOSP's own, step A3). */
+     *  (AppHost.Start.beforeApplicationOnCreate), and AppHost.Start.afterApplicationAttach first when
+     *  the app has no providers (installContentProviders is not called then). */
     public static void callApplicationOnCreate(android.app.Instrumentation instr, android.app.Application app) {
         AospApp a = AospApp.get();
+        afterAttach(app);
         if (!sBeforeOnCreateRan && a != null && a.beforeOnCreate != null) {
             sBeforeOnCreateRan = true;
             a.beforeOnCreate.accept(app);
