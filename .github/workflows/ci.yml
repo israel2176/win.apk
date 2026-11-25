@@ -737,6 +737,10 @@ jobs:
           grep -E "AOSP graphics: robolectric-nativeruntime.dll loaded" install.log
           grep -F "launcher icon rendered" install.log
           test -s installdata/apps/sudoku/icon.png
+          # The app's name, resolved from its resources: not its package (AppMeta.resolve, through ResBackend).
+          cat installdata/apps/sudoku/label.txt; echo
+          if grep -qx "org.moire.opensudoku" installdata/apps/sudoku/label.txt; then exit 1; fi
+          if grep -F "reading the app's name failed" install.log; then exit 1; fi
           cp installdata/apps/sudoku/icon.png install-icon.png
       - name: Class-data sharing on Win.apk's Java runtime
         run: |
