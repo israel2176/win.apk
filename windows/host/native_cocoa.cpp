@@ -1502,8 +1502,19 @@ void guest_frame_present(const uint32_t* argb, int w, int h) {
     // Under the windows when the native window's SurfaceView is below its window, else over them.
     // The layer stays until the next frame, as a compositor shows a surface's last buffer: an app
     // draws only when something changes (Flutter drew City Car's sign-in screen and went idle).
-    if (g_guest_layer_z.load() == 1) hwui_host_layer(argb, w, h);
-    else hwui_host_layer_above(argb, w, h);
+    // A surface is in one place: when its SurfaceView's side is known only after its first frames
+    // (Flutter's first frame comes before the view says it is below its window), its last buffer
+    // leaves the layer it was in. Left over the windows, it hid them and its own later frames.
+    static std::atomic<int> last_z{-1};
+    const int z = g_guest_layer_z.load() == 1 ? 1 : 0;
+    const int was = last_z.exchange(z);
+    if (z == 1) {
+        if (was == 0) hwui_host_layer_above(nullptr, 0, 0);
+        hwui_host_layer(argb, w, h);
+    } else {
+        if (was == 1) hwui_host_layer(nullptr, 0, 0);
+        hwui_host_layer_above(argb, w, h);
+    }
 }
 
 
