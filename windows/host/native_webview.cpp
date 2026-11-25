@@ -101,6 +101,11 @@ enum {
 
 constexpr wchar_t kHostClass[] = L"WinApkWebViewHost";
 constexpr wchar_t kBridgePrefix[] = L"\x0001macapk-jsb\x0001";
+// How long the WebView2 thread waits for the app's UI thread (shouldOverrideUrlLoading) or for
+// itself from an app thread (CookieManager). Android has no limit: the call is synchronous on the
+// UI thread. Here one WebView2 thread serves every view, so a busy or blocked UI thread must not
+// hang it; 3 s is under Android's 5 s input dispatch timeout, past which Android would call the
+// app not responding anyway. A navigation past it goes on, and the log says so.
 constexpr DWORD kDecisionWaitMs = 3000;
 constexpr DWORD kCookieWaitMs = 3000;
 constexpr UINT_PTR kFollowTimer = 1;
@@ -581,6 +586,10 @@ std::atomic<int> g_next_intercept{1};
 std::mutex g_intercept_lock;
 std::condition_variable g_intercept_cv;
 std::deque<InterceptCall> g_intercept_calls;
+// shouldInterceptRequest runs off the UI thread on Android too, for several requests at once
+// (Chromium's network threads): a few threads answer a page's parallel requests together, without
+// a thread per request. Four is a round small number, not measured: more only helps an app whose
+// own answers are slow.
 constexpr int kInterceptThreads = 4;
 
 // The app's answer: none (go to the network), or a whole response.

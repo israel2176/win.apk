@@ -791,7 +791,7 @@ bool from_touch() {
 // event walks the app's view tree, so the position goes out once per kHoverMs
 // at most, always the newest.
 
-constexpr UINT kHoverMs = 16;
+constexpr UINT kHoverMs = 16;  // a frame at the display's 60 Hz (swap_pacing.h kDisplayHz)
 int g_mouse_buttons = 0;       // BUTTON_SECONDARY | BUTTON_TERTIARY held on the app
 bool g_hovering = false;       // the app has been told the pointer is over it
 bool g_hover_dirty = false;    // a hover position waits for the timer
