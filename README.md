@@ -13,7 +13,7 @@
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
 [![Sweep: 90 of 92 apps start](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
 
-**English** · [עברית](README.he.md)
+**English** · [עברית](README.he.md) · [Website](https://israel2176.github.io/win.apk/)
 
 Win.apk installs Android apps (`.apk`, `.apkm`, `.xapk`, `.apks`) and runs
 each one in its own window, with its own Start menu entry, taskbar icon and
