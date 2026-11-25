@@ -1489,6 +1489,37 @@ Left, being a matter of direction:
 
 ## Work started and not merged
 
+- **V3: HWUI's GPU pipeline (November 2026; the owner approved it: exactly as
+  Android, `SkiaOpenGLPipeline` on EGL over ANGLE, the CPU drawing path
+  deleted once it works, no switch, +~1.2 MB installer accepted, no frame-time
+  regression).** Robolectric's DLL has HWUI's render thread but only its own
+  `SkiaHostPipeline` (raster into an `ImageReader`), no Ganesh and no EGL/GL
+  import, and AOSP 14 builds `SkiaOpenGLPipeline`, `EglManager`,
+  `CanvasContext` and Skia's Ganesh only for the device. So the graphics DLL
+  is being rebuilt from AOSP 14 sources: `windows/hwui_build/` (`fetch.sh`
+  the sources, `bp.py` + `gen.py` Android.bp flattened for the Windows host
+  with the android sections of libskia and libhwui, `patch_src.py` the few
+  source edits, `cmake/shim/` what MinGW lacks of Bionic). State: Skia (with
+  Ganesh GL), FreeType, HarfBuzz, ICU 72, minikin, libutils/libbase/liblog,
+  libpng/jpeg/webp/gif/expat/zlib all compile; libhwui compiles but 13 files
+  (EglManager's window surface, `SkiaOpenGLPipeline`, `SkiaPipeline`,
+  `LayerDrawable`, `ShaderCache`'s blob cache, `DeferredLayerUpdater`,
+  `Readback`, the `HardwareRenderer`/`Bitmap`/`Region`/`Gainmap` JNI over
+  Parcel and AHardwareBuffer). A trial link leaves ANativeWindow (14),
+  AChoreographer (5), AHardwareBuffer (3), libjpeg-turbo's SIMD (NASM) and
+  pthread unresolved. Measured: Ganesh + GL for Windows x64 is 2.12 MB
+  (0.86 MB gzip) of code and data. Next, in order: an `ANativeWindow` per
+  window over an ANGLE window surface (D3D11 texture per window, composed on
+  the GPU as SurfaceFlinger composes layers) and EglManager on it; the JNI
+  registered on AOSP's classes by HWUI's own `register_android_graphics_classes`
+  (no Robolectric `*Natives` glue, no API 34 adapters in `aosp_gfx_redirect.cpp`);
+  ICU 72's data file instead of 68's; `ThreadedRenderer` on
+  (`AospViewHost`'s `sRendererEnabled = false` dropped); `Compositor` on the
+  GPU; then the CPU path deleted. Baseline to beat (framebench under Wine,
+  windowed, 1500 frames, before V3): median/p90/p99 total 5.22/6.72/11.03 ms
+  (draw 3.12, pixels 0.88, present 1.12), 60.0 frames/s, CPU 8.95 s user +
+  3.93 s system over 43.9 s; first frame 12.7 s, working set 264 MB.
+
 - **AOSP's app layer (November 2026; the owner approved the layer, and decided:
   no switch).** Every app's process runs on AOSP 14's own `ActivityThread`,
   `Activity` and `Application` (`lib/aosp-app.jar`, staged and shipped;
