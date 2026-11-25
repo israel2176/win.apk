@@ -474,7 +474,8 @@ public class AccessibilityTreeTest {
         System.load(new File(host).getAbsolutePath());
         // This plain JVM has Robolectric's native graphics, not the GPU DLL (no render thread): views
         // draw in software here, as Android's own tests disable hardware rendering.
-        android.view.ThreadedRenderer.disable(false);
+        // (reflection: the class is hidden API, not in the jar this test compiles against)
+        Class.forName("android.view.ThreadedRenderer").getMethod("disable", boolean.class).invoke(null, false);
         String runtime = System.getProperty("winapk.test.gfx.runtime");
         if (runtime == null) throw new IllegalStateException("-Dwinapk.test.gfx.runtime=<robolectric-nativeruntime>");
         if (!redirectBegin()) throw new IllegalStateException("the redirect did not install");
