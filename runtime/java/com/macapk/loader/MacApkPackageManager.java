@@ -240,14 +240,13 @@ public final class MacApkPackageManager extends PackageManager {
         // user's own account. An app that finds this package and binds to it
         // gets a working service.
         //
-        // ⚠ THE SIGNATURE IS OURS AND SAYS SO. PackageInfo.signatures carries a
-        // genuine self-signed certificate whose subject is CN=Mac.apk Platform
-        // (com.macapk.gms.PlatformSignature). It will never equal Google's, so
-        // an app that byte-compares against Google's embedded certificate
-        // correctly concludes this store is not Google's -- which is the honest
-        // answer, and one we are content for it to reach. Presenting Google's
-        // certificate bytes for our code is the line CLAUDE.md draws and this
-        // branch does not go near it.
+        // THE SIGNATURE. Upstream reports a self-signed CN=Mac.apk Platform
+        // certificate here (com.macapk.gms.PlatformSignature). Win.apk reports
+        // Google's public certificate for this package and for Play services
+        // (com.macapk.gms.GoogleGmsCertificate, in the PackageInfo built
+        // further down): an app's own play-services-basement requires both,
+        // and equal, before it uses Play services. No key is involved and no
+        // attestation changes: Play Integrity / SafetyNet still fail.
         //
         // This does NOT touch the reserved-Google DENY set below: that set stops
         // a REGISTRY ROW from resurrecting these names, which is a different

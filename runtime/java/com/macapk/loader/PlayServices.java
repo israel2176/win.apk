@@ -97,13 +97,12 @@ public final class PlayServices {
     // hypothetical.
     //
     // ⛔ THE SCOPE LINE IS UNCHANGED AND IS NOT A FLAG. Turning this on does not
-    // turn on anything CLAUDE.md forbids. We present a com.android.vending
-    // signed by US and never by Google, so an app that byte-compares the store's
-    // signing certificate against Google's embedded copy still correctly finds
-    // it is not Google's -- that app gets the honest absent answer forever, and
-    // that is a principled ceiling, not a TODO. Play Integrity / SafetyNet /
-    // DroidGuard are likewise untouched: this device is REGISTERED (checkin),
-    // never CERTIFIED (attestation). Nothing here mints a licence; a Google-
+    // spoof attestation. The com.android.vending and com.google.android.gms
+    // packages Win.apk presents report Google's public certificate
+    // (com.macapk.gms.GoogleGmsCertificate: the bytes every app's own
+    // play-services-basement compares with; no key, nothing signed with it).
+    // Play Integrity / SafetyNet / DroidGuard are untouched: this device is
+    // REGISTERED (checkin), never CERTIFIED (attestation). Nothing here mints a licence; a Google-
     // signed JWS is relayed verbatim or the call fails honestly.
     //
     // ---- WHY vending IS A SEPARATE QUESTION FROM gms -----------------------
@@ -118,11 +117,11 @@ public final class PlayServices {
     // Coupling them is exactly the mistake that caused the v1.0.574 regression;
     // do not "simplify" these into one boolean.
     //
-    // ---- DEFAULT ON (v1.0.1175, owner directive), MACAPK_GMS_PRESENT=0 to
+    // ---- DEFAULT ON (v1.0.1175), MACAPK_GMS_PRESENT=0 to
     //      restore the absent contract for A/B ---------------------------------
     // The destination was always ON, and the licensing vertical now DELIVERS: a
     // real Google-signed LICENSED verdict for an owned app, NOT_LICENSED for an
-    // unowned one (v1.0.1174, measured). The owner directed the flip.
+    // unowned one (v1.0.1174, measured), so the default was flipped.
     //
     // ⚠ WHY THIS IS SAFER THAN THE GENERAL "GMS present" FLIP THE EARNED-DEFAULT
     // RULE WARNED ABOUT. That warning was about com.google.android.gms and the
@@ -132,17 +131,16 @@ public final class PlayServices {
     // self-terminates Firebase's registration loop is unchanged, and
     // availability() was already SUCCESS. What flips ON is narrower: the
     // com.android.vending PACKAGE + its licensing service resolve, and the
-    // AccountManager returns the owner's real com.google account. Both are what
+    // AccountManager returns the user's real com.google account. Both are what
     // a real device with the Play Store and a signed-in account genuinely does.
     //
-    // ⚠ WHAT DEFAULT-ON EXPOSES, stated plainly: every guest app can now see the
-    // owner's Google account (AccountManager.getAccountsByType) and request
-    // tokens for it -- exactly as on a device with an account added. The Play
-    // Store IDENTITY, however, is NOT lent to those requests: only the licensing
-    // scope borrows it (GoogleAuthClient.applyPlayStoreIdentity is scope-gated),
-    // so a guest asking for an arbitrary scope presents our own honest identity
-    // and is refused by Google if that scope is gated. The concession stays
-    // narrow.
+    // What this exposes: every guest app can see the user's Google account
+    // (AccountManager.getAccountsByType) and request tokens for it, as on a
+    // device with an account added. The Play Store's client identity is not
+    // lent to those requests: only the licensing scope uses it
+    // (GoogleAuthClient.applyPlayStoreIdentity is scope-gated), so a guest
+    // asking for any other scope presents Win.apk's own identity and is
+    // refused by Google if that scope is gated.
     //
     // NOTE on verification: the games in scripts/sweep.sh do not exercise GMS,
     // so a clean sweep there proves the game paths did not regress but is NOT
