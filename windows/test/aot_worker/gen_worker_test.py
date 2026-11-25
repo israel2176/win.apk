@@ -38,6 +38,7 @@ out = '''// Generated from host/runtime_main.cpp: the background translation wor
 #include <shellapi.h>
 #include "winapk/aot_files.h"
 #include "winapk/arm64_aot.h"
+#include "winapk/aot_stamp.h"
 namespace winapk::arm64 { size_t aot_profile_flush() { return 0; } size_t aot_load_pending() { return 0; } }
 namespace fs = std::filesystem;
 namespace {
