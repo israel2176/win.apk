@@ -101,6 +101,31 @@ EDITS = [
      '#else\n    sk_sp<Bitmap> heap = Bitmap::allocateHeapBitmap(bitmap.info());\n'
      '    if (heap && !bitmap.readPixels(heap->info(), heap->pixels(), heap->rowBytes(), 0, 0)) return nullptr;\n'
      '    return heap;\n#endif\n'),
+    # FileBlobCache (ANGLE's program cache and HWUI's Skia shader cache) on Windows: the file is
+    # read, not mapped (no mmap here); opened in binary mode (MinGW's default text mode turns each
+    # \n written into \r\n); and kept writable, since Windows deletes no read-only file and the
+    # next write deletes the old one first (it failed with "Permission denied", every run).
+    ('native_opengl/EGL/FileBlobCache.cpp', '#include <unistd.h>\n', '#include <unistd.h>\n\n#include <vector>\n'),
+    ('native_opengl/EGL/FileBlobCache.cpp',
+     'int fd = open(mFilename.c_str(), O_RDONLY, 0);\n',
+     'int fd = open(mFilename.c_str(), O_RDONLY | O_BINARY, 0);\n'),
+    ('native_opengl/EGL/FileBlobCache.cpp',
+     '        uint8_t* buf = reinterpret_cast<uint8_t*>(mmap(nullptr, fileSize,\n'
+     '                PROT_READ, MAP_PRIVATE, fd, 0));\n'
+     '        if (buf == MAP_FAILED) {\n',
+     '        std::vector<uint8_t> contents(fileSize);  // Win.apk: read, not mapped\n'
+     '        uint8_t* buf = contents.data();\n'
+     '        if (fileSize < headerSize || read(fd, buf, fileSize) != static_cast<int>(fileSize)) {\n'),
+    ('native_opengl/EGL/FileBlobCache.cpp',
+     'open(fname, O_CREAT | O_EXCL | O_RDWR, 0)',
+     'open(fname, O_CREAT | O_EXCL | O_RDWR | O_BINARY, S_IRUSR | S_IWUSR)', 2),
+    ('native_opengl/EGL/FileBlobCache.cpp',
+     '                if (unlink(fname) == -1) {\n',
+     '                chmod(fname, S_IRUSR | S_IWUSR);  // Win.apk: an older build left it read-only\n'
+     '                if (unlink(fname) == -1) {\n'),
+    ('native_opengl/EGL/FileBlobCache.cpp',
+     '        fchmod(fd, S_IRUSR);\n',
+     '        // Win.apk: left writable (Windows deletes no read-only file).\n'),
     # HardwareBufferRenderer (API 34, rendering into an AHardwareBuffer): none here.
     ('hwui/pipeline/skia/SkiaPipeline.cpp',
      '        mBufferSurface = SkSurface::MakeFromAHardwareBuffer(\n'
