@@ -10,7 +10,9 @@
 // <name>.splits/ (launcher/library_files.h), hard links to those APKs, and drops the bundle: installing
 // again from that .apk (a stale record) links base.apk and every split back, extracts the split's library
 // again, and leaves the library's files the very files installed (one copy on disk). A plain APK with no
-// .splits folder installs alone, as before. The package of the kept .apk reads as the bundle's.
+// .splits folder installs alone, as before. The package of the kept .apk reads as the bundle's. Hostile names
+// go nowhere: a package that fails Android's validateName is not installed, and a library or a bundle's APK
+// whose file name is not safe (a backslash, a drive) is skipped.
 // Prints PASS/FAIL per check and "ALL PASSED" at the end; exits 1 on a failure.
 package com.winapk.tools;
 
@@ -116,9 +118,65 @@ public class AppInstallTest {
                 rc == 0 && apks == 1 && Files.isSameFile(plain, plainDir.resolve("base.apk")));
         check("plain APK has no kept splits", AppInstall.keptSplits(plain).isEmpty());
 
+        // Hostile names, refused or skipped as a device's installer refuses or skips them: a package with a
+        // path in it would name directories outside the app (and the data folder a removal deletes), a
+        // library or split named with a backslash or ':' a file outside it on Windows.
+        String up = "..\\..\\..\\..\\";
+        check("package names: Android's rule", AppInstall.validatePackageName("com.example.app") == null
+                && AppInstall.validatePackageName("a.b_2.C3") == null
+                && AppInstall.validatePackageName("noseparator") != null
+                && AppInstall.validatePackageName("..") != null
+                && AppInstall.validatePackageName("com.1digit") != null
+                && AppInstall.validatePackageName("com.example\\" + up + "escaped") != null
+                && AppInstall.validatePackageName("com.example/../escaped") != null
+                && AppInstall.validatePackageName("C:.example") != null
+                && AppInstall.validatePackageName("") != null);
+        Path hostile = library.resolve("Hostile.apk");
+        Files.write(hostile, zip(Map.of("AndroidManifest.xml", manifest("com.example/../../../../escaped"),
+                "classes.dex", bytes("dex\n035"))));
+        rc = AppInstall.install(hostile, android, "x86_64,arm64-v8a", android.resolve("data/app/.Hostile.installed"));
+        check("a package with a path in it is not installed", rc == 3 && !anyNamed(root, "escaped")
+                && !Files.exists(android.resolve("data/app/.Hostile.installed")));
+
+        Path libs = library.resolve("Libs.apk");
+        Files.write(libs, zip(Map.of("AndroidManifest.xml", manifest("com.example.libs"),
+                "lib/x86_64/libgood.so", bytes("ELF good"),
+                "lib/x86_64/" + up + "libevil.so", bytes("ELF evil"),
+                "lib/x86_64/C:libdrive.so", bytes("ELF drive"))));
+        rc = AppInstall.install(libs, android, "x86_64,arm64-v8a", android.resolve("data/app/.Libs.installed"));
+        Path libsDir = android.resolve("data/app").resolve(AppInstall.DIR_NONCE)
+                .resolve("com.example.libs-" + AppInstall.NAME_NONCE).resolve("lib/x86_64");
+        List<String> extracted;
+        try (var s = Files.list(libsDir)) {
+            extracted = s.map(p -> p.getFileName().toString()).toList();
+        }
+        check("only safely named libraries are extracted", rc == 0 && extracted.equals(List.of("libgood.so"))
+                && !anyNamed(root, "libevil") && !anyNamed(root, "libdrive"));
+
+        Map<String, byte[]> hostileBundle = new LinkedHashMap<>();
+        hostileBundle.put("base.apk", zip(Map.of("AndroidManifest.xml", manifest("com.example.hb"))));
+        hostileBundle.put(up + "splitevil.apk", dpi);
+        Path hb = library.resolve("Hb.apkm");
+        Files.write(hb, zip(hostileBundle));
+        rc = AppInstall.install(hb, android, "x86_64,arm64-v8a", android.resolve("data/app/.Hb.installed"));
+        Path hbDir = android.resolve("data/app").resolve(AppInstall.DIR_NONCE)
+                .resolve("com.example.hb-" + AppInstall.NAME_NONCE);
+        check("a bundle's unsafely named APK is skipped", rc == 0 && Files.isRegularFile(hbDir.resolve("base.apk"))
+                && !anyNamed(root, "splitevil"));
+
         AppInstall.deleteTree(root);
         System.out.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         System.exit(failures == 0 ? 0 : 1);
+    }
+
+    /** Whether any file or folder under (or the volume's root above) `root` has a name containing `part`. */
+    static boolean anyNamed(Path root, String part) throws IOException {
+        for (Path top : new Path[] {root, root.getRoot()}) {
+            try (var s = Files.walk(top, top == root ? Integer.MAX_VALUE : 1)) {
+                if (s.anyMatch(p -> p.getFileName() != null && p.getFileName().toString().contains(part))) return true;
+            }
+        }
+        return false;
     }
 
     static byte[] bytes(String s) {
