@@ -716,9 +716,37 @@ Before the window closes, the page asks `accounts.google.com/ListAccounts`
 launcher's account item (the foot of its pane). A window that ends without a
 token says why as a code (`signInWindowError`: the WebView2 HRESULT, the
 page's `COREWEBVIEW2_WEB_ERROR_STATUS` and HTTP status, `TIMEOUT`), which
-`--gms signin-window` prints as its `ERROR` line and the launcher shows. The layer's state is `gms\gms_state.properties`. `winapk-runtime --gms
+`--gms signin-window` prints as its `ERROR` line and the launcher shows. `winapk-runtime --gms
 <command>` runs upstream's `GmsCli` with no app, which is how the launcher's
 Google account setting lists accounts, adds one and signs out.
+
+**Who holds the master token.** As on Android, where only the account's
+authenticator (Play services) holds it and an app gets scoped tokens through
+`AccountManager.getAuthToken`, no app's process reads it. The layer's state is
+two files in `gms\`: `gms_state.properties`, what any process may know (which
+accounts are signed in, their non-secret data, the checkin identity), and
+`tokens.dat`, the master token and the cached tokens as text sealed with DPAPI
+for the Windows user and Win.apk's entropy (`host/data_protection.h`,
+`com.macapk.loader.DataProtection`). Only the account's owner side opens
+`tokens.dat` (`GmsStore.becomeOwner`): `--gms` (the launcher's Settings and
+its sign-in window), the system broker, and the **token service**,
+`winapk-runtime --gms token-service` (`GmsTokenService`). An app's process
+sends every request that needs the master token or the token cache to the
+token service over Binder (`GmsTokens`): a scoped token
+(`getAuthToken`, the Play licence check), a token minted for the app itself
+(Sign in with Google's ID token and server auth code: the service reads the
+caller's package and signing certificate from the APK its `--apk` names, and
+refuses a request naming another), the cache (peek, set, invalidate; a cached
+`app:<package>:` token is that app's only), the account id, and the sign-in
+window's `oauth_token`, which becomes the master token in the service; the app
+gets the e-mail back. The first request starts the service (`logs\gms-tokens.log`),
+which exits after five idle minutes. An older install's plain tokens in
+`gms_state.properties` are moved into `tokens.dat` by the first owner that
+reads the file (an app's process has the service do it before it reads).
+What this does not do: every app runs with the user's rights and its native
+code is not confined, so code that sets out to can still read the user's DPAPI
+secrets or start a runtime naming another app's APK; real isolation needs a
+sandbox for apps, which Win.apk does not have yet.
 
 Not Play-certified: no Google signing certificate, no installed
 `com.google.android.gms` package, no Play Integrity or SafetyNet, Play
@@ -781,9 +809,12 @@ the user installed run as apps, as upstream runs them on the Mac:
   (the broker's service hosts, Google's three apps) and waits for the user
   to close an app open in a window. With no broker running nothing is sent.
 - **Google accounts with the broker.** The accounts service mirrors
-  `gms\gms_state.properties` (Win.apk's one Google account store) into its
-  table: the master token as the row's password and the gaia id as
-  `GoogleUserId`, where Play services looks. It follows the file as other
+  `gms\` (Win.apk's one Google account store) into its table: the master
+  token as the row's password and the gaia id as `GoogleUserId`, where Play
+  services looks. The broker is one of the account's owners, so it reads the
+  master token itself, and its table (`system_ce\0\accounts_ce.dat`) is
+  sealed with DPAPI as `tokens.dat` is (`AccountStore.sealedAt`; an older
+  install's plain `accounts_ce.properties` is moved into it once). It follows the file as other
   processes write it (Settings' `--gms signin-window` / `signout`, an app's
   sign-in) and broadcasts `LOGIN_ACCOUNTS_CHANGED`. `AccountManager.addAccount`
   for `com.google` (the Play Store's "Sign in") opens Win.apk's sign-in
@@ -1054,12 +1085,12 @@ default; `--data` moves it for a direct run):
 | `library\<name>.apk`, `.splits\`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. The `.apk` is the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update renames the app's files aside and copies the new file in, so none is written in place); an app that came as a bundle (`.apkm`, `.xapk`, `.apks`) also has `<name>.splits\split_*.apk`, hard links to its installed splits. A bundle is in the library only while it installs: its members cannot be links, so keeping it took its size twice (a 191 MB Waze `.xapk` took about 380 MB). What goes with it is what was never installed: its `manifest.json` and icon, a bundletool set's whole-app alternatives |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
-| `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
+| `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `gms-tokens.log` (the Google token service), `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store-app\` | The Store's app: `installed.sha256` (the SHA-256 of the release asset installed, for the daily check), and `apk-store.apk` while it downloads or waits to be installed. An older install's `store\` (F-Droid's catalog) is removed at start |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |
 | `appops\` | `app-ops.json`, `signing-key.pub`, `signing-key.p256` |
-| `gms\` | `gms_state.properties`, the `accounts.present` marker |
-| `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store, which app installed which, the broker's readiness |
+| `gms\` | `gms_state.properties` (the signed-in accounts and what any process may know), `tokens.dat` (the master token and cached tokens, sealed with DPAPI; only the account's owner side opens it), the `accounts.present` marker, `photo-<account>.img` |
+| `app_uids.properties`, `system_ce\0\`, `installer-of-record.properties`, `run\system-ready` | With Google services on: per-package uids, the accounts service's store (`accounts_ce.dat`, sealed with DPAPI), which app installed which, the broker's readiness |
 | `logs\system.log`, `logs\services\` | The system broker and the apps it starts as service hosts |
 | `aot-cache\` | Whole arm64 translations shared between apps, `<key>.aot.dll` (kept under 2 GB, least recently used first); a `*.tmp` is a write in progress, or one a killed worker left (deleted when an hour old) |
 | `cds\` | The framework archive (`host/cds.h`): `framework-<graphics>-<key>.jsa` (`aosp`; `aospres`, `aospviews` with AOSP's resources or views; each kept), `.ok` once it has mapped whole, `.fails` (failures in a row; at two it is not made again for that key), `dump.log` (the last dump), a `.classlist` while a first start records, and `patch-digests.txt` (the patch folders' digests under a stamp of their listing, so a start does not hash them again) |

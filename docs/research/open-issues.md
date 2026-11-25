@@ -1077,9 +1077,25 @@ a message, an APK only installed, a downloaded file Explorer looks at) can do.
   process now (`checkCallingPermission`, `enforceCallingPermission`). Not
   done: a custom dangerous permission an app declares has no prompt (held
   only by legacy targets).
-- *Not fixed, needs a decision*: the Google master token is in
-  `gms\gms_state.properties`, which every app's process reads directly (on
-  Android only GMS holds it).
+- *Fixed (the owner's decision)*: the Google master token was in
+  `gms\gms_state.properties`, which every app's process read directly (on
+  Android only GMS holds it). It and the cached tokens are now in
+  `gms\tokens.dat`, sealed with DPAPI, which only the account's owner side
+  opens (`--gms`, the system broker, the new `--gms token-service`); an app's
+  process asks the token service over Binder for scoped tokens and for tokens
+  minted for itself, which the service checks against the package and
+  certificate of the APK on the caller's `--apk` (`GmsTokenService`,
+  `GmsTokensTest`, `winapk-data-protection-test`). The broker's accounts
+  table, which holds the master token as Play services' password, is sealed
+  too. An older install's plain files are moved at the first owner run.
+  *Still open*: same-user native code can read DPAPI secrets and start a
+  runtime naming another app's APK (no app sandbox); the sign-in window still
+  runs in the app's process when an app opens it, so its one-time
+  `oauth_token` passes through the app before the service exchanges it; a
+  token request on an app's main thread may wait for the service's start
+  (one JVM boot, once per idle period); the in-process `AccountManager`'s own
+  table (apps' own authenticators, Google services off) stays a plain file
+  shared by the apps.
 - *Not looked at closely*: the background arm64 translation parses an
   installed app's ELF files before the app is ever run (upstream's
   translator); the AOSP graphics' native decoders render an icon at install.
