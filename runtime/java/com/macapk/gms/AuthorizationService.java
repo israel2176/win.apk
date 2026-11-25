@@ -137,7 +137,7 @@ public final class AuthorizationService extends android.app.Service {
         GoogleSignInBroker.log("authorization: authorize " + r);
         Thread t = new Thread(() -> {
             String account = r.accountHint != null ? r.accountHint : GoogleSignInBroker.lastSignedIn(r.callerPkg);
-            if (account == null || GmsStore.masterToken(account) == null) {
+            if (account == null || !GmsStore.hasAccount(account)) {
                 GoogleSignInBroker.log("authorization: no account signed in to " + r.callerPkg + " -> SIGN_IN_REQUIRED");
                 reply(cb, STATUS_SIGN_IN_REQUIRED, "Sign in to the app first", null, null);
                 return;

@@ -142,13 +142,7 @@ public final class GoogleAuthenticator {
      *  same lookup against its token table. */
     public static void invalidateAuthToken(String accountType, String authToken) {
         if (!available() || !ACCOUNT_TYPE.equals(accountType) || authToken == null) return;
-        for (String name : GmsStore.accountNames()) {
-            for (String scope : GmsStore.scopesFor(name)) {
-                if (authToken.equals(GmsStore.authTokenRaw(name, scope))) {
-                    GmsStore.invalidateAuthToken(name, scope);
-                }
-            }
-        }
+        GmsStore.invalidateAuthTokenValue(authToken);   // in the token service, for an app
     }
 
     /**
