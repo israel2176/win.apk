@@ -441,6 +441,12 @@ public class AospAppRewrite {
                 mv.visitInsn(Opcodes.ICONST_0);
                 mv.visitVarInsn(Opcodes.LLOAD, 0);
                 mv.visitMethodInsn(Opcodes.INVOKESPECIAL, cls, "attach", "(ZJ)V", false);
+                // ActivityThread.main then: `if (sMainThreadHandler == null) sMainThreadHandler =
+                // thread.getHandler();` (null until then: the process makes one thread).
+                // SharedPreferences' apply() posts its listeners there.
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, cls, "getHandler", "()Landroid/os/Handler;", false);
+                mv.visitFieldInsn(Opcodes.PUTSTATIC, cls, "sMainThreadHandler", "Landroid/os/Handler;");
                 mv.visitVarInsn(Opcodes.ALOAD, 2);
                 mv.visitInsn(Opcodes.ARETURN);
                 mv.visitMaxs(0, 0);
