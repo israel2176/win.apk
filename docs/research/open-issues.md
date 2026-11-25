@@ -795,7 +795,7 @@ New bugs found with AOSP views:
   Win.apk's UI, `MACAPK_TILT_CONTROL=1` only) drove the removed sensors and
   now does nothing; with no webcam, `CameraBridge`'s virtual camera delivers
   dark-grey frames (`MACAPK_VIRTUAL_CAMERA=0` turns it off) so preview screens
-  open.
+  open (the choice is under "Decisions for the owner").
 - **Cal's "error loading the app" page**: the KeyManagerFactory "X509" fix
   (c4e09b8's batch) loads the client certificate; whether the page goes away
   needs a run with real network (the sandbox's proxy breaks client-certificate
