@@ -11056,6 +11056,9 @@ int helper_main(int argc, wchar_t** argv) {
         std::getline(f, pkg);
     }
     fs::remove(pkg_out, ec);
+    // Not the file's fault when the runtime never ran: STATUS_FAILURE, not STATUS_FAILURE_INVALID.
+    if (!probe) return helper_fail(5, "install", "the runtime could not be started; the log is " +
+                                                     wide_to_utf8((logs_dir() / L"install-helper.log").wstring()));
     if (pkg.empty()) return helper_fail(6, "invalid-apk", "no package name in the app");
     helper_progress(0.05, "parsed");
 
