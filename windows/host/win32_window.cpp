@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <condition_variable>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -97,12 +98,8 @@ bool g_pointer_down = false;  // the mouse's left button is down on the app: a f
 bool g_last_press_touch = false;  // the last press on the app was a finger or a pen (the touch keyboard)
 
 std::mutex g_frame_lock;
-std::vector<uint32_t> g_frame;
-int g_frame_w = 0, g_frame_h = 0;
-std::vector<uint32_t> g_overlay;  // empty: none
-int g_overlay_w = 0, g_overlay_h = 0;
-std::vector<uint32_t> g_composed;
-// Where paint() last put the frame: a frame pixel (x, y) is at client (ox + x * sx, oy + y * sy),
+int g_frame_w = 0, g_frame_h = 0;  // the display the compositor last placed (window_gpu_layout)
+// Where the compositor last put the frame: a frame pixel (x, y) is at client (ox + x * sx, oy + y * sy),
 // left to right. For screen readers (uia_provider.h), which ask from their own threads.
 struct Shown {
     int ox = 0, oy = 0;
@@ -110,35 +107,11 @@ struct Shown {
     bool ok = false;
 };
 Shown g_shown;  // under g_frame_lock
-
-// The frame with the overlay blended over it ("source over", straight alpha).
-// Both are drawn at the surface size, so they match; one from before a resize
-// is laid over the other pixel for pixel at the top left, never stretched to
-// fit (the next frame brings both to the new size).
-const uint32_t* composed_frame() {
-    if (g_overlay.empty()) return g_frame.data();
-    g_composed = g_frame;
-    const int h = std::min(g_frame_h, g_overlay_h), w = std::min(g_frame_w, g_overlay_w);
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            const uint32_t o = g_overlay[static_cast<size_t>(y) * g_overlay_w + x];
-            const uint32_t a = o >> 24;
-            if (a == 0) continue;
-            uint32_t& d = g_composed[static_cast<size_t>(y) * g_frame_w + x];
-            if (a == 255) {
-                d = o;
-                continue;
-            }
-            uint32_t out = 0xff000000u;
-            for (int shift = 0; shift < 24; shift += 8) {
-                const uint32_t sc = (o >> shift) & 0xff, dc = (d >> shift) & 0xff;
-                out |= ((sc * a + dc * (255 - a)) / 255) << shift;
-            }
-            d = out;
-        }
-    }
-    return g_composed.data();
-}
+// A snapshot's frame, read back by the compositor (window_frame_wanted), under g_frame_lock.
+bool g_frame_wanted = false;
+std::vector<uint32_t> g_frame_read;
+int g_frame_read_w = 0, g_frame_read_h = 0;
+std::condition_variable g_frame_read_cv;
 COLORREF g_background = RGB(255, 255, 255);  // until the first frame
 
 constexpr DWORD kStyle = WS_OVERLAPPEDWINDOW;
@@ -526,126 +499,11 @@ void remember_size() {
     if (g_input) g_input->remember_size(g_phone_w, g_phone_h);
 }
 
-void fill(HDC dc, const RECT& r, COLORREF color) {
-    if (r.right <= r.left || r.bottom <= r.top) return;
-    HBRUSH brush = CreateSolidBrush(color);
-    FillRect(dc, &r, brush);
-    DeleteObject(brush);
-}
-
-// Draws the frame's top-left w x h pixels at (x, y), unscaled.
-void blit_frame(HDC dc, int x, int y, int w, int h, const uint32_t* px) {
-    BITMAPINFO bi{};
-    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-    bi.bmiHeader.biWidth = g_frame_w;  // the stride
-    bi.bmiHeader.biHeight = -h;        // top-down: the first h rows
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 32;
-    bi.bmiHeader.biCompression = BI_RGB;
-    SetStretchBltMode(dc, COLORONCOLOR);
-    StretchDIBits(dc, x, y, w, h, 0, 0, w, h, px, &bi, DIB_RGB_COLORS, SRCCOPY);
-}
-
-// The client area: black bars around the box; in the box the frame, pixel for
-// pixel when it is the box's size (window_frame_present), scaled when the app
-// is meant to draw at another size, else unscaled at the top left with the
-// background color (the theme's window background, as Android shows under a
-// window) where it does not reach. Every pixel is drawn once, so nothing
-// flickers: the frame first, then the rest with the frame clipped out.
+// The graphics DLL's compositor draws the whole client area on the GPU (window_gpu_layout): an
+// exposed or resized window is composed again, nothing drawn here.
 void paint(HWND hwnd) {
-    // The graphics DLL's compositor draws the whole client area on the GPU (window_gpu_layout):
-    // an exposed or resized window is composed again, nothing drawn here.
-    if (hwui_active()) {
-        ValidateRect(hwnd, nullptr);
-        hwui_recompose();
-        return;
-    }
-    PAINTSTRUCT ps;
-    HDC dc = BeginPaint(hwnd, &ps);
-    if (g_rtl_window) SetLayout(dc, 0);  // the app's frame as it is, not mirrored
-    RECT client;
-    GetClientRect(hwnd, &client);
-    const RECT box = app_rect(client);
-    const int bw = box.right - box.left, bh = box.bottom - box.top;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_frame_w > 0 && g_frame_h > 0 && bw > 0 && bh > 0) {
-            const FramePresent how = window_frame_present(g_frame_w, g_frame_h, bw, bh, g_surface.cx, g_surface.cy,
-                                                          g_before_density.cx, g_before_density.cy);
-            // A frame at the new density: the old one is no longer shown.
-            if (g_frame_w == g_surface.cx && g_frame_h == g_surface.cy) g_before_density = SIZE{};
-            const uint32_t* px = composed_frame();
-            RECT drawn{};
-            if (how == FramePresent::kRescaled && g_before_dpi > 0) {
-                // The density's ratio, from the box's top left, cut to the box.
-                const double r = static_cast<double>(g_density_dpi) / static_cast<double>(g_before_dpi);
-                const int dw = static_cast<int>(std::lround(g_frame_w * r));
-                const int dh = static_cast<int>(std::lround(g_frame_h * r));
-                BITMAPINFO bi{};
-                bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-                bi.bmiHeader.biWidth = g_frame_w;
-                bi.bmiHeader.biHeight = -g_frame_h;
-                bi.bmiHeader.biPlanes = 1;
-                bi.bmiHeader.biBitCount = 32;
-                bi.bmiHeader.biCompression = BI_RGB;
-                const int saved = SaveDC(dc);
-                IntersectClipRect(dc, box.left, box.top, box.right, box.bottom);
-                SetStretchBltMode(dc, HALFTONE);
-                SetBrushOrgEx(dc, 0, 0, nullptr);
-                StretchDIBits(dc, box.left, box.top, dw, dh, 0, 0, g_frame_w, g_frame_h, px, &bi, DIB_RGB_COLORS,
-                              SRCCOPY);
-                RestoreDC(dc, saved);
-                drawn = RECT{box.left, box.top, std::min(box.left + dw, box.right), std::min(box.top + dh, box.bottom)};
-                g_shown = Shown{box.left, box.top, r, r, true};
-            } else if (how == FramePresent::kScaled) {
-                BITMAPINFO bi{};
-                bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
-                bi.bmiHeader.biWidth = g_frame_w;
-                bi.bmiHeader.biHeight = -g_frame_h;  // top-down, like the ARGB rows
-                bi.bmiHeader.biPlanes = 1;
-                bi.bmiHeader.biBitCount = 32;
-                bi.bmiHeader.biCompression = BI_RGB;
-                SetStretchBltMode(dc, HALFTONE);
-                SetBrushOrgEx(dc, 0, 0, nullptr);
-                StretchDIBits(dc, box.left, box.top, bw, bh, 0, 0, g_frame_w, g_frame_h, px, &bi, DIB_RGB_COLORS,
-                              SRCCOPY);
-                drawn = box;
-                g_shown = Shown{box.left, box.top, static_cast<double>(bw) / g_frame_w,
-                                static_cast<double>(bh) / g_frame_h, true};
-            } else {
-                // Exact: centred (the box may be a pixel or two larger or
-                // smaller from rounding; a row of it is then cut or left to
-                // the background). Stale: at the top left.
-                const int w = std::min(g_frame_w, bw), h = std::min(g_frame_h, bh);
-                const int bx = box.left, by = box.top;
-                const int x = how == FramePresent::kExact ? bx + (bw - g_frame_w) / 2 : bx;
-                const int y = how == FramePresent::kExact ? by + (bh - g_frame_h) / 2 : by;
-                const int x0 = std::max(x, bx), y0 = std::max(y, by);
-                const int dw = std::min(w, bx + bw - x0), dh = std::min(h, by + bh - y0);
-                // A frame wider than the box (by a pixel) starts a pixel in.
-                const uint32_t* start = px + static_cast<size_t>(y0 - y) * g_frame_w + (x0 - x);
-                blit_frame(dc, x0, y0, dw, dh, start);
-                drawn = RECT{x0, y0, x0 + dw, y0 + dh};
-                g_shown = Shown{x, y, 1.0, 1.0, true};
-            }
-            const bool at_surface = std::abs(g_frame_w - g_surface.cx) <= 2 && std::abs(g_frame_h - g_surface.cy) <= 2;
-            if (how != FramePresent::kStale && at_surface && g_followed_at != 0) {
-                const ULONGLONG took = GetTickCount64() - g_followed_at;
-                g_followed_at = 0;
-                if (!g_in_size_move) {
-                    std::fprintf(stderr, "[win.apk] resize: the app drew at %dx%d px %llu ms after the window%s\n",
-                                 g_frame_w, g_frame_h, took, how == FramePresent::kScaled ? " (resampled)" : "");
-                }
-            }
-            ExcludeClipRect(dc, drawn.left, drawn.top, drawn.right, drawn.bottom);
-        }
-        fill(dc, box, g_background);
-    }
-    ExcludeClipRect(dc, box.left, box.top, box.right, box.bottom);
-    fill(dc, client, RGB(0, 0, 0));
-    EndPaint(hwnd, &ps);
-    // The app's first frame is on screen: the launcher's splash can go.
-    if (g_frame_w > 0 && IsWindowVisible(hwnd)) signal_launcher_ready();
+    ValidateRect(hwnd, nullptr);
+    hwui_recompose();
 }
 
 // ---- input ----------------------------------------------------------------------
@@ -2117,7 +1975,7 @@ void window_snapshot(HWND hwnd) {
     swprintf(stamp, 32, L"%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
     const std::wstring base = dir + L"\\snapshot-" + app + L"-" + stamp;
 
-    // The frame as the app drew it (with the overlay the window draws over it).
+    // The frame as the compositor showed it in the box, read back on its render thread.
     std::vector<uint32_t> frame;
     int fw = 0, fh = 0;
     RECT client{};
@@ -2126,14 +1984,18 @@ void window_snapshot(HWND hwnd) {
     const int bw = box.right - box.left, bh = box.bottom - box.top;
     FramePresent how = FramePresent::kStale;
     {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_frame_w > 0 && g_frame_h > 0) {
-            const uint32_t* px = composed_frame();
-            frame.assign(px, px + static_cast<size_t>(g_frame_w) * g_frame_h);
-            fw = g_frame_w;
-            fh = g_frame_h;
-            how = window_frame_present(fw, fh, bw, bh, g_surface.cx, g_surface.cy);
-        }
+        std::unique_lock<std::mutex> hold(g_frame_lock);
+        g_frame_wanted = true;
+        g_frame_read.clear();
+        hold.unlock();
+        hwui_recompose();
+        hold.lock();
+        g_frame_read_cv.wait_for(hold, std::chrono::seconds(1), [] { return !g_frame_read.empty(); });
+        g_frame_wanted = false;
+        frame.swap(g_frame_read);
+        fw = g_frame_read_w;
+        fh = g_frame_read_h;
+        if (g_frame_w > 0 && g_frame_h > 0) how = window_frame_present(g_frame_w, g_frame_h, bw, bh, g_surface.cx, g_surface.cy);
     }
     for (uint32_t& p : frame) p |= 0xFF000000u;  // the app's frames are opaque; keep the PNG so
     // The client area as it is on screen (DWM's redirection surface of it).
@@ -2429,7 +2291,23 @@ int window_gpu_layout(int frame_w, int frame_h, WinApkHwuiLayout* out) {
     return 1;
 }
 
-// A frame the graphics DLL composed reached the window: as window_present's and paint's ends.
+bool window_frame_wanted() {
+    std::lock_guard<std::mutex> hold(g_frame_lock);
+    return g_frame_wanted;
+}
+
+void window_frame_pixels(const uint32_t* argb, int w, int h) {
+    {
+        std::lock_guard<std::mutex> hold(g_frame_lock);
+        if (!g_frame_wanted || w <= 0 || h <= 0) return;
+        g_frame_read.assign(argb, argb + static_cast<size_t>(w) * h);
+        g_frame_read_w = w;
+        g_frame_read_h = h;
+    }
+    g_frame_read_cv.notify_all();
+}
+
+// A frame the graphics DLL composed reached the window.
 void window_gpu_presented(bool first) {
     HWND hwnd = g_hwnd;
     if (!hwnd) return;
@@ -2438,77 +2316,6 @@ void window_gpu_presented(bool first) {
     if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
         PostMessageW(hwnd, kMsgTestResize, 0, 0);
     }
-}
-
-void window_present(const uint32_t* argb, int w, int h) {
-    if (!g_hwnd || w <= 0 || h <= 0) return;
-    bool first;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        first = g_frame_w == 0;
-        g_frame.assign(argb, argb + static_cast<size_t>(w) * static_cast<size_t>(h));
-        // A pixel of slack: paint reads a cropped frame's last row from an
-        // offset into it (blit_frame).
-        g_frame.resize(g_frame.size() + 4);
-        g_frame_w = w;
-        g_frame_h = h;
-    }
-    uia::note_frame();
-    InvalidateRect(g_hwnd, nullptr, FALSE);
-    if (first && GetEnvironmentVariableW(L"WINAPK_TEST_RESIZE", nullptr, 0) > 0) {
-        PostMessageW(g_hwnd, kMsgTestResize, 0, 0);
-    }
-}
-
-bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r, int b) {
-    if (!g_hwnd || l < 0 || t < 0 || r > w || b > h || r <= l || b <= t) return false;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_frame_w != w || g_frame_h != h) return false;  // nothing to patch: the caller sends it whole
-        const size_t rw = static_cast<size_t>(r - l);
-        for (int y = t; y < b; ++y) {
-            std::copy(rows + static_cast<size_t>(y - t) * rw, rows + static_cast<size_t>(y - t + 1) * rw,
-                      g_frame.data() + static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(l));
-        }
-    }
-    uia::note_frame();
-    // Where paint() puts those pixels. Only for a frame shown pixel for pixel in
-    // a window that is not mirrored; a scaled or stale one is painted whole.
-    RECT client{};
-    GetClientRect(g_hwnd, &client);
-    const RECT box = app_rect(client);
-    const int bw = box.right - box.left, bh = box.bottom - box.top;
-    if (!g_rtl_window && bw > 0 && bh > 0 &&
-        window_frame_present(w, h, bw, bh, g_surface.cx, g_surface.cy) == FramePresent::kExact) {
-        const int x = box.left + (bw - w) / 2, y = box.top + (bh - h) / 2;
-        const RECT changed{x + l, y + t, x + r, y + b};
-        InvalidateRect(g_hwnd, &changed, FALSE);
-    } else {
-        InvalidateRect(g_hwnd, nullptr, FALSE);
-    }
-    return true;
-}
-
-void window_set_overlay(const uint32_t* argb, int w, int h) {
-    if (!g_hwnd || w <= 0 || h <= 0) return;
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        g_overlay.assign(argb, argb + static_cast<size_t>(w) * static_cast<size_t>(h));
-        g_overlay_w = w;
-        g_overlay_h = h;
-    }
-    uia::note_frame();
-    InvalidateRect(g_hwnd, nullptr, FALSE);
-}
-
-void window_clear_overlay() {
-    {
-        std::lock_guard<std::mutex> hold(g_frame_lock);
-        if (g_overlay.empty()) return;
-        g_overlay.clear();
-        g_composed.clear();
-    }
-    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
 }
 
 void window_set_secure(bool secure) {

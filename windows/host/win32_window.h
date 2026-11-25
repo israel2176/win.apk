@@ -193,20 +193,12 @@ void window_set_background(uint32_t argb);
 // Where Ctrl+Shift+F12 saves a snapshot of the display (window_snapshot), and
 // the app's name for the files: the data directory's logs folder.
 void window_set_snapshot_dir(const std::wstring& dir, const std::wstring& app);
-// Copies the frame; it is painted on the UI thread. A frame at the size the
-// app was asked to draw is shown pixel for pixel (window_frame_present).
-void window_present(const uint32_t* argb, int w, int h);
 // A frame the graphics DLL composed on the GPU reached the window (hwui_host.h).
 void window_gpu_presented(bool first);
-// A frame that differs from the one window_present last copied only inside
-// [l, r) x [t, b): `rows` holds that rectangle's pixels, row after row. Only
-// that part is copied, and repainted. False, with nothing done, when no frame
-// of this size is held (the caller then presents the whole frame).
-bool window_present_rect(const uint32_t* rows, int w, int h, int l, int t, int r, int b);
-// A layer drawn over the frame (dialogs over GL or surface content), scaled to
-// the frame, alpha-blended; cleared with window_clear_overlay.
-void window_set_overlay(const uint32_t* argb, int w, int h);
-void window_clear_overlay();
+// A snapshot waits for the compositor's next frame as pixels (the box's, 0xAARRGGBB, top row
+// first): whether one is wanted, and the frame, from the render thread.
+bool window_frame_wanted();
+void window_frame_pixels(const uint32_t* argb, int w, int h);
 // Keeps the window out of screenshots and screen sharing (FLAG_SECURE).
 void window_set_secure(bool secure);
 
