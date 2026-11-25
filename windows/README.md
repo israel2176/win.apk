@@ -3782,6 +3782,14 @@ every such change is listed here:
   link in an app's text reaches only the app's own filters and the host actions an intent has (web, mailto,
   tel, geo), never Windows' other protocol handlers; the native open itself takes only those schemes
   (`host/host_url.h`).
+- `runtime/java/com/macapk/loader/ActivityHost.java` (`macapkLaunchAllowed`, `openHost`): a host open (a
+  link in the browser, mail, a call) and a start of another app's activity follow Android's background-start
+  rule (`BackgroundActivityStartController`) instead of upstream's "a real input in the last 10 s": allowed
+  while the app's window is in front, refused once the user minimized it, and allowed for 10 s
+  (`ACTIVITY_BG_START_GRACE_PERIOD_MS`) after the app sent its own task behind (`moveTaskToBack`, its last
+  activity finished; `Boot`'s `moveToBack` and `taskEmpty` note it). `HostUrlIntake.shouldClaim` is gone with
+  the old rule: an open that happens claims the redirect schemes. Upstream's rule refused every link with AOSP's
+  input, which noted no real input (`AospInput` now does, for the frame heartbeat).
 
 ## License
 

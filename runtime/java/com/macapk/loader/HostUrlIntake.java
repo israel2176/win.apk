@@ -490,23 +490,6 @@ public final class HostUrlIntake {
     }
 
 
-    /** The decision ActivityHost.openHost takes before it claims: is this open one
-     *  a person made? Pure, so debug/urlscheme_gate.sh can drive every branch.
-     *  - externalOff (MACAPK_EXTERNAL_URLS=0): the open is REFUSED, nothing reaches a
-     *    browser, so nothing is claimed -- unless the harness-only claimOnRefusal.
-     *  - allowAtLaunch (MACAPK_ALLOW_HOST_URL_AT_LAUNCH=1): every open happens, so
-     *    every open claims.
-     *  - otherwise the open happens iff the last real input was within graceMs
-     *    (lastInputMs == 0: never), which is exactly openHost's own refusal rule, so
-     *    a programmatic open (a launch-time ad / rate-us) never steals a scheme. */
-    static boolean shouldClaim(boolean allowAtLaunch, long lastInputMs, long nowMs, long graceMs,
-                               boolean externalOff, boolean claimOnRefusal) {
-        if (externalOff && !claimOnRefusal) return false;
-        if (allowAtLaunch) return true;
-        if (lastInputMs == 0L) return false;
-        return nowMs - lastInputMs <= graceMs;
-    }
-
     /** What claimRedirectSchemes would take: empty when the gate is off. */
     static List<String> redirectPlan(List<String> claimed, String ownBundle, HandlerProbe probe) {
         return redirectSchemesToTake(claimed, ownBundle, probe, new java.util.HashMap<>());

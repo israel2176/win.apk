@@ -709,9 +709,9 @@ public class TouchDispatcher {
      *  the same `hosttap` does not localises the bug to exactly those stages.
      *  A hold with the same start and end is a long press. The cursor never
      *  moves and nothing reaches another app. The events DO pass through
-     *  dispatch() and therefore noteRealInput(), which is the gate
-     *  ActivityHost.macapkLaunchAllowed reads to allow a host URL / cross-app
-     *  launch (the pre-existing injectedHostTouch path avoids it on purpose: "a
+     *  dispatch() and therefore noteRealInput(), which was the gate host URL /
+     *  cross-app launches read before they followed Android's background-start
+     *  rule (the pre-existing injectedHostTouch path avoids it on purpose: "a
      *  harness tap must not unlock host-URL opening"). So these verbs FAIL
      *  CLOSED: they refuse to post anything unless the run has
      *  MACAPK_EXTERNAL_URLS=0 (debug/drive_app.sh sets it), and a harness that
@@ -2203,16 +2203,9 @@ public class TouchDispatcher {
     // an unattended sweep is running.
     private static volatile boolean s_userInputSeen = false;
     public static boolean userInputSeen() { return s_userInputSeen; }
-    // v1.0.849: WHEN the last real input arrived, for the host-URL RECENCY
-    // gate (ActivityHost.openHost). The one-shot boolean above let a single
-    // tap arm host-browser opens for the app's whole lifetime, so an ad SDK
-    // firing ACTION_VIEW minutes later still hijacked the browser ("we still
-    // have multiple apps opening browser links", 2026-08-01; subway opened an
-    // ad tracker mid-campaign). Android's own model for background activity
-    // starts is a RECENT-interaction grace window, not ever-interacted --
-    // mirror that. Note the caveat above still applies: a CGEvent-synthesized
-    // click (debug/click.swift) is indistinguishable from a human at this
-    // layer, so unattended harnesses must ALSO set MACAPK_EXTERNAL_URLS=0.
+    // WHEN the last real input arrived: the frame heartbeat's evidence that the app is active
+    // (ViewCanvasDriver). Host URL opens and cross-app starts no longer read it: they follow
+    // Android's background-start rule, whether the task is in front (ActivityHost.macapkLaunchAllowed).
     private static volatile long s_lastInputMillis = 0L;
     public static long lastUserInputMillis() { return s_lastInputMillis; }
     private static void noteRealInput() {
