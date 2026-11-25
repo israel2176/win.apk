@@ -217,10 +217,10 @@ The user-facing ones (`WINAPK_PHONE_SIZE`, `WINAPK_RESIZABLE`,
 | `WINAPK_READY_EVENT=<handle>` | Set by the launcher, not by hand: an inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launcher's starting window waits for it) |
 | `WINAPK_START_WINDOW=<hwnd>` | Set by the launcher, not by hand: its starting window for the app, as a decimal number. The app's window opens on that window's monitor, at its top and centred on it (the same rectangle, since both are sized by `host/window_fit.h`), and so takes its place. Ignored when it is no window, hidden or minimized |
 | `WINAPK_EMBED_PARENT=<hwnd>` | Set by the launcher, not by hand: a window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (Google Play inside the library window); not a window, or the child cannot be made: a window of its own |
-| `WINAPK_DENSITY=<dpi>` | Overrides the density the app sees |
+| `WINAPK_DENSITY=<dpi>` | Pins the density the app sees: it no longer follows the scale the window shows the phone at (maximized, restored, another monitor's scale), and the frames are resampled to the window instead |
 | `WINAPK_WINDOW_RTL=1` or `0` | Overrides the locale's reading layout for the app window's frame |
 | `WINAPK_ANGLE_BACKEND=d3d11` or `swiftshader` | Forces a graphics backend (the default is a GPU, then WARP, then SwiftShader) |
-| `WINAPK_MAXIMIZE_TURNS=0` | A maximized window gives the app a display of the window's pixels at the normal scale (a tablet-sized one) instead of the phone turned: its short side kept in dp, the frames resampled to the window, and the next start planned at the density that draws it pixel for pixel (`win32_window.cpp`, "a maximized window is the phone turned") |
+| `WINAPK_MAXIMIZE_TURNS=0` | A maximized window gives the app a display of the window's pixels at the normal scale and density (a tablet-sized one) instead of the phone turned, which is drawn pixel for pixel at the density at which the turned phone's dp fill the window, changed live as a configuration change (`win32_window.cpp`, "a maximized window is the phone turned"; `DisplayConfig`) |
 | `WINAPK_GL_ASYNC_READBACK=1` | A presenting swap (`eglSwapBuffers` on a window surface) reads the frame back asynchronously through a double pixel pack buffer (`host/gl/gl_surface.cpp`) instead of the default synchronous `glReadPixels`: the GL thread no longer stalls on the GPU->CPU copy, at a cost of one frame of latency. Off by default because an on-demand renderer (a Flutter UI) drops its final frame on this path; even when on, it engages only after a sustained run of continuous swaps (`guest_gl.cpp`). `winapk-runtime` logs `window surface frames N: readback X ms present Y ms (async\|sync)` every 120 frames so the two are comparable |
 | `MACAPK_LETTERBOX=0` | With `WINAPK_RESIZABLE=0`, stretches the phone over the whole window instead of letterboxing |
 | `MACAPK_SCROLL_SCALE=<n>` | Scales the drag a wheel step becomes in an app whose views take no scroll event |
@@ -3625,6 +3625,13 @@ every such change is listed here:
   `res/ResBackend.java`, `view/ViewHost.java` and the comments that named `WINAPK_AOSP_RES=1` /
   `WINAPK_AOSP_VIEWS=1` now name the properties the code reads (`-Dwinapk.aosp.res=1`,
   `-Dwinapk.aosp.views=1`).
+- `runtime/java/com/macapk/loader/DisplayConfig.java`: the density is committed with the size
+  (`macapkNoteDisplay(w, h, dpi)`, which the Windows render thread calls; `macapkNoteSurfaceSize`
+  is it with no new density), so a window maximized, restored or moved to a monitor of another
+  scale is a configuration change with a new `densityDpi`, as on Android; `compute` takes the
+  metrics' density from the committed one (`densityDpi()`, the launch `DENSITY_DEVICE_STABLE`
+  until a change) instead of keeping it; `overlayCommitted` gives the in-process window manager
+  the committed display for the windows' configuration (`PORTING.md`, "Display").
 
 ## License
 

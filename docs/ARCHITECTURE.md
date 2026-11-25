@@ -538,9 +538,13 @@ any more; AOSP's software renderer redraws the dirty area its own way.
 
 Each app has one Win32 window on its own UI thread (`win32_window.cpp`). The
 window is the app's display: its client area in pixels is the app's surface,
-the density comes from the monitor's scale, and the Configuration and
-DisplayMetrics follow. Resizing, maximizing or snapping gives the app a
-display of the new size and it lays itself out again; a fixed-orientation app
+the density comes from the scale the window shows the phone at (the
+monitor's), and the Configuration and DisplayMetrics follow. Resizing,
+maximizing or snapping gives the app a display of the new size and it lays
+itself out again; maximizing, restoring and another monitor's scale also give
+it a new density, delivered as Android delivers one (a configuration change
+with a new `densityDpi`: resources reloaded, activities relaunched unless they
+declare `density`; `DisplayConfig`), so the frames stay pixel for pixel; a fixed-orientation app
 gets the largest box of its aspect, centred, with black bars. Frames are shown
 pixel for pixel; a frame from before a resize is never stretched. The size
 the user settles on is written to `library\<name>.window` for the next start.

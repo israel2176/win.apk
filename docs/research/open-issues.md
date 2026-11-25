@@ -1250,6 +1250,51 @@ app on real Windows; to check then:
   formatting attributes (one run: culture, read-only, direction only), MSAA clients
   that do not use UI Automation (`OBJID_CLIENT` is left to Windows' default).
 
+## A live density change (November 2026): fixed, to check on Windows
+
+The owner's report: an app (the Play Store) was blurry in a maximized window. The
+density was fixed for the process, so a maximized window (the phone turned, ~656x360 dp
+as large as the screen) and a monitor of another scale showed the frames resampled until
+the next start. **Fixed:** the density follows the scale the window shows the phone at,
+delivered as Android delivers a density change (Settings > Display size, a desktop window
+moved to a display of another density): `win32_window.cpp` gives the app the density for
+the new scale with its new size, `DisplayConfig.macapkNoteDisplay` commits both as one
+configuration change with a new `densityDpi`, AOSP's app layer relaunches an activity that
+does not declare `density` (its window made again, `Tasks.isResizeOnlyChange`, as
+`ActivityRecord.ensureActivityConfiguration` keeps it only for a size change) and tells the
+others; `DENSITY_DEVICE_STABLE` stays the launch density; the compositor composes layers
+pixel for pixel (`Bitmap.DENSITY_NONE`: a window's bitmap made after the change carries the
+new default density and was drawn scaled by 160/468 into the frame). Until the app draws at
+the new density its last frame is shown larger or smaller by the densities' ratio.
+`PORTING.md`, "Display".
+
+Checked under Wine 9 (Xvfb, Wine's X11 driver unmanaged; maximize and restore posted as
+`WM_SYSCOMMAND`): Open Sudoku (relaunched, its puzzle kept), Fossify Notes (relaunched,
+the typed text kept; typed into while maximized: touch and the keyboard land), Jerboa
+(Compose; relaunched; its two dialogs follow) at 160 -> 468 -> 160 -> 468 dpi, frames
+copied pixel for pixel after each change (no "(resampled)" line). The other smoke apps
+maximized, restored and maximized again in a window: Editor, Puzzles, Klooni (portrait
+column at 210 dpi), PPSSPP (NativeActivity), Jitsi Meet and Jellyfin each through three
+density changes with no crash. **Tensy (SDL) ends at the first maximize**: its activity
+does not declare `density` (`configChanges` 0x2ff4), so it is relaunched, and SDL's
+activity calls `System.exit(0)` when it is made again in a process whose SDL already ran.
+Android does the same on a display-size change; here maximizing is common, which it was
+not before (the size change alone is declared, so it was not relaunched). **The owner to
+decide** whether that is acceptable or a maximized window should keep such an app's
+density (size compatibility, resampled) instead. **To check on Windows:**
+
+- `WM_DPICHANGED` (a window dragged to a monitor of another scale): not reachable under
+  Wine; the code path is `fit_window` -> `follow_client` with the new monitor's scale.
+- The Play Store itself maximized (the owner's case), and a GL game or a NativeActivity
+  that does not declare `density` relaunched mid-game (Android does the same; check that
+  its surface comes back).
+- The system bars (`MACAPK_SYSTEM_BARS=1`): `DisplayConfig.compute` reads their thickness
+  from the resources before the change reaches them, so the first commit's
+  `screenHeightDp` may be off by the bars' rounding until the next.
+- Not a regression of this change, seen while checking it: Open Sudoku's database
+  creation fails at every start under Wine (`duplicate column name: rating_level`, its
+  `CREATE TABLE`); the app goes on.
+
 ## Work started and not merged
 
 - **AOSP's app layer (November 2026; the owner approved the layer, and decided:
