@@ -124,24 +124,15 @@ public final class SpecialAccessStore {
         return pkg + "@" + installedAt;
     }
 
-    private static final boolean HONEST;
-    static {
-        String e = System.getenv("MACAPK_ALLFILES_HONEST");
-        HONEST = e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
+    /** Special access answered as Android does (all files access, usage stats, manage media and
+     *  the rest only when granted). Always on: upstream's MACAPK_ALLFILES_HONEST=0, which put back
+     *  answers no Android gives (every op allowed, isExternalStorageManager true), is gone, as the
+     *  owner wants no switches. */
+    private static final boolean HONEST = true;
 
-    /** MACAPK_ALLFILES_HONEST, default ON. Off = the pre-S1 answers everywhere:
-     *  isExternalStorageManager()/isExternalStorageLegacy() true, every op
-     *  MODE_ALLOWED except GET_USAGE_STATS, checkPermission GRANTED for a
-     *  declared MANAGE_* permission, canManageMedia false, the Settings
-     *  special-access intents unresolved, setMode a silent sink. */
     public static boolean honest() { return HONEST; }
 
-    private static final boolean ALL_PERMS_ASK;
-    static {
-        String e = System.getenv("MACAPK_ALL_PERMS_ASK");
-        ALL_PERMS_ASK = windowsHost() && (e == null || e.isEmpty() || e.charAt(0) != '0');
-    }
+    private static final boolean ALL_PERMS_ASK = windowsHost();
 
     /** Every dangerous permission group is asked like Android, not only the
      *  storage family and location (RuntimePermissionGroups), and "Display
@@ -149,9 +140,8 @@ public final class SpecialAccessStore {
      *  grants: ON where the helper knows those verbs. That is Win.apk's
      *  launcher (Win.apk.exe runtime-permission --prompt camera ...); the
      *  Mac's macapk-installhelper does not, so there the install-time rule
-     *  (declared == held) stays, unchanged. MACAPK_ALL_PERMS_ASK=0 turns it
-     *  off on Windows too (the labelled bisect gate; also honest() and
-     *  mediaPermsAsk() gate it, as they gate the rest). */
+     *  (declared == held) stays, unchanged. (Its switch, MACAPK_ALL_PERMS_ASK=0,
+     *  is gone.) */
     public static boolean allPermsAsk() { return ALL_PERMS_ASK && HONEST && MEDIA_PERMS_ASK; }
 
     // ---- where things live -----------------------------------------------
@@ -760,13 +750,10 @@ public final class SpecialAccessStore {
                     PERM_ACCESS_MEDIA_LOCATION, PERM_READ_MEDIA_AUDIO, PERM_READ_MEDIA_IMAGES,
                     PERM_READ_MEDIA_VIDEO, PERM_READ_MEDIA_VISUAL_USER_SELECTED));
 
-    private static final boolean MEDIA_PERMS_ASK;
-    static {
-        String e = System.getenv("MACAPK_MEDIA_PERMS_ASK");
-        MEDIA_PERMS_ASK = e == null || e.isEmpty() || e.charAt(0) != '0';
-    }
+    /** The storage and media permissions asked at run time, as on Android. Always on (upstream's
+     *  MACAPK_MEDIA_PERMS_ASK=0, the install-time rule, is gone). See the section header. */
+    private static final boolean MEDIA_PERMS_ASK = true;
 
-    /** MACAPK_MEDIA_PERMS_ASK, default ON. See the section header. */
     public static boolean mediaPermsAsk() { return MEDIA_PERMS_ASK; }
 
     /** The location runtime permissions (2026-10-05). Same tokens, same signed
