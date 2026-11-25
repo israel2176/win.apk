@@ -629,6 +629,20 @@ jobs:
             com.macapk.loader.ApkVerificationTest "$(cygpath -w stage/bin/aosp/framework-res-34.apk)" \
             "$(cygpath -w "$RUNNER_TEMP/apkverify")" | tee apkverify-test.log
           grep -q "ALL PASSED" apkverify-test.log
+      - name: Run the broker permission test
+        run: |
+          # com.macapk.loader.BrokerPermissions, the system broker's checks when one app reaches
+          # another's component, on APKs the test signs with two keys: signature permissions by
+          # the real signer (Play services' c2dm SEND held by Google's apps only), normal ones by
+          # request, the platform's from the staged framework-res-34.apk, a provider's read and
+          # write permissions and path-permissions, URI grants.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/brokerperm-test windows/test/java/com/macapk/loader/BrokerPermissionsTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/brokerperm-test)" \
+            com.macapk.loader.BrokerPermissionsTest "$(cygpath -w stage/bin/aosp/framework-res-34.apk)" \
+            "$(cygpath -w "$RUNNER_TEMP/brokerperm")" | tee brokerperm-test.log
+          grep -q "ALL PASSED" brokerperm-test.log
       - name: Run the App Link verification test
         run: |
           # com.macapk.loader.AppLinks: nothing fetched at start; a sign-in's
