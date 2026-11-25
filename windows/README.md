@@ -1121,7 +1121,13 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   (each idempotent; libstdc++ instead of libc++, Bionic's calls, no Vulkan or
   AHardwareBuffer, the shader caches' files on Windows), and
   `hwui_build/cmake/` builds the DLL with clang: MSYS2's CLANG64 natively (CI,
-  the release), or clang targeting MinGW-w64 on Linux. `glue/` is Win.apk's:
+  the release; LLVM's libc++), or clang targeting MinGW-w64 on Linux (GCC's
+  libstdc++, `cmake/clang-mingw-x86_64.cmake`). To reproduce CI's compiler
+  and libc++ on Linux, point `HWUI_TOOLCHAIN_FILE` at
+  `cmake/clang-mingw-libcxx-x86_64.cmake` and `LLVM_MINGW` at an
+  [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) ucrt release of a
+  close clang version. On a failure CI lists every compile error and keeps
+  `b/ci.log` as the `aosp-hwui-build-log` artifact. `glue/` is Win.apk's:
   the windows' layers and the compositor (`layers.cpp`), Choreographer's vsync
   (`choreographer.cpp`), eventfd and epoll for libutils' `Looper`
   (`fd_emul.cpp`), the EGL blob cache (`blob_cache.cpp`), the stubs for what

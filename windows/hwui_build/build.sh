@@ -11,7 +11,9 @@
 # On Linux it cross-compiles with clang for MinGW-w64 (windows/cmake/clang-mingw-x86_64.cmake);
 # under MSYS2's CLANG64 (CI) it builds natively. Each run applies patch_src.py, regenerates the
 # CMake modules from Android.bp (gen.py, mods.sh), builds, and summarizes any compile errors.
-# HWUI_CMAKE_ARGS adds CMake arguments (CI: ccache as the compiler launcher).
+# HWUI_CMAKE_ARGS adds CMake arguments (CI: ccache as the compiler launcher). HWUI_TOOLCHAIN_FILE
+# picks another CMake toolchain file on Linux: windows/cmake/clang-mingw-libcxx-x86_64.cmake builds
+# with llvm-mingw's clang and libc++, as CI's CLANG64 does (LLVM_MINGW names its root).
 set -u
 H=$(cd "$(dirname "$0")" && pwd)
 V=$1
@@ -25,7 +27,7 @@ mkdir -p "$V/b"
 cd "$V/b" || exit 1
 case "$(uname -s)" in
     MINGW* | MSYS*) TOOLCHAIN=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++) ;;
-    *) TOOLCHAIN=(-DCMAKE_TOOLCHAIN_FILE="$WINAPK/windows/cmake/clang-mingw-x86_64.cmake") ;;
+    *) TOOLCHAIN=(-DCMAKE_TOOLCHAIN_FILE="${HWUI_TOOLCHAIN_FILE:-$WINAPK/windows/cmake/clang-mingw-x86_64.cmake}") ;;
 esac
 # shellcheck disable=SC2086
 cmake -G Ninja "${TOOLCHAIN[@]}" -DCMAKE_BUILD_TYPE=Release -DAOSP="$V/src" -DWINAPK="$WINAPK" \
