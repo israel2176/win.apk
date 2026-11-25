@@ -55,13 +55,18 @@
 //
 // The last two are the install helper, upstream's macapk-installhelper: an app
 // that installs apps (F-Droid, through PackageInstaller) hands its APK to
-// PackageInstallerBackend, which runs this program. It asks the user, installs
-// as above, and keeps installed_apps.json, the installed-apps registry that
-// PackageManager answers apps from, so a store sees what it installed. Its
-// output keeps the helper's contract: "[helper] progress <fraction> <stage>"
-// lines, then one JSON object; exit 0 done, 2 bad arguments, 3 declined,
-// 5 failed, 6 not an app. The third line is the permission dialogs (see
-// "Permissions" below).
+// PackageInstallerBackend, which runs this program. It asks the user as
+// Android's package installer does (an app whose "Install unknown apps" is off
+// is first sent to that switch, then "Do you want to install this app?"),
+// shows the install in the install window and its end there ("App installed."
+// with Open and Done, or "App not installed." and why), installs as above, and
+// keeps installed_apps.json, the installed-apps registry that PackageManager
+// answers apps from, so a store sees what it installed. Its output keeps the
+// helper's contract: "[helper] progress <fraction> <stage>" lines, then one
+// JSON object, then (once its window shows the end) "[helper] exit <code>",
+// which is when the app gets its result; exit 0 done, 2 bad arguments,
+// 3 declined or cancelled, 5 failed, 6 not an app. The third line is the
+// permission dialogs (see "Permissions" below).
 
 #include <windows.h>
 #include <commctrl.h>
@@ -359,10 +364,16 @@ const wchar_t* tr(const wchar_t* en) {
         {L"{0} stopped with an error", L"{0} נעצרה עם שגיאה"},
         {L"An app", L"אפליקציה"},
         {L"{0} asks to remove it.", L"{0} מבקשת להסיר אותה."},
-        {L"Update {0}?", L"לעדכן את {0}?"},
+        {L"Do you want to update this app?", L"האם לעדכן את האפליקציה הזו?"},
         {L"{0} asks to update it with the copy it has ({1}).", L"{0} מבקשת לעדכן אותה בעותק שיש לה ({1})."},
-        {L"Install {0}?", L"להתקין את {0}?"},
+        {L"Do you want to install this app?", L"האם להתקין את האפליקציה הזו?"},
         {L"{0} asks to install it.", L"{0} מבקשת להתקין אותה."},
+        {L"App installed.", L"האפליקציה הותקנה."},
+        {L"App updated.", L"האפליקציה עודכנה."},
+        {L"App not installed.", L"האפליקציה לא הותקנה."},
+        {L"For your security, your PC currently isn't allowed to install unknown apps from this source.",
+         L"מטעמי אבטחה, המחשב שלך לא מורשה כרגע להתקין אפליקציות לא מוכרות מהמקור הזה."},
+        {L"You can change this in Settings.", L"אפשר לשנות זאת בהגדרות."},
         {L"bytes", L"בתים"},
         {L"Library", L"ספרייה"},
         {L"Store", L"חנות"},
@@ -7515,6 +7526,14 @@ struct InstallView {
     float need_h = 0;              // the height the last paint wanted, for fit_install_window
 } g_iv;
 
+// This process is the install helper, installing for an app that asked (a store): the window is Android's
+// package installer after its confirmation (InstallInstalling, then InstallSuccess or InstallFailed). The
+// same card, in that installer's words: "App installed." with Open and Done, or "App not installed." with
+// the reason; no batch, no library (helper_install_ui).
+bool g_helper_ui = false;
+void helper_install_ended(const std::wstring& name);
+void helper_progress(double fraction, const char* stage);
+
 enum { kActClose = 1, kActCancel, kActOpen, kActDetails, kActCopy, kActShowLog, kActLibrary, kActReport,
        kActRowOpen = 1000, kActRowLog = 2000 };
 constexpr UINT kFitInstall = WM_APP + 20;
@@ -7562,6 +7581,14 @@ Gdiplus::Bitmap* job_icon(Job& j) {
     if (j.icon) return j.icon.get();
     if (const App* a = find_app(j.name)) return icon_for(*a);
     return nullptr;
+}
+
+// Whether the installed app has an Open: not one of Google's (a part of Google services), and for an app's
+// install not one with no launcher activity, as InstallSuccess offers Open only for an app with a launch
+// intent.
+bool job_opens(const Job& j) {
+    if (system_app(j.name)) return false;
+    return !g_helper_ui || !has_no_launcher(package_of(j.name));
 }
 
 bool installs_active() {
@@ -7638,19 +7665,29 @@ void paint_install(Graphics& g, float W, float H) {
                 sub = tr(phase_text(hero->phase));
                 break;
             case Job::kDone:
-                title = fmt(L"{0} is ready", {name});
-                sub = tr(system_app(hero->name)                ? L"It's part of Google services."
-                         : setting(L"DesktopShortcut", 1) != 0 ? L"It's in the Start menu and on the desktop."
-                                                               : L"It's in the Start menu.");
+                if (g_helper_ui) {  // InstallSuccess: the app's name over "App installed."
+                    title = name;
+                    sub = tr(hero->update ? L"App updated." : L"App installed.");
+                } else {
+                    title = fmt(L"{0} is ready", {name});
+                    sub = tr(system_app(hero->name)                ? L"It's part of Google services."
+                             : setting(L"DesktopShortcut", 1) != 0 ? L"It's in the Start menu and on the desktop."
+                                                                   : L"It's in the Start menu.");
+                }
                 draw_badge(g, ir, true, px(24));
                 break;
             case Job::kFailed:
-                title = fmt(L"Couldn't install {0}", {name});
-                sub = hero->reason;
+                if (g_helper_ui) {  // InstallFailed: "App not installed." and why
+                    title = name;
+                    sub = std::wstring(tr(L"App not installed.")) + L" " + hero->reason;
+                } else {
+                    title = fmt(L"Couldn't install {0}", {name});
+                    sub = hero->reason;
+                }
                 draw_badge(g, ir, false, px(24));
                 break;
             case Job::kCancelled:
-                title = fmt(L"{0} was not installed", {name});
+                title = g_helper_ui ? name : fmt(L"{0} was not installed", {name});
                 sub = tr(hero->update ? L"The install was cancelled. The app stays as it was."
                                       : L"The install was cancelled.");
                 break;
@@ -7776,19 +7813,41 @@ void paint_install(Graphics& g, float W, float H) {
     if (active) {
         button(tr(L"Cancel"), kActCancel, false);
     } else {
-        const bool single_ok = hero && hero->state == Job::kDone && !system_app(hero->name);
+        const bool single_ok = hero && hero->state == Job::kDone && job_opens(*hero);
         if (any_failed && hero && hero->state == Job::kFailed) {
             button(tr(L"Copy details"), kActCopy, false);
             button(tr(L"Show log"), kActShowLog, false);
         }
-        button(tr(L"Close"), kActClose, !single_ok);
+        // The helper's ends are InstallSuccess's and InstallFailed's: Done, and Open beside it.
+        button(tr(g_helper_ui ? L"Done" : L"Close"), kActClose, !single_ok);
         if (single_ok) button(tr(L"Open"), kActOpen, true);
-        if (shown_done > 0) draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
+        if (shown_done > 0 && !g_helper_ui)
+            draw_link(g, tr(L"Show in library"), m, fy, foot, g_iv.hot == kActLibrary, kActLibrary);
     }
 }
 
 void fit_install_window() {
     if (g_install_wnd) PostMessageW(g_install_wnd, kFitInstall, 0, 0);
+}
+
+// The install window's record of an install that ended `how`: its state, and why when it failed.
+void job_ended(const std::wstring& name, InstallEnd::Kind how) {
+    for (Job& j : g_jobs) {
+        if (j.name != name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
+        j.state = how == InstallEnd::kCancelled ? Job::kCancelled
+                  : how == InstallEnd::kDone    ? Job::kDone
+                                                : Job::kFailed;
+        j.end = GetTickCount64();
+        if (j.state == Job::kFailed) {
+            j.reason = how == InstallEnd::kAppRunning ? fmt(L"Close {0} first, then install it again.", {job_label(name)})
+                                                      : install_failure_reason(install_log(name));
+        }
+        break;
+    }
+    if (g_install_wnd) {
+        fit_install_window();
+        InvalidateRect(g_install_wnd, nullptr, FALSE);
+    }
 }
 
 // The window's title: what it is doing, for the taskbar.
@@ -7837,7 +7896,19 @@ void install_action(HWND hwnd, int act) {
     } else if (act == kActOpen) {
         const Job* hero = hero_job();
         const App* a = hero ? find_app(hero->name) : nullptr;
-        if (a) {
+        if (a && g_helper_ui) {
+            // InstallSuccess's Open starts the app's launch intent: here, as its shortcut does, in a
+            // Win.apk.exe of its own (this helper ends with its window).
+            std::wstring cmd = L"\"" + exe_path().wstring() + L"\" --run \"" + a->apk.wstring() + L"\"";
+            STARTUPINFOW si{sizeof(si)};
+            PROCESS_INFORMATION pi{};
+            if (CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
+                AllowSetForegroundWindow(pi.dwProcessId);
+                CloseHandle(pi.hThread);
+                CloseHandle(pi.hProcess);
+            }
+            DestroyWindow(hwnd);
+        } else if (a) {
             launch(*a);  // first: with the library hidden, closing this window last must not end the process
             DestroyWindow(hwnd);
         }
@@ -7887,7 +7958,11 @@ void install_action(HWND hwnd, int act) {
 void poll_install(HWND hwnd) {
     for (Job& j : g_jobs) {
         if (j.state != Job::kInstalling) continue;
-        j.phase = (std::max)(j.phase, install_phase(install_log(j.name)));
+        const int phase = (std::max)(j.phase, install_phase(install_log(j.name)));
+        // The asking app's session moves with the install's steps (its progress bar, onProgressChanged).
+        static const char* const kStages[] = {"", "installing", "reading", "converting"};
+        if (g_helper_ui && phase > j.phase) helper_progress(0.1 + 0.25 * phase, kStages[phase]);
+        j.phase = phase;
         if (!find_app(j.name)) {  // a new app: what its install has written of it so far
             const PendingLook& look = pending_look(j.name);
             if (!j.icon) j.icon = look.icon;
@@ -7957,9 +8032,14 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 install_action(hwnd, installs_active() ? kActCancel : kActClose);
             } else if (wp == VK_RETURN && !installs_active()) {
                 const Job* hero = hero_job();
-                install_action(hwnd, hero && hero->state == Job::kDone ? kActOpen : kActClose);
+                install_action(hwnd, hero && hero->state == Job::kDone && job_opens(*hero) ? kActOpen : kActClose);
             }
             return 0;
+        case kInstalled: {  // the install helper's install ended (helper_install_thread)
+            std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
+            if (g_helper_ui) helper_install_ended(*name);
+            return 0;
+        }
         case WM_CLOSE:
             if (installs_active()) {
                 if (ask_stop_installing(hwnd)) cancel_all_installs();
@@ -7970,6 +8050,7 @@ LRESULT CALLBACK install_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g_install_wnd = nullptr;
             g_iv = InstallView{};
             if (!any_pending()) g_jobs.clear();
+            if (g_helper_ui) PostQuitMessage(0);  // the helper's one window: its run ends with it
             maybe_quit();
             return 0;
     }
@@ -10343,23 +10424,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             refresh();
             // The last of Google's three apps installed: background updates can start.
             if (how == InstallEnd::kDone) maintenance_check();
-            for (Job& j : g_jobs) {
-                if (j.name != *name || (j.state != Job::kInstalling && j.state != Job::kWaiting)) continue;
-                j.state = how == InstallEnd::kCancelled ? Job::kCancelled
-                          : how == InstallEnd::kDone    ? Job::kDone
-                                                        : Job::kFailed;
-                j.end = GetTickCount64();
-                if (j.state == Job::kFailed) {
-                    j.reason = how == InstallEnd::kAppRunning
-                                   ? fmt(L"Close {0} first, then install it again.", {job_label(*name)})
-                                   : install_failure_reason(install_log(*name));
-                }
-                break;
-            }
-            if (g_install_wnd) {
-                fit_install_window();
-                InvalidateRect(g_install_wnd, nullptr, FALSE);
-            }
+            job_ended(*name, how);
             update_timer();
             if (how == InstallEnd::kDone) {
                 select_app(*name);
@@ -10725,13 +10790,16 @@ const App* find_package(const std::vector<App>& apps, const std::string& pkg) {
 }
 
 // Asks the user, as the Mac's helper does before it acts for an app: the launcher's dialog, in front of
-// the app, Enter on Cancel. `app` heads it when the question is about one in the library. A no is
-// exit 3, which the installer reports as STATUS_FAILURE_ABORTED.
-bool helper_consent(const App* app, const std::wstring& question, const std::wstring& note, const std::wstring& action) {
+// the app, Enter on Cancel. `app` heads it when the question is about one in the library, else `heading`
+// when given. A no is exit 3, which the installer reports as STATUS_FAILURE_ABORTED.
+bool helper_consent(const App* app, const std::wstring& question, const std::wstring& note, const std::wstring& action,
+                    const std::wstring& heading = L"") {
     Prompt p;
     if (app) {
         p.app = app->label;
         p.icon = rounded_icon(app_dir(app->name) / L"icon.png", ipx(40));
+    } else {
+        p.app = heading;
     }
     p.caption = L"Win.apk";
     p.question = question;
@@ -10747,6 +10815,118 @@ void notify_library() {
 
 namespace appops {
 bool caller_is_play_store();
+bool installs_allowed_from_caller();
+}
+
+// The helper's end, once known: its one JSON line, then "[helper] exit <code>", which tells the asking app's
+// runtime that the install is over (PackageInstallerBackend.runHelper) while the window stays to show it, as
+// a device sends the session's status when the install ends, not when the user closes the installer.
+int g_helper_code = -1;
+std::string g_helper_pkg;
+bool g_helper_update = false;
+
+int helper_report(int code) {
+    helper_say("[helper] exit " + std::to_string(code));
+    g_helper_code = code;
+    return code;
+}
+
+DWORD WINAPI helper_install_thread(void* param) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    std::unique_ptr<InstallJob> job(static_cast<InstallJob*>(param));
+    bool running = false;
+    const bool ok = install_into_library(job->source, job->name, &running);
+    AcquireSRWLockExclusive(&g_installs_lock);
+    g_installs.ended(job->name, ok, running);
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    // The window outlives the install (it is closed only from a result), so it is there to tell.
+    PostMessageW(g_install_wnd, kInstalled, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
+    CoUninitialize();
+    return 0;
+}
+
+// The install window, on its install's end: the result shown, and told to the app that asked.
+void helper_install_ended(const std::wstring& name) {
+    const InstallEnd::Kind how = finish_install(name).kind();
+    g_apps = library();  // the installed app's own name and icon, and Open
+    job_ended(name, how);
+    switch (how) {
+        case InstallEnd::kDone:
+            helper_progress(1.0, "installed");
+            notify_library();
+            helper_say("{\"ok\":true,\"package\":" + json_string(g_helper_pkg) + ",\"wasUpdate\":\"" +
+                       (g_helper_update ? "true" : "false") + "\"}");
+            helper_report(0);
+            break;
+        case InstallEnd::kCancelled:  // InstallInstalling's Cancel abandons the session: STATUS_FAILURE_ABORTED
+            helper_report(helper_fail(3, "cancelled", "the user cancelled the install"));
+            break;
+        case InstallEnd::kAppRunning:
+            helper_report(helper_fail(5, "install", "the app is running; close it, then update it"));
+            break;
+        default:
+            helper_report(helper_fail(5, "install", "installing failed; the log is " +
+                                                        wide_to_utf8(install_log(name).wstring())));
+            break;
+    }
+}
+
+// After the user agreed: Android's package installer shows the install (InstallInstalling: the app, a moving
+// bar, Cancel until it commits) and then its end (InstallSuccess: "App installed." with Done and Open;
+// InstallFailed: "App not installed." and why). Here that is the install window, alone in this process,
+// installing as the library does (install_into_library, cancelled through the same InstallTable). Returns
+// the helper's exit code, told to the app as soon as the install ends (helper_report).
+int helper_install_ui(const fs::path& apk, const std::wstring& name, const std::string& pkg, bool update,
+                      const std::wstring& shown) {
+    g_helper_ui = true;
+    g_helper_pkg = pkg;
+    g_helper_update = update;
+    g_apps = library();
+    WNDCLASSEXW sc{sizeof(sc)};
+    sc.hInstance = g_inst;
+    sc.hIcon = LoadIconW(g_inst, MAKEINTRESOURCEW(1));
+    sc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    sc.lpfnWndProc = install_proc;
+    sc.lpszClassName = L"WinApkInstall";
+    RegisterClassExW(&sc);
+
+    begin_install(name);
+    AcquireSRWLockExclusive(&g_installs_lock);
+    g_installs.start(name);
+    ReleaseSRWLockExclusive(&g_installs_lock);
+    Job job{name};
+    job.file = shown;
+    job.update = update;
+    job.state = Job::kInstalling;
+    job.start = GetTickCount64();
+    g_jobs = {job};
+    show_install_window();
+    if (!g_install_wnd) {  // no window (no desktop): the install still runs and is told, with nothing shown
+        bool running = false;
+        const bool ok = install_into_library(apk, name, &running);
+        AcquireSRWLockExclusive(&g_installs_lock);
+        g_installs.ended(name, ok, running);
+        ReleaseSRWLockExclusive(&g_installs_lock);
+        helper_install_ended(name);
+        return g_helper_code;
+    }
+    auto* work = new InstallJob{apk, name, false};
+    if (HANDLE t = CreateThread(nullptr, 0, helper_install_thread, work, 0, nullptr)) {
+        CloseHandle(t);
+    } else {
+        delete work;
+        AcquireSRWLockExclusive(&g_installs_lock);
+        g_installs.ended(name, false, false);
+        ReleaseSRWLockExclusive(&g_installs_lock);
+        helper_install_ended(name);
+    }
+    MSG m;
+    while (GetMessageW(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    // The window closes only once the install has ended (WM_CLOSE asks to cancel while it runs).
+    return g_helper_code < 0 ? helper_report(helper_fail(5, "install", "the install window closed")) : g_helper_code;
 }
 
 int helper_main(int argc, wchar_t** argv) {
@@ -10808,21 +10988,31 @@ int helper_main(int argc, wchar_t** argv) {
     // The Play Store installs as a phone's system installer does, with no question: it holds INSTALL_PACKAGES
     // there, and the user already chose the app in it. Only the real one: the asking runtime runs the
     // library's com.android.vending and Google signed that APK (appops::caller_is_play_store).
+    const bool play = appops::caller_is_play_store();
+    // Any other app installs only from a source the user allowed ("Install unknown apps"), as Android's
+    // installer checks before its question (PackageInstallerActivity: the blocked dialog, Settings, back).
+    if (!play && !appops::installs_allowed_from_caller())
+        return helper_fail(3, "unknown-sources", "installs from this app are not allowed");
+    // PackageInstallerActivity's question: the app's name over "Do you want to install this app?" (a new app's
+    // name is not known before its install reads it: its package stands in).
     const bool agreed =
-        appops::caller_is_play_store() ||
-        (update ? helper_consent(existing, fmt(L"Update {0}?", {existing->label}),
-                                 fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
-                : helper_consent(nullptr, fmt(L"Install {0}?", {wpkg}), fmt(L"{0} asks to install it.", {who}),
-                                 tr(L"Install")));
+        play || (update ? helper_consent(existing, tr(L"Do you want to update this app?"),
+                                         fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}),
+                                         tr(L"Update"))
+                        : helper_consent(nullptr, tr(L"Do you want to install this app?"),
+                                         fmt(L"{0} asks to install it.", {who}), tr(L"Install"), wpkg));
     if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
+    // Everyone else's install is shown as Android's installer shows it after the question: its progress, then
+    // its end with Open and Done (helper_install_ui).
+    if (!play) return helper_install_ui(apk, name, pkg, update, update ? existing->label : wpkg);
     // The Play Store's update of an app open in a window: PackageManagerService kills an app it replaces, and
     // the Play Store has already waited for it when it asked to (an auto-update's InstallConstraints, "app not
     // interacting"), or the user tapped Update in it. So the app is stopped, not the update refused. Any other
     // installer's update leaves an open window to the user (stop_app_for_install).
-    if (update && appops::caller_is_play_store() && !stop_app_for_update(name))
+    if (update && !stop_app_for_update(name))
         return helper_fail(5, "install", "the app is running and could not be stopped");
     bool running = false;
     if (!install_into_library(apk, name, &running)) {
@@ -11902,14 +12092,9 @@ int special_access_info(const Caller& c, const std::string& op) {
 
 // Settings' "All files access" / "Media management" / "Display over other
 // apps" / "Install unknown apps" switch for the app. The default button keeps
-// the current state, as upstream's alert's Return does.
-int special_access(const std::string& op) {
-    if (!is_op(op) && !is_info_op(op))
-        return usage("--op must be " + kAllFiles + ", " + kManageMedia + ", " + kOverlay + " or " + kInstallApps);
-    Caller c;
-    std::string why;
-    if (!resolve(&c, &why)) return refused(why);
-    if (is_info_op(op)) return special_access_info(c, op);
+// the current state, as upstream's alert's Return does. 0 allowed, 3 not
+// allowed, 4 no answer (nothing changed), 5 the answer could not be recorded.
+int special_access_switch(const Caller& c, const std::string& op, std::string* why) {
     const std::string current = mode(c.id, op);
     const bool files = op == kAllFiles;
     std::wstring main, body;
@@ -11930,20 +12115,52 @@ int special_access(const std::string& op) {
     // Enter keeps what is set now.
     const int answer = ask(c, main, body, {{kAnswerAllow, tr(L"Allow")}, {kAnswerDeny, tr(L"Don't allow")}},
                            current == "allow" ? kAnswerAllow : kAnswerDeny);
-    if (answer == 0) {
+    if (answer == 0) return 4;
+    const std::string want = answer == kAnswerAllow ? "allow" : "deny";
+    // "Don't allow" writes only to turn an allowed switch off.
+    if (want != current && (want == "allow" || current == "allow") && !record(c.id, {}, {{op, want}}, "helper", why))
+        return 5;
+    return want == "allow" ? 0 : 3;
+}
+
+int special_access(const std::string& op) {
+    if (!is_op(op) && !is_info_op(op))
+        return usage("--op must be " + kAllFiles + ", " + kManageMedia + ", " + kOverlay + " or " + kInstallApps);
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return refused(why);
+    if (is_info_op(op)) return special_access_info(c, op);
+    const int code = special_access_switch(c, op, &why);
+    if (code == 4) {
         emit({{"status", "timeout"},
               {"op", op},
               {"message", "the dialog was closed without an answer; nothing changed"}});
-        return 4;
-    }
-    const std::string want = answer == kAnswerAllow ? "allow" : "deny";
-    // "Don't allow" writes only to turn an allowed switch off.
-    if (want != current && (want == "allow" || current == "allow") && !record(c.id, {}, {{op, want}}, "helper", &why)) {
+    } else if (code == 5) {
         emit({{"status", "error"}, {"message", "could not record the answer: " + why}});
-        return 5;
+    } else {
+        emit({{"status", code == 0 ? "allowed" : "denied"}, {"op", op}, {"dirName", c.id.dir_name}});
     }
-    emit({{"status", want == "allow" ? "allowed" : "denied"}, {"op", op}, {"dirName", c.id.dir_name}});
-    return want == "allow" ? 0 : 3;
+    return code;
+}
+
+// Before an app's install (the install helper): whether the app asking may install apps, as Android's
+// installer decides before its question (PackageInstallerActivity.checkIfAllowedAndInitiateInstall). Its
+// "Install unknown apps" switch on: yes. Off: the dialog Android shows for a blocked source, whose Settings
+// is that switch (special_access_switch, as the app's own MANAGE_UNKNOWN_APP_SOURCES opens it); turned on
+// there, the install goes on to its question. With no app identity (not a library app's runtime) there is no
+// switch to read: the install's own question still guards it.
+bool installs_allowed_from_caller() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return true;
+    if (mode(c.id, kInstallApps) == "allow") return true;
+    constexpr int kSettings = 103;
+    const int answer = ask(c, tr(L"For your security, your PC currently isn't allowed to install unknown apps "
+                                 L"from this source."),
+                           tr(L"You can change this in Settings."),
+                           {{kSettings, tr(L"Settings")}, {kAnswerDeny, tr(L"Cancel")}}, kSettings);
+    if (answer != kSettings) return false;
+    return special_access_switch(c, kInstallApps, &why) == 0;
 }
 
 // ---- app-details --------------------------------------------------------------------
