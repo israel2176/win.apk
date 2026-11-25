@@ -596,6 +596,23 @@ void compose_now() {
         }
     } unref{scene};
     if (dw <= 0 || dh <= 0) return;
+    // Nothing is shown before something has drawn: WindowManagerService shows a window only once it
+    // has drawn its first frame (its draw state HAS_DRAWN), and until then the starting window stays.
+    // A splash activity that holds its first draw (the SplashScreen API's keep-on-screen condition,
+    // an OnPreDrawListener returning false) or a trampoline that never draws is added but not shown;
+    // composing it anyway presented an empty black frame as the app's first, which ended the
+    // starting window (and the headless run's wait) before the app drew anything.
+    static bool shown_once = false;
+    if (!shown_once) {
+        bool drawn = false;
+        for (const Placed& p : scene) drawn |= p.layer->has_frame.load();
+        {
+            std::lock_guard<std::mutex> hold(g_host_lock);
+            drawn |= (g_host_below.w > 0 && g_host_below.h > 0) || (g_host_above.w > 0 && g_host_above.h > 0);
+        }
+        if (!drawn) return;
+        shown_once = true;
+    }
 
     const int64_t compose_start = systemTime(SYSTEM_TIME_MONOTONIC);
     EGLDisplay d = eglGetCurrentDisplay();
