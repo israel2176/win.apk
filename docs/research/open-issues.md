@@ -1421,6 +1421,24 @@ app on real Windows; to check then:
   `main` lacks it, and compares base and head once `main` has it. Then watch
   for noise between two runs of the same code.
 
+## The the other runtime comparison's measure
+
+- **Fossify Notes "did not draw" in the comparison: the measure, not the
+  runtime (verified 2026-11-25).** Run 45513190823 judged it blank (0.31% of
+  pixels away from the background) in Win.apk and in the other runtime alike, cold and
+  warm; its own PNGs show both drew the app's real first screen, the one
+  note's empty editor ("Insert text here") under a title-less toolbar of three
+  icons, which is what the app shows on a device at first start (its
+  `MainActivity` hides the tab strip while one note exists; F-Droid's
+  screenshots show the same toolbar; CI's headless smoke frame, run
+  45515006074, the same screen). `measure.ps1` now also counts
+  anti-aliased detail (`CmpWin.Judge`: edges and colors) and drops a screen
+  read another process's window or a console covers (the other runtime's warm reads were
+  of a log console); `comparison notes`, "Running both". To check: the
+  editor's background is (252,252,255) in Win.apk and (254,251,255) in the other runtime,
+  a different surface tone of the same theme (Monet's seed?), not compared
+  with a device.
+
 ## Deferred by the owner: a live comparison
 
 The screens sweep sees only layout XML files: Compose, Flutter and React
