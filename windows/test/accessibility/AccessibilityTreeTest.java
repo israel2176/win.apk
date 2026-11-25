@@ -472,6 +472,9 @@ public class AccessibilityTreeTest {
         String host = System.getProperty("winapk.test.host");
         if (host == null || !new File(host).isFile()) throw new IllegalStateException("-Dwinapk.test.host=<host library>");
         System.load(new File(host).getAbsolutePath());
+        // This plain JVM has Robolectric's native graphics, not the GPU DLL (no render thread): views
+        // draw in software here, as Android's own tests disable hardware rendering.
+        android.view.ThreadedRenderer.disable(false);
         String runtime = System.getProperty("winapk.test.gfx.runtime");
         if (runtime == null) throw new IllegalStateException("-Dwinapk.test.gfx.runtime=<robolectric-nativeruntime>");
         if (!redirectBegin()) throw new IllegalStateException("the redirect did not install");
