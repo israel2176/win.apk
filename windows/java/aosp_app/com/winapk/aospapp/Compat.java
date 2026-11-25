@@ -297,4 +297,10 @@ public final class Compat {
     public static String formatSimple(String format, Object... args) {
         return String.format(java.util.Locale.ROOT, format, args);
     }
+
+    /** AppOpsManager.toReceiverId (Win.apk's AppOpsManager lacks it): a registration's id for the app-op
+     *  attribution of a receiver, its class and identity. */
+    public static String toReceiverId(Object obj) {
+        return obj == null ? null : obj.getClass().getName() + "@" + System.identityHashCode(obj);
+    }
 }

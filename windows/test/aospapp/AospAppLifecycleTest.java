@@ -63,6 +63,18 @@ public class AospAppLifecycleTest {
         @Override public void onDestroy() { svc.add("Bound.onDestroy"); }
     }
 
+    /** A receiver the manifest declares (ActivityThread.handleReceiver through scheduleReceiver), sent
+     *  an ordered broadcast whose result it sets for the result receiver. */
+    static final String STATIC = PKG + ".STATIC";
+    static final List<String> rcv = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    public static class Static extends android.content.BroadcastReceiver {
+        @Override public void onReceive(android.content.Context c, Intent i) {
+            rcv.add("Static " + i.getStringExtra("v") + " ordered=" + isOrderedBroadcast());
+            setResultCode(7);
+        }
+    }
+
     static final List<String> SVC_EXPECTED = List.of(
             "Started.onCreate", "Started.onStartCommand 1 go", "Started.onDestroy",
             "Bound.onCreate", "Bound.onBind", "connected to Bound", "Bound.onUnbind", "Bound.onDestroy");
@@ -110,6 +122,12 @@ public class AospAppLifecycleTest {
                 note("First: getApplication() is App: " + (getApplication() instanceof App));
                 sendBroadcast(new Intent(PING).setPackage(PKG).putExtra("v", "pong"));
                 startService(new Intent(this, Started.class).putExtra("s", "go"));
+                sendOrderedBroadcast(new Intent(STATIC).setPackage(PKG).putExtra("v", "m"), null,
+                        new android.content.BroadcastReceiver() {
+                            @Override public void onReceive(android.content.Context c, Intent i) {
+                                rcv.add("result " + getResultCode());
+                            }
+                        }, null, 0, null, null);
                 bindService(new Intent(this, Bound.class), new android.content.ServiceConnection() {
                     @Override public void onServiceConnected(android.content.ComponentName n, android.os.IBinder b) {
                         svc.add("connected to " + n.getClassName().substring(n.getClassName().lastIndexOf('$') + 1));
@@ -203,6 +221,7 @@ public class AospAppLifecycleTest {
         // The resources the app's LoadedApk opens: any APK will do, the framework's by default.
         String apk = System.getProperty("winapk.test.apk", fw);
         if (!new File(apk).isFile()) throw new IllegalStateException("no " + apk);
+        apk = withoutManifest(apk, new File(data, "app.apk"));
         ai.sourceDir = ai.publicSourceDir = apk;
         // As the package manager fills them: /data/user/0/<pkg> (credential protected, the default
         // storage) and /data/user_de/0/<pkg>.
@@ -210,6 +229,7 @@ public class AospAppLifecycleTest {
         ai.deviceProtectedDataDir = new File(data, "user_de").getPath();
         new File(ai.dataDir).mkdirs();
         new File(ai.deviceProtectedDataDir).mkdirs();
+        java.nio.file.Files.writeString(new File(ai.dataDir, "AndroidManifest.xml").toPath(), MANIFEST);
         ai.nativeLibraryDir = new File(data, "lib").getPath();
         ai.targetSdkVersion = 34;
         ai.uid = android.os.Process.myUid();
@@ -267,6 +287,37 @@ public class AospAppLifecycleTest {
         }
     }
 
+    static final String MANIFEST = "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\""
+            + " package=\"" + PKG + "\">\n"
+            + "  <application android:name=\"AospAppLifecycleTest$App\">\n"
+            + "    <receiver android:name=\"AospAppLifecycleTest$Static\" android:exported=\"false\">\n"
+            + "      <intent-filter><action android:name=\"" + STATIC + "\"/></intent-filter>\n"
+            + "    </receiver>\n"
+            + "  </application>\n"
+            + "</manifest>\n";
+
+    /** A copy of `apk` with no AndroidManifest.xml: its resources, and the app's manifest from text. */
+    static String withoutManifest(String apk, File out) throws java.io.IOException {
+        try (java.util.zip.ZipFile in = new java.util.zip.ZipFile(apk);
+             java.util.zip.ZipOutputStream zo = new java.util.zip.ZipOutputStream(new java.io.FileOutputStream(out))) {
+            for (java.util.Enumeration<? extends java.util.zip.ZipEntry> en = in.entries(); en.hasMoreElements();) {
+                java.util.zip.ZipEntry e = en.nextElement();
+                if (e.getName().equals("AndroidManifest.xml")) continue;
+                java.util.zip.ZipEntry c = new java.util.zip.ZipEntry(e.getName());
+                c.setMethod(e.getMethod());
+                if (e.getMethod() == java.util.zip.ZipEntry.STORED) {
+                    c.setSize(e.getSize());
+                    c.setCompressedSize(e.getCompressedSize());
+                    c.setCrc(e.getCrc());
+                }
+                zo.putNextEntry(c);
+                try (java.io.InputStream is = in.getInputStream(e)) { is.transferTo(zo); }
+                zo.closeEntry();
+            }
+        }
+        return out.getPath();
+    }
+
     static ActivityInfo activity(ApplicationInfo ai, Class<?> c) {
         ActivityInfo a = new ActivityInfo();
         a.name = c.getName();
@@ -302,6 +353,11 @@ public class AospAppLifecycleTest {
         List<String> want = SVC_EXPECTED;
         if (!started.equals(want.subList(0, 3)) || !bound.equals(want.subList(3, want.size()))) {
             System.out.println("FAILED: the services gave " + svc + ", Android gives " + want);
+            System.exit(1);
+        }
+        if (!rcv.equals(List.of("Static m ordered=true", "result 7"))) {
+            System.out.println("FAILED: the manifest receiver and the result gave " + rcv
+                    + ", Android gives [Static m ordered=true, result 7]");
             System.exit(1);
         }
         System.out.println("ALL PASSED");

@@ -279,12 +279,10 @@ public final class SystemClient {
                 final boolean fromSystem = data.readInt() != 0;
                 // ActivityThread.handleReceiver / the receiver dispatcher: on
                 // this app's main looper, to its own receivers only.
-                new Handler(Looper.getMainLooper()).post(() -> {
-                    android.content.Context.MACAPK_FROM_OTHER_APP.set(!fromSystem);
-                    try { sApp.macapkDeliverLocal(intent); }
-                    catch (Throwable t) { NativeLog.w(TAG, "broadcast " + intent + " threw " + t); }
-                    finally { android.content.Context.MACAPK_FROM_OTHER_APP.set(Boolean.FALSE); }
-                });
+                try {
+                    com.macapk.loader.app.AppHost host = com.macapk.loader.app.AppHost.get();
+                    if (host != null) host.deliverBroadcast(intent, !fromSystem);
+                } catch (Throwable t) { NativeLog.w(TAG, "broadcast " + intent + " threw " + t); }
                 return true;
             }
             if (code == SystemServer.TX_SCHEDULE_NOTIFY) {

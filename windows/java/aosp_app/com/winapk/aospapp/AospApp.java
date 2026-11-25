@@ -60,6 +60,7 @@ public final class AospApp {
     /** The process's ApplicationThread once attached: what the system sends client transactions to. */
     volatile IApplicationThread appThread;
     final ActiveServices services = new ActiveServices(this);
+    final ActiveBroadcasts broadcasts = new ActiveBroadcasts(this);
     private Intent first;
     private String firstSender;
     private final Runnable onTaskEmpty;
