@@ -160,6 +160,8 @@ void spawn_dump() {
 // runner and 15 s under Wine; a start that maps the archive is worth the wait, one that waits
 // for a dump stuck behind a busy machine is not.
 constexpr DWORD kDumpWaitMs = 30000;
+// How long the dump's JVM may run before it is taken as stuck: ~20 times the slowest seen (Wine).
+constexpr DWORD kDumpRunMs = 5 * 60 * 1000;
 
 // When another process is dumping the archive (it holds Local\WinApk-cds-dump, run_dump), waits
 // for it to finish, at most kDumpWaitMs. True when it finished in time.
@@ -243,11 +245,22 @@ int run_dump(const std::vector<std::wstring>& a) {
     PROCESS_INFORMATION pi{};
     const ULONGLONG t0 = GetTickCount64();
     DWORD rc = 1;
+    const char* why = nullptr;  // what went wrong outside the JVM, for dump.log
+    char why_buf[96];
     if (CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
-        WaitForSingleObject(pi.hProcess, INFINITE);
+        // Bounded: a JVM stuck in its dump would hold Local\WinApk-cds-dump for good, and every later
+        // start would wait kDumpWaitMs for it and never get an archive.
+        if (WaitForSingleObject(pi.hProcess, kDumpRunMs) == WAIT_TIMEOUT) {
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
+            why = "the dump did not end in time and was stopped";
+        }
         GetExitCodeProcess(pi.hProcess, &rc);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
+    } else {
+        std::snprintf(why_buf, sizeof why_buf, "java could not be started (error %lu)", GetLastError());
+        why = why_buf;
     }
     const bool ok = rc == 0 && fs::exists(part, ec) && MoveFileExW(part.c_str(), jsa.c_str(), MOVEFILE_REPLACE_EXISTING);
     remove_file(list);
@@ -260,11 +273,12 @@ int run_dump(const std::vector<std::wstring>& a) {
         write_text(fails, std::to_string(read_count(fails) + 1));
     }
     if (out != INVALID_HANDLE_VALUE) {
-        char line[200];
+        char line[320];
         DWORD n = 0;
-        const int len = std::snprintf(line, sizeof line, "\n[win.apk] cds dump: %zu classes listed, exit %lu, %s in %.1f s\n",
-                                      classes, rc, ok ? "archive in place" : "no archive",
-                                      (GetTickCount64() - t0) / 1000.0);
+        const int len = std::snprintf(line, sizeof line,
+                                      "\n[win.apk] cds dump: %zu classes listed, exit %lu, %s in %.1f s%s%s\n", classes,
+                                      rc, ok ? "archive in place" : "no archive", (GetTickCount64() - t0) / 1000.0,
+                                      why ? "; " : "", why ? why : "");
         WriteFile(out, line, static_cast<DWORD>(len), &n, nullptr);
         CloseHandle(out);
     }
