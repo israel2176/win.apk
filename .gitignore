@@ -45,3 +45,6 @@ scripts/.release.env
 *.p12
 *.keystore
 *.jks
+
+# Local assistant state and worktrees
+.claude/
