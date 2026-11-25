@@ -31,7 +31,8 @@ sees your password; it keeps the token Google hands back, only on this PC, in
   same window when no account is signed in yet; with an account, the app shows
   its chooser.
 - The account's item at the foot of the left pane, above Settings, shows the
-  signed-in account's picture and address and opens Settings.
+  signed-in account's picture and address and opens Settings at the Google
+  account section.
 - **Sign out** forgets the account and its tokens on this PC.
 - Signing in works behind a filter or proxy whose certificate Windows trusts.
 - It needs the WebView2 Runtime (2022 or later).
