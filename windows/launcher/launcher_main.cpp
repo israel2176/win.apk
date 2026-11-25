@@ -56,6 +56,7 @@
 //   Win.apk.exe install --apk <file> --source android [--requestor-label <app>] --json
 //   Win.apk.exe uninstall --package <name> --source android [--requestor-label <app>] --json
 //   Win.apk.exe runtime-permission | special-access | app-details ... --source android --json
+//   Win.apk.exe app-not-responding --source android --json
 //
 // The last two are the install helper, upstream's macapk-installhelper: an app
 // that installs apps (the Store, through PackageInstaller) hands its APK to
@@ -571,6 +572,14 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Show details", L"הצגת הפרטים"},
         {L"Show in library", L"הצגה בספרייה"},
         {L"Show log", L"הצגת היומן"},
+        // Android's own Hebrew (framework-res, iw): aerr_application, aerr_application_repeated, app_info,
+        // aerr_close_app, anr_application_process, aerr_wait.
+        {L"{0} has stopped", L"האפליקציה {0} הפסיקה"},
+        {L"{0} keeps stopping", L"האפליקציה {0} נעצרת שוב ושוב"},
+        {L"App info", L"פרטי אפליקציה"},
+        {L"Close app", L"סגירת האפליקציה"},
+        {L"{0} isn't responding", L"האפליקציה {0} לא מגיבה"},
+        {L"Wait", L"להמתין"},
         {L"Starting…", L"מתחיל…"},
         {L"Still starting. The first start can take a minute.", L"עדיין בהפעלה. ההפעלה הראשונה עשויה להימשך כדקה."},
         {L"Stop installing", L"עצירת ההתקנה"},
@@ -1492,7 +1501,7 @@ DWORD WINAPI run_thread(void* param) {
         GetExitCodeProcess(p, &code);
         log_runtime_status(log, code);
         AcquireSRWLockExclusive(&g_proc_lock);
-        g_runs.ended(job->name, code == 0);
+        g_runs.ended_with(job->name, code);
         ReleaseSRWLockExclusive(&g_proc_lock);
         CloseHandle(p);
     }
@@ -3728,6 +3737,7 @@ void update_timer() {
 constexpr UINT kAskTimeoutMs = 300 * 1000;  // an app's question: no answer in five minutes changes nothing
 
 constexpr int kPromptLink = 0x7000;  // the link's target id: past any switch's, and no button uses it
+constexpr int kPromptLink2 = 0x7001;  // the second link's
 
 struct Prompt {
     std::wstring app, question, note;
@@ -3742,6 +3752,10 @@ struct Prompt {
     std::vector<std::pair<int, std::wstring>> buttons;  // the first is the accent one
     std::wstring link;              // a link under the note, which does `on_link` and leaves the dialog open
     std::function<void()> on_link;
+    std::wstring link2;             // a second link beside it
+    std::function<void()> on_link2;
+    bool plain = false;    // no accent button: Android's list of a system dialog's actions (the crash and
+                           // not-responding dialogs), none of which is the one to take
     bool footer = false;   // the buttons in a footer at the end, else stacked full width
     bool timeout = false;  // closes itself after kAskTimeoutMs
     int default_id = 0;    // Enter
@@ -3781,6 +3795,17 @@ float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
             const Color ink = p.hot == kPromptLink ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent;
             draw_text(g, p.link, g_f.body.get(), ink, r);
             if (p.focus == kPromptLink) draw_focus_ring(g, r, px(4));
+        }
+        if (!p.link2.empty()) {
+            const float x2 = r.GetRight() + px(20);
+            const RectF r2(x2, r.Y, (std::max)(0.0f, (std::min)(m + cw - x2, text_width(g, p.link2, g_f.body.get()) + px(4))),
+                           px(22));
+            p.targets.push_back({r2, kPromptLink2});
+            if (draw) {
+                const Color ink = p.hot == kPromptLink2 ? mix(g_t.accent, g_t.text, 0.3f) : g_t.accent;
+                draw_text(g, p.link2, g_f.body.get(), ink, r2);
+                if (p.focus == kPromptLink2) draw_focus_ring(g, r2, px(4));
+            }
         }
         y += px(30);
     }
@@ -3860,7 +3885,7 @@ float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
         const RectF r(m, y, cw, px(32));
         p.targets.push_back({r, p.buttons[i].first});
         if (draw) {
-            draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0, false);
+            draw_button(g, r, p.buttons[i].second, p.hot == p.buttons[i].first, i == 0 && !p.plain, false);
             if (p.focus == p.buttons[i].first) draw_focus_ring(g, r, px(kRadiusControl));
         }
         y += px(40);
@@ -3878,6 +3903,10 @@ void prompt_answer(Prompt& p, int id) {
     if (id <= 0) return;
     if (id == kPromptLink) {
         if (p.on_link) p.on_link();
+        return;
+    }
+    if (id == kPromptLink2) {
+        if (p.on_link2) p.on_link2();
         return;
     }
     if (id <= static_cast<int>(p.switches.size())) {
@@ -4052,6 +4081,92 @@ bool confirm(const std::wstring& main, const std::wstring& content, const wchar_
     p.buttons = {{IDOK, action}, {IDCANCEL, tr(L"Cancel")}};
     p.default_id = IDCANCEL;
     return run_dialog(p, owner()) == IDOK;
+}
+
+// ---------------------------------------------------------------------------
+// Android's dialogs about an app's end: "<app> has stopped" / "<app> keeps stopping" when it crashed, and
+// "<app> isn't responding" when its main thread has not taken input for five seconds. Their titles and
+// buttons are AOSP 14's (framework-res: aerr_application, aerr_application_repeated, app_info,
+// aerr_close_app, anr_application_process, aerr_wait), the buttons a plain list as AppErrorDialog's and
+// AppNotRespondingDialog's are.
+
+void report_problem(HWND parent, const std::wstring& name, const std::wstring& label, const fs::path& log,
+                    const std::wstring& what);
+void show_info(const App& app);
+
+enum { kAppInfo = 300, kCloseApp, kWait };
+
+// A dialog about the app `name`: its icon and name head it, as AOSP's do not (Android's has the name in the
+// title alone; on a PC the app's icon says which window it is about).
+Prompt app_end_prompt(const std::wstring& name, const std::wstring& label, const std::wstring& question) {
+    Prompt p;
+    p.app = label;
+    p.icon = rounded_icon(app_dir(name) / L"icon.png", ipx(40));
+    p.question = question;
+    p.plain = true;
+    return p;
+}
+
+// ActivityManager's AppNotRespondingDialog: Close app ends the app, Wait leaves it. Enter, Esc and the
+// caption's close are Wait, as Android's back is (the dialog's cancel is Wait). Over `over` (screen
+// coordinates); modal to `owner` when there is one, else above every window.
+void not_responding_choices(Prompt& p) {
+    p.buttons = {{kCloseApp, tr(L"Close app")}, {kWait, tr(L"Wait")}};
+    p.default_id = kWait;
+}
+
+int ask_not_responding(Prompt& p, HWND owner, const RECT& over) {
+    not_responding_choices(p);
+    p.owner = owner;
+    const int pressed = show_prompt(p, over);
+    return pressed == kCloseApp ? kCloseApp : kWait;
+}
+
+// ProcessList.MIN_CRASH_INTERVAL: a crash this soon after the app's last one is a repeat ("keeps stopping").
+constexpr long long kMinCrashIntervalSeconds = 60;
+
+// Whether the app crashed within kMinCrashIntervalSeconds before now, which is recorded as its last crash
+// (AppErrors' persistent crash times, in apps\<name>\last-crash, as the launcher may not live between).
+bool crash_repeats(const std::wstring& name) {
+    const fs::path f = app_dir(name) / L"last-crash";
+    const long long now = static_cast<long long>(std::time(nullptr));
+    long long last = 0;
+    if (std::ifstream in(f); in) in >> last;
+    std::error_code ec;
+    fs::create_directories(f.parent_path(), ec);
+    if (std::ofstream out(f, std::ios::trunc); out) out << now;
+    return last > 0 && now >= last && now - last < kMinCrashIntervalSeconds;
+}
+
+// AppErrors' crash dialog for an app that crashed (RunEnd::kCrashed): App info opens its details page,
+// Close app (Enter, Esc, or five minutes without an answer: AppErrorDialog's DISMISS_TIMEOUT) leaves it
+// closed. Show log and Report a problem are links under the title, as on the failed starting window.
+// "Open app again" is not offered: AOSP shows it only with the global show_restart_in_crash_dialog on.
+// Android 14 shows the dialog on a repeated crash and, with "Always show crash dialog" on (Developer
+// options), on the first: Win.apk shows it each time, as there is no home screen for a crashed app to
+// leave the user on. Over `over` (screen coordinates), above every window.
+void show_crash_dialog(const std::wstring& name, const RECT& over) {
+    const std::wstring label = label_of(name);
+    const std::wstring title = fmt(crash_repeats(name) ? L"{0} keeps stopping" : L"{0} has stopped", {label});
+    Prompt p = app_end_prompt(name, label, title);
+    p.buttons = {{kAppInfo, tr(L"App info")}, {kCloseApp, tr(L"Close app")}};
+    p.default_id = kCloseApp;
+    p.timeout = true;
+    const fs::path log = run_log(name);
+    p.link = tr(L"Show log");
+    p.on_link = [&p, log] {  // the log in its window, the dialog answered as Close app
+        p.pressed = kCloseApp;
+        close_prompt(p);
+        show_logs(log);
+    };
+    p.link2 = tr(L"Report a problem");
+    p.on_link2 = [&p, name, label, log, title] { report_problem(p.window, name, label, log, title); };
+    if (show_prompt(p, over) == kAppInfo) {
+        if (const App* app = find_app(name)) {
+            show_library(SW_SHOWNORMAL);
+            show_info(*app);
+        }
+    }
 }
 
 
@@ -9440,7 +9555,15 @@ struct Splash {
     Targets targets;
     int hot = 0;
     bool tracking = false;
+    // Input given to the app while it has no window (a key, a click on its starting window): when, and
+    // whether its "isn't responding" question is on show. InputDispatcher holds such input for the app
+    // that is starting and, five seconds on, reports it not responding ("does not have a focused window").
+    ULONGLONG input_at = 0;
+    bool asking = false;
 };
+
+// InputDispatcher's DEFAULT_DISPATCHING_TIMEOUT: input an app has not taken in this long is an ANR.
+constexpr ULONGLONG kInputDispatchingTimeoutMs = 5000;
 
 std::map<std::wstring, std::unique_ptr<Splash>> g_splashes;
 
@@ -9606,8 +9729,28 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (!s->failed && GetTickCount64() - s->phase_read > 500) {
                 s->phase = run_phase(run_log(s->name));
                 s->phase_read = GetTickCount64();
+                // Converting the app's code or readying Win.apk is an install's work on a phone, before any
+                // input reaches the app: no clock runs for it.
+                if (s->phase) s->input_at = 0;
             }
             if (!s->failed) InvalidateRect(hwnd, nullptr, FALSE);
+            if (!s->failed && s->input_at && !s->asking &&
+                GetTickCount64() - s->input_at >= kInputDispatchingTimeoutMs) {
+                // The app was given input and has not shown a window to take it in five seconds: "<app>
+                // isn't responding", over its starting window. The window coming up meanwhile ends the
+                // question (it is owned by the starting window, which then goes).
+                s->asking = true;
+                const std::wstring name = s->name, label = label_of(name);
+                Prompt p = app_end_prompt(name, label, fmt(L"{0} isn't responding", {label}));
+                RECT r;
+                GetWindowRect(hwnd, &r);
+                const int answer = ask_not_responding(p, hwnd, r);
+                const auto it = g_splashes.find(name);
+                if (it == g_splashes.end() || it->second->hwnd != hwnd) return 0;  // the app came up, or ended
+                s->asking = false;
+                s->input_at = 0;  // Wait: the input is dropped, as InputDispatcher drops it; new input starts again
+                if (answer == kCloseApp) splash_action(*s, kSplashCancel);
+            }
             return 0;
         case WM_NCHITTEST: {  // the app's window to be: its frame, but not one to resize
             const LRESULT hit = DefWindowProcW(hwnd, msg, wp, lp);
@@ -9628,10 +9771,14 @@ LRESULT CALLBACK splash_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return TRUE;
             }
             break;
+        case WM_LBUTTONDOWN:  // a click on the app's starting window is input for the app
+            if (!s->failed && !s->phase && !s->input_at) s->input_at = GetTickCount64();
+            return 0;
         case WM_LBUTTONUP: splash_action(*s, find_target(s->targets, lp)); return 0;
         case WM_KEYDOWN:
             if (wp == VK_ESCAPE) splash_action(*s, s->failed ? kSplashClose : kSplashCancel);
             else if (wp == VK_RETURN && s->failed) splash_action(*s, kSplashClose);
+            else if (!s->failed && !s->phase && !s->input_at) s->input_at = GetTickCount64();  // a key for the app
             return 0;
         case WM_CLOSE:  // its close button, as the app's own: the start is cancelled
             splash_action(*s, s->failed ? kSplashClose : kSplashCancel);
@@ -9760,6 +9907,12 @@ void splash_failed(const std::wstring& name, const std::wstring& title, const st
 void close_splash(const std::wstring& name) {
     const auto it = g_splashes.find(name);
     if (it != g_splashes.end() && !it->second->failed) DestroyWindow(it->second->hwnd);
+}
+
+// The starting window of a start still on show (not one turned into an error), else null.
+HWND starting_window(const std::wstring& name) {
+    const auto it = g_splashes.find(name);
+    return it != g_splashes.end() && !it->second->failed ? it->second->hwnd : nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -10395,11 +10548,29 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
             if (Embedded* e = embedded_of(*name); e && e->up()) {
-                embedded_exited(*e, end.kind() == RunEnd::kDidNotStart);
+                embedded_exited(*e, end.kind() == RunEnd::kDidNotStart ||
+                                        (end.kind() == RunEnd::kCrashed && !end.was_ready));
             } else {
                 switch (end.kind()) {
                     case RunEnd::kQuiet: break;
                     case RunEnd::kStopped: close_splash(*name); break;
+                    case RunEnd::kCrashed: {
+                        // Win.apk's own part missing says so on the starting window, as it did.
+                        if (std::wstring why = runtime_failure_reason(run_log(*name)); !why.empty()) {
+                            splash_failed(*name, fmt(L"{0} didn't start", {label}), why);
+                            break;
+                        }
+                        // Android's crash dialog where the app was: its starting window goes (hidden first,
+                        // so that the launcher, which lives while a window of its is up, is still here).
+                        RECT near_r = work_area_with_cursor();
+                        if (HWND sw = starting_window(*name)) {
+                            GetWindowRect(sw, &near_r);
+                            ShowWindow(sw, SW_HIDE);
+                        }
+                        show_crash_dialog(*name, near_r);
+                        close_splash(*name);
+                        break;
+                    }
                     case RunEnd::kDidNotStart:
                         splash_failed(*name, fmt(L"{0} didn't start", {label}),
                                       failure_reason(run_log(*name), end.clean));
@@ -12288,6 +12459,25 @@ void revoked(const App& a, const std::string& op) {
     info(fmt(L"{0} was stopped, as Android does when a permission is revoked.", {a.label}), kInfo);
 }
 
+// ---- app-not-responding -----------------------------------------------------------
+//
+// The runtime asks it when the app's main thread has not taken the input it was given for five seconds
+// (com.winapk.aospviews.InputTimeout, InputDispatcher's timeout): "<app> isn't responding", over the
+// app's window. Exit 3 Close app, 0 Wait (also Esc, the caption's close, and no answer in five minutes),
+// 5 no identity.
+
+int not_responding() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why)) return refused(why);
+    const std::wstring label = quoted(c.id);
+    Prompt p = app_end_prompt(c.name, label, fmt(L"{0} isn't responding", {label}));
+    not_responding_choices(p);
+    const bool close = run_prompt(p, c.pid) == kCloseApp;
+    emit({{"status", "ok"}, {"answer", close ? "close" : "wait"}});
+    return close ? 3 : 0;
+}
+
 }  // namespace appops
 
 void appops_forget(const std::string& pkg) { appops::forget(pkg); }
@@ -12356,6 +12546,7 @@ int permission_main(int argc, wchar_t** argv) {
         return appops::usage(wide_to_utf8(verb) + " is only asked for by an app (--source android)");
     if (verb == L"runtime-permission")
         return appops::runtime_permission(level, prompt, automatic, perms, members, partial);
+    if (verb == L"app-not-responding") return appops::not_responding();
     if (verb == L"special-access") {
         if (ops.size() != 1) return appops::usage("--op takes one op");
         return appops::special_access(ops[0]);
@@ -12452,7 +12643,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     std::vector<fs::path> files;
     const bool permission = argc >= 2 && (wcscmp(argv[1], L"runtime-permission") == 0 ||
                                           wcscmp(argv[1], L"special-access") == 0 ||
-                                          wcscmp(argv[1], L"app-details") == 0);
+                                          wcscmp(argv[1], L"app-details") == 0 ||
+                                          wcscmp(argv[1], L"app-not-responding") == 0);
     if (argc >= 3 && wcscmp(argv[1], L"--run") == 0) {
         run_apk = argv[2];
     } else if (!permission) {

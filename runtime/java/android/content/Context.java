@@ -2064,6 +2064,17 @@ public abstract class Context {
     public void unregisterReceiver(android.content.BroadcastReceiver receiver) {
         applicationForStarts().unregisterReceiver(receiver);
     }
+    /** AOSP's hidden registerReceiverAsUser, which its own widgets call (TextClock, AnalogClock,
+     *  ViewFlipper, AdapterViewFlipper register for the time and screen broadcasts as the
+     *  context's user). The one user here is the process's, so it is registerReceiver. */
+    public Intent registerReceiverAsUser(android.content.BroadcastReceiver receiver, android.os.UserHandle user,
+            android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler) {
+        return registerReceiver(receiver, filter, broadcastPermission, scheduler);
+    }
+    public Intent registerReceiverAsUser(android.content.BroadcastReceiver receiver, android.os.UserHandle user,
+            android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler, int flags) {
+        return registerReceiver(receiver, filter, broadcastPermission, scheduler, flags);
+    }
 
     /** AOSP API-14+: registers a ComponentCallbacks for memory-pressure
      *  / configuration-change notifications. v1.0.464 (subsystem-04): AOSP's

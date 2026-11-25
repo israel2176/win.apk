@@ -108,6 +108,8 @@ public class SearchManager
 
     public SearchManager() {}
     public SearchManager(Context context) { mContext = context; }
+    /** AOSP's constructor, which Activity.ensureSearchManager calls (`new SearchManager(this, null)`). */
+    public SearchManager(Context context, android.os.Handler handler) { mContext = context; }
 
     /** AOSP startSearch(...): shows the system search dialog over the calling
      *  activity. There is no search dialog on Mac.apk, so nothing is displayed

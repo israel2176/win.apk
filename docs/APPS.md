@@ -102,13 +102,24 @@ first screen. The list is `windows/test/compat/apps.txt`; every pull request
 that touches the runtime boots ten of them (`smoke.txt`) and fails if one no
 longer draws.
 
-The last full run (2026-11-09, [CI run 42633462999](https://github.com/israel2176/win.apk/actions/runs/42633462999)):
-**91 of 92 drew their first screen.** Tiny Wheels crashed at start, with no
-crash report, in its native font code: a frame that ran past the part of the
-thread's stack Windows had committed. The runtime has committed that stack
-ahead since the run before, but on Windows it took the guard region below it
-for one page, which on x64 is several, and so committed nothing; it now finds
-the region whatever its size (the next run will tell).
+The last full run (2026-11-25, [CI run 45643144404](https://github.com/israel2176/win.apk/actions/runs/45643144404)):
+**81 of 92 drew their first screen.** Nine of the eleven that did not threw
+on their main thread at start because AOSP's own `Activity`, `ActivityThread`
+or widgets called something Win.apk's framework lacked:
+`AttributionSource.getRenouncedPermissions`, which every runtime-permission
+request reads (Diary, SatStat, F-Droid, Fossify Gallery, DroidFish, NewPipe),
+`SplashScreen.SplashScreenImpl` (Organic Maps), `DateFormat.hasSeconds`
+(Fossify Clock), or a `GLSurfaceView` that lost its XML id (Shader Editor);
+the runtime then swallowed the exception, so the activity never finished
+starting and its window stayed empty. AnkiDroid's crash reporter closed it
+over a null `ActivityThread.sMainThreadHandler`. All ten are fixed and draw
+under Wine. The main thread no longer swallows an exception: a gap of this
+kind is now a crash, with Android's **has stopped** dialog and a
+`FATAL EXCEPTION` in the log, as on a phone. MuPDF opens the system's
+document picker as its first screen; the sweep runs with no user, nothing
+answers the picker and the app's own window never draws. A person sees
+Windows' Open dialog there. Open Sudoku is pinned at 4.11.1: 4.11.2 and 4.11.3
+crash on a fresh install on a phone too ([#121](https://github.com/israel2176/win.apk/issues/121)).
 
 ![First screens of six F-Droid apps from the sweep: Shattered Pixel Dungeon, Thunderbird, Mindustry, Lexica, DAVx5 and Loop Habit Tracker](images/apps.png)
 
@@ -139,6 +150,9 @@ what to look for in the app or in its log.
 | `native not implemented` in the log | A piece of the Android host that is still missing | Report it with the log |
 | `[win.apk] cannot load <library>` in the log | A native library the loader could not load: packed, encrypted, or for another CPU | Report it with the log and the APK's `lib/` folders |
 | The app opens sideways, or narrow | Apps open in landscape; an app that fixes portrait opens portrait | The app's details page, **Window > Orientation**; or Settings > Apps > Default orientation for all apps |
+| **Wiz has stopped** or **Wiz keeps stopping** | The app crashed: an error it did not handle. When its log's `FATAL EXCEPTION` is a `NoSuchMethodError` or `NoClassDefFoundError` naming an `android.` class, Win.apk's framework lacks something the app or Android's own code calls | [Report it](troubleshooting.md#reporting-a-problem) with the log (**Report a problem** under the message) |
+| **Wiz isn't responding** | The app's main thread did not take a click or key for five seconds | **Wait** once; if it comes back each time at the same place, report it with the log |
+| An app opens Windows' Open dialog before its own screen | The app's first screen is Android's document picker (MuPDF) | Pick a file there: the app opens it |
 | SmartScreen or an antivirus warns | Win.apk is not code-signed yet, and Win.apk writes then runs translated code | Allow it if you downloaded Win.apk from this repository |
 
 ## Apps people have tried

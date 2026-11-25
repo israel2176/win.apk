@@ -54,7 +54,15 @@ public final class AospInput extends TouchDispatcher {
     private static float px(float x) { return x * scale(); }
     private static float py(float y, float viewH) { return (viewH - y) * scale(); }
 
-    static void post(MotionEvent ev) { main().post(() -> InputRouter.motion(ev)); }
+    /** To the window under it, on the main thread. Input the app is waited for (not a pointer only passing
+     *  over: hover) counts toward its "isn't responding" (InputTimeout). */
+    static void post(MotionEvent ev) {
+        int a = ev.getActionMasked();
+        boolean hover = a == MotionEvent.ACTION_HOVER_ENTER || a == MotionEvent.ACTION_HOVER_MOVE
+                || a == MotionEvent.ACTION_HOVER_EXIT;
+        Runnable r = () -> InputRouter.motion(ev);
+        main().post(hover ? r : InputTimeout.track(r));
+    }
 
     // ---- touch ------------------------------------------------------------------------------
 
@@ -212,7 +220,7 @@ public final class AospInput extends TouchDispatcher {
 
     @Override public void dispatchHostKey(int action, int keyCode, int unicodeChar, int metaState, boolean autoRepeat) {
         KeyEvent ev = keyEvent(action, keyCode, unicodeChar, metaState, autoRepeat);
-        main().post(() -> InputRouter.key(ev));
+        main().post(InputTimeout.track(() -> InputRouter.key(ev)));
     }
 
     /** KeyboardInputMapper's event: a down's time held by its up, the repeat count of a held key. */
@@ -239,14 +247,14 @@ public final class AospInput extends TouchDispatcher {
 
     @Override public void dispatchHostText(final String text) {
         if (text == null || text.isEmpty()) return;
-        main().post(() -> {
+        main().post(InputTimeout.track(() -> {
             if (ImeService.commitText(text)) return;
             for (int i = 0; i < text.length(); i++) {
                 char ch = text.charAt(i);
                 InputRouter.key(keyEvent(KeyEvent.ACTION_DOWN, 0, ch, 0, false));
                 InputRouter.key(keyEvent(KeyEvent.ACTION_UP, 0, ch, 0, false));
             }
-        });
+        }));
     }
 
     @Override public boolean hostImeInline() { return ImeService.bound(); }

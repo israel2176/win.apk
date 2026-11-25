@@ -112,5 +112,117 @@ public class DateFormat {
     }
 
     public static char[] getDateFormatOrder(android.content.Context context) { return new char[]{'M', 'd', 'y'}; }
+
+    // AOSP's format letters (DateFormat.java's public constants).
+    public static final char QUOTE = '\'';
+    public static final char SECONDS = 's';
+
+    /** AOSP :690, verbatim: whether the pattern has a seconds field outside quoted text.
+     *  TextClock asks it of its format to know whether to tick every second. */
+    public static boolean hasSeconds(CharSequence inFormat) {
+        return hasDesignator(inFormat, SECONDS);
+    }
+
+    /** AOSP :700, verbatim. */
+    public static boolean hasDesignator(CharSequence inFormat, char designator) {
+        if (inFormat == null) return false;
+        final int length = inFormat.length();
+        boolean insideQuote = false;
+        for (int i = 0; i < length; i++) {
+            final char c = inFormat.charAt(i);
+            if (c == QUOTE) {
+                insideQuote = !insideQuote;
+            } else if (!insideQuote) {
+                if (c == designator) return true;
+            }
+        }
+        return false;
+    }
+
+    /** AOSP :750, verbatim: drops the quotes of the quoted text at `index` and answers its
+     *  length (TimePickerClockDelegate's separators). */
+    public static int appendQuotedText(android.text.SpannableStringBuilder formatString, int index) {
+        int length = formatString.length();
+        if (index + 1 < length && formatString.charAt(index + 1) == QUOTE) {
+            formatString.delete(index, index + 1);
+            return 1;
+        }
+        int count = 0;
+        formatString.delete(index, index + 1);  // the leading quote
+        length--;
+        while (index < length) {
+            char c = formatString.charAt(index);
+            if (c == QUOTE) {
+                if (index + 1 < length && formatString.charAt(index + 1) == QUOTE) {  // QUOTEQUOTE -> QUOTE
+                    formatString.delete(index, index + 1);
+                    length--;
+                    count++;
+                    index++;
+                } else {  // the closing quote ends the quoted text
+                    formatString.delete(index, index + 1);
+                    break;
+                }
+            } else {
+                index++;
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** AOSP :330: the locale's hour-and-minute pattern in the user's 12/24-hour choice
+     *  (AOSP's LocaleData.timeFormat_Hm / timeFormat_hm, which are these skeletons' best
+     *  patterns). DigitalClock formats with it. */
+    public static String getTimeFormatString(Context context) {
+        java.util.Locale locale = java.util.Locale.getDefault();
+        if (context != null && context.getResources() != null
+                && context.getResources().getConfiguration().locale != null) {
+            locale = context.getResources().getConfiguration().locale;
+        }
+        return getBestDateTimePattern(locale, is24HourFormat(context) ? "Hm" : "hm");
+    }
+
+    public static String getTimeFormatString(Context context, int userHandle) {
+        return getTimeFormatString(context);
+    }
+
+    /** AOSP :393, verbatim: the order of the day, month and year fields in a date pattern
+     *  (DatePicker's spinners are laid out in it). */
+    public static char[] getDateFormatOrder(String pattern) {
+        char[] result = new char[3];
+        int resultIndex = 0;
+        boolean sawDay = false;
+        boolean sawMonth = false;
+        boolean sawYear = false;
+        for (int i = 0; i < pattern.length(); ++i) {
+            char ch = pattern.charAt(i);
+            if (ch == 'd' || ch == 'L' || ch == 'M' || ch == 'y') {
+                if (ch == 'd' && !sawDay) {
+                    result[resultIndex++] = 'd';
+                    sawDay = true;
+                } else if ((ch == 'L' || ch == 'M') && !sawMonth) {
+                    result[resultIndex++] = 'M';
+                    sawMonth = true;
+                } else if ((ch == 'y') && !sawYear) {
+                    result[resultIndex++] = 'y';
+                    sawYear = true;
+                }
+            } else if (ch == 'G') {
+                // The era, if present, is ignored.
+            } else if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) {
+                throw new IllegalArgumentException("Bad pattern character '" + ch + "' in " + pattern);
+            } else if (ch == '\'') {
+                if (i < pattern.length() - 1 && pattern.charAt(i + 1) == '\'') {
+                    ++i;
+                } else {
+                    i = pattern.indexOf('\'', i + 1);
+                    if (i == -1) throw new IllegalArgumentException("Bad quoting in " + pattern);
+                    ++i;
+                }
+            }
+            // Spaces and punctuation are ignored.
+        }
+        return result;
+    }
 }
 

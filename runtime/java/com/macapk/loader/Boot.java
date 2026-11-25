@@ -845,50 +845,30 @@ public final class Boot {
         // Crashlytics installs its own default handler and keeps the previous
         // one as its chain target, so being first means we are still called
         // (from Crashlytics' finally) even when the Crashlytics handler itself
-        // throws -- which is what hides the Firebase-datatransport background
-        // thread exception that the contract-correct clock surfaces on Crossy.
+        // throws.
         //
-        // (b), the process kill, is gated on MACAPK_KILL_ON_UNCAUGHT and is
-        // OFF by default for now. Today a thread that throws just dies, and
-        // apps in the protected set reach their menu "despite" a swallowed
-        // background exception; turning the AOSP behavior on flips those from
-        // limping to dead, so the flip needs an interleaved protected-sweep
-        // A/B behind it. RETIRE CONDITION: run that sweep, then make the kill
-        // unconditional and delete the flag. Same land-behind-a-flag-then-flip
-        // shape as MACAPK_REAL_LOOPER / MACAPK_GMS_CHILD_FIRST. The reporting
-        // half (a) is unconditional -- it is what makes a silently-dead thread
-        // visible at all, and it is what the old MACAPK_LOG_UNCAUGHT diagnostic
-        // did by hand.
-        final boolean killOnUncaught =
-            false;
+        // (b) is the crash: the process ends with CRASH_EXIT, which tells the
+        // launcher that the framework's handler ran -- on a device that is
+        // ActivityManager.handleApplicationCrash, whose AppErrors shows
+        // "<app> has stopped" / "<app> keeps stopping" (the launcher's crash
+        // dialog here). An app that ends itself after its own crash reporter
+        // (ACRA's System.exit(10)) never reaches this handler, and on a device
+        // gets no system dialog either.
         final Thread.UncaughtExceptionHandler prevUncaught =
             Thread.getDefaultUncaughtExceptionHandler();
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
             try {
                 // RuntimeInit's mCrashing guard: once the process is on its
-                // way down a second uncaught throw must not re-enter. Only
-                // meaningful when we actually terminate -- with the kill off
-                // the process survives, so keep reporting every one of them.
-                if (killOnUncaught) {
-                    if (sCrashing) return;
-                    sCrashing = true;
-                }
+                // way down a second uncaught throw must not re-enter.
+                if (sCrashing) return;
+                sCrashing = true;
                 logUncaught(t, e);
                 if (prevUncaught != null) prevUncaught.uncaughtException(t, e);
             } catch (Throwable ignored) {
                 // A throwing handler would replace the real crash with a
                 // confusing secondary one; RuntimeInit swallows here too.
             } finally {
-                if (killOnUncaught) {
-                    // AOSP kills with SIGKILL to self and then calls
-                    // System.exit(10), so shutdown hooks and finalizers never
-                    // run and the exit status is only nominal. halt(10) is
-                    // that union on HotSpot: immediate, status 10, no shutdown
-                    // hooks -- which also matters here because a graceful exit
-                    // would try to unwind guest threads parked forever in the
-                    // Bionic cond shim.
-                    Runtime.getRuntime().halt(10);
-                }
+                crashExit();
             }
         });
 
@@ -2317,6 +2297,23 @@ public final class Boot {
     private static void maybeInjectTestPush(com.macapk.gms.McsClient.Dispatcher deliver,
                                             String pkg) {
         return;
+    }
+
+    /** The exit code of a run the framework's crash handler ended (KillApplicationHandler's
+     *  Process.killProcess + System.exit(10) on a device): the launcher shows the crash dialog
+     *  for it. windows/include/winapk/app_exit.h has the same number. */
+    public static final int CRASH_EXIT = 0x1000000A;
+
+    /** AOSP's `finally { Process.killProcess(Process.myPid()); System.exit(10); }`: the whole
+     *  process, now, whatever thread threw. Through the host's exit (its end-of-run lines, no
+     *  Java shutdown, as SIGKILL runs none); halt if there is no host. */
+    private static void crashExit() {
+        try {
+            NativeCocoa.exitProcess(CRASH_EXIT, null);
+        } catch (Throwable ignored) {
+            // A plain JVM.
+        }
+        Runtime.getRuntime().halt(CRASH_EXIT);
     }
 
     private static void logUncaught(Thread t, Throwable e) {

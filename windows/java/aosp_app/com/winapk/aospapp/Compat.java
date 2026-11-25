@@ -164,13 +164,13 @@ public final class Compat {
     // ---- android.app.ContextImpl ----
 
     /** ContextImpl.createAttributionSource: this process's uid and the context's package and tag,
-     *  chained to the next source; renounced permissions are not kept (Win.apk's AttributionSource
-     *  has none, and no service here checks them). */
+     *  chained to the next source, with the permissions the context renounced (Activity.requestPermissions
+     *  refuses to ask for one of them, as AOSP's). */
     public static android.content.AttributionSource createAttributionSource(android.content.Context ctx,
             String attributionTag, android.content.AttributionSource next, java.util.Set<String> renounced) {
         return new android.content.AttributionSource.Builder(android.os.Process.myUid())
                 .setPid(android.os.Process.myPid()).setPackageName(opPackageName(ctx))
-                .setAttributionTag(attributionTag).setNext(next).build();
+                .setAttributionTag(attributionTag).setNext(next).setRenouncedPermissions(renounced).build();
     }
 
     private static java.lang.reflect.Field sOpPackageName;

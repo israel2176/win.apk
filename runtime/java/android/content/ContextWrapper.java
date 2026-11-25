@@ -386,4 +386,16 @@ public class ContextWrapper extends Context {
         if (baseContext != null) baseContext.unregisterReceiver(receiver);
         else super.unregisterReceiver(receiver);
     }
+    @Override public Intent registerReceiverAsUser(android.content.BroadcastReceiver receiver, android.os.UserHandle user,
+            android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler) {
+        if (baseContext != null) return baseContext.registerReceiverAsUser(receiver, user, filter, broadcastPermission, scheduler);
+        else return super.registerReceiverAsUser(receiver, user, filter, broadcastPermission, scheduler);
+    }
+    @Override public Intent registerReceiverAsUser(android.content.BroadcastReceiver receiver, android.os.UserHandle user,
+            android.content.IntentFilter filter, String broadcastPermission, android.os.Handler scheduler, int flags) {
+        if (baseContext != null) {
+            return baseContext.registerReceiverAsUser(receiver, user, filter, broadcastPermission, scheduler, flags);
+        }
+        return super.registerReceiverAsUser(receiver, user, filter, broadcastPermission, scheduler, flags);
+    }
 }

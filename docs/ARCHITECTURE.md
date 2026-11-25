@@ -1030,7 +1030,14 @@ the change refused from anyone but the launcher.
    the starting window goes. If the process ends first, that window says the app did
    not start, with Show log and Report a problem (`report_problem`: GitHub's
    issue form prefilled through its fields' ids in the URL, and Explorer on
-   the run log and the newest crash dump; nothing is uploaded).
+   the run log and the newest crash dump; nothing is uploaded). A run that
+   ends as a crash (`include/winapk/app_exit.h`: the framework's crash exit,
+   a native fault, `abort()`) gets Android's crash dialog instead, before or
+   after the window came up (`show_crash_dialog`: "has stopped", or "keeps
+   stopping" within a minute of the last, App info, Close app, those two
+   links). Input given to the starting window (a click, a key) that the app
+   has not shown a window for five seconds on asks "isn't responding", Close
+   app or Wait (InputDispatcher's no-focused-window ANR).
 2. The runtime takes a named mutex keyed on the app's data folder. If another
    copy holds it, the running window is brought forward, the ready event is
    set, and this process exits.
@@ -1079,7 +1086,16 @@ the change refused from anyone but the launcher.
    brings the task forward (`macapkTaskToFront`: `onRestart`, `onStart`,
    `onResume`), the same transitions as Back at the task's root. The exit
    code is 0 unless the app or the VM failed (always 0 once the user closed
-   the window); a VM crash leaves `logs\hs_err_pid<n>.log`.
+   the window); a VM crash leaves `logs\hs_err_pid<n>.log`. An exception
+   nothing catches, on any of the app's threads, leaves its looper as on
+   Android (Win.apk's own `winapk-*`/`macapk-*` threads log it and go on), and
+   the uncaught handler (`Boot`, RuntimeInit's KillApplicationHandler) logs
+   `FATAL EXCEPTION` and ends the process with `kExitAppCrashed`. Input the
+   main thread has not taken five seconds after the host gave it
+   (`InputTimeout`, in `aosp-views.jar`) asks the launcher's "isn't responding"
+   (`Win.apk.exe app-not-responding`, over the app's window); Close app ends
+   the process with `kExitClosedNotResponding`, which the launcher takes as
+   the user's word.
    The lifecycle itself is AOSP's: `Boot` starts the app on AOSP 14's own
    `ActivityThread` (`lib\aosp-app.jar`) through `com.macapk.loader.app.AppHost`,
    whose in-process activity manager and task manager send it the client

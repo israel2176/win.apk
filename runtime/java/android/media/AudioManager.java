@@ -482,6 +482,12 @@ public class AudioManager {
     public int requestAudioFocus(android.media.AudioFocusRequest focusRequest) {
         return AUDIOFOCUS_REQUEST_GRANTED;
     }
+    /** AOSP's hidden form, which its VideoView calls when it opens a video
+     *  (`requestAudioFocus(null, mAudioAttributes, mAudioFocusType, 0)`): granted, as the others. */
+    public int requestAudioFocus(OnAudioFocusChangeListener l, android.media.AudioAttributes requestAttributes,
+                                 int durationHint, int flags) {
+        return AUDIOFOCUS_REQUEST_GRANTED;
+    }
     public int abandonAudioFocusRequest(android.media.AudioFocusRequest focusRequest) {
         return AUDIOFOCUS_REQUEST_GRANTED;
     }

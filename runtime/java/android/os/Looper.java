@@ -717,6 +717,11 @@ public final class Looper {
                     if (msg.target != null) msg.target.dispatchMessage(msg);
                     else if (msg.callback != null) msg.callback.run();
                 } catch (Throwable t) {
+                    // An app's looper thread (a HandlerThread) ends with its throw, as AOSP's
+                    // loop() does, and the uncaught handler ends the process. Win.apk's own
+                    // threads (winapk-*, macapk-*) are the system's side of a device, which an
+                    // app's mistake reaching them does not end: logged, and the loop goes on.
+                    if (!macapkSystemThread(tn)) throw t;
                     android.util.Log.e("Looper", "exception dispatching message", t);
                 }
                 // AOSP Looper.loop() recycles the message it just delivered
@@ -764,6 +769,12 @@ public final class Looper {
             + " (dispatched " + n + ")");
     }
 
+    /** A thread Win.apk made for its own system side (the in-process services' looper,
+     *  winapk-system; upstream's macapk-* helpers), not one of the app's. */
+    private static boolean macapkSystemThread(String name) {
+        return name != null && (name.startsWith("winapk-") || name.startsWith("macapk-"));
+    }
+
     /** True if the current thread is registered as a main thread (the
      *  macapk-activity thread tags itself via prepareMainLooper). Used to
      *  decide whether loop() should run the real main loop. */
@@ -793,12 +804,10 @@ public final class Looper {
             Message msg = q.next();   // blocks
             if (msg == null) break;   // quit()
             n++;
-            try {
-                if (msg.target != null) msg.target.dispatchMessage(msg);
-                else if (msg.callback != null) msg.callback.run();
-            } catch (Throwable t) {
-                android.util.Log.e("Looper", "exception dispatching main message", t);
-            }
+            // AOSP Looper.loopOnce: a throw out of dispatchMessage leaves loop(), and the
+            // main thread's end is the process's (RuntimeInit's uncaught handler).
+            if (msg.target != null) msg.target.dispatchMessage(msg);
+            else if (msg.callback != null) msg.callback.run();
             // AOSP Looper.loop():272 recycles after dispatch. Required now that
             // enqueueMessage marks messages in use: without it FLAG_IN_USE would
             // never clear and re-sending a delivered Message would throw.
@@ -858,12 +867,12 @@ public final class Looper {
             while ((msg = q.macapkPollDue()) != null) {
                 dispatched = true;
                 n++;
-                try {
-                    if (msg.target != null) msg.target.dispatchMessage(msg);
-                    else if (msg.callback != null) msg.callback.run();
-                } catch (Throwable t) {
-                    android.util.Log.e("Looper", "exception dispatching main message", t);
-                }
+                // As AOSP's Looper.loopOnce: what dispatchMessage throws leaves the loop, and
+                // the main thread, uncaught: the app crashes (Boot's uncaught handler, RuntimeInit's
+                // KillApplicationHandler). Carrying on after it left the activity it was starting
+                // half made, and its window empty for good.
+                if (msg.target != null) msg.target.dispatchMessage(msg);
+                else if (msg.callback != null) msg.callback.run();
                 msg.recycleUnchecked();
                 if (n == 1 || n == 60 || n == 600 || (n % 3000) == 0)
                     android.util.Log.i("Looper",
