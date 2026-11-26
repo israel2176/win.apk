@@ -65,7 +65,9 @@ void rebind(Current& cur) {
 
 GlTurn::GlTurn(bool draws) {
     Current& cur = t_current;
-    if (cur.ctx == EGL_NO_CONTEXT) return;
+    // A GL call with nothing current does nothing in ANGLE; an EGL call always takes the turn, from
+    // any thread: creating or destroying a context or surface reaches the renderer too.
+    if (draws && cur.ctx == EGL_NO_CONTEXT) return;
     g_turn.lock();
     held_ = true;
     if (draws && holder(cur.dpy) != cur.ctx) rebind(cur);

@@ -190,10 +190,13 @@ void check_two_gl_threads() {
     std::thread a([&] {
         GlThread t;
         a_setup = t.setup(dpy);
+        std::printf("  (A set up: %d)\n", a_setup);
         a_first = a_setup && t.draw(kRed);
+        std::printf("  (A drew)\n");
         step = 1;
         wait_for(2);  // B made its context current: the renderer holds B's state
         a_after = a_setup && t.draw(kRed);
+        std::printf("  (A drew after B)\n");
         step = 3;
         wait_for(4);
         for (int i = 0; i < 300 && a_setup; ++i) {
@@ -205,7 +208,9 @@ void check_two_gl_threads() {
         wait_for(1);
         GlThread t;
         b_setup = t.setup(dpy);
+        std::printf("  (B set up: %d)\n", b_setup);
         b_first = b_setup && t.draw(kGreen);
+        std::printf("  (B drew)\n");
         step = 2;
         wait_for(3);
         b_after = b_setup && t.draw(kGreen);
@@ -231,6 +236,8 @@ void check_two_gl_threads() {
 }  // namespace
 
 int main() {
+    // Unbuffered: a crash in ANGLE must not take the lines before it along.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("ANGLE through the runtime's GL\n");
     const bool ready = winapk::host::gl_frame_begin(1, 64, 32);
     check("context current on a 64x32 pbuffer", ready);

@@ -18,9 +18,11 @@
 // thread's call, and, when another context became current on the display since, the thread's own
 // context made current again, released and re-bound, since ANGLE's eglMakeCurrent of what is
 // already current does nothing (egl_stubs.cpp MakeCurrent) and a re-bind marks all its state dirty
-// (gl::Context::makeCurrent). A thread whose context was made current outside the forwarders (the
-// graphics DLL's render thread, on its own display) takes no turn. The pure queries (eglGetError,
-// eglGetCurrent*, eglGetProcAddress, eglQueryAPI, eglBindAPI) take none either.
+// (gl::Context::makeCurrent). EGL calls take the turn from any thread (destroying a context reaches
+// the renderer's state manager); a GL call from a thread whose context was made current outside the
+// forwarders (the graphics DLL's render thread, on its own display), or with nothing current, takes
+// none. The pure queries (eglGetError, eglGetCurrent*, eglGetProcAddress, eglQueryAPI, eglBindAPI)
+// take none either.
 //
 // What it costs: an uncontended lock per call, and a full state sync each time the display passes
 // from one context to another. What it cannot be: concurrent. Two GL threads of an app run their
