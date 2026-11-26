@@ -75,8 +75,8 @@ The full table, checked against the code, is on
 | Java and Kotlin apps | Apps with only arm64 native code: slower until translated | Apps with only 32-bit ARM code (`armeabi-v7a`) |
 | x86_64 native code | `MediaCodec`: H.264 with AAC/MP3 audio; Vulkan (new, untried with games) | |
 | OpenGL ES 1.1-3.2 on Direct3D 11, `NativeActivity` games | Bluetooth: paired devices, RFCOMM, LE scans and GATT client | |
-| Sound (AudioTrack, SoundPool, AAudio output, OpenSL ES), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
-| Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (none is reported) |
+| Sound (AudioTrack, SoundPool, AAudio output, OpenSL ES), microphone | Wi-Fi: information, no connecting | |
+| Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons; NDK media API (`AMediaCodec`): decoders only | Real sensors (none is reported) |
 | WebView and Custom Tabs on WebView2 | Google's real Play services and Play Store (experimental) | In-app purchases, Play Integrity, the Maps SDK's map |
 | Webcam, location, clipboard, file pickers, Xbox controllers | Input: multi-touch from a touchscreen or a pen, pinch by Ctrl+wheel or the touchpad; no multi-touch from a mouse alone | |
 | Permissions, Google sign-in, push messages (FCM) | | |
