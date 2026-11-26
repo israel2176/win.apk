@@ -1279,14 +1279,15 @@ jobs:
       # The stage already has AOSP's resources and views (stage_runtime.sh); only the Linux natives.
       - name: AOSP's dependencies for Linux
         run: windows/test/aospgfx/fetch.sh thirdparty/aosp-gfx-linux linux
-      - name: The lifecycle test
+      # The lifecycle test, then the magnifier's (MagnifierTest: a window's child layers): one line each.
+      - name: The lifecycle and magnifier tests
         run: |
           set -o pipefail
           rc=0
           windows/test/aospapp/run.sh stage thirdparty/aosp-gfx-linux aospapp-out build/java/android-framework.jar \
             2>&1 | tee aospapp.log || rc=$?
           {
-            echo "### AOSP app layer: $(grep -E '^(ALL PASSED|FAILED|TIMEOUT)' aospapp.log | head -n 1 || echo 'did not finish')"
+            echo "### AOSP app layer: $(grep -E '^(ALL PASSED|FAILED|TIMEOUT)' aospapp.log | paste -sd ';' - | grep . || echo 'did not finish')"
             echo ""
             echo "$(grep -E '^\[aosp-app\] .*aosp-app.jar: ' aospapp.log | head -n 1)"
             echo "$(grep -E 'do not link' aospapp.log | head -n 1)"

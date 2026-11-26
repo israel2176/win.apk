@@ -1,5 +1,6 @@
-// What winapk-runtime.exe gives a JVM, for a plain-JVM test of AOSP's app layer (AospAppLifecycleTest):
-// the two host natives it reaches (the log funnel, setenv; windows/host binds the real ones) and the
+// What winapk-runtime.exe gives a JVM, for a plain-JVM test of AOSP's app layer (AospAppLifecycleTest,
+// MagnifierTest): the host natives they reach (the log funnel, setenv; windows/host binds the real ones),
+// the graphics DLL's that the native runtime lacks, as tokens, and the
 // binding of Robolectric's native runtime onto AOSP's graphics classes, with the host's own redirect
 // (windows/host/aosp_gfx_redirect.cpp, as host/aosp_gfx.cpp uses it). The test loads this library
 // with System.load; the natives bind by their JNI names.
@@ -12,6 +13,10 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <map>
+#include <mutex>
+#include <utility>
+#include <vector>
 
 #include "../../host/aosp_gfx_redirect.h"
 
@@ -71,17 +76,111 @@ JNIEXPORT jint JNICALL Java_com_macapk_loader_NativeCocoa_displayHz(JNIEnv*, jcl
 // there is no animation on it to enable or disable.
 JNIEXPORT void JNICALL Java_android_graphics_HardwareRenderer_nSetRtAnimationsEnabled(JNIEnv*, jclass, jboolean) {}
 
+// The rest of HardwareRenderer's natives that Robolectric's runtime lacks (the graphics DLL has AOSP's): a
+// Magnifier's popup is drawn by a ThreadedRenderer.SimpleRenderer even when the windows draw in software
+// (MagnifierTest), whose construction gives HWUI the display and the process's kind (ProcessInitializer)
+// and whose frames reach the frame callbacks. Nothing to tell a render thread here.
+#define HR(name) Java_android_graphics_HardwareRenderer_##name
+JNIEXPORT void JNICALL HR(nInitDisplayInfo)(JNIEnv*, jclass, jint, jint, jfloat, jint, jlong, jlong, jboolean, jboolean) {}
+JNIEXPORT void JNICALL HR(nSetIsLowRam)(JNIEnv*, jclass, jboolean) {}
+JNIEXPORT void JNICALL HR(nSetIsSystemOrPersistent)(JNIEnv*, jclass, jboolean) {}
+JNIEXPORT void JNICALL HR(setupShadersDiskCache)(JNIEnv*, jclass, jstring, jstring) {}
+JNIEXPORT jboolean JNICALL HR(isWebViewOverlaysEnabled)(JNIEnv*, jclass) { return JNI_FALSE; }
+JNIEXPORT void JNICALL HR(preload)(JNIEnv*, jclass) {}
+JNIEXPORT void JNICALL HR(disableVsync)(JNIEnv*, jclass) {}
+JNIEXPORT void JNICALL HR(nTrimCaches)(JNIEnv*, jclass, jint) {}
+JNIEXPORT void JNICALL HR(nSetDrawingEnabled)(JNIEnv*, jclass, jboolean) {}
+JNIEXPORT void JNICALL HR(nSetTargetSdrHdrRatio)(JNIEnv*, jclass, jlong, jfloat) {}
+JNIEXPORT void JNICALL HR(nForceDrawNextFrame)(JNIEnv*, jclass, jlong) {}
+JNIEXPORT void JNICALL HR(nSetFrameCommitCallback)(JNIEnv*, jclass, jlong, jobject) {}
+JNIEXPORT void JNICALL HR(nNotifyCallbackPending)(JNIEnv*, jclass, jlong) {}
+JNIEXPORT void JNICALL HR(nNotifyExpensiveFrame)(JNIEnv*, jclass, jlong) {}
+#undef HR
+
 // The GPU DLL's natives the window path reaches (com.winapk.aospviews.HwuiLayers: a window's layer and
 // the compositor's scene; RenderNode's position updates for a SurfaceView): this harness has no DLL and
-// shows nothing, so a layer is a token and the scene goes nowhere.
-JNIEXPORT jlong JNICALL Java_com_winapk_aospviews_HwuiLayers_nCreate(JNIEnv*, jclass, jint, jint) { return 1; }
-JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nResize(JNIEnv*, jclass, jlong, jint, jint) {}
-JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nRelease(JNIEnv*, jclass, jlong) {}
+// shows nothing, so a layer is a number, with its size kept, and the last scene is kept for a test to read
+// (MagnifierTest.scene, layerSize).
+namespace {
+std::mutex g_layers_lock;
+jlong g_next_layer = 1;
+std::map<jlong, std::pair<jint, jint>> g_layer_sizes;
+std::vector<jlong> g_scene_layers;
+std::vector<jint> g_scene_xy;
+}  // namespace
+
+JNIEXPORT jlong JNICALL Java_com_winapk_aospviews_HwuiLayers_nCreate(JNIEnv*, jclass, jint w, jint h) {
+    std::lock_guard<std::mutex> hold(g_layers_lock);
+    const jlong l = g_next_layer++;
+    g_layer_sizes[l] = {w, h};
+    return l;
+}
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nResize(JNIEnv*, jclass, jlong l, jint w, jint h) {
+    std::lock_guard<std::mutex> hold(g_layers_lock);
+    g_layer_sizes[l] = {w, h};
+}
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nRelease(JNIEnv*, jclass, jlong l) {
+    std::lock_guard<std::mutex> hold(g_layers_lock);
+    g_layer_sizes.erase(l);
+}
 JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nPostBitmap(JNIEnv*, jclass, jlong, jlong) {}
-JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nSetScene(JNIEnv*, jclass, jlongArray, jintArray, jintArray,
-                                                                     jint, jint, jboolean) {}
+JNIEXPORT void JNICALL Java_com_winapk_aospviews_HwuiLayers_nSetScene(JNIEnv* env, jclass, jlongArray layers, jintArray xy,
+                                                                     jintArray, jint, jint, jboolean) {
+    std::lock_guard<std::mutex> hold(g_layers_lock);
+    g_scene_layers.resize(env->GetArrayLength(layers));
+    g_scene_xy.resize(env->GetArrayLength(xy));
+    env->GetLongArrayRegion(layers, 0, static_cast<jsize>(g_scene_layers.size()), g_scene_layers.data());
+    env->GetIntArrayRegion(xy, 0, static_cast<jsize>(g_scene_xy.size()), g_scene_xy.data());
+}
+
+// MagnifierTest's view of the above: the last scene, as {layer, x, y} triples bottom to top, and a layer's
+// size ({} once released).
+JNIEXPORT jlongArray JNICALL Java_MagnifierTest_scene(JNIEnv* env, jclass) {
+    std::lock_guard<std::mutex> hold(g_layers_lock);
+    std::vector<jlong> out;
+    for (size_t i = 0; i < g_scene_layers.size(); i++) {
+        out.push_back(g_scene_layers[i]);
+        out.push_back(g_scene_xy[2 * i]);
+        out.push_back(g_scene_xy[2 * i + 1]);
+    }
+    jlongArray a = env->NewLongArray(static_cast<jsize>(out.size()));
+    env->SetLongArrayRegion(a, 0, static_cast<jsize>(out.size()), out.data());
+    return a;
+}
+JNIEXPORT jintArray JNICALL Java_MagnifierTest_layerSize(JNIEnv* env, jclass, jlong l) {
+    std::lock_guard<std::mutex> hold(g_layers_lock);
+    auto it = g_layer_sizes.find(l);
+    if (it == g_layer_sizes.end()) return env->NewIntArray(0);
+    const jint wh[2] = {it->second.first, it->second.second};
+    jintArray a = env->NewIntArray(2);
+    env->SetIntArrayRegion(a, 0, 2, wh);
+    return a;
+}
 JNIEXPORT void JNICALL Java_android_graphics_RenderNode_nRequestPositionUpdates(JNIEnv*, jclass, jlong, jobject) {}
 JNIEXPORT jboolean JNICALL Java_android_graphics_HardwareRenderer_nIsDrawingEnabled(JNIEnv*, jclass) { return JNI_TRUE; }
+
+// HardwareRenderer's natives that take a Surface, rebound (MagnifierTest.bindSurfaceNatives, after the
+// native runtime is loaded): Robolectric's read its own Surface's native window, which Win.apk's Surface
+// does not have (the graphics DLL finds a Surface's layer by its layer post: layers.cpp), and crashed the
+// JVM. This harness's layers are numbers with no pixels: a renderer is given no window to draw into, and a
+// copy of a window's pixels (PixelCopy, which a Magnifier asks for its content) never finishes.
+namespace {
+void JNICALL set_surface_none(JNIEnv*, jclass, jlong, jobject, jboolean) {}
+void JNICALL copy_surface_never(JNIEnv*, jclass, jobject, jint, jint, jint, jint, jobject) {}
+}  // namespace
+
+JNIEXPORT jboolean JNICALL Java_MagnifierTest_bindSurfaceNatives(JNIEnv* env, jclass) {
+    jclass c = env->FindClass("android/graphics/HardwareRenderer");
+    if (!c) return JNI_FALSE;
+    const JNINativeMethod m[] = {
+        {const_cast<char*>("nSetSurface"), const_cast<char*>("(JLandroid/view/Surface;Z)V"),
+         reinterpret_cast<void*>(set_surface_none)},
+        {const_cast<char*>("nCopySurfaceInto"),
+         const_cast<char*>("(Landroid/view/Surface;IIIILandroid/graphics/HardwareRenderer$CopyRequest;)V"),
+         reinterpret_cast<void*>(copy_surface_never)},
+    };
+    return env->RegisterNatives(c, m, 2) == 0 ? JNI_TRUE : JNI_FALSE;
+}
 
 // AospAppLifecycleTest.redirectBegin() / redirectEnd(): around System.load of the native runtime, as
 // host/aosp_gfx.cpp does around its LoadLibrary.

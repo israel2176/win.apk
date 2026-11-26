@@ -562,7 +562,12 @@ not affected (they inflate and draw detached views). Both are fixed below.
   layer's canvas comes back in its initial state at each lock, as AOSP's native
   `lockCanvas` gives one (`ViewRootImpl` translates by the surface insets after
   every lock; a floating window's content walked off its layer frame by frame).
-  The relayout sizes a layer with AOSP's `WindowLayout.computeSurfaceSize`
+  A layer built as a child of a window's control (`SurfaceControl.Builder
+  .setParent`: the text `Magnifier`'s popup through a `BLASTBufferQueue`, a
+  drag shadow) is SurfaceFlinger's child layer: Win.apk's `SurfaceControl`
+  keeps the tree, its Transactions set position, z and visibility, and each
+  buffer layer of it is composed with its window, among its siblings by z
+  (`MagnifierTest`). The relayout sizes a layer with AOSP's `WindowLayout.computeSurfaceSize`
   (a dialog's is its frame plus 64 px of surface insets each side).
 - **The system bars** (`Bars`). Which bars exist stays Win.apk's decision:
   none by default (`StatusBarDriver.systemBarsEnabled`), both with
@@ -797,7 +802,8 @@ it; and the AIDL Stubs (the in-process services' own: `INotificationManager`,
 `ActivityThread.getSystemContext()`'s `ContextImpl`, now a `Context` (`Compat.systemContext`, the
 Application) through both rewrites. Left, behind services Win.apk does not offer: augmented
 autofill (`AssistStructure$ViewNodeBuilder`), translation (`ITranslationCallback`), inline
-suggestions (`SurfaceControl$OnReparentListener`) and `LockPatternUtils` (`IStrongAuthTracker`).
+suggestions (`SurfaceControl$OnReparentListener`, since added: a layer's reparent listeners) and
+`LockPatternUtils` (`IStrongAuthTracker`).
 
 A rotation with an override's Resources: Sudoku in a window (Xvfb), Dark mode picked, then the
 window made landscape (1200x700): the night override's Resources follow the application's

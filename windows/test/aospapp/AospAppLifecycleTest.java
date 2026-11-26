@@ -324,6 +324,46 @@ public class AospAppLifecycleTest {
     static native int redirectEnd();
 
     public static void main(String[] args) throws Exception {
+        ApplicationInfo ai = setUp(MANIFEST, App.class.getName());
+        String apk = ai.sourceDir;
+
+        Map<String, ActivityInfo> activities = Map.of(
+                First.class.getName(), activity(ai, First.class),
+                Second.class.getName(), activity(ai, Second.class),
+                Trampoline.class.getName(), activity(ai, Trampoline.class));
+        Configuration config = launchConfig;
+        config.setToDefaults();
+        config.screenWidthDp = 360;
+        config.screenHeightDp = 640;
+        config.densityDpi = 320;
+        config.orientation = Configuration.ORIENTATION_PORTRAIT;
+        config.setLocale(java.util.Locale.US);
+
+        Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                .setClassName(PKG, First.class.getName());
+        com.winapk.aospapp.AospApp.start(ai, config,
+                (intent, type) -> intent.getComponent() != null ? activities.get(intent.getComponent().getClassName()) : null,
+                AospAppLifecycleTest.class.getClassLoader(),
+                packageManager(apk, ai), launch,
+                () -> {
+                    note("task empty");
+                    finish();
+                });
+        Thread watchdog = new Thread(() -> {
+            try { Thread.sleep(60_000); } catch (InterruptedException e) { return; }
+            System.out.println("TIMEOUT");
+            finish();
+        });
+        watchdog.setDaemon(true);
+        watchdog.start();
+        loop();
+    }
+
+    /** What winapk-runtime does before an app's process starts, on this plain JVM: the host library, AOSP's
+     *  graphics on Robolectric's native runtime, the system fonts, the main looper, the framework's
+     *  resources; then the app's ApplicationInfo, its data folders and its manifest (`manifest`, whose
+     *  application is `appClass`). Its sourceDir is the app's APK. MagnifierTest starts from here too. */
+    static ApplicationInfo setUp(String manifest, String appClass) throws Exception {
         String fw = System.getProperty("winapk.aosp.res.framework");
         if (fw == null || !new File(fw).isFile()) throw new IllegalStateException("-Dwinapk.aosp.res.framework=<framework-res-34.apk>");
         String host = System.getProperty("winapk.test.host");   // plainjvm_host.c, built
@@ -356,7 +396,7 @@ public class AospAppLifecycleTest {
         ApplicationInfo ai = new ApplicationInfo();
         ai.packageName = PKG;
         ai.processName = PKG;
-        ai.className = App.class.getName();
+        ai.className = appClass;
         // The resources the app's LoadedApk opens: any APK will do, the framework's by default.
         String apk = System.getProperty("winapk.test.apk", fw);
         if (!new File(apk).isFile()) throw new IllegalStateException("no " + apk);
@@ -368,43 +408,13 @@ public class AospAppLifecycleTest {
         ai.deviceProtectedDataDir = new File(data, "user_de").getPath();
         new File(ai.dataDir).mkdirs();
         new File(ai.deviceProtectedDataDir).mkdirs();
-        java.nio.file.Files.writeString(new File(ai.dataDir, "AndroidManifest.xml").toPath(), MANIFEST);
+        java.nio.file.Files.writeString(new File(ai.dataDir, "AndroidManifest.xml").toPath(), manifest);
         ai.nativeLibraryDir = new File(data, "lib").getPath();
         ai.targetSdkVersion = 34;
         ai.uid = android.os.Process.myUid();
         ai.enabled = true;
         ai.flags = ApplicationInfo.FLAG_HAS_CODE;
-
-        Map<String, ActivityInfo> activities = Map.of(
-                First.class.getName(), activity(ai, First.class),
-                Second.class.getName(), activity(ai, Second.class),
-                Trampoline.class.getName(), activity(ai, Trampoline.class));
-        Configuration config = launchConfig;
-        config.setToDefaults();
-        config.screenWidthDp = 360;
-        config.screenHeightDp = 640;
-        config.densityDpi = 320;
-        config.orientation = Configuration.ORIENTATION_PORTRAIT;
-        config.setLocale(java.util.Locale.US);
-
-        Intent launch = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-                .setClassName(PKG, First.class.getName());
-        com.winapk.aospapp.AospApp.start(ai, config,
-                (intent, type) -> intent.getComponent() != null ? activities.get(intent.getComponent().getClassName()) : null,
-                AospAppLifecycleTest.class.getClassLoader(),
-                packageManager(apk, ai), launch,
-                () -> {
-                    note("task empty");
-                    finish();
-                });
-        Thread watchdog = new Thread(() -> {
-            try { Thread.sleep(60_000); } catch (InterruptedException e) { return; }
-            System.out.println("TIMEOUT");
-            finish();
-        });
-        watchdog.setDaemon(true);
-        watchdog.start();
-        loop();
+        return ai;
     }
 
     /** Looper.loop()'s body, but an exception out of a message fails the test: Win.apk's main loop

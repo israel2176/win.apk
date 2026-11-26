@@ -537,6 +537,10 @@ to top as `Compositor` (`windows/java/aosp_views`) orders them as
 WindowManagerService would, with the dim layer under a `FLAG_DIM_BEHIND`
 window, into the host window's ANGLE surface, placed where the window puts the
 phone (`host/hwui_host.cpp`, `window_gpu_layout`); SurfaceFlinger's part. A
+buffer layer an app builds under a window's `SurfaceControl` (the text
+magnifier's popup, a drag shadow) is a layer as well, which Win.apk's
+`SurfaceControl` keeps in SurfaceFlinger's tree (parent, position, z, shown, as
+Transactions set them) and `Compositor` draws over its window. A
 window drawn in software (`hardwareAccelerated="false"`) posts its bitmap to
 its layer. What the host has as pixels (a GL view read back, a SurfaceView's
 `lockCanvas`, an app's native window, a video frame) is a host layer under the
