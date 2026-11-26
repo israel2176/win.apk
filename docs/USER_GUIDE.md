@@ -142,7 +142,7 @@ Android phones use ARM processors; a PC uses x86-64. An app's native code
 | No native libraries (Java or Kotlin only) | Runs directly |
 | `lib/x86_64` | Loads those libraries directly, at full speed. Win.apk prefers this build whenever the APK or bundle has it |
 | Only `lib/arm64-v8a` | Translates the libraries to x64 in the background; the app runs on an ARM64 JIT until the translation is ready |
-| Only `lib/armeabi-v7a` (32-bit ARM) | Not supported. The app installs but stops when it loads that code; look for an x86_64 or arm64-v8a build |
+| Only `lib/armeabi-v7a` (32-bit ARM) | Not supported. The install is refused, as on a phone with no ARM support (`INSTALL_FAILED_NO_MATCHING_ABIS`), and says so; look for an x86_64 or arm64-v8a build |
 
 #### ARM-only apps
 
