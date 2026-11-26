@@ -12786,6 +12786,19 @@ void maybe_quit() {
     DestroyWindow(g_main);
 }
 
+// Every GDI+ object the launcher keeps, released while GDI+ still runs: a static's destructor that ran after
+// GdiplusShutdown would call into a GDI+ that is gone and crash the exit. Every way out of wWinMain that started
+// GDI+ comes through here, so a new kept picture or font is added once, below.
+void release_graphics() {
+    g_icons.clear();
+    g_brand.reset();
+    g_account_photo.reset();
+    g_pending_looks.clear();
+    for (Job& j : g_jobs) j.icon.reset();
+    for (auto& [name, splash] : g_splashes) splash->icon.reset();
+    g_f = Fonts{};
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
@@ -12814,7 +12827,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         make_fonts();
         const int code = helper_main(argc, argv);
         LocalFree(argv);
-        g_f = Fonts{};
+        release_graphics();
         Gdiplus::GdiplusShutdown(gdiplus);
         OleUninitialize();
         return code;
@@ -12853,7 +12866,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         make_fonts();
         const int code = permission_main(argc, argv);
         LocalFree(argv);
-        g_f = Fonts{};
+        release_graphics();
         Gdiplus::GdiplusShutdown(gdiplus);
         OleUninitialize();
         return code;
@@ -12926,8 +12939,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         DispatchMessageW(&m);
     }
     end_background_work();
-    g_icons.clear();
-    g_f = Fonts{};
+    release_graphics();
     Gdiplus::GdiplusShutdown(gdiplus);
     OleUninitialize();
     return 0;
