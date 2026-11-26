@@ -181,8 +181,14 @@ under **Manage apps & device**.
   or so while it is open, even when only an app or the install window is
   showing, and only when the PC is on mains power and has a network. Nothing
   runs once Win.apk is closed: there is no scheduled task or service, and
-  Win.apk does not stay open just for updates (it waits only for an update
-  window it has already started). Earlier versions made a task named
+  Win.apk does not stay open just for updates. Closing the library stops
+  them: no update window starts after that, and once no app window is left
+  the one under way ends at once, with the Google apps it started (an update
+  being installed is cut off as by a phone's power-off, and the Play Store
+  tries it again later). Only when Win.apk was started for an app or an
+  install, with the library never opened, does it wait, after that window
+  closes, for an update window it has already started (a few minutes).
+  Earlier versions made a task named
   **Win.apk\Background updates** in Windows' Task Scheduler; Win.apk deletes
   it the first time it starts.
 - **An app you are using.** When the Play Store asks Android to wait until

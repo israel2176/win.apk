@@ -236,10 +236,11 @@ const wchar_t* tr(const wchar_t* en) {
          L"ממיר ברקע קוד ARM לקוד של המחשב, כדי שהאפליקציות ירוצו מהר יותר. פועל בעדיפות נמוכה."},
         {L"Report Google Play as the installer", L"דיווח על Google Play כמקור ההתקנה"},
         {L"Update apps in the background", L"עדכון אפליקציות ברקע"},
-        {L"While Win.apk is open, even in the background, Google services start for a few minutes every few hours "
-         L"so the Play Store can update your apps, as a phone does. Only on mains power.",
-         L"כל עוד Win.apk פתוחה, גם ברקע, שירותי Google פועלים לכמה דקות כל כמה שעות כדי שחנות Play תוכל לעדכן "
-         L"את האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל."},
+        {L"While Win.apk is open, even with only an app showing, Google services start for a few minutes every few "
+         L"hours so the Play Store can update your apps, as a phone does. Only on mains power. Closing Win.apk stops "
+         L"them.",
+         L"כל עוד Win.apk פתוחה, גם כשמוצגת רק אפליקציה, שירותי Google פועלים לכמה דקות כל כמה שעות כדי שחנות Play "
+         L"תוכל לעדכן את האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל. סגירת Win.apk עוצרת אותם."},
         {L"Apps you install appear to come from Google Play, as some banking apps require.",
          L"האפליקציות שמתקינים נראות כאילו הותקנו מ-Google Play, כפי שחלק מאפליקציות הבנקים דורשות."},
         {L"Performance", L"ביצועים"},
@@ -5602,9 +5603,9 @@ Section google_account_section() {
         Row bg;
         bg.kind = Row::kToggle;
         bg.title = tr(L"Update apps in the background");
-        bg.detail = tr(L"While Win.apk is open, even in the background, Google services start for a few minutes "
-                       L"every few hours so the Play Store can update your apps, as a phone does. Only on mains "
-                       L"power.");
+        bg.detail = tr(L"While Win.apk is open, even with only an app showing, Google services start for a few "
+                       L"minutes every few hours so the Play Store can update your apps, as a phone does. Only on "
+                       L"mains power. Closing Win.apk stops them.");
         bg.on = setting(L"BackgroundUpdates", 1) != 0;
         bg.act = [](int on) {
             set_setting(L"BackgroundUpdates", static_cast<DWORD>(on));
@@ -5705,9 +5706,12 @@ bool google_apps_ready() {
 // maintenance window every few hours while it runs, shown or hidden: `winapk-runtime --system --maintenance`
 // boots Google services, runs the jobs that are due (their own constraints decide: network, unmetered,
 // charging) and stops a few minutes after the last. The rule: only while Win.apk runs, never from a
-// Windows scheduled task or a service; the launcher is not kept alive for it, but waits for a window it opened
-// (maybe_quit). When is decided in maintenance.h; the window's conditions are Android's too: only on mains
-// power, with a network. Logs: logs\maintenance.log.
+// Windows scheduled task or a service; the launcher is not kept alive for it, but a launcher never shown waits
+// for a window it opened (maybe_quit). Closing the library is closing Win.apk: from then on no window is
+// opened, and once no app window is on screen the launcher quits without waiting, which ends the window's
+// broker and the apps it started (end_background_work; the broker writes its files whole, and a Play Store
+// install under way is cut off as a phone's power-off cuts it). When is decided in maintenance.h; the
+// window's conditions are Android's too: only on mains power, with a network. Logs: logs\maintenance.log.
 
 namespace mw = winapk::launcher::maintenance;
 
@@ -5719,6 +5723,9 @@ bool any_splash();
 constexpr wchar_t kMaintenanceTask[] = L"Win.apk\\Background updates";
 
 HANDLE g_maintenance = nullptr;  // the window this launcher opened, until kMaintenanceEnded
+// The user closed the library (WM_CLOSE) and has not shown it again (show_library): Win.apk is on its way out,
+// so no maintenance window is opened and a running one is not waited for (maintenance.h).
+bool g_closed_by_user = false;
 
 bool background_updates_on() { return google_services_on() && setting(L"BackgroundUpdates", 1) != 0; }
 
@@ -5800,6 +5807,7 @@ void maintenance_check() {
     c.apps_ready = c.setting_on && google_apps_ready();
     c.window_running = g_maintenance != nullptr;
     c.app_starting = any_splash();
+    c.closed_by_user = g_closed_by_user;
     if (c.setting_on && c.apps_ready && !c.window_running) {
         c.broker_running = broker_running();
         c.on_mains = on_mains_power();
@@ -10655,6 +10663,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_CLOSE:
             save_window_size();
+            // The user closes Win.apk: what it started in the background ends once nothing of it is on screen,
+            // a maintenance window included (g_closed_by_user, maybe_quit).
+            g_closed_by_user = true;
             // The Store and Google Play live in this window: they close with it.
             for (const Embedded* e : {&g_store_app, &g_play}) {
                 if (!e->name.empty() && e->up()) stop_run(e->name);
@@ -12563,6 +12574,7 @@ bool forward_to_running(bool show_library, const std::vector<fs::path>& files) {
 
 // The library window as it was last left: its size and whether it was maximized.
 void show_library(int show) {
+    g_closed_by_user = false;  // Win.apk is open again: background updates go on (maintenance_check)
     if (IsWindowVisible(g_main)) {
         if (IsIconic(g_main)) ShowWindow(g_main, SW_RESTORE);
     } else {
@@ -12639,17 +12651,20 @@ void end_background_work() {
 }
 
 // When the library is not shown, the process lives only for what it is doing: an install window,
-// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened,
-// and an app's window it did not start (looked at again every few seconds), so that the broker such an
-// app uses is not ended under it (end_background_work).
+// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened
+// (only when the user did not close the library: maintenance.h, wait_for_window), and an app's window it
+// did not start (looked at again every few seconds), so that the broker such an app uses is not ended under
+// it (end_background_work).
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
     if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
-    if (g_maintenance) return;  // a maintenance window it opened: waits for its end (kMaintenanceEnded)
     if (!windowed_processes().empty()) {
         SetTimer(g_main, kQuitTimer, 3000, nullptr);
         return;
     }
+    // Nothing of Win.apk on screen: a maintenance window it opened is waited for (kMaintenanceEnded) unless
+    // the user closed the library, when the process ends now and end_background_work ends the window too.
+    if (mw::wait_for_window(g_maintenance != nullptr, g_closed_by_user)) return;
     DestroyWindow(g_main);
 }
 
