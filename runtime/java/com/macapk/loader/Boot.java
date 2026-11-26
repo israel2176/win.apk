@@ -163,6 +163,10 @@ public final class Boot {
         if (System.getProperty("winapk.android.root") == null) return hostDir;
         try {
             NativeCocoa.setAppData(packageName, hostDir.getAbsolutePath());
+            // The same mapping for an Android program the app starts with ProcessBuilder
+            // (java.base overlay's jdk.internal.util.WinApkExec hands it to winapk-exec).
+            System.setProperty("winapk.app.package", packageName);
+            System.setProperty("winapk.app.data", hostDir.getAbsolutePath());
             return new File("/data/user/0/" + packageName);
         } catch (UnsatisfiedLinkError notWinApk) {
             return hostDir;

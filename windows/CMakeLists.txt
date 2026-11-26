@@ -44,6 +44,7 @@ add_library(winapk_loader STATIC
   src/bionic/looper.cpp
   src/bionic/zlib.cpp
   src/bionic/setjmp.cpp
+  src/bionic/process.cpp
   src/abi_thunk.cpp
   src/linker.cpp
   src/arm64/arm64_cpu.cpp
@@ -107,6 +108,14 @@ endif()
 
 add_executable(winapk-elfrun tools/elfrun_main.cpp)
 target_link_libraries(winapk-elfrun PRIVATE winapk_loader)
+
+# An Android program an app starts as a child process (host/exec_main.cpp; src/bionic/process.cpp
+# starts it), with a Linux-sized main stack (8 MB).
+add_executable(winapk-exec host/exec_main.cpp)
+target_link_libraries(winapk-exec PRIVATE winapk_loader)
+# posix_spawn, waitpid and kill on a child running test/guest/exec_guest.c under winapk-exec.
+add_executable(winapk-exec-test test/exec_test.cpp)
+target_link_libraries(winapk-exec-test PRIVATE winapk_loader)
 
 add_executable(winapk-thunk-test test/thunk_test.cpp)
 target_link_libraries(winapk-thunk-test PRIVATE winapk_loader)
@@ -218,6 +227,8 @@ target_include_directories(winapk-aot PRIVATE include)
 if(MINGW)
   # One self-contained .exe: no libstdc++/libgcc/winpthread DLLs next to it.
   target_link_options(winapk-elfrun PRIVATE -static)
+  target_link_options(winapk-exec PRIVATE -static -municode -Wl,--stack,8388608)
+  target_link_options(winapk-exec-test PRIVATE -static)
   target_link_options(winapk-thunk-test PRIVATE -static)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)

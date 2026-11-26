@@ -2002,8 +2002,9 @@ static void test_missing_forms(const char* dir) {
     // What Win.apk cannot do fails as Linux reports it (and says so once in the log).
     int pid = 0;
     char* argv[] = {"sh", 0};
-    check("posix_spawn answers ENOSYS", posix_spawn(&pid, "/system/bin/sh", 0, 0, argv, environ) == 38, 0);
-    check("execv returns -1 with ENOSYS", execv("/system/bin/sh", argv) == -1 && *__errno() == 38, 0);
+    // No shell here: a device's /system/bin/sh is a file that does not exist (src/bionic/process.cpp).
+    check("posix_spawn of the shell: ENOENT", posix_spawn(&pid, "/system/bin/sh", 0, 0, argv, environ) == 2, 0);
+    check("execv of the shell returns -1 with ENOENT", execv("/system/bin/sh", argv) == -1 && *__errno() == 2, 0);
     check("wait4 has no child: ECHILD", wait4(-1, 0, 0, 0) == -1 && *__errno() == 10, 0);
     int master = 0, slave = 0;
     check("openpty: ENOENT, there is no /dev/ptmx", openpty(&master, &slave, 0, 0, 0) == -1 && *__errno() == 2, 0);
