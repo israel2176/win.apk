@@ -3944,6 +3944,14 @@ every such change is listed here:
   and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
   is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
   `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
+- `runtime/java/android/media/AudioManager.java`: the streams' volumes as AOSP's AudioService keeps them, one
+  per stream for the process (they were per `AudioManager` object, so a value set was lost at the next
+  `getSystemService`), in AOSP's ranges and defaults, with AOSP's aliasing for a device without telephony;
+  the media stream (and text to speech, accessibility) is Windows' default output device's volume and mute,
+  read and set through `com/macapk/loader/HostVolume.java` (new; `windows/host/native_volume.cpp`,
+  `IAudioEndpointVolume`), as an app sets a phone's media volume. `adjustStreamVolume`, `adjustVolume`,
+  `setStreamMute` and `isStreamMute` act on them (they did nothing); `isMusicActive` is whether an audio
+  session plays on the default output device.
 
 ## License
 

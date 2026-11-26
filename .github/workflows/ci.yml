@@ -650,6 +650,14 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
+      - name: Run the stream volumes test
+        run: |
+          # AudioManager's stream volumes as AOSP's AudioService keeps them (ranges, defaults, aliasing,
+          # mute, adjust), on a plain JVM: no output device, so the media stream stays in the process.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/volume-test windows/test/java/android/media/AudioManagerVolumeTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/volume-test)" android.media.AudioManagerVolumeTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.

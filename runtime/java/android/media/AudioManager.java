@@ -4,24 +4,128 @@ public class AudioManager {
     public static final int STREAM_SYSTEM = 1;
     public static final int FLAG_PLAY_SOUND = 0x4;
 
-    // AOSP: setStreamVolume(streamType, index, flags) persists the index per
-    // streamType (in AudioService); a later getStreamVolume(SAME streamType)
-    // must read back what was just set. We have no AudioService, so the
-    // index is persisted here instead. Sized to cover every STREAM_* index
-    // declared below (0..STREAM_ACCESSIBILITY==10). Defaulted to 7 in the
-    // constructor to match the flat value getStreamVolume() used to return
-    // unconditionally, so an app that never calls setStreamVolume sees no
-    // change. This does NOT drive the real CoreAudio output gain (that
-    // needs an AVAudioEngine.mainMixerNode.outputVolume hook in
-    // runtime/src/audio_backend.mm, a file this class does not own) -- it
-    // only makes the Java-visible state honest for callers that read back
-    // what they wrote (volume UI, mute toggles).
+    // The streams' volumes, as AOSP's AudioService keeps them: one value per stream for the whole
+    // device (static here: every AudioManager of the process reads the same, as every app reads the
+    // device's), each in AOSP's own range (AudioService.MAX_STREAM_VOLUME / MIN_STREAM_VOLUME) and
+    // starting at AOSP's default (AudioSystem.DEFAULT_STREAM_VOLUME). The media stream, and the
+    // streams AOSP aliases to it on a device without telephony (STREAM_VOLUME_ALIAS_DEFAULT: text to
+    // speech, accessibility), is Windows' output volume: the default output device's master volume
+    // and mute (com.macapk.loader.HostVolume), which the taskbar and the volume keys move, read on
+    // every call and set by setStreamVolume as an app sets a phone's media volume. The other streams
+    // keep their index in the process: Windows has one output volume, and their sounds play at it.
     private static final int STREAM_TYPE_COUNT = 11;
-    private final int[] mStreamVolume = new int[STREAM_TYPE_COUNT];
+    private static final int[] MAX_VOLUME = {5, 7, 7, 15, 7, 7, 15, 7, 15, 15, 15};
+    private static final int[] MIN_VOLUME = {1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0};
+    private static final int[] sStreamVolume = {4, 7, 5, 5, 6, 5, 7, 7, 5, 5, 5};
+    private static final boolean[] sStreamMute = new boolean[STREAM_TYPE_COUNT];
 
-    public AudioManager() {
-        java.util.Arrays.fill(mStreamVolume, 7);
+    /** AOSP's STREAM_VOLUME_ALIAS_DEFAULT (a device that is not voice capable): which stream's volume
+     *  a stream uses. */
+    private static final int[] ALIAS = {0, 2, 2, 3, 4, 2, 0, 2, 2, 3, 3};
+
+    private static boolean followsHost(int streamType) {
+        return ALIAS[streamType] == STREAM_MUSIC && com.macapk.loader.HostVolume.masterVolume() >= 0f;
     }
+
+    private static boolean validStream(int streamType) {
+        return streamType >= 0 && streamType < STREAM_TYPE_COUNT;
+    }
+
+    public AudioManager() {}
+
+    public int getStreamVolume(int streamType) {
+        if (!validStream(streamType)) throw new IllegalArgumentException("Bad stream type " + streamType);
+        int alias = ALIAS[streamType];
+        if (followsHost(streamType)) {
+            // A muted device reads 0 at the media stream, as AOSP's getStreamVolume of a muted stream.
+            if (com.macapk.loader.HostVolume.muted() == 1) return 0;
+            return Math.round(com.macapk.loader.HostVolume.masterVolume() * MAX_VOLUME[alias]);
+        }
+        synchronized (sStreamVolume) {
+            return sStreamMute[alias] ? 0 : sStreamVolume[alias];
+        }
+    }
+
+    public int getStreamMaxVolume(int streamType) {
+        if (!validStream(streamType)) throw new IllegalArgumentException("Bad stream type " + streamType);
+        return MAX_VOLUME[ALIAS[streamType]];
+    }
+
+    public int getStreamMinVolume(int streamType) {
+        if (!validStream(streamType)) throw new IllegalArgumentException("Bad stream type " + streamType);
+        return MIN_VOLUME[ALIAS[streamType]];
+    }
+
+    public void setStreamVolume(int streamType, int index, int flags) {
+        if (!validStream(streamType)) throw new IllegalArgumentException("Bad stream type " + streamType);
+        int alias = ALIAS[streamType];
+        index = Math.max(MIN_VOLUME[alias], Math.min(MAX_VOLUME[alias], index));
+        if (followsHost(streamType)) {
+            com.macapk.loader.HostVolume.setMasterVolume((float) index / MAX_VOLUME[alias]);
+            // AOSP: setting a muted stream's volume above 0 unmutes it.
+            if (index > 0 && com.macapk.loader.HostVolume.muted() == 1) com.macapk.loader.HostVolume.setMuted(false);
+            return;
+        }
+        synchronized (sStreamVolume) {
+            sStreamVolume[alias] = index;
+            if (index > 0) sStreamMute[alias] = false;
+        }
+    }
+
+    /** AOSP adjustStreamVolume: one step up or down, or mute, unmute and toggle. */
+    public void adjustStreamVolume(int streamType, int direction, int flags) {
+        if (!validStream(streamType)) throw new IllegalArgumentException("Bad stream type " + streamType);
+        switch (direction) {
+            case ADJUST_MUTE: setStreamMute(streamType, true); return;
+            case ADJUST_UNMUTE: setStreamMute(streamType, false); return;
+            case ADJUST_TOGGLE_MUTE: setStreamMute(streamType, !isStreamMute(streamType)); return;
+            case ADJUST_SAME: return;
+            case ADJUST_RAISE:
+            case ADJUST_LOWER: {
+                if (isStreamMute(streamType)) {
+                    // AOSP: a step on a muted stream unmutes it (raising) or keeps it muted.
+                    if (direction == ADJUST_RAISE) setStreamMute(streamType, false);
+                    return;
+                }
+                setStreamVolume(streamType, getStreamVolume(streamType) + direction, flags);
+                return;
+            }
+            default:
+                throw new IllegalArgumentException("Bad direction " + direction);
+        }
+    }
+
+    /** AOSP adjustVolume / adjustSuggestedStreamVolume: the stream a phone picks with no call or ring
+     *  going on is the media stream. */
+    public void adjustVolume(int direction, int flags) { adjustStreamVolume(STREAM_MUSIC, direction, flags); }
+
+    public void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags) {
+        adjustStreamVolume(suggestedStreamType == USE_DEFAULT_STREAM_TYPE ? STREAM_MUSIC : suggestedStreamType,
+                direction, flags);
+    }
+
+    public boolean isStreamMute(int streamType) {
+        if (!validStream(streamType)) return false;
+        if (followsHost(streamType)) return com.macapk.loader.HostVolume.muted() == 1;
+        synchronized (sStreamVolume) {
+            return sStreamMute[ALIAS[streamType]];
+        }
+    }
+
+    public void setStreamMute(int streamType, boolean state) {
+        if (!validStream(streamType)) return;
+        if (followsHost(streamType)) {
+            com.macapk.loader.HostVolume.setMuted(state);
+            return;
+        }
+        synchronized (sStreamVolume) {
+            sStreamMute[ALIAS[streamType]] = state;
+        }
+    }
+
+    /** AOSP isMusicActive: whether any sound plays on the device's output now (Windows' active audio
+     *  sessions on the default output device, this app's own among them). */
+    public boolean isMusicActive() { return com.macapk.loader.HostVolume.anyActive(); }
 
     // HISTORY: getProperty(String) was deliberately ABSENT v1.0.270..v1.0.601.
     // libunity's native audio bringup does GetMethodID("getProperty", ...) and only
@@ -35,25 +139,6 @@ public class AudioManager {
     // below (real Android has it; FMOD/MCPE needs it for audio output). Protected sweep
     // must confirm Crossy/Unity still reach their menu.
 
-    public int  getStreamVolume(int streamType) {
-        if (streamType < 0 || streamType >= mStreamVolume.length) return 7;
-        return mStreamVolume[streamType];
-    }
-    public int  getStreamMaxVolume(int streamType) { return 15; }
-    public void setStreamVolume(int streamType, int index, int flags) {
-        if (streamType < 0 || streamType >= mStreamVolume.length) return;
-        int min = getStreamMinVolume(streamType);
-        int max = getStreamMaxVolume(streamType);
-        if (index < min) index = min;
-        if (index > max) index = max;
-        mStreamVolume[streamType] = index;
-    }
-    // isMusicActive() stays hardcoded false: an honest answer needs to query
-    // whether any Stream in audio_backend.mm's g_streams is PLAYSTATE_PLAYING
-    // (real AOSP forwards to IAudioService.isMusicActive(false), which is
-    // the same kind of live-engine query), and that file is native code this
-    // class does not own. See followups.
-    public boolean isMusicActive() { return false; }
     public void setSpeakerphoneOn(boolean on) {}
     public boolean isWiredHeadsetOn() { return false; }
 
@@ -303,12 +388,6 @@ public class AudioManager {
     // ExoPlayer call this to tag effects/tracks; -1 / 0 are reserved sentinels.
     public int generateAudioSessionId() { return mSessionIds.incrementAndGet(); }
 
-    public void adjustVolume(int direction, int flags) {}
-    public void adjustStreamVolume(int streamType, int direction, int flags) {}
-    public void adjustSuggestedStreamVolume(int direction, int suggestedStreamType, int flags) {}
-    public int getStreamMinVolume(int streamType) { return 0; }
-    public boolean isStreamMute(int streamType) { return false; }
-    public void setStreamMute(int streamType, boolean state) {}
 
     // Plays a UI sound effect (key click, focus nav). No backend wiring, but the
     // method must exist: View.playSoundEffect routes here on every click.
