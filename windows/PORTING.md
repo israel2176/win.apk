@@ -1030,7 +1030,11 @@ on the window would skip the copy; that is left for later.
 
 An app's native code gets the same display (`host/gl/guest_gl.cpp`): every
 GLES 1.1-3.2, GLES 2 extension and EGL 1.5 function wrapped for the System V
-convention (`guest_gl.inc`, generated with the forwarders), and the EGL calls
+convention (`guest_gl.inc`, generated with the forwarders), GLES 1's extension
+functions that ANGLE's GLES 1 front end has (`OES_draw_texture`,
+`OES_framebuffer_object`, `OES_matrix_palette`, `OES_query_matrix`, texture
+coordinate generation; `ANGLE_GLES1_EXT`: SDL 1.2's renderer draws with
+`glDrawTexiOES`), and the EGL calls
 that need a window by hand. Its `ANativeWindow` (`host/native_window.cpp`) is a
 size and a format; a window surface on it is a square pbuffer as long as the
 window's longer side, so the app can turn to landscape after making it, and

@@ -497,7 +497,9 @@ checked against its SHA-256.
   ANGLE up on first use, so the runtime starts without it.
 - **From native code** (`host/gl/guest_gl.cpp`): every GLES 1.1 to 3.2 and
   EGL 1.5 function wrapped for the System V convention, the Khronos and
-  ANGLE/Chromium extensions' functions too (`third_party/angle/`'s
+  ANGLE/Chromium extensions' functions too (GLES 1's those ANGLE has:
+  `glDrawTex*OES`, `glBindFramebufferOES`...; `OES_fixed_point`'s `gl*xOES`
+  are not ANGLE's and stay missing) (`third_party/angle/`'s
   `gl2ext_angle.h`), plus the EGL calls that need a window. `GL_EXTENSIONS`
   and `EGL_EXTENSIONS` name only the extensions whose every function the app
   can call and the ANGLE loaded resolves (`host/gl/guest_gl_extensions.cpp`):
