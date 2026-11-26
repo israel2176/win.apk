@@ -297,9 +297,15 @@ listed in [Compatibility](APPS.md#what-works).
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
-Closing the library while an app it started is still running, or while an
-install is under way, only hides it: Win.apk stays until those finish, so it
-can still report an app that stops with an error.
+Closing the library while an app is still running, or while an install is
+under way, only hides it: Win.apk stays until those finish, so it can still
+report an app that stops with an error.
+
+When Win.apk ends (the library closed and no app open), everything it
+started in the background ends with it: the translation of ARM apps, the
+system broker and the Google account's service. Nothing of Win.apk goes on
+running with nothing on screen; translation goes on where it was the next
+time.
 
 Apps run with your Windows user account's permissions. There is no
 phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md)).

@@ -34,7 +34,7 @@ data protection, DPAPI).
   background token service). An app that needs Google asks that service and
   gets a short-lived token for what it asked, minted for that app and no
   other. The service starts when an app first needs it and stops by itself
-  after a few idle minutes; its log is `logs\gms-tokens.log`. A token saved
+  after a few idle minutes, or when Win.apk ends; its log is `logs\gms-tokens.log`. A token saved
   by an older Win.apk is encrypted and moved the first time Win.apk's Google
   side opens it.
 
@@ -236,7 +236,7 @@ installed again, it gets a new ID, which has to be registered again.
 - Each app runs in its own process. A small background process, the system
   broker (`winapk-runtime --system`), lets one app reach another's services,
   as Android's system server does. The first app that needs it starts it, and
-  it exits a minute after the last app closes. It checks what Android checks
+  it exits a minute after the last app closes, or at once when Win.apk ends. It checks what Android checks
   before one app reaches another: a service, data or message that an app
   keeps for apps signed by the same key, or for apps that asked for a
   permission, is refused to the others. Google's apps reach each other, and
