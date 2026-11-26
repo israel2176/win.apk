@@ -45,6 +45,7 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include "winapk/long_path.h"
 #include "winapk/mini_bionic.h"
 
 namespace winapk::bionic {
@@ -342,25 +343,12 @@ std::wstring mapped_path(const char* p) {
 
 }  // namespace
 
-// A path near MAX_PATH by the long-path form of its full path (normalized first:
-// under "\\?\" Windows takes '/' and ".." as names); a shorter one as it is.
+// A path near MAX_PATH by the long-path form of its full path (long_path.h); a shorter one as it is.
 // An app's data folder sits under %LOCALAPPDATA%\Win.apk\android\data\data\<package>,
 // and its own deep files (Crashlytics' sessions name the package twice, Dart's caches,
 // a WebView's) pass 260 characters with a long user name or package; without the
 // long-path policy (off on most PCs) every such file call failed.
-std::wstring file_path(const char* p) {
-    std::wstring w = host_path(p);
-    if (w.size() < MAX_PATH - 12 || w.rfind(L"\\\\?\\", 0) == 0) return w;
-    const DWORD n = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
-    if (n == 0) return w;
-    std::wstring full(n, L'\0');
-    const DWORD m = GetFullPathNameW(w.c_str(), n, &full[0], nullptr);
-    if (m == 0 || m >= n) return w;
-    full.resize(m);
-    if (full.rfind(L"\\\\?\\", 0) == 0) return full;
-    if (full.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + full.substr(2);
-    return L"\\\\?\\" + full;
-}
+std::wstring file_path(const char* p) { return long_path(host_path(p)); }
 
 }  // namespace winapk::bionic
 

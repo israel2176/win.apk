@@ -173,7 +173,7 @@ private:
     void unload(GuestLibrary* root, const std::unordered_set<GuestLibrary*>& kept);
     static void on_thread_dtor_added(const void* dso);
     static void on_thread_dtor_removed(const void* dso);
-    std::filesystem::path locate(const std::string& name, const std::filesystem::path& near) const;
+    std::filesystem::path locate(const std::string& name, const std::filesystem::path& needer_dir) const;
     std::vector<GuestLibrary*> local_group(GuestLibrary* root) const;
     void* find_in(GuestLibrary* lib, const char* name) const;
     void* resolve_linker_owned(const char* name) const;
