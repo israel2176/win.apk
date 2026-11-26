@@ -493,35 +493,5 @@ public final class AospViewHost implements ViewHost {
     @Override public boolean presentVideoFrame(Surface surface, int[] argb, int width, int height) {
         return mWinApk.presentVideoFrame(surface, argb, width, height);
     }
-    @Override public boolean isSurfaceViewGlThread(Thread thread) { return mWinApk.isSurfaceViewGlThread(thread); }
-    @Override public void markGlThreadSurvivedRefusal(Thread thread, String call) {
-        mWinApk.markGlThreadSurvivedRefusal(thread, call);
-    }
-    @Override public boolean glWaitFrame() { return mWinApk.glWaitFrame(); }
-    @Override public boolean holderSizeIsBufferSize() { return mWinApk.holderSizeIsBufferSize(); }
     @Override public boolean isZOrderOnTop(SurfaceView view) { return mWinApk.isZOrderOnTop(view); }
-    @Override public boolean rendersOnOsMain(SurfaceView view) { return mWinApk.rendersOnOsMain(view); }
-    @Override public boolean forkGlQueueServiced(SurfaceView view) { return mWinApk.forkGlQueueServiced(view); }
-    @Override public boolean rendererMayStart(SurfaceView view, int displayW, int displayH) {
-        return mWinApk.rendererMayStart(view, displayW, displayH);
-    }
-    @Override public int[] rendererSurfaceSize(SurfaceView view, int displayW, int displayH) {
-        return mWinApk.rendererSurfaceSize(view, displayW, displayH);
-    }
-    @Override public void warnGlSizeSplit(SurfaceView view, int toldW, int toldH, int displayW, int displayH) {
-        mWinApk.warnGlSizeSplit(view, toldW, toldH, displayW, displayH);
-    }
-    @Override public int[] driveOverlayForCurrentSurface(SurfaceView view) {
-        return mWinApk.driveOverlayForCurrentSurface(view);
-    }
-    @Override public void convergeSurfaceLifecycle(SurfaceView view, int widthPx, int heightPx) {
-        mWinApk.convergeSurfaceLifecycle(view, widthPx, heightPx);
-    }
-    @Override public void detectDrawBehindTop(SurfaceView view, Object renderer) {
-        mWinApk.detectDrawBehindTop(view, renderer);
-    }
-    @Override public void noteNativeDisplaySize(SurfaceView view, int w, int h) {
-        mWinApk.noteNativeDisplaySize(view, w, h);
-    }
-    @Override public boolean ownerStoppedUnderTop(SurfaceView view) { return mWinApk.ownerStoppedUnderTop(view); }
 }

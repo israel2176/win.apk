@@ -104,24 +104,6 @@ public final class MacApkEGL10 implements EGL10 {
                     CONFIGS[i++] = new Config(id++, c[0], c[1], c[2], c[3], d, s);
     }
 
-    /** The EGLConfig a GLSurfaceView renderer receives in onSurfaceCreated:
-     *  the table row describing the window surface the renderer really draws
-     *  into, angle_glue.cpp AngleInit's config (RGBA 8888, depth 24, stencil
-     *  0). AOSP never passes null there: GLThread.guardedRun calls
-     *  view.mRenderer.onSurfaceCreated(gl, mEglHelper.mEglConfig)
-     *  (android14-release opengl/java/android/opengl/GLSurfaceView.java:1541),
-     *  the config its EGLConfigChooser picked. A Kotlin renderer declares the
-     *  parameter non-null and throws on null (LibretroDroid's GLRetroView,
-     *  which then never initialised its core's GL state). eglGetConfigAttrib
-     *  on it answers from this table row. MACAPK_GL_SURFACE_CONFIG=0 restores
-     *  the old null. */
-    public static EGLConfig macapkWindowSurfaceConfig() {
-        for (Config c : CONFIGS)
-            if (c.r == 8 && c.g == 8 && c.b == 8 && c.a == 8 && c.depth == 24 && c.stencil == 0)
-                return c;
-        return CONFIGS[0];
-    }
-
     /** Thread-local last EGL error, read-and-cleared by eglGetError
      *  (spec semantics). */
     private static final ThreadLocal<Integer> LAST_ERROR =
