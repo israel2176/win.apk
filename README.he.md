@@ -71,7 +71,7 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 | קוד מקורי x86_64 | ‏`MediaCodec`: וידאו H.264 עם שמע AAC/MP3 | ‏Vulkan |
 | ‏OpenGL ES 1.1 עד 3.2 על Direct3D 11, משחקי `NativeActivity` | ‏Bluetooth: התקנים מצומדים, RFCOMM, סריקת LE ולקוח GATT | |
 | שמע (AudioTrack, SoundPool, פלט AAudio, ‏OpenSL ES), מיקרופון | ‏Wi-Fi: מידע בלבד, בלי התחברות לרשת | ממשק המדיה של ה-NDK (`AMediaCodec`) |
-| וידאו (`MediaPlayer`, `VideoView`) על Media Foundation | התראות: בלי כפתורי פעולה | חיישנים אמיתיים (לא מדווח אף חיישן) |
+| וידאו (`MediaPlayer`, `VideoView`) על Media Foundation | התראות: בלי בחירת תשובות מוכנות ובלי תמונות | חיישנים אמיתיים (לא מדווח אף חיישן) |
 | ‏WebView ו-Custom Tabs על WebView2 | שירותי Google Play וחנות Play המקוריים (ניסיוני) | רכישות מתוך אפליקציה, Play Integrity, המפה של Maps SDK |
 | מצלמה, מיקום, לוח, בחירת קבצים, בקרי Xbox | קלט: אצבע אחת, בלי מגע מרובה | |
 | הרשאות, כניסה עם Google, הודעות Push ‏(FCM) | | |
