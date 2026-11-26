@@ -92,6 +92,8 @@ public final class AospApp {
         Services.register("package", android.content.pm.IPackageManager.class, new PackageService(this));
         Services.register(Context.SLICE_SERVICE, android.app.slice.ISliceManager.class,
                 new SliceService(this, new Handler(system.getLooper())));
+        Services.register(Context.SAFETY_CENTER_SERVICE, android.safetycenter.ISafetyCenterManager.class,
+                new SafetyCenterService());
     }
 
     /** PackageManager.resolveActivity, as ActivityTaskManagerService resolves a start through

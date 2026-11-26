@@ -144,6 +144,9 @@ public class AospAppLifecycleTest {
         @Override public void onSlicePinned(android.net.Uri uri) { slicePinned = uri.getPath(); }
     }
 
+    static final List<String> platform = java.util.Collections.synchronizedList(new ArrayList<>());
+    static final List<String> PLATFORM_EXPECTED = List.of("safety center true enabled false",
+            "backup transport null enabled false");
     static final List<String> SLICES_EXPECTED = List.of("Slices.onCreate", "App.onCreate", "manager true",
             "pinned [content://" + SLICES + "/s]", "bound /s hi", "full access false");
 
@@ -245,6 +248,15 @@ public class AospAppLifecycleTest {
                             + bound.getItems().get(0).getText());
                     slices.add("full access " + sm.hasSliceAccess());
                 }
+                // Safety Center: the manager every phone from API 33 hands out, off as where the config
+                // disables it (issue #208: the Play Store died on the missing class).
+                android.safetycenter.SafetyCenterManager scm =
+                        getSystemService(android.safetycenter.SafetyCenterManager.class);
+                platform.add("safety center " + (scm != null) + " enabled "
+                        + (scm != null && scm.isSafetyCenterEnabled()));
+                // BackupManager's system members as AOSP answers them with no backup service.
+                android.app.backup.BackupManager bm = new android.app.backup.BackupManager(this);
+                platform.add("backup transport " + bm.getCurrentTransport() + " enabled " + bm.isBackupEnabled());
                 startService(new Intent(this, Started.class).putExtra("s", "go"));
                 sendOrderedBroadcast(new Intent(STATIC).setPackage(PKG).putExtra("v", "m"), null,
                         new android.content.BroadcastReceiver() {
@@ -612,6 +624,10 @@ public class AospAppLifecycleTest {
         if (!slices.equals(SLICES_EXPECTED) || !"/s".equals(slicePinned)) {
             System.out.println("FAILED: the slice provider gave " + slices + ", onSlicePinned " + slicePinned
                     + ", Android gives " + SLICES_EXPECTED + ", onSlicePinned /s");
+            System.exit(1);
+        }
+        if (!platform.equals(PLATFORM_EXPECTED)) {
+            System.out.println("FAILED: Safety Center and backup gave " + platform + ", Android gives " + PLATFORM_EXPECTED);
             System.exit(1);
         }
         if (!rcv.equals(List.of("Static m ordered=true", "Dyn 7", "result 8"))) {

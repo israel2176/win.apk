@@ -3949,7 +3949,13 @@ every such change is listed here:
   AIDL: the other platform classes Play services, the Play Store and the Services Framework carry stand-ins
   for). `android/content/Context.java`: `SLICE_SERVICE`, AOSP's `SliceManager` over the in-process
   `ISliceManager` an app's process registers (`windows/java/aosp_app/.../SliceService.java`: pins and grants
-  as a phone with no slice host keeps them; a first pin reaches the provider's `onSlicePinned`).
+  as a phone with no slice host keeps them; a first pin reaches the provider's `onSlicePinned`), and
+  `SAFETY_CENTER_SERVICE`, AOSP's `SafetyCenterManager` (`android.safetycenter`, taken whole the same way)
+  over the in-process `ISafetyCenterManager` (`.../SafetyCenterService.java`: Safety Center off, as on a
+  phone whose config disables it; the Play Store died on the missing class at every start, issue #208).
+  `android/app/backup/BackupManager.java`: AOSP's members, each answering as AOSP does with no backup
+  service (no transport, backup off, `requestRestore` -1): Play services' d2d `MigrateCleaner` died on
+  `getCurrentTransport` and the device checkin it ran with never finished.
   `android/content/ContentProvider.java`: AOSP's `getUriWithoutUserId` and `validateIncomingUri` (the
   slice provider checks each uri with them; `android/provider/DocumentsProvider.java`'s private copy of the
   latter is gone). `android/os/Bundle.java`: `setDefusable(Bundle, boolean)` (no effect outside the

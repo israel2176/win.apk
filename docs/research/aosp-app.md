@@ -237,6 +237,10 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   provider's `onSlicePinned`), grants, `hasSliceAccess` false. The
   `android.app.slice` package is AOSP's, taken with the other platform classes
   apps extend that Win.apk had none of (`aosp_app_take.sh`, `PLATFORM_TAKE`).
+- `SafetyCenterService` (`ISafetyCenterManager`, "safety_center"): what AOSP's
+  `SafetyCenterManager` asks, answered as a phone whose config disables Safety
+  Center: `isSafetyCenterEnabled` false, a source's data dropped, nothing to
+  read back. `android.safetycenter` is taken whole (`PLATFORM_TAKE`).
 - `Compat`: below. (`ApplicationStatics`, the four statics added to AOSP's
   `Application`, went at A4: the framework asks `com.macapk.loader.app.Apps`.)
 
