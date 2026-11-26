@@ -6,7 +6,11 @@
 #   - after the window is resized (WINAPK_TEST_RESIZE, a second after the first frame) the renderer
 #     hears onSurfaceChanged at the new width: the same renderer for ForkActivity, which keeps its
 #     window across the change (configChanges), a relaunched activity's for the other two;
-#   - the GL thread never dies (an EGL refusal used to kill an app's own one).
+#   - the GL thread never dies (an EGL refusal used to kill an app's own one);
+#   - for the app's own GL threads, a loader thread on a context shared with the GL thread uploads
+#     textures the whole time, from before the window surface exists and across the resize, where
+#     the GL thread remakes its window surface, as Flutter's IO and raster threads do; the run must
+#     not crash (the host's render tick once drew on the app's display beside them).
 #
 #   windows/test/glthread/run.sh <winapk-runtime.exe> <glthread.apk> <out dir>
 #
@@ -43,6 +47,8 @@ for act in PlatformActivity ForkActivity Fork14Activity; do
             check "$log" "created on its GL thread" "GLPROBE: $name created on GLThread $name"
             check "$log" "drew on its GL thread" "GLPROBE: $name drew #1 on GLThread $name"
             check "$log" "changed at the resized width" "GLPROBE: $name changed ${WIDTH}x[0-9]+ on GLThread $name"
+            check "$log" "its loader uploaded on its own thread" \
+                "GLPROBE: $name loader uploaded #300 on GLThread $name loader"
             ;;
     esac
     if grep -aE "GLPROBE: .* died" "$log"; then fail=1; fi

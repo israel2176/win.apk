@@ -514,8 +514,13 @@ checked against its SHA-256.
   a size and a format; a window surface on it is a pbuffer that grows with
   the window, and `eglSwapBuffers` reads it back and presents it.
 
-Each GL view renders into its own pbuffer; after a frame the pixels are read
-back and become a layer under the app's windows (below). Vulkan is not
+All of an app's GL, from Java or native code, is on one ANGLE display of the
+app's own (`host/gl/gl_surface.cpp`), drawn by the app's own threads; the host
+draws nothing on it, because ANGLE takes no lock between contexts that share
+nothing on one Direct3D 11 device. A window surface's frame is read back at
+the app's swap, on its thread, and becomes a layer under the app's windows
+(below); until a SurfaceView's producer has drawn, the render tick shows black
+in its place, as AOSP's SurfaceView shows its background layer. Vulkan is not
 implemented.
 
 ### The view tree's frames
@@ -545,7 +550,7 @@ magnifier's popup, a drag shadow) is a layer as well, which Win.apk's
 `SurfaceControl` keeps in SurfaceFlinger's tree (parent, position, z, shown, as
 Transactions set them) and `Compositor` draws over its window. A
 window drawn in software (`hardwareAccelerated="false"`) posts its bitmap to
-its layer. What the host has as pixels (a GL view read back, a SurfaceView's
+its layer. What the host has as pixels (an EGL window surface read back, a SurfaceView's
 `lockCanvas`, an app's native window, a video frame) is a host layer under the
 windows, seen through the hole a SurfaceView punches, or over them for
 `setZOrderOnTop`. `PixelCopy` reads a window's layer back; a `HARDWARE` bitmap

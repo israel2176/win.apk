@@ -1208,7 +1208,7 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   GDI, and the runtime stops (`error: AOSP graphics`) when the DLL has no
   compositor. A Direct3D 11 device that fails falls back to WARP.
 - What the host has as pixels is two host layers at the display's size:
-  under the windows (a GL view read back, a SurfaceView's `lockCanvas`, an
+  under the windows (an EGL window surface read back, a SurfaceView's `lockCanvas`, an
   app's native window below its view, a video frame) and over them
   (`setZOrderOnTop`, a native window on top). `PixelCopy` of a window reads
   its layer back (`Readback::copySurfaceInto`); `Bitmap.copy(HARDWARE)` is a
@@ -1225,12 +1225,19 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   ANGLE keys as the DLL's, and the render thread crashed in `libGLESv2` as an
   EGL14 thread made its surface) all answer that one display, as Android's
   libEGL has one default display per process, and an app's `eglTerminate` of
-  it does not reach ANGLE while the framework draws on it. Nothing crosses between the two
-  displays: the app's frames reach the compositor as the host layer's pixels.
+  it does not reach ANGLE while another of its APIs holds it. Nothing crosses between the two
+  displays: the app's frames reach the compositor as the host layer's pixels, read back on the
+  app's GL thread at its swap. The host draws nothing on the app's display: the render tick's GL
+  view (the SurfaceViews' native window) is no GL, a black frame until a producer draws. It was a
+  pbuffer of the host's on that display, which a resize remade beside the app's GL threads
+  whenever it came between Flutter's destroying its window surface and making the new one; City
+  Car crashed in the Direct3D driver from its own GL just after such a resize. Two of an app's own contexts that share nothing, on two threads,
+  still meet on one device; on a phone the driver keeps them apart.
   A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
   makes an EGL window surface on the view's holder (the host's window surface
   on the SurfaceView, read back at each swap), as does an app's own copy of
-  it, on EGL10 or EGL14; `test/glthread/` checks both, and a resize.
+  it, on EGL10 or EGL14; `test/glthread/` checks both, and a resize, with a loader thread
+  uploading textures on a shared context beside the app's own GL thread.
 - The snapshot (Ctrl+Shift+F12) and the headless frame file
   (`WINAPK_HEADLESS_FRAME`) read the composed frame back on the render thread.
 - Shader caches: ANGLE's programs (`EGL_ANDROID_blob_cache`) and Skia's
