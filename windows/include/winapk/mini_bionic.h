@@ -70,6 +70,11 @@ void set_system_fonts_dir(const char* dir);
 // The running app: /data/user/0/<package> and /data/data/<package> are
 // `host_dir`, its data directory (UTF-8).
 void set_app_data(const char* package, const char* host_dir);
+// The running app's installed base.apk (UTF-8 host path, under the android
+// root): it and its split_*.apk beside it are mapped read-only at the first
+// read of /proc/self/maps and listed there by their /data/app/... paths, as
+// Android maps every app's APKs into its process (src/bionic/stdio.cpp).
+void set_app_code(const char* base_apk);
 // The host file an Android path names (host_path), for the runtime's own
 // natives (java.io, java.nio); a host path comes back as it is.
 std::wstring android_host_path(const char* path);
