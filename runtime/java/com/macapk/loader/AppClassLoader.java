@@ -2007,7 +2007,16 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  that pass; instead we patch the fields from public.xml at class-
      *  definition time. Resources.macapkGetResourceIndex() is a static
      *  reachable from anywhere, populated by Boot before any APK class
-     *  loads. */
+     *  loads.
+     *
+     *  Only a field that still reads 0 is looked up. Every other one holds
+     *  the value the dex gave it (the converter writes a dex field's static
+     *  value as its ConstantValue, which HotSpot assigns to any static field
+     *  when the class is prepared): the value ART would have the app read, and
+     *  the one a lookup by name would find again. A large app's unshrunk R
+     *  classes (a bank app's R$string and R$id, ~11k fields each) cost a
+     *  getIdentifier per field otherwise, on the main thread at its first
+     *  activity. Reading a field initializes the class, as setInt did. */
     private static void maybePopulateRClassFields(Class<?> c, String dotted) {
         if (c == null || dotted == null) return;
         int dollar = dotted.indexOf('$');
@@ -2028,9 +2037,10 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             if (java.lang.reflect.Modifier.isFinal(mods)) continue;
             if (f.getType() != int.class) continue;
             try {
+                f.setAccessible(true);
+                if (f.getInt(null) != 0) continue;
                 Object id = ResBackend.get().indexIdOfName(idx, f.getName(), type, null);
                 if (id instanceof Integer && (Integer) id != 0) {
-                    f.setAccessible(true);
                     f.setInt(null, (Integer) id);
                     set++;
                 }

@@ -3801,6 +3801,10 @@ every such change is listed here:
   activity finished; `Boot`'s `moveToBack` and `taskEmpty` note it). `HostUrlIntake.shouldClaim` is gone with
   the old rule: an open that happens claims the redirect schemes. Upstream's rule refused every link with AOSP's
   input, which noted no real input (`AospInput` now does, for the frame heartbeat).
+- `runtime/java/com/macapk/loader/AppClassLoader.java` (`maybePopulateRClassFields`, R-init): only an R
+  field that still reads 0 (an R8-shrunk class whose `<clinit>` was stripped) is looked up by name; every
+  other one keeps the value its dex gave it (the converter's `ConstantValue`), the value ART has the app
+  read. Upstream looked up every field, a `getIdentifier` each: ~22k on a large app's first activity.
 
 ## License
 
