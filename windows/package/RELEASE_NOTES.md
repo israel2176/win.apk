@@ -18,6 +18,7 @@
 
 ## Also
 - Install `.apk`, `.apkm`, `.xapk` and `.apks` files by double-click or drag and drop.
+- An app that comes in parts installs whole, as on Android: drop its loose `.apk` files together, or its bundle; a part on its own is refused with the reason, and the installed app is left as it was.
 - Apps that ship only 64-bit ARM code are translated for your PC in the background, at the lowest priority.
 - Your PC's hardware for apps: webcam, microphone, location, Bluetooth, game controllers, and your Windows folders.
 - **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account > **Use Google services (experimental)**).

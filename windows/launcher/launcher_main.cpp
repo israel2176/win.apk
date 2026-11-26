@@ -147,6 +147,7 @@ constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed wh
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
 constexpr UINT kSetupFetched = WM_APP + 22;   // lParam: new SetupFetch (apkeep's download of one of Google's apps)
+constexpr UINT kInstallSets = WM_APP + 23;    // lParam: new std::vector<InstallSet> (a batch's files as installs)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
@@ -543,6 +544,16 @@ const wchar_t* tr(const wchar_t* en) {
          L"האפליקציה הזו בנויה רק לארם 32 ביט, ו-Win.apk לא יכול להריץ אותה. הורד את הגרסה שלה ל-x86_64 או ל-arm64-v8a."},
         {L"This app has code only for {0}, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
          L"לאפליקציה הזו יש קוד רק ל-{0}, ו-Win.apk לא יכול להריץ אותו. הורד את הגרסה שלה ל-x86_64 או ל-arm64-v8a."},
+        {L"This file is only a part of an app. Install the app's whole bundle (.apkm, .xapk or .apks), or all of its "
+         L".apk files together.",
+         L"הקובץ הזה הוא רק חלק מאפליקציה. יש להתקין את החבילה המלאה של האפליקציה (‎.apkm, ‎.xapk או ‎.apks), או את כל "
+         L"קובצי ה-‎.apk‎ שלה יחד."},
+        {L"This app comes in parts, and some are missing. Install the app's whole bundle (.apkm, .xapk or .apks), or "
+         L"all of its .apk files together.",
+         L"האפליקציה הזו מורכבת מכמה חלקים, וחלק מהם חסרים. יש להתקין את החבילה המלאה של האפליקציה (‎.apkm, ‎.xapk או "
+         L"‎.apks), או את כל קובצי ה-‎.apk‎ שלה יחד."},
+        {L"These files are not the parts of one version of one app.",
+         L"הקבצים האלה אינם חלקים של גרסה אחת של אפליקציה אחת."},
         {L"Couldn't install {0}", L"לא ניתן היה להתקין את {0}"},
         {L"Drop an Android app here", L"אפשר לגרור לכאן אפליקציית Android"},
         {L"The reason for each failure is shown below.", L"סיבת הכישלון מוצגת ליד כל אחת."},
@@ -1526,10 +1537,14 @@ void expect_run_end(const std::wstring& name) {
     ReleaseSRWLockExclusive(&g_proc_lock);
 }
 
+// A split of an install: the file, and its name in library\<name>.splits (installs.h, InstallSet).
+using SplitFile = std::pair<fs::path, std::wstring>;
+
 struct InstallJob {
     fs::path source;
     std::wstring name;
     bool temporary;     // the Store's app as Win.apk downloaded it, removed once it is in the library
+    std::vector<SplitFile> splits = {};  // the other APKs of its session (several files of one app, install_files)
 };
 
 SRWLOCK g_install_lock = SRWLOCK_INIT;  // one install at a time: each one is a JVM converting the whole app
@@ -1815,7 +1830,10 @@ bool recover_interrupted_installs() {
 // files are in use): false, with `*running` set; what runs of it with no window is stopped first
 // (stop_app_for_install). An update that fails or is cancelled puts the previous files back; a new app that
 // does leaves nothing behind. Once the registry has the app, a running system broker is told (tell_broker).
-bool install_into_library(const fs::path& source, const std::wstring& name, bool* running) {
+// `splits` are the other APKs of the session when the app came as loose files (install_files): copied in as
+// library\<name>.splits\, the layout AppInstall installs a kept bundle from, so the app is installed whole.
+bool install_into_library(const fs::path& source, const std::wstring& name, bool* running,
+                          const std::vector<SplitFile>& splits = {}) {
     *running = !stop_app_for_install(name);
     if (*running) return false;
     const InstallClaim claim(name, true);  // until this returns: see recover_interrupted_installs
@@ -1837,6 +1855,19 @@ bool install_into_library(const fs::path& source, const std::wstring& name, bool
     } else if (!ok && !(ok = CopyFileW(source.c_str(), target.c_str(), TRUE) != 0)) {
         log_launcher_error(install_log(name), L"could not copy " + source.wstring() + L" to " + target.wstring(),
                            GetLastError());
+    }
+    if (ok && !same && !splits.empty()) {
+        const fs::path dir = library_dir() / (name + L".splits");
+        fs::create_directories(dir, ec);
+        for (const SplitFile& f : splits) {
+            const fs::path to = dir / f.second;
+            if (!CopyFileW(f.first.c_str(), to.c_str(), TRUE)) {
+                log_launcher_error(install_log(name), L"could not copy " + f.first.wstring() + L" to " + to.wstring(),
+                                   GetLastError());
+                ok = false;
+                break;
+            }
+        }
     }
     // The install writes the new version's icon first (so that it shows while the code is converted):
     // an update keeps the app's own beside it, to put back if the update does not go through.
@@ -1902,7 +1933,7 @@ DWORD WINAPI install_thread(void* param) {
     ReleaseSRWLockExclusive(&g_installs_lock);
     if (started) {
         PostMessageW(g_main, kInstallStarted, 0, reinterpret_cast<LPARAM>(new std::wstring(job->name)));
-        ok = install_into_library(job->source, job->name, &running);
+        ok = install_into_library(job->source, job->name, &running, job->splits);
     }
     AcquireSRWLockExclusive(&g_installs_lock);
     g_installs.ended(job->name, ok, running);
@@ -4455,7 +4486,8 @@ std::wstring install_name(const fs::path& source) {
 // Queues an install. A quiet one (the Store's own app, which Win.apk downloads)
 // installs a download it then removes, and shows no install window: the Store's
 // page shows its progress.
-void install(const fs::path& source, std::wstring name = L"", bool quiet = false) {
+void install(const fs::path& source, std::wstring name = L"", bool quiet = false,
+             std::vector<SplitFile> splits = {}) {
     if (name.empty()) name = install_name(source);
     if (is_pending(name)) return;  // the same file twice
     if (!any_pending() && !g_install_wnd) g_jobs.clear();
@@ -4464,14 +4496,61 @@ void install(const fs::path& source, std::wstring name = L"", bool quiet = false
     job.file = source.filename().wstring();
     job.update = find_app(name) != nullptr;
     g_jobs.push_back(job);
-    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, quiet}, 0, nullptr));
+    CloseHandle(CreateThread(nullptr, 0, install_thread, new InstallJob{source, name, quiet, std::move(splits)}, 0,
+                             nullptr));
     update_timer();
     rebuild_tiles();
     if (!quiet || g_install_wnd) show_install_window();
 }
 
+// The installs of a batch of files opened at once. Several .apk files are first asked which app each is a
+// part of (winapk-runtime --apk-set-to, on a thread: a JVM's start), and those of one app are installed as
+// one session, as `adb install-multiple` installs them (installs.h, group_install_sets); a lone .apk and a
+// bundle install as they are. Should the question get no answer, each file installs alone, and AppInstall
+// refuses a split without its base as Android does.
+DWORD WINAPI install_sets_thread(void* param) {
+    std::unique_ptr<std::vector<fs::path>> apks(static_cast<std::vector<fs::path>*>(param));
+    wchar_t tmp_dir[MAX_PATH + 1];
+    wchar_t tmp[MAX_PATH + 1];
+    std::wstring text;
+    if (GetTempPathW(MAX_PATH + 1, tmp_dir) && GetTempFileNameW(tmp_dir, L"wap", 0, tmp)) {
+        std::wstring args = L"--apk-set-to \"" + std::wstring(tmp) + L"\"";
+        for (const fs::path& f : *apks) args += L" \"" + f.wstring() + L"\"";
+        HANDLE p = start_runtime(args, logs_dir() / L"install-set.log");
+        if (p && wait_exit(p) == 0) {
+            std::ifstream in(tmp, std::ios::binary);
+            text = utf8_to_wide(std::string(std::istreambuf_iterator<char>(in), {}));
+        }
+        DeleteFileW(tmp);
+    }
+    std::vector<winapk::launcher::ApkPart> parts = winapk::launcher::parse_apk_set(text);
+    if (parts.size() != apks->size()) {  // no answer: each file alone
+        parts.clear();
+        for (const fs::path& f : *apks) parts.push_back({f.wstring(), L"", L""});
+    }
+    auto* sets = new std::vector<winapk::launcher::InstallSet>(winapk::launcher::group_install_sets(parts));
+    if (!PostMessageW(g_main, kInstallSets, 0, reinterpret_cast<LPARAM>(sets))) delete sets;
+    return 0;
+}
+
+void install_files(const std::vector<fs::path>& files) {
+    auto* apks = new std::vector<fs::path>;
+    for (const fs::path& f : files) {
+        std::wstring ext = f.extension().wstring();
+        for (wchar_t& c : ext) c = static_cast<wchar_t>(towlower(c));
+        if (ext == L".apk") apks->push_back(f);
+        else install(f);
+    }
+    if (apks->size() < 2) {
+        for (const fs::path& f : *apks) install(f);
+        delete apks;
+        return;
+    }
+    CloseHandle(CreateThread(nullptr, 0, install_sets_thread, apks, 0, nullptr));
+}
+
 void add_from_dialog() {
-    for (const fs::path& p : pick_files(true, tr(L"Install an Android app"))) install(p);
+    install_files(pick_files(true, tr(L"Install an Android app")));
 }
 
 Splash* show_splash(const std::wstring& name, bool compact = false);
@@ -7675,6 +7754,17 @@ std::wstring install_failure_reason(const fs::path& log) {
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
     if (std::wstring why = runtime_failure_reason(log); !why.empty()) return why;
+    // AppInstall's refusals, Android's own (PackageInstallerSession): the file is a part of an app, not all of it.
+    const std::string refused = read_tail(log, 16 * 1024);
+    if (refused.find("Full install must include a base package") != std::string::npos)
+        return tr(L"This file is only a part of an app. Install the app's whole bundle (.apkm, .xapk or .apks), or "
+                  L"all of its .apk files together.");
+    if (refused.find("INSTALL_FAILED_MISSING_SPLIT") != std::string::npos)
+        return tr(L"This app comes in parts, and some are missing. Install the app's whole bundle (.apkm, .xapk or "
+                  L".apks), or all of its .apk files together.");
+    if (refused.find("[install] INSTALL_FAILED_INVALID_APK") != std::string::npos ||
+        refused.find("[install] INSTALL_PARSE_FAILED") != std::string::npos)
+        return tr(L"These files are not the parts of one version of one app.");
     // The launcher's own lines (launcher_error_line): the file did not reach the library.
     const std::string tail = read_tail(log, 4096);
     if (tail.find("[E] launcher: could not ") != std::string::npos)
@@ -9947,11 +10037,10 @@ public:
     HRESULT STDMETHODCALLTYPE Drop(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
         set_over(false);
         *effect = accept_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
-        if (accept_) {
-            for (const fs::path& p : dropped_files(data)) {
-                if (g_view == kGmsSetupView) setup_offer(p);
-                else install(p);
-            }
+        if (accept_ && g_view == kGmsSetupView) {
+            for (const fs::path& p : dropped_files(data)) setup_offer(p);
+        } else if (accept_) {
+            install_files(dropped_files(data));
         }
         return S_OK;
     }
@@ -10466,6 +10555,16 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         case WM_CHAR: return 0;  // no beep
+        case kInstallSets: {  // install_sets_thread: the batch's files, as installs
+            std::unique_ptr<std::vector<winapk::launcher::InstallSet>> sets(
+                reinterpret_cast<std::vector<winapk::launcher::InstallSet>*>(lp));
+            for (const winapk::launcher::InstallSet& set : *sets) {
+                std::vector<SplitFile> splits;
+                for (const auto& f : set.splits) splits.emplace_back(fs::path(f.first), f.second);
+                install(set.base, L"", false, std::move(splits));
+            }
+            return 0;
+        }
         case kInstallStarted: {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             for (Job& j : g_jobs) {
@@ -10634,12 +10733,14 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (cds->dwData != kCopyOpen || cds->cbData < sizeof(wchar_t)) return FALSE;
             const std::wstring text(static_cast<const wchar_t*>(cds->lpData), cds->cbData / sizeof(wchar_t) - 1);
             size_t at = text.find(L'\n');
+            std::vector<fs::path> files;
             while (at != std::wstring::npos) {
                 const size_t end = text.find(L'\n', at + 1);
                 const fs::path f = text.substr(at + 1, end == std::wstring::npos ? std::wstring::npos : end - at - 1);
-                if (is_app_file(f)) install(f);
+                if (is_app_file(f)) files.push_back(f);
                 at = end;
             }
+            install_files(files);
             if (!text.empty() && text[0] == L'L') show_library(SW_SHOWDEFAULT);
             return TRUE;
         }
@@ -12794,7 +12895,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         launch(app ? *app : App{name, label_of(name), run_apk});
     } else if (!files.empty()) {
         // Opened from Explorer, or dropped on the program: only the install window.
-        for (const fs::path& f : files) install(f);
+        install_files(files);
     } else {
         show_library(show);
     }

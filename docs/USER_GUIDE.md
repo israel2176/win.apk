@@ -44,6 +44,16 @@ APKs, not the bundle: `<app>.apk` and the folder `<app>.splits` beside it,
 the very files the app runs from, so the app takes its space on disk once.
 Keep the bundle you downloaded if you may want its other parts later.
 
+An app that comes in parts must be installed whole, as Android installs it:
+the bundle itself, not one `.apk` taken out of it. Loose `.apk` files of one
+app (its base and splits such as `config.arm64_v8a.apk`) install together
+when you drop them or choose them together, as `adb install-multiple`
+installs them. Win.apk refuses what Android refuses, with Android's reason
+in the log: a split on its own ("Full install must include a base package"),
+a base that declares its splits required without them
+(`INSTALL_FAILED_MISSING_SPLIT`), and parts of another app or another
+version. The app's install from before is then left as it was.
+
 Any of these starts an install:
 
 - double-click an app file in Explorer (see [Shortcuts and file types](#shortcuts-and-file-types)).
@@ -808,10 +818,11 @@ bin\winapk-runtime.exe [--data <dir>] [--jdk <dir>] [--lib <dir>] --verify-apk <
 | `--lib` | The folder with the framework jars (default: `lib` next to `bin`) |
 | `--install-only` | Install and convert the app, write its icon and name, and exit |
 | `--gms <command>` | Run a Google Play services command with no app: `status`, `selftest`, `accounts`, `signin-window`, `signin-master` (an account from its e-mail and master token on standard input, for tests), `signout`, `checkin`, `device-id` (`DEVICE_ID`, the Services Framework's `android_id` from its `gservices.db` as a signed decimal, else the layer's own checkin's, and `gsf` or `checkin`; no line when there is none), `license <package> <versionCode>`, `gcmtoken <package>`, `token-service` (the Google token service apps ask for their tokens, started by the first app that needs one; it exits when idle) and the rest of `com.macapk.gms.GmsCli` |
+| `--apk-set-to <file> <app.apk>...` | Write each file's package and split name to `<file>`, a line each (`<package>`, tab, `<split>`, tab, `<file>`): how the library tells which of several `.apk` files opened together are one app's parts |
 | `--verify-apk <file>` | Print an app file's package and whether its signature verifies and Google signed it (`PACKAGE`, `VERIFIED`, `REASON`, `SCHEME`, `LINEAGE`, `GOOGLE` lines), its native code's ABIs, minSdkVersion, targetSdkVersion and version (`ABIS`, `MINSDK`, `TARGETSDK`, `VERSIONCODE`, `VERSIONNAME`) and the newest API level Win.apk presents (`SDK`), as the Google services setup asks |
 
 Exit codes: 0 done, 2 wrong arguments, 3 when `--install-only` finds the app
-running. `--gms` exits 0 done, 1 error (an `ERROR` line on standard output),
+running, or the install is refused as Android refuses it (its reason in the log). `--gms` exits 0 done, 1 error (an `ERROR` line on standard output),
 2 cancelled or wrong arguments. `--verify-apk` exits 0 signed by Google, 4
 signed by another key, 3 the signature does not verify, 1 not an app.
 

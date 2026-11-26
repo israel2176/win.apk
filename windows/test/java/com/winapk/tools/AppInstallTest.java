@@ -47,8 +47,8 @@ public class AppInstallTest {
         String pkg = "com.example.bundled";
 
         byte[] base = zip(Map.of("AndroidManifest.xml", manifest(pkg), "classes.dex", bytes("dex\n035")));
-        byte[] abi = zip(Map.of("AndroidManifest.xml", manifest(pkg), "lib/x86_64/libnative.so", bytes("ELF x86_64")));
-        byte[] dpi = zip(Map.of("AndroidManifest.xml", manifest(pkg), "res/drawable-xxhdpi/icon.png", bytes("png")));
+        byte[] abi = zip(Map.of("AndroidManifest.xml", splitManifest(pkg, "config.x86_64"), "lib/x86_64/libnative.so", bytes("ELF x86_64")));
+        byte[] dpi = zip(Map.of("AndroidManifest.xml", splitManifest(pkg, "config.xxhdpi"), "res/drawable-xxhdpi/icon.png", bytes("png")));
         Map<String, byte[]> members = new LinkedHashMap<>();
         members.put("base.apk", base);
         members.put("split_config.x86_64.apk", abi);
@@ -179,10 +179,91 @@ public class AppInstallTest {
         check("an app with arm64-v8a beside armeabi-v7a installs", rc == 0);
         check("libAbis lists the ABIs", AppInstall.libAbis(both).equals(new java.util.TreeSet<>(
                 List.of("arm64-v8a", "armeabi-v7a"))));
+        sessionChecks(library, android);
 
         AppInstall.deleteTree(root);
         System.out.println(failures == 0 ? "ALL PASSED" : failures + " FAILED");
         System.exit(failures == 0 ? 0 : 1);
+    }
+
+    /** The checks PackageInstallerSession makes of a full install's APKs, each refused as Android refuses it
+     *  and leaving the app's install from before as it was; and the APKs named by their manifests. */
+    static void sessionChecks(Path library, Path android) throws IOException {
+        String pkg = "com.example.parts";
+        Path dir = android.resolve("data/app").resolve(AppInstall.DIR_NONCE).resolve(pkg + "-" + AppInstall.NAME_NONCE);
+        byte[] base = zip(Map.of("AndroidManifest.xml", manifest(pkg, null, 7, true, null, null),
+                "classes.dex", bytes("dex\n035")));
+        byte[] abi = zip(Map.of("AndroidManifest.xml", manifest(pkg, "config.arm64_v8a", 7, false, null, null),
+                "lib/arm64-v8a/libreactnative.so", bytes("ELF arm64")));
+
+        // The app as a bundle whose files are named by a store, not as installed: installs, its split by its name.
+        Map<String, byte[]> m = new LinkedHashMap<>();
+        m.put(pkg + ".apk", base);
+        m.put("libs-for-arm.apk", abi);
+        Path xapk = library.resolve("Parts.xapk");
+        Files.write(xapk, zip(m));
+        Path record = android.resolve("data/app/.Parts.installed");
+        int rc = AppInstall.install(xapk, android, "x86_64,arm64-v8a", record);
+        check("bundle: installed, the split by its manifest's name", rc == 0
+                && Files.isRegularFile(dir.resolve("base.apk")) && Files.isRegularFile(dir.resolve("split_config.arm64_v8a.apk"))
+                && !Files.exists(dir.resolve("split_libs-for-arm.apk"))
+                && Files.isRegularFile(dir.resolve("lib/arm64/libreactnative.so")));
+
+        // A split alone: "Full install must include a base package"; the installed app is untouched.
+        Path lone = library.resolve("com.example.parts.config.arm64_v8a.apk");
+        Files.write(lone, abi);
+        rc = AppInstall.install(lone, android, "x86_64,arm64-v8a", android.resolve("data/app/.Lone.installed"));
+        check("a split alone is refused, the app as it was", rc == 3
+                && AppInstall.validateSession(List.of(lone)).equals(
+                        "INSTALL_FAILED_INVALID_APK: Full install must include a base package")
+                && Files.isRegularFile(dir.resolve("lib/arm64/libreactnative.so")));
+
+        // A base that requires its splits, alone: INSTALL_FAILED_MISSING_SPLIT; the installed app is untouched.
+        Path baseOnly = library.resolve("PartsBase.apk");
+        Files.write(baseOnly, base);
+        rc = AppInstall.install(baseOnly, android, "x86_64,arm64-v8a", android.resolve("data/app/.PartsBase.installed"));
+        check("a base that requires splits, alone, is refused", rc == 3
+                && AppInstall.validateSession(List.of(baseOnly)).equals(
+                        "INSTALL_FAILED_MISSING_SPLIT: Missing split for " + pkg)
+                && Files.isRegularFile(dir.resolve("split_config.arm64_v8a.apk")));
+
+        // The same base with its split kept beside it (the launcher's <name>.splits): installs.
+        Path splits = Files.createDirectories(library.resolve("PartsBase.splits"));
+        Files.write(splits.resolve("split_whatever.apk"), abi);
+        rc = AppInstall.install(baseOnly, android, "x86_64,arm64-v8a", android.resolve("data/app/.PartsBase.installed"));
+        check("the base with its split installs", rc == 0 && Files.isRegularFile(dir.resolve("split_config.arm64_v8a.apk"))
+                && Files.isRegularFile(dir.resolve("lib/arm64/libreactnative.so")));
+
+        // Required split types: a split of each listed type, or the install is refused.
+        Path typed = Files.write(library.resolve("typed-base.apk"), zip(Map.of("AndroidManifest.xml",
+                manifest(pkg, null, 7, true, "abi,density", null))));
+        Path abiTyped = Files.write(library.resolve("typed-abi.apk"), zip(Map.of("AndroidManifest.xml",
+                manifest(pkg, "config.arm64_v8a", 7, false, null, "abi"))));
+        Path dpiTyped = Files.write(library.resolve("typed-dpi.apk"), zip(Map.of("AndroidManifest.xml",
+                manifest(pkg, "config.xxhdpi", 7, false, null, "density"))));
+        check("required split types: one missing is refused",
+                String.valueOf(AppInstall.validateSession(List.of(typed, abiTyped))).startsWith("INSTALL_FAILED_MISSING_SPLIT"));
+        check("required split types: all present installs", AppInstall.validateSession(List.of(typed, abiTyped, dpiTyped)) == null);
+
+        // Parts of other apps or versions, or a split twice: refused with Android's messages.
+        Path other = Files.write(library.resolve("other.apk"), zip(Map.of("AndroidManifest.xml",
+                manifest("com.example.other", "config.xxhdpi", 7, false, null, null))));
+        Path older = Files.write(library.resolve("older.apk"), zip(Map.of("AndroidManifest.xml",
+                manifest(pkg, "config.xxhdpi", 6, false, null, null))));
+        Path again = Files.write(library.resolve("again.apk"), abi);
+        Path abiFile = Files.write(library.resolve("abi.apk"), abi);
+        check("another app's split is refused", AppInstall.validateSession(List.of(baseOnly, other)).equals(
+                "INSTALL_FAILED_INVALID_APK: Inconsistent package com.example.other in other.apk; expected " + pkg));
+        check("another version's split is refused", AppInstall.validateSession(List.of(baseOnly, older)).equals(
+                "INSTALL_FAILED_INVALID_APK: Inconsistent version 6 in older.apk; expected 7"));
+        check("a split twice is refused", AppInstall.validateSession(List.of(baseOnly, abiFile, again)).equals(
+                "INSTALL_FAILED_INVALID_APK: Split config.arm64_v8a was defined multiple times"));
+
+        // The launcher's question: which files are parts of which app.
+        Path out = library.resolve("set.txt");
+        check("--set writes", AppInstall.writeSet(out, List.of(baseOnly.toString(), lone.toString())) == 0);
+        check("--set: package and split per file", Files.readString(out).equals(
+                pkg + "\t\t" + baseOnly + "\n" + pkg + "\tconfig.arm64_v8a\t" + lone + "\n"));
     }
 
     /** Whether any file or folder under (or the volume's root above) `root` has a name containing `part`. */
@@ -211,10 +292,41 @@ public class AppInstallTest {
         return out.toByteArray();
     }
 
-    /** A binary AndroidManifest.xml whose root element is <manifest package="pkg">: a string pool (UTF-8)
-     *  and one start element, which is all AppInstall.rootAttribute reads. */
+    /** A base's manifest: <manifest package="pkg" versionCode="1">. */
     static byte[] manifest(String pkg) {
-        List<String> strings = List.of("manifest", "package", pkg);
+        return manifest(pkg, null, 1, false, null, null);
+    }
+
+    /** A split's manifest: <manifest package="pkg" split="split" versionCode="1">. */
+    static byte[] splitManifest(String pkg, String split) {
+        return manifest(pkg, split, 1, false, null, null);
+    }
+
+    /** A binary AndroidManifest.xml: a string pool (UTF-8), the start element <manifest package split
+     *  versionCode requiredSplitTypes splitTypes> (split and the types only when given) and, for a base that
+     *  requires its splits, <application isSplitRequired="true">: what AppInstall's reader looks at. */
+    static byte[] manifest(String pkg, String split, int versionCode, boolean splitRequired,
+            String requiredSplitTypes, String splitTypes) {
+        List<String> strings = new java.util.ArrayList<>();
+        java.util.function.Function<String, Integer> idx = t -> {
+            int i = strings.indexOf(t);
+            if (i < 0) { strings.add(t); i = strings.size() - 1; }
+            return i;
+        };
+        // {name, raw string or -1, type, data}
+        List<int[]> rootAttrs = new java.util.ArrayList<>();
+        rootAttrs.add(new int[] {idx.apply("package"), idx.apply(pkg), 0x03, idx.apply(pkg)});
+        if (split != null) rootAttrs.add(new int[] {idx.apply("split"), idx.apply(split), 0x03, idx.apply(split)});
+        rootAttrs.add(new int[] {idx.apply("versionCode"), -1, 0x10, versionCode});
+        if (requiredSplitTypes != null) rootAttrs.add(new int[] {idx.apply("requiredSplitTypes"),
+                idx.apply(requiredSplitTypes), 0x03, idx.apply(requiredSplitTypes)});
+        if (splitTypes != null) rootAttrs.add(new int[] {idx.apply("splitTypes"), idx.apply(splitTypes), 0x03,
+                idx.apply(splitTypes)});
+        int manifestTag = idx.apply("manifest");
+        List<int[]> appAttrs = new java.util.ArrayList<>();
+        if (splitRequired) appAttrs.add(new int[] {idx.apply("isSplitRequired"), -1, 0x12, -1});
+        int applicationTag = idx.apply("application");
+
         ByteArrayOutputStream data = new ByteArrayOutputStream();
         int[] offsets = new int[strings.size()];
         for (int i = 0; i < strings.size(); i++) {
@@ -227,18 +339,27 @@ public class AppInstallTest {
         }
         while (data.size() % 4 != 0) data.write(0);
         int poolHeader = 28, poolSize = poolHeader + 4 * strings.size() + data.size();
-        int elemHeader = 16, elemSize = elemHeader + 20 + 20;
-        ByteBuffer b = ByteBuffer.allocate(8 + poolSize + elemSize).order(ByteOrder.LITTLE_ENDIAN);
-        b.putShort((short) 0x0003).putShort((short) 8).putInt(8 + poolSize + elemSize);
+        int elemHeader = 16;
+        int rootSize = elemHeader + 20 + 20 * rootAttrs.size(), appSize = elemHeader + 20 + 20 * appAttrs.size();
+        int total = 8 + poolSize + rootSize + appSize;
+        ByteBuffer b = ByteBuffer.allocate(total).order(ByteOrder.LITTLE_ENDIAN);
+        b.putShort((short) 0x0003).putShort((short) 8).putInt(total);
         b.putShort((short) 0x0001).putShort((short) poolHeader).putInt(poolSize).putInt(strings.size()).putInt(0)
                 .putInt(0x100).putInt(poolHeader + 4 * strings.size()).putInt(0);
         for (int o : offsets) b.putInt(o);
         b.put(data.toByteArray());
-        b.putShort((short) 0x0102).putShort((short) elemHeader).putInt(elemSize).putInt(1).putInt(-1);
-        b.putInt(-1).putInt(0).putShort((short) 20).putShort((short) 20).putShort((short) 1).putShort((short) 0)
-                .putShort((short) 0).putShort((short) 0);
-        b.putInt(-1).putInt(1).putInt(2).putShort((short) 8).put((byte) 0).put((byte) 0x03).putInt(2);
+        element(b, manifestTag, rootAttrs);
+        element(b, applicationTag, appAttrs);
         return b.array();
+    }
+
+    static void element(ByteBuffer b, int tag, List<int[]> attrs) {
+        int size = 16 + 20 + 20 * attrs.size();
+        b.putShort((short) 0x0102).putShort((short) 16).putInt(size).putInt(1).putInt(-1);
+        b.putInt(-1).putInt(tag).putShort((short) 20).putShort((short) 20).putShort((short) attrs.size())
+                .putShort((short) 0).putShort((short) 0).putShort((short) 0);
+        for (int[] a : attrs)
+            b.putInt(-1).putInt(a[0]).putInt(a[1]).putShort((short) 8).put((byte) 0).put((byte) a[2]).putInt(a[3]);
     }
 
 }

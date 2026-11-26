@@ -21,6 +21,8 @@
 // The library's files (launcher/library_files.h, std::filesystem only), on real files: a bundle kept as hard
 // links to its installed APKs, that step done again over a cut-off one, an update's files set aside, then
 // dropped or put back, never written.
+// A batch's APK files (launcher/installs.h): AppInstall --set's lines read, and the files of one app made one
+// install with its base kept as the app's .apk, a split named as a device names it, other apps' files apart.
 // Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
 // done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
 // clock went back), and waits while on battery, with no network or while an app starts; none once the user closed
@@ -1062,8 +1064,44 @@ void test_maintenance() {
     check("no window: nothing to wait for", !mw::wait_for_window(false, false) && !mw::wait_for_window(false, true));
 }
 
+void test_install_sets() {
+    std::printf("A batch's APK files as installs\n");
+    using winapk::launcher::ApkPart;
+    using winapk::launcher::InstallSet;
+    const std::vector<ApkPart> parts = winapk::launcher::parse_apk_set(
+        L"com.paamonim\tconfig.arm64_v8a\tC:\\d\\com.paamonim.config.arm64_v8a.apk\r\n"
+        L"com.other\t\tC:\\d\\other.apk\n"
+        L"com.paamonim\t\tC:\\d\\com.paamonim.apk\n"
+        L"\t\tC:\\d\\broken.apk\n"
+        L"com.paamonim\tconfig.xxhdpi\tC:\\d\\dpi.apk\n"
+        L"not a line\n");
+    check("--set: five lines read, the one that is not skipped", parts.size() == 5);
+    check("--set: a line's fields", parts.size() == 5 && parts[0].package == L"com.paamonim" &&
+                                        parts[0].split == L"config.arm64_v8a" &&
+                                        parts[0].file == L"C:\\d\\com.paamonim.config.arm64_v8a.apk");
+    const std::vector<InstallSet> sets = winapk::launcher::group_install_sets(parts);
+    check("three installs: the app, the other app, the unreadable file", sets.size() == 3);
+    check("the app: its base kept as the app, the split first given second",
+          sets.size() == 3 && sets[0].base == L"C:\\d\\com.paamonim.apk" && sets[0].splits.size() == 2 &&
+              sets[0].splits[0].first == L"C:\\d\\com.paamonim.config.arm64_v8a.apk" &&
+              sets[0].splits[0].second == L"split_config.arm64_v8a.apk" &&
+              sets[0].splits[1].second == L"split_config.xxhdpi.apk");
+    check("the other app and the unreadable file alone", sets.size() == 3 && sets[1].base == L"C:\\d\\other.apk" &&
+                                                            sets[1].splits.empty() &&
+                                                            sets[2].base == L"C:\\d\\broken.apk");
+    // Splits alone: still one install, its first file as the app's .apk (AppInstall refuses it, as Android does).
+    const std::vector<InstallSet> lone = winapk::launcher::group_install_sets(
+        {{L"a.apk", L"com.x", L"config.arm64_v8a"}, {L"b.apk", L"com.x", L"config.arm64_v8a"},
+         {L"c.apk", L"com.x", L"..\\evil"}});
+    check("no base: one install, the first file kept as the app", lone.size() == 1 && lone[0].base == L"a.apk");
+    check("a name taken gets a number; an unsafe split name is not a file name",
+          lone.size() == 1 && lone[0].splits.size() == 2 && lone[0].splits[0].second == L"split_config.arm64_v8a.apk" &&
+              lone[0].splits[1].second == L"split_2.apk");
+}
+
 int main() {
     test_runs();
+    test_install_sets();
     test_installs();
     test_updates();
     test_update_integrity();

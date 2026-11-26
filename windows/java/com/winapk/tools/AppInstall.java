@@ -42,6 +42,16 @@
 //    (InstalledSplits.fallbackLibDirs). Only those: the background
 //    translation translates whatever is in lib/arm64.
 //
+//  - The APKs are one install session, checked as PackageInstallerSession
+//    checks one (validateApkInstallLocked, AOSP 14) before anything installed
+//    is touched: one base (an APK whose manifest names no `split`; "Full
+//    install must include a base package"), each split name once, every APK
+//    of the base's package and version code, and a base that declares
+//    android:isSplitRequired has its splits (with the types its
+//    android:requiredSplitTypes lists): else INSTALL_FAILED_MISSING_SPLIT. A
+//    refused set exits 3 with Android's error on stderr, and the app's install
+//    from before stays as it was. Then each APK is named as the device names
+//    a staged one, by its manifest: base.apk, split_<split name>.apk.
 //  - Names are held to the device installer's rules before they name a file:
 //    the manifest's package to PackageParser.validateName (it names the
 //    installed directory, the data directory and the library's files), and
@@ -51,7 +61,13 @@
 // The installed base.apk's path is written to the record file, which the host
 // reads back and also uses to tell an install is current.
 //
-// Exit codes: 0 installed, 2 usage, 3 nothing installable, 1 error.
+// Exit codes: 0 installed, 2 usage, 3 nothing installable (or refused as Android refuses it), 1 error.
+//
+//     java -cp winapk-tools.jar com.winapk.tools.AppInstall --set <out file> <app.apk>...
+//
+// tells the launcher which files of a batch are parts of one app, so it installs
+// them as one session (adb install-multiple): a line per file, "<package>\t<split
+// name, empty for a base>\t<file>", the package empty for a file with no manifest.
 
 package com.winapk.tools;
 
@@ -69,6 +85,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Enumeration;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -106,6 +123,9 @@ public final class AppInstall {
                 System.exit(1);
             }
         }
+        if (args.length >= 2 && args[0].equals("--set")) {
+            System.exit(writeSet(Paths.get(args[1]), List.of(args).subList(2, args.length)));
+        }
         if (args.length != 4) {
             System.err.println("usage: AppInstall <app> <android root> <abi>[,<abi>...] <record file>");
             System.exit(2);
@@ -139,6 +159,13 @@ public final class AppInstall {
                 return 3;
             }
 
+            // The session's checks, then each APK by the name the device gives it (base first).
+            String refused = validateSession(members);
+            if (refused != null) {
+                System.err.println("[install] " + refused);
+                return 3;
+            }
+            members = nameAsInstalled(members);
             String pkg = packageName(members.get(0));
             if (pkg == null) {
                 System.err.println("[install] no package name in " + source);
@@ -202,6 +229,138 @@ public final class AppInstall {
         } finally {
             if (staging != null) deleteTree(staging);
         }
+    }
+
+    // ---- one install session, as PackageInstallerSession checks it ------------------------
+
+    /** --set: a line per file, "<package>\t<split name>\t<file>", into `out`; 0, or 1 when it cannot be
+     *  written. A file that is no APK has an empty package: the launcher installs it alone, and it fails
+     *  there as it would. */
+    static int writeSet(Path out, List<String> files) {
+        StringBuilder text = new StringBuilder();
+        for (String f : files) {
+            ApkLite a = null;
+            try {
+                a = apkLite(Paths.get(f));
+            } catch (IOException | RuntimeException notAnApk) {
+                // no package: see above
+            }
+            text.append(a == null || a.packageName == null ? "" : a.packageName).append('\t')
+                    .append(a == null || a.splitName == null ? "" : a.splitName).append('\t')
+                    .append(f).append('\n');
+        }
+        try {
+            Files.writeString(out, text, StandardCharsets.UTF_8);
+            return 0;
+        } catch (IOException e) {
+            System.err.println("[install] " + e);
+            return 1;
+        }
+    }
+
+    /** What the installer reads of an APK before it installs it (ApkLiteParseUtils.parseApkLite):
+     *  the manifest's package, split, version code and split types, and <application>'s
+     *  isSplitRequired. */
+    static final class ApkLite {
+        String packageName;
+        String splitName;  // null: a base
+        long versionCode;
+        boolean splitRequired;
+        Set<String> requiredSplitTypes = new HashSet<>();
+        Set<String> splitTypes = new HashSet<>();
+    }
+
+    /** The APK's ApkLite, or null when it has no AndroidManifest.xml. */
+    static ApkLite apkLite(Path apk) throws IOException {
+        byte[] axml = manifestOf(apk);
+        if (axml == null) return null;
+        Map<String, Object> root = elementAttributes(axml, null);
+        Map<String, Object> app = elementAttributes(axml, "application");
+        ApkLite a = new ApkLite();
+        a.packageName = root.get("package") instanceof String p ? p : null;
+        String split = root.get("split") instanceof String sp ? sp : null;
+        a.splitName = split == null || split.isEmpty() ? null : split;
+        // PackageInfo.composeLongVersionCode(versionCodeMajor, versionCode).
+        long code = root.get("versionCode") instanceof Integer c ? c & 0xffffffffL : 0;
+        long major = root.get("versionCodeMajor") instanceof Integer m ? m : 0;
+        a.versionCode = (major << 32) | code;
+        a.splitRequired = Boolean.TRUE.equals(app.get("isSplitRequired"));
+        a.requiredSplitTypes = namesOf(root.get("requiredSplitTypes"));
+        a.splitTypes = namesOf(root.get("splitTypes"));
+        return a;
+    }
+
+    /** ApkLiteParseUtils.separateNamesToSet: a comma-separated attribute as a set. */
+    static Set<String> namesOf(Object value) {
+        Set<String> out = new HashSet<>();
+        if (!(value instanceof String s)) return out;
+        for (String n : s.split(",")) if (!n.isEmpty()) out.add(n);
+        return out;
+    }
+
+    /** PackageInstallerSession.validateApkInstallLocked's checks of a full install's APKs (AOSP 14), with
+     *  its errors: null when the APKs install as one app, else the device's error code and message. */
+    static String validateSession(List<Path> apks) throws IOException {
+        String pkg = null;
+        long version = 0;
+        ApkLite base = null;
+        Set<String> splits = new HashSet<>();  // "" stands for the base, which no split name can be
+        Set<String> stagedSplitTypes = new HashSet<>();
+        for (Path file : apks) {
+            ApkLite a;
+            try {
+                a = apkLite(file);
+            } catch (RuntimeException malformed) {
+                a = null;
+            }
+            String name = file.getFileName().toString();
+            if (a == null || a.packageName == null)
+                return "INSTALL_PARSE_FAILED_NOT_APK: Failed to parse " + name;
+            if (a.splitName != null && !isFilenameSafe("split_" + a.splitName + ".apk"))
+                return "INSTALL_PARSE_FAILED_BAD_MANIFEST: Invalid split name " + a.splitName + " in " + name;
+            if (!splits.add(a.splitName == null ? "" : a.splitName))
+                return "INSTALL_FAILED_INVALID_APK: Split " + a.splitName + " was defined multiple times";
+            if (pkg == null) {
+                pkg = a.packageName;
+                version = a.versionCode;
+            } else if (!pkg.equals(a.packageName)) {
+                return "INSTALL_FAILED_INVALID_APK: Inconsistent package " + a.packageName + " in " + name
+                        + "; expected " + pkg;
+            } else if (version != a.versionCode) {
+                return "INSTALL_FAILED_INVALID_APK: Inconsistent version " + a.versionCode + " in " + name
+                        + "; expected " + version;
+            }
+            if (a.splitName == null) base = a;
+            stagedSplitTypes.addAll(a.splitTypes);
+        }
+        if (base == null) return "INSTALL_FAILED_INVALID_APK: Full install must include a base package";
+        if (base.splitRequired && (splits.size() <= 1 || !stagedSplitTypes.containsAll(base.requiredSplitTypes)))
+            return "INSTALL_FAILED_MISSING_SPLIT: Missing split for " + pkg;
+        return null;
+    }
+
+    /** The session's APKs renamed in place as the device names staged ones, by their manifests
+     *  (PackageInstallerSession: "base.apk", "split_" + splitName + ".apk"), the base first. Run after
+     *  validateSession, so the names are safe and distinct. */
+    static List<Path> nameAsInstalled(List<Path> apks) throws IOException {
+        List<Path> moved = new ArrayList<>();
+        List<String> targets = new ArrayList<>();
+        for (int i = 0; i < apks.size(); i++) {
+            ApkLite a = apkLite(apks.get(i));
+            targets.add(a.splitName == null ? "base.apk" : "split_" + a.splitName + ".apk");
+            // Through a name no APK has, so that two APKs may swap names.
+            Path tmp = apks.get(i).resolveSibling(".staged-" + i);
+            Files.move(apks.get(i), tmp);
+            moved.add(tmp);
+        }
+        List<Path> out = new ArrayList<>();
+        for (int i = 0; i < moved.size(); i++) {
+            Path target = moved.get(i).resolveSibling(targets.get(i));
+            Files.move(moved.get(i), target);
+            if (targets.get(i).equals("base.apk")) out.add(0, target);
+            else out.add(target);
+        }
+        return out;
     }
 
     /** The splits the library keeps beside an app that came as a bundle: <name>.splits/split_*.apk next to
@@ -486,47 +645,71 @@ public final class AppInstall {
 
     /** The `package` attribute of the manifest's root element. */
     static String packageName(Path apk) throws IOException {
-        byte[] axml;
+        byte[] axml = manifestOf(apk);
+        return axml == null ? null : rootAttribute(axml, "package");
+    }
+
+    /** The APK's binary AndroidManifest.xml, or null when it has none. */
+    static byte[] manifestOf(Path apk) throws IOException {
         try (ZipFile zip = new ZipFile(apk.toFile())) {
             ZipEntry m = zip.getEntry("AndroidManifest.xml");
             if (m == null) return null;
             try (InputStream in = zip.getInputStream(m)) {
-                axml = in.readAllBytes();
+                return in.readAllBytes();
             }
         }
-        return rootAttribute(axml, "package");
     }
 
     /** A string attribute of the first element of a binary XML document. */
     static String rootAttribute(byte[] axml, String attr) {
-        ByteBuffer b = ByteBuffer.wrap(axml).order(ByteOrder.LITTLE_ENDIAN);
-        List<String> strings = null;
-        int pos = b.getShort(2) & 0xffff;  // the document header's size
-        while (pos + 8 <= axml.length) {
-            int type = b.getShort(pos) & 0xffff;
-            int headerSize = b.getShort(pos + 2) & 0xffff;
-            int size = b.getInt(pos + 4);
-            if (size <= 0) return null;
-            if (type == 0x0001) {
-                strings = stringPool(b, pos);
-            } else if (type == 0x0102 && strings != null) {
-                int attrStart = b.getShort(pos + headerSize + 8) & 0xffff;
-                int attrSize = b.getShort(pos + headerSize + 10) & 0xffff;
-                int count = b.getShort(pos + headerSize + 12) & 0xffff;
-                for (int i = 0; i < count; i++) {
-                    int a = pos + headerSize + attrStart + i * attrSize;
-                    int name = b.getInt(a + 4);
-                    if (name < 0 || name >= strings.size() || !attr.equals(strings.get(name))) continue;
-                    int raw = b.getInt(a + 8);
-                    if (raw >= 0 && raw < strings.size()) return strings.get(raw);
-                    int dataType = b.get(a + 15) & 0xff, data = b.getInt(a + 16);
-                    return dataType == 0x03 && data >= 0 && data < strings.size() ? strings.get(data) : null;
+        return elementAttributes(axml, null).get(attr) instanceof String s ? s : null;
+    }
+
+    /** The attributes of the first element named `element` (null: the first element of all) of a binary XML
+     *  document, by name: a String, an Integer (decimal or hex) or a Boolean each. Empty when there is no such
+     *  element or the document is not one this reader understands. */
+    static Map<String, Object> elementAttributes(byte[] axml, String element) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        try {
+            ByteBuffer b = ByteBuffer.wrap(axml).order(ByteOrder.LITTLE_ENDIAN);
+            List<String> strings = null;
+            int pos = b.getShort(2) & 0xffff;  // the document header's size
+            while (pos + 8 <= axml.length) {
+                int type = b.getShort(pos) & 0xffff;
+                int headerSize = b.getShort(pos + 2) & 0xffff;
+                int size = b.getInt(pos + 4);
+                if (size <= 0) break;
+                if (type == 0x0001) {
+                    strings = stringPool(b, pos);
+                } else if (type == 0x0102 && strings != null) {
+                    int tag = b.getInt(pos + headerSize + 4);
+                    String tagName = tag >= 0 && tag < strings.size() ? strings.get(tag) : null;
+                    if (element == null || element.equals(tagName)) {
+                        int attrStart = b.getShort(pos + headerSize + 8) & 0xffff;
+                        int attrSize = b.getShort(pos + headerSize + 10) & 0xffff;
+                        int count = b.getShort(pos + headerSize + 12) & 0xffff;
+                        for (int i = 0; i < count; i++) {
+                            int a = pos + headerSize + attrStart + i * attrSize;
+                            int name = b.getInt(a + 4);
+                            if (name < 0 || name >= strings.size()) continue;
+                            int raw = b.getInt(a + 8);
+                            int dataType = b.get(a + 15) & 0xff, data = b.getInt(a + 16);
+                            Object value = null;
+                            if (raw >= 0 && raw < strings.size()) value = strings.get(raw);
+                            else if (dataType == 0x03 && data >= 0 && data < strings.size()) value = strings.get(data);
+                            else if (dataType == 0x10 || dataType == 0x11) value = data;
+                            else if (dataType == 0x12) value = data != 0;
+                            if (value != null) out.putIfAbsent(strings.get(name), value);
+                        }
+                        return out;
+                    }
                 }
-                return null;
+                pos += size;
             }
-            pos += size;
+        } catch (RuntimeException malformed) {
+            out.clear();
         }
-        return null;
+        return out;
     }
 
     static List<String> stringPool(ByteBuffer b, int pos) {
