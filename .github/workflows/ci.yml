@@ -890,8 +890,9 @@ jobs:
           # It needs ANGLE next to it, which staging put in stage/bin.
           # The runner has no GPU, so ANGLE falls back to WARP or SwiftShader.
           cp build/winapk-gl-test.exe stage/bin/
-          ./stage/bin/winapk-gl-test.exe
+          for m in default nomain release es3; do echo "=== $m"; ./stage/bin/winapk-gl-test.exe $m || echo "=== $m exit $?"; done
           rm stage/bin/winapk-gl-test.exe
+          exit 1
       - name: Boot an APK headless
         run: |
           # F-Droid moves old versions to its archive, so try both.

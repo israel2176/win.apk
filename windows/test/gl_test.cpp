@@ -32,7 +32,33 @@
 #include "gl/gl_turn.h"
 #include "gl/guest_gl_extensions.h"
 
+#include <windows.h>
+#include <cstring>
+
 namespace {
+
+// DIAGNOSTIC: where a crash is, and which step of a draw.
+thread_local const char* t_who = "main";
+bool g_trace = false;
+LONG CALLBACK on_fault(EXCEPTION_POINTERS* e) {
+    const DWORD code = e->ExceptionRecord->ExceptionCode;
+    if (code != EXCEPTION_ACCESS_VIOLATION && code != EXCEPTION_ILLEGAL_INSTRUCTION) return EXCEPTION_CONTINUE_SEARCH;
+    void* at = e->ExceptionRecord->ExceptionAddress;
+    HMODULE m = nullptr;
+    char name[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           static_cast<LPCSTR>(at), &m)) {
+        GetModuleFileNameA(m, name, MAX_PATH);
+    }
+    std::printf("  CRASH on %s: code %08lx at %s+0x%llx (address %p, %s %p)\n", t_who, code, name,
+                static_cast<unsigned long long>(static_cast<char*>(at) - reinterpret_cast<char*>(m)), at,
+                e->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
+                reinterpret_cast<void*>(e->ExceptionRecord->ExceptionInformation[1]));
+    std::fflush(stdout);
+    TerminateProcess(GetCurrentProcess(), 3);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#define TRACE(x) do { if (g_trace) std::printf("    [%s] %s\n", t_who, x); } while (0)
 
 int g_failures = 0;
 
@@ -155,13 +181,17 @@ struct GlThread {
 
     // Draws `rgba` and reads the middle pixel back: whether it is that colour.
     bool draw(uint32_t rgba) {
+        TRACE("useProgram");
         glUseProgram(program);
+        TRACE("uniform");
         glUniform4f(color, (rgba >> 24 & 0xff) / 255.0f, (rgba >> 16 & 0xff) / 255.0f, (rgba >> 8 & 0xff) / 255.0f,
                     (rgba & 0xff) / 255.0f);
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
         glEnableVertexAttribArray(0);
+        TRACE("drawArrays");
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        TRACE("readPixels");
         glBindBuffer(GL_ARRAY_BUFFER, 0);
         unsigned char px[4] = {};
         glReadPixels(8, 8, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
@@ -189,6 +219,7 @@ void check_two_gl_threads() {
     };
     const unsigned long rebinds_before = winapk::host::gl_turn_rebinds();
     std::thread a([&] {
+        t_who = "A";
         GlThread t;
         a_setup = t.setup(dpy);
         std::printf("  (A set up: %d)\n", a_setup);
@@ -206,6 +237,7 @@ void check_two_gl_threads() {
         t.end();
     });
     std::thread b([&] {
+        t_who = "B";
         wait_for(1);
         GlThread t;
         b_setup = t.setup(dpy);
@@ -214,7 +246,10 @@ void check_two_gl_threads() {
         std::printf("  (B drew)\n");
         step = 2;
         wait_for(3);
+        g_trace = true;
         b_after = b_setup && t.draw(kGreen);
+        g_trace = false;
+        std::printf("  (B drew after A)\n");
         step = 4;
         for (int i = 0; i < 300 && b_setup; ++i) {
             if (!t.draw(kGreen)) b_wrong.fetch_add(1);
@@ -251,13 +286,38 @@ bool make_current(int w, int h) {
     return s != EGL_NO_SURFACE && eglMakeCurrent(d, s, s, ctx);
 }
 
+// DIAGNOSTIC: as the host's context was before: ES 3, D24S8.
+bool make_current_es3(int w, int h) {
+    const EGLDisplay d = static_cast<EGLDisplay>(winapk::host::gl_shared_display());
+    if (!d) return false;
+    const EGLint config_attribs[] = {EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+                                     EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
+                                     EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE};
+    EGLConfig config = nullptr;
+    EGLint n = 0;
+    if (!eglChooseConfig(d, config_attribs, &config, 1, &n) || n < 1) return false;
+    const EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+    const EGLContext ctx = eglCreateContext(d, config, EGL_NO_CONTEXT, ctx_attribs);
+    const EGLint pb_attribs[] = {EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE};
+    const EGLSurface s = ctx == EGL_NO_CONTEXT ? EGL_NO_SURFACE : eglCreatePbufferSurface(d, config, pb_attribs);
+    return s != EGL_NO_SURFACE && eglMakeCurrent(d, s, s, ctx);
+}
+
 }  // namespace
 
-int main() {
+int main(int argc, char** argv) {
     // Unbuffered: a crash in ANGLE must not take the lines before it along.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
-    std::printf("ANGLE through the runtime's GL\n");
-    const bool ready = make_current(64, 32);
+    AddVectoredExceptionHandler(1, on_fault);
+    const char* mode = argc > 1 ? argv[1] : "";
+    std::printf("ANGLE through the runtime's GL (mode '%s')\n", mode);
+    if (!std::strcmp(mode, "nomain")) {
+        std::printf("\nTwo GL threads on the app's display\n");
+        check_two_gl_threads();
+        std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
+        return g_failures;
+    }
+    const bool ready = !std::strcmp(mode, "es3") ? make_current_es3(64, 32) : make_current(64, 32);
     check("context current on a 64x32 pbuffer of the app's display", ready);
     if (!ready) {
         std::printf("\nFAILED: 1 failure(s)\n");
@@ -282,6 +342,10 @@ int main() {
     std::printf("\nThe extensions an app's native code is told of\n");
     check_guest_extensions();
 
+    if (!std::strcmp(mode, "release")) {
+        eglMakeCurrent(eglGetCurrentDisplay(), EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        std::printf("  (main released its context)\n");
+    }
     std::printf("\nTwo GL threads on the app's display\n");
     check_two_gl_threads();
 
