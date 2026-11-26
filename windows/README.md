@@ -2184,6 +2184,10 @@ every such change is listed here:
   Android's `/` (Pattern S) and
   `System.mapLibraryName` / `load` go through the on-demand native loader
   (Pattern N); beside upstream's Patterns L and J.
+- `runtime/java/com/macapk/loader/AppClassLoader.java`: `preloadDependencies` loads each bundled
+  DT_NEEDED dependency once (`preloadedDeps`), as the dynamic linker loads a library once per process; it
+  walked every library's whole closure again (Microsoft Word: 1,647 loads for 63 libraries on the main
+  thread, an ANR, issue #208).
 - `runtime/java/com/macapk/loader/AppClassLoader.java`: `findLibrary` asked by
   app code (not by `System.loadLibrary` or the framework) answers as Android
   does, `/data/app/.../lib/<isa>/lib<name>.so`, where upstream answers the
