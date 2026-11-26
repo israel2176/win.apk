@@ -164,6 +164,9 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: winapk-linker-test <dir with libwinapk_link_*.so>\n");
         return 2;
     }
+    // Each check's line as it happens: a guest library that crashes the process would
+    // otherwise take the buffered lines with it, and the log would not say which check.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
 
     std::printf("Win.apk guest linker\n");
     winapk::LinkerConfig config;
