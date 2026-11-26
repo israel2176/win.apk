@@ -73,8 +73,15 @@ public final class ActivityManagerService {
     }
 
     public void attachApplication(IApplicationThread thread, long startSeq) {
+        // The process's own name, as ActivityManagerService binds a ProcessRecord's (app.processName), not
+        // the application's default: a process a component's android:process started is named so
+        // (com.android.vending:background). Application.getProcessName() answers it, and the Play Store
+        // picks its process's dependency graph by it: its :background services died on a ClassCastException
+        // with the main process's graph (issue #208's logs).
+        String process = com.macapk.loader.Boot.processName();
+        if (process == null || process.isEmpty()) process = app.info.processName;
         try {
-            thread.bindApplication(app.info.processName, app.info, null, null,
+            thread.bindApplication(process, app.info, null, null,
                     ProviderInfoList.fromList(app.providers), null /* instrumentation */, null, null,
                     null, null, 0 /* debugMode */, false, false, false /* restrictedBackupMode */, false,
                     app.config, CompatibilityInfo.DEFAULT_COMPATIBILITY_INFO, null /* services */,

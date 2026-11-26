@@ -217,7 +217,9 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   packageManager, launchIntent, onTaskEmpty)`: registers the services and
   attaches a new `ActivityThread` on the main looper's thread.
 - `ActivityManagerService` (`IActivityManager`): `attachApplication` calls
-  `bindApplication` with the host's `ApplicationInfo` and configuration, then
+  `bindApplication` with the process's own name (`Boot.processName()`, e.g.
+  `com.android.vending:background`, which `Application.getProcessName()`
+  answers), the host's `ApplicationInfo` and configuration, then
   the task manager launches the first activity.
 - `ActivityTaskService` (`IActivityTaskManager`): `startActivity` resolved by
   the host, `START_INTENT_NOT_RESOLVED` when nothing matches (so
