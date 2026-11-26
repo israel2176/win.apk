@@ -431,48 +431,7 @@ public interface ViewHost {
     /** Shows a video frame on the surface's SurfaceView; true when shown (SurfaceView.macapkPresentVideoFrame). */
     boolean presentVideoFrame(Surface surface, int[] argb, int width, int height);
 
-    /** True for a SurfaceView's GL thread (SurfaceView.macapkIsSurfaceViewGlThread). */
-    boolean isSurfaceViewGlThread(Thread thread);
-
-    /** (SurfaceView.macapkMarkGlThreadSurvivedRefusal) */
-    void markGlThreadSurvivedRefusal(Thread thread, String call);
-
-    /** (SurfaceView.macapkGlWaitFrame) */
-    boolean glWaitFrame();
-
-    /** (SurfaceView.macapkHolderSizeIsBufferSize) */
-    boolean holderSizeIsBufferSize();
-
     /** (SurfaceView.macapkIsZOrderOnTop) */
     boolean isZOrderOnTop(SurfaceView view);
 
-    /** True when the view's renderer runs on the OS main thread (SurfaceView.macapkRendersOnOsMain, virtual). */
-    boolean rendersOnOsMain(SurfaceView view);
-
-    /** (SurfaceView.macapkForkGlQueueServiced) */
-    boolean forkGlQueueServiced(SurfaceView view);
-
-    /** (SurfaceView.macapkRendererMayStart) */
-    boolean rendererMayStart(SurfaceView view, int displayW, int displayH);
-
-    /** (SurfaceView.macapkRendererSurfaceSize) */
-    int[] rendererSurfaceSize(SurfaceView view, int displayW, int displayH);
-
-    /** (SurfaceView.macapkWarnGlSizeSplit) */
-    void warnGlSizeSplit(SurfaceView view, int toldW, int toldH, int displayW, int displayH);
-
-    /** (SurfaceView.macapkDriveOverlayForCurrentSurface) */
-    int[] driveOverlayForCurrentSurface(SurfaceView view);
-
-    /** (SurfaceView.macapkConvergeSurfaceLifecycle) */
-    void convergeSurfaceLifecycle(SurfaceView view, int widthPx, int heightPx);
-
-    /** (SurfaceView.macapkDetectDrawBehindTop) */
-    void detectDrawBehindTop(SurfaceView view, Object renderer);
-
-    /** (SurfaceView.macapkNoteNativeDisplaySize) */
-    void noteNativeDisplaySize(SurfaceView view, int w, int h);
-
-    /** (SurfaceView.macapkOwnerStoppedUnderTop) */
-    boolean ownerStoppedUnderTop(SurfaceView view);
 }

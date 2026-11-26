@@ -2189,7 +2189,12 @@ public final class Boot {
         if (!own.isDirectory() && !own.mkdirs() && !own.isDirectory()) {
             throw new java.io.IOException("could not create " + own);
         }
-        String name = android.app.ActivityThread.currentProcessName();
+        // The name the manifest gives this process (Boot.processName). Not AOSP's
+        // ActivityThread.currentProcessName(): it is null until bindApplication, and
+        // this file must hold the name by the time Application.onCreate reads it.
+        String name = sProcessName;
+        if (name == null) name = android.app.ActivityThread.currentProcessName();
+        if (name == null) throw new java.io.IOException("no process name yet");
         try (java.io.FileOutputStream out = new java.io.FileOutputStream(new File(own, "cmdline"))) {
             out.write(name.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             out.write(0);

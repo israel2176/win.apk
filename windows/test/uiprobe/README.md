@@ -76,8 +76,11 @@ hinted a little differently and each side rounds a pixel its own way.
 
 What the oracle cannot tell: Robolectric draws no Hebrew in a Material chip or
 a toolbar title, shows an animated selector in the middle of its transition,
-and runs without EmojiCompat; `no such drawable` lines are platform drawables
-Robolectric's framework does not carry. Those lines differ on its side.
+and runs without EmojiCompat. Those lines differ on its side. Robolectric's
+port of `FindEntryByName` misreads sparse types, so `getIdentifier` there
+misses some platform drawables a phone has (`tooltip_frame`,
+`text_cursor_material`, the text select handles): the probe leaves those out,
+as the oracle cannot speak for them.
 
 `../apicheck/ApiCheck.java` is the static counterpart: it resolves every class,
 method and field that converted apps name against the runtime's jars and lists

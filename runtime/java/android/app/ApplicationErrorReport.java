@@ -320,4 +320,25 @@ public class ApplicationErrorReport implements android.os.Parcelable {
             android.content.Context context, String packageName, int appFlags) {
         return null;
     }
+
+    /** AOSP 14 ApplicationErrorReport.ParcelableCrashInfo (@hide): a CrashInfo the app sends the
+     *  activity manager (IActivityManager.handleApplicationCrash names it, so reflection on
+     *  IActivityManager builds it). */
+    public static class ParcelableCrashInfo extends CrashInfo implements android.os.Parcelable {
+        public ParcelableCrashInfo() { }
+
+        public ParcelableCrashInfo(Throwable tr) { super(tr); }
+
+        public ParcelableCrashInfo(android.os.Parcel in) { super(in); }
+
+        @Override public int describeContents() { return 0; }
+
+        public static final android.os.Parcelable.Creator<ParcelableCrashInfo> CREATOR =
+                new android.os.Parcelable.Creator<ParcelableCrashInfo>() {
+                    @Override public ParcelableCrashInfo createFromParcel(android.os.Parcel in) {
+                        return new ParcelableCrashInfo(in);
+                    }
+                    @Override public ParcelableCrashInfo[] newArray(int size) { return new ParcelableCrashInfo[size]; }
+                };
+    }
 }

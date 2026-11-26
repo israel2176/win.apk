@@ -181,8 +181,14 @@ under **Manage apps & device**.
   or so while it is open, even when only an app or the install window is
   showing, and only when the PC is on mains power and has a network. Nothing
   runs once Win.apk is closed: there is no scheduled task or service, and
-  Win.apk does not stay open just for updates (it waits only for an update
-  window it has already started). Earlier versions made a task named
+  Win.apk does not stay open just for updates. Closing the library stops
+  them: no update window starts after that, and once no app window is left
+  the one under way ends at once, with the Google apps it started (an update
+  being installed is cut off as by a phone's power-off, and the Play Store
+  tries it again later). Only when Win.apk was started for an app or an
+  install, with the library never opened, does it wait, after that window
+  closes, for an update window it has already started (a few minutes).
+  Earlier versions made a task named
   **Win.apk\Background updates** in Windows' Task Scheduler; Win.apk deletes
   it the first time it starts.
 - **An app you are using.** When the Play Store asks Android to wait until
@@ -211,26 +217,6 @@ Play Protect certified"**. That is true: Google certifies phones and tablets
 whose makers had them tested, and Win.apk is not one of them. Win.apk does not
 fake a certification, and will not.
 
-Google has its own way on for devices like this (custom ROMs and Waydroid
-use it): you register the device's ID with your Google account, and Google
-apps then let that account sign in on it.
-
-1. Turn on **Settings > Google account > Use Google services (experimental)**, set them up,
-   and open the Play Store once so Google services check in with Google.
-2. Under **Settings > Google account**, the row **Device ID for Google** shows
-   a long number (it may start with a minus sign). Press **Copy**.
-3. Press **Register this device**. Google's page opens in your browser; sign
-   in there with the same Google account, paste the number and press
-   **Register**.
-4. Wait: Google says it can take a few minutes, sometimes longer. Then close
-   the Google app and open it again.
-
-The number is the Google Services Framework's own ID (its `android_id`). Win.apk
-reads it from the Services Framework's data each time Settings opens; with no
-Services Framework it shows the ID Win.apk's own Google layer was given. No
-number, no row. Once the Services Framework's data is cleared or it is
-installed again, it gets a new ID, which has to be registered again.
-
 ### How it works and what it means for privacy
 
 - Each app runs in its own process. A small background process, the system
@@ -245,10 +231,9 @@ installed again, it gets a new ID, which has to be registered again.
 - Only copies whose signature verifies with Google's key (or a newer Google
   key that took over from it) are treated as Google's apps. An app that only
   uses their package names is an ordinary app.
-- Google sees this PC as a device of its own: brand, maker and model
-  "Win.apk", device "winapk", hardware "x86_64". Win.apk never claims to be a
-  real phone. (Before v0.8.0 it called itself "Mac.apk", so Google meets it as
-  a new device once.)
+- Google sees this PC as Mac.apk's device: brand and maker "Apple", model
+  "Mac", device "macapk", as every Win.apk did until 1.0.0. Win.apk never
+  claims to be a real phone, and fakes no certification or Play Integrity.
 - Every app still runs with your Windows account's rights; there is no
   sandbox between apps on Windows. Keeping the Google account's token
   encrypted and out of the apps protects it from copies of the data folder,

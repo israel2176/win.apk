@@ -58,7 +58,16 @@ mkdir -p "$OUT/.build/drop/META-INF"
 for j in aosp-resources aosp-views aosp-app; do unzip -Z1 "$OUT/lib/$j.jar"; done | tr -d '\r' | grep '\.class$' |
     LC_ALL=C sort -u > "$OUT/.build/aosp-shadowing.txt"
 unzip -Z1 "$OUT/lib/android-framework.jar" | tr -d '\r' | LC_ALL=C sort > "$OUT/.build/framework-entries.txt"
-LC_ALL=C comm -12 "$OUT/.build/aosp-shadowing.txt" "$OUT/.build/framework-entries.txt" > "$DROP"
+# And Win.apk's own nested classes of a class AOSP's replaces (RemoteViews$1..$22, the anonymous
+# classes of Win.apk's RemoteViews): never loaded through their outer class, which is AOSP's, but a
+# name an AOSP class lacks still loads from here, beside AOSP's of the same outer class; reflection
+# over them threw IncompatibleClassChangeError (Win.apk's RemoteViews$7 implementing an Action that
+# AOSP's declares a class; ReflectScan.java).
+LC_ALL=C comm -12 "$OUT/.build/aosp-shadowing.txt" "$OUT/.build/framework-entries.txt" > "$DROP.exact"
+LC_ALL=C comm -23 "$OUT/.build/framework-entries.txt" "$OUT/.build/aosp-shadowing.txt" | grep '[$].*[.]class$' |
+    awk -v shadowing="$OUT/.build/aosp-shadowing.txt" 'BEGIN { while ((getline l < shadowing) > 0) h[l] = 1 }
+        { o = $0; sub(/[$].*/, "", o); if (h[o ".class"]) print }' > "$DROP.nested" || true
+LC_ALL=C sort -u "$DROP.exact" "$DROP.nested" > "$DROP"
 echo "[stage] android-framework.jar: $(wc -l < "$DROP") classes AOSP's resources, views and app layer shadow, dropped"
 if [[ ! -s "$DROP" ]]; then
     echo "[stage] none found: the AOSP jars ($(wc -l < "$OUT/.build/aosp-shadowing.txt") classes) and the framework" \

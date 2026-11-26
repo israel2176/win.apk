@@ -759,6 +759,39 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
         return auth.substring(end + 1);
     }
 
+    /** {@hide} AOSP ContentProvider.getUriWithoutUserId: the uri with its authority's "userId@" taken
+     *  off. */
+    public static Uri getUriWithoutUserId(Uri uri) {
+        if (uri == null) return null;
+        Uri.Builder builder = uri.buildUpon();
+        builder.authority(getAuthorityWithoutUserId(uri.getAuthority()));
+        return builder.build();
+    }
+
+    /** {@hide} AOSP ContentProvider.validateIncomingUri: a uri a caller hands the provider must name one
+     *  of its authorities (one user here, so no other user's uri can come), and its path loses empty
+     *  segments, a way around path checks. AOSP's SliceProvider checks every slice uri with it. */
+    public Uri validateIncomingUri(Uri uri) throws SecurityException {
+        String auth = getAuthorityWithoutUserId(uri.getAuthority());
+        String ours = mInfo != null ? mInfo.authority : null;
+        boolean matches = false;
+        if (ours != null && auth != null) {
+            for (String a : ours.split(";")) if (a.trim().equals(auth)) { matches = true; break; }
+        }
+        if (!matches) {
+            throw new SecurityException("The authority of the uri " + uri
+                    + " does not match the one of the contentProvider: " + ours);
+        }
+        String encodedPath = uri.getEncodedPath();
+        if (encodedPath != null && encodedPath.indexOf("//") != -1) {
+            Uri normalized = uri.buildUpon().encodedPath(encodedPath.replaceAll("//+", "/")).build();
+            android.util.Log.w("ContentProvider", "Normalized " + uri + " to " + normalized
+                    + " to avoid possible security issues");
+            return normalized;
+        }
+        return uri;
+    }
+
     /** {@hide} AOSP ContentProvider.Transport, over the provider's own checks. */
     class Transport extends ContentProviderNative {
         ContentProvider getContentProvider() { return ContentProvider.this; }

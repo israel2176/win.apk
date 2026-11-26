@@ -37,6 +37,8 @@ public class AospAppLifecycleTest {
     static final List<String> log = new ArrayList<>();
     static final String PING = PKG + ".PING";
     static volatile String heard;
+    /** What became of the application context's window manager once nothing but the context held it. */
+    static volatile String windowManager;
     /** The services' callbacks, in their own order (each service's is Android's; between the two
      *  services and the activities it is the main queue's), checked once at the end. */
     static final List<String> svc = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -116,6 +118,27 @@ public class AospAppLifecycleTest {
         @Override public int update(android.net.Uri uri, android.content.ContentValues v, String s, String[] a) { return 0; }
     }
 
+    /** A slice provider (android.app.slice.SliceProvider, AOSP's, as Google Play services declares
+     *  several): installed by ActivityThread.installProvider before Application.onCreate like any
+     *  provider, then reached through the slice manager: a pin reaches onSlicePinned, a bind
+     *  onBindSlice. */
+    static final String SLICES = PKG + ".slices";
+    static final List<String> slices = java.util.Collections.synchronizedList(new ArrayList<>());
+    static volatile String slicePinned;
+
+    public static class Slices extends android.app.slice.SliceProvider {
+        @Override public boolean onCreate() { slices.add("Slices.onCreate"); return true; }
+        @Override public android.app.slice.Slice onBindSlice(android.net.Uri uri,
+                java.util.Set<android.app.slice.SliceSpec> specs) {
+            return new android.app.slice.Slice.Builder(uri, specs.iterator().next())
+                    .addText("hi", null, java.util.List.of()).build();
+        }
+        @Override public void onSlicePinned(android.net.Uri uri) { slicePinned = uri.getPath(); }
+    }
+
+    static final List<String> SLICES_EXPECTED = List.of("Slices.onCreate", "App.onCreate", "manager true",
+            "pinned [content://" + SLICES + "/s]", "bound /s hi", "full access false");
+
     static final List<String> SVC_EXPECTED = List.of(
             "Started.onCreate", "Started.onStartCommand 1 go", "Started.onDestroy",
             "Bound.onCreate", "Bound.onBind", "connected to Bound", "Bound.onUnbind", "Bound.onDestroy");
@@ -130,6 +153,15 @@ public class AospAppLifecycleTest {
             super.onCreate();
             note("App.onCreate");
             prov.add("App.onCreate");
+            slices.add("App.onCreate");
+            // A context's window manager is its own for the context's life (ContextImpl's service
+            // cache): ToastPresenter keeps it only in a WeakReference and removes its toast with it.
+            Object wm = getSystemService(WINDOW_SERVICE);
+            java.lang.ref.WeakReference<Object> weak = new java.lang.ref.WeakReference<>(wm);
+            boolean same = wm != null && wm == getSystemService(android.view.WindowManager.class);
+            wm = null;
+            System.gc();
+            windowManager = !same ? "a new one on each call" : weak.get() == null ? "collected" : "kept";
             // A receiver registered on the application's context hears a broadcast an activity sends
             // (step A3: ContextImpl's receivers and broadcasts). Not in the callback order: when it
             // is heard is the broadcast queue's, checked once at the end.
@@ -191,6 +223,19 @@ public class AospAppLifecycleTest {
                 try (android.database.Cursor c = getContentResolver().query(
                         android.net.Uri.parse("content://" + AUTHORITY + "/x"), null, null, null, null)) {
                     prov.add(c != null && c.moveToFirst() ? "query " + c.getString(0) : "query nothing");
+                }
+                android.app.slice.SliceManager sm = getSystemService(android.app.slice.SliceManager.class);
+                slices.add("manager " + (sm != null));
+                if (sm != null) {
+                    android.net.Uri su = android.net.Uri.parse("content://" + SLICES + "/s");
+                    java.util.Set<android.app.slice.SliceSpec> specs =
+                            java.util.Set.of(new android.app.slice.SliceSpec("test", 1));
+                    sm.pinSlice(su, specs);
+                    slices.add("pinned " + sm.getPinnedSlices());
+                    android.app.slice.Slice bound = sm.bindSlice(su, specs);
+                    slices.add(bound == null ? "bound nothing" : "bound " + bound.getUri().getPath() + " "
+                            + bound.getItems().get(0).getText());
+                    slices.add("full access " + sm.hasSliceAccess());
                 }
                 startService(new Intent(this, Started.class).putExtra("s", "go"));
                 sendOrderedBroadcast(new Intent(STATIC).setPackage(PKG).putExtra("v", "m"), null,
@@ -314,56 +359,8 @@ public class AospAppLifecycleTest {
     static native int redirectEnd();
 
     public static void main(String[] args) throws Exception {
-        String fw = System.getProperty("winapk.aosp.res.framework");
-        if (fw == null || !new File(fw).isFile()) throw new IllegalStateException("-Dwinapk.aosp.res.framework=<framework-res-34.apk>");
-        String host = System.getProperty("winapk.test.host");   // plainjvm_host.c, built
-        if (host == null || !new File(host).isFile()) throw new IllegalStateException("-Dwinapk.test.host=<libplainjvm_host>");
-        System.load(new File(host).getAbsolutePath());
-        // This plain JVM has Robolectric's native graphics, not the GPU DLL (no render thread): views
-        // draw in software here, as Android's own tests disable hardware rendering.
-        // (reflection: the class is hidden API, not in the jar this test compiles against)
-        java.lang.reflect.Field rendererEnabled = Class.forName("android.view.ThreadedRenderer").getField("sRendererEnabled");
-        rendererEnabled.setBoolean(null, false);  // what ViewRootImpl.enableHardwareAcceleration reads
-        // AOSP's graphics, as winapk-runtime binds them (host/aosp_gfx.cpp): Robolectric's native
-        // runtime onto AOSP's classes through the host's own redirect (plainjvm_host.cpp), ICU's data, then
-        // the system fonts (AospGfx.materializeSystemFonts, what Boot does): an activity's decor
-        // reaches ColorSpace and Typeface.
-        String runtime = System.getProperty("winapk.test.gfx.runtime");
-        if (runtime == null) throw new IllegalStateException("-Dwinapk.test.gfx.runtime=<robolectric-nativeruntime>");
-        if (!redirectBegin()) throw new IllegalStateException("the redirect did not install");
-        System.load(new File(runtime).getAbsolutePath());
-        int bound = redirectEnd();
-        if (bound < 600) throw new IllegalStateException("graphics natives bound: " + bound);
-        if (com.macapk.loader.gfx.GfxBackend.get().materializeSystemFonts(name -> null) == null) {
-            throw new IllegalStateException("no system fonts (-Dwinapk.aosp.fonts=<fonts dir>)");
-        }
-        File data = java.nio.file.Files.createTempDirectory("aospapp").toFile();
-        Looper.prepareMainLooper();
-        // The framework's resources as the system AssetManager, as Boot has them before the app binds
-        // (AospRes: AssetManager.createSystemAssetsInZygoteLocked without overlays).
-        com.winapk.aospres.AospRes.INSTANCE.openAssets(fw);
-
-        ApplicationInfo ai = new ApplicationInfo();
-        ai.packageName = PKG;
-        ai.processName = PKG;
-        ai.className = App.class.getName();
-        // The resources the app's LoadedApk opens: any APK will do, the framework's by default.
-        String apk = System.getProperty("winapk.test.apk", fw);
-        if (!new File(apk).isFile()) throw new IllegalStateException("no " + apk);
-        apk = withoutManifest(apk, new File(data, "app.apk"));
-        ai.sourceDir = ai.publicSourceDir = apk;
-        // As the package manager fills them: /data/user/0/<pkg> (credential protected, the default
-        // storage) and /data/user_de/0/<pkg>.
-        ai.dataDir = ai.credentialProtectedDataDir = new File(data, "user").getPath();
-        ai.deviceProtectedDataDir = new File(data, "user_de").getPath();
-        new File(ai.dataDir).mkdirs();
-        new File(ai.deviceProtectedDataDir).mkdirs();
-        java.nio.file.Files.writeString(new File(ai.dataDir, "AndroidManifest.xml").toPath(), MANIFEST);
-        ai.nativeLibraryDir = new File(data, "lib").getPath();
-        ai.targetSdkVersion = 34;
-        ai.uid = android.os.Process.myUid();
-        ai.enabled = true;
-        ai.flags = ApplicationInfo.FLAG_HAS_CODE;
+        ApplicationInfo ai = setUp(MANIFEST, App.class.getName());
+        String apk = ai.sourceDir;
 
         Map<String, ActivityInfo> activities = Map.of(
                 First.class.getName(), activity(ai, First.class),
@@ -397,6 +394,64 @@ public class AospAppLifecycleTest {
         loop();
     }
 
+    /** What winapk-runtime does before an app's process starts, on this plain JVM: the host library, AOSP's
+     *  graphics on Robolectric's native runtime, the system fonts, the main looper, the framework's
+     *  resources; then the app's ApplicationInfo, its data folders and its manifest (`manifest`, whose
+     *  application is `appClass`). Its sourceDir is the app's APK. MagnifierTest starts from here too. */
+    static ApplicationInfo setUp(String manifest, String appClass) throws Exception {
+        String fw = System.getProperty("winapk.aosp.res.framework");
+        if (fw == null || !new File(fw).isFile()) throw new IllegalStateException("-Dwinapk.aosp.res.framework=<framework-res-34.apk>");
+        String host = System.getProperty("winapk.test.host");   // plainjvm_host.c, built
+        if (host == null || !new File(host).isFile()) throw new IllegalStateException("-Dwinapk.test.host=<libplainjvm_host>");
+        System.load(new File(host).getAbsolutePath());
+        // This plain JVM has Robolectric's native graphics, not the GPU DLL (no render thread): views
+        // draw in software here, as Android's own tests disable hardware rendering.
+        // (reflection: the class is hidden API, not in the jar this test compiles against)
+        java.lang.reflect.Field rendererEnabled = Class.forName("android.view.ThreadedRenderer").getField("sRendererEnabled");
+        rendererEnabled.setBoolean(null, false);  // what ViewRootImpl.enableHardwareAcceleration reads
+        // AOSP's graphics, as winapk-runtime binds them (host/aosp_gfx.cpp): Robolectric's native
+        // runtime onto AOSP's classes through the host's own redirect (plainjvm_host.cpp), ICU's data, then
+        // the system fonts (AospGfx.materializeSystemFonts, what Boot does): an activity's decor
+        // reaches ColorSpace and Typeface.
+        String runtime = System.getProperty("winapk.test.gfx.runtime");
+        if (runtime == null) throw new IllegalStateException("-Dwinapk.test.gfx.runtime=<robolectric-nativeruntime>");
+        if (!redirectBegin()) throw new IllegalStateException("the redirect did not install");
+        System.load(new File(runtime).getAbsolutePath());
+        int bound = redirectEnd();
+        if (bound < 600) throw new IllegalStateException("graphics natives bound: " + bound);
+        if (com.macapk.loader.gfx.GfxBackend.get().materializeSystemFonts(name -> null) == null) {
+            throw new IllegalStateException("no system fonts (-Dwinapk.aosp.fonts=<fonts dir>)");
+        }
+        File data = java.nio.file.Files.createTempDirectory("aospapp").toFile();
+        Looper.prepareMainLooper();
+        // The framework's resources as the system AssetManager, as Boot has them before the app binds
+        // (AospRes: AssetManager.createSystemAssetsInZygoteLocked without overlays).
+        com.winapk.aospres.AospRes.INSTANCE.openAssets(fw);
+
+        ApplicationInfo ai = new ApplicationInfo();
+        ai.packageName = PKG;
+        ai.processName = PKG;
+        ai.className = appClass;
+        // The resources the app's LoadedApk opens: any APK will do, the framework's by default.
+        String apk = System.getProperty("winapk.test.apk", fw);
+        if (!new File(apk).isFile()) throw new IllegalStateException("no " + apk);
+        apk = withoutManifest(apk, new File(data, "app.apk"));
+        ai.sourceDir = ai.publicSourceDir = apk;
+        // As the package manager fills them: /data/user/0/<pkg> (credential protected, the default
+        // storage) and /data/user_de/0/<pkg>.
+        ai.dataDir = ai.credentialProtectedDataDir = new File(data, "user").getPath();
+        ai.deviceProtectedDataDir = new File(data, "user_de").getPath();
+        new File(ai.dataDir).mkdirs();
+        new File(ai.deviceProtectedDataDir).mkdirs();
+        java.nio.file.Files.writeString(new File(ai.dataDir, "AndroidManifest.xml").toPath(), manifest);
+        ai.nativeLibraryDir = new File(data, "lib").getPath();
+        ai.targetSdkVersion = 34;
+        ai.uid = android.os.Process.myUid();
+        ai.enabled = true;
+        ai.flags = ApplicationInfo.FLAG_HAS_CODE;
+        return ai;
+    }
+
     /** Looper.loop()'s body, but an exception out of a message fails the test: Win.apk's main loop
      *  logs it through the host's log, which a plain JVM does not have. */
     static void loop() throws Exception {
@@ -425,6 +480,8 @@ public class AospAppLifecycleTest {
             + "    </receiver>\n"
             + "    <provider android:name=\"AospAppLifecycleTest$Provider\" android:authorities=\"" + AUTHORITY
             + "\" android:exported=\"false\"/>\n"
+            + "    <provider android:name=\"AospAppLifecycleTest$Slices\" android:authorities=\"" + SLICES
+            + "\" android:exported=\"true\"/>\n"
             + "  </application>\n"
             + "</manifest>\n";
 
@@ -510,6 +567,11 @@ public class AospAppLifecycleTest {
                     + " query hello x]");
             System.exit(1);
         }
+        if (!slices.equals(SLICES_EXPECTED) || !"/s".equals(slicePinned)) {
+            System.out.println("FAILED: the slice provider gave " + slices + ", onSlicePinned " + slicePinned
+                    + ", Android gives " + SLICES_EXPECTED + ", onSlicePinned /s");
+            System.exit(1);
+        }
         if (!rcv.equals(List.of("Static m ordered=true", "Dyn 7", "result 8"))) {
             System.out.println("FAILED: the ordered broadcast's receivers and result gave " + rcv
                     + ", Android gives [Static m ordered=true, Dyn 7, result 8]");
@@ -518,6 +580,11 @@ public class AospAppLifecycleTest {
         if (!new java.util.HashSet<>(sticky).equals(java.util.Set.of("live initial=false", "replay initial=true"))) {
             System.out.println("FAILED: the sticky broadcast's receivers gave " + sticky
                     + ", Android gives [live initial=false, replay initial=true]");
+            System.exit(1);
+        }
+        if (!"kept".equals(windowManager)) {
+            System.out.println("FAILED: the application context's window manager: " + windowManager
+                    + ", Android keeps one per context");
             System.exit(1);
         }
         System.out.println("ALL PASSED");

@@ -123,8 +123,8 @@ way Android's package installer does it:
    **Install unknown apps** switch ("Allow ... to install other apps?");
    **Allow** goes on to the install, **Cancel** or **Don't allow** stops it.
    The answer is kept (see [Permissions](#permissions)), so this comes once
-   per store, and an update of the store keeps it. The built-in Store is
-   allowed from the start, as a phone's own store is.
+   per store, and an update of the store keeps it. The built-in Store and
+   the Play Store skip all of these steps, as a phone's own store does.
 2. **Do you want to install this app?** (or **Do you want to update this
    app?** when the library has the app): **Install** / **Update**, or
    **Cancel**.
@@ -152,7 +152,7 @@ Android phones use ARM processors; a PC uses x86-64. An app's native code
 | No native libraries (Java or Kotlin only) | Runs directly |
 | `lib/x86_64` | Loads those libraries directly, at full speed. Win.apk prefers this build whenever the APK or bundle has it |
 | Only `lib/arm64-v8a` | Translates the libraries to x64 in the background; the app runs on an ARM64 JIT until the translation is ready |
-| Only `lib/armeabi-v7a` (32-bit ARM) | Not supported. The app installs but stops when it loads that code; look for an x86_64 or arm64-v8a build |
+| Only `lib/armeabi-v7a` (32-bit ARM) | Not supported. The install is refused, as on a phone with no ARM support (`INSTALL_FAILED_NO_MATCHING_ABIS`), and says so; look for an x86_64 or arm64-v8a build |
 
 #### ARM-only apps
 
@@ -184,12 +184,13 @@ no shortcut, and the Store item is its one way in.
 - **Updates**: the daily update check (Settings > Updates, **Check for updates
   automatically**) also looks for a newer release of the store app, and
   installs it the same way, once the Store is not open.
-- **Installing an app** from the Store goes through Win.apk as for any store
-  (see [Apps that install apps](#apps-that-install-apps)): **Do you want to
-  install this app?**, the install window, then **App installed.** with
-  **Open** and **Done**. The Store is allowed to install apps from the start,
-  as a phone's own store is, and the apps it installs name it as their
-  installer.
+- **Installing an app** from the Store asks nothing more: choosing it in the
+  Store is the answer, as a phone's own store installs what you pick in it
+  (the Play Store does the same). The Store shows the install and says when
+  it is done, and the apps it installs name it as their installer. This holds
+  for the Store as Win.apk installed it, the release it checked against
+  GitHub; a copy of the Store from elsewhere asks as any other store does
+  (see [Apps that install apps](#apps-that-install-apps)).
 - Leaving for another item keeps the Store running, as a phone keeps an app
   in the background; the Store item shows it again at once. Closing the
   library window closes it. If it closes, the page says so, with **Open the
@@ -313,9 +314,14 @@ report an app that stops with an error.
 
 When Win.apk ends (the library closed and no app open), everything it
 started in the background ends with it: the translation of ARM apps, the
-system broker and the Google account's service. Nothing of Win.apk goes on
-running with nothing on screen; translation goes on where it was the next
-time.
+system broker and the Google account's service, and a background update
+window (**Update apps in the background**) with Google's apps it started.
+Nothing of Win.apk goes on running with nothing on screen; translation goes
+on where it was the next time, and a Play Store update cut off half way is
+cut off as when a phone is switched off: the Play Store tries it again
+later. Once you close the library, no new background update window starts
+until you open Win.apk again (an app you leave open still has its own Google
+services, which run the Play Store's jobs that are due).
 
 Apps run with your Windows user account's permissions. There is no
 phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md)).
@@ -387,7 +393,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; nothing runs once Win.apk is closed: there is no scheduled task or service), **Google services setup**, and **Device ID for Google** (once Google services have checked in: the Services Framework's ID, **Copy**, and **Register this device**, Google's page for devices that are not Play Protect certified) | See [Google account and Google services](google-services.md) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; closing Win.apk stops them, and nothing runs once it is closed: there is no scheduled task or service), and **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
@@ -599,9 +605,7 @@ shortcut. The Play Store updates your apps as on a phone, in the background
 too (**Update apps in the background**); an app you have open is updated
 once you close it when the Play Store asks to wait, else closed for its update.
 Win.apk is not a Play Protect certified device and does not pretend to be, so
-Gmail and the Play Store may say so; **Device ID for Google** shows the ID to
-register with your account on Google's page for such devices (**Register this
-device**), after which Google apps sign in.
+Gmail and the Play Store may say so.
 
 [Google account and Google services](google-services.md) explains both, the
 setup step by step, and what does not work.
@@ -698,7 +702,7 @@ and the launch window open the right log themselves when something fails.
 | `google-download.log` | The Google services setup's downloads (apkeep's output, from APKPure) |
 | `system.log`, `services\` | With Google services on: the system broker (its `jobs:` lines: the apps' background jobs it keeps and starts, the Play Store's update checks among them), and the apps it starts for other apps |
 | `maintenance.log` | With **Update apps in the background** on: the last background window Win.apk opened |
-| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
+| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed and the built-in Store: no question, as on a phone), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 

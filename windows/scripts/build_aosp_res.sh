@@ -116,13 +116,15 @@ extract "$PORT" "$WORK/port.txt"
 # android-all, the port's jars, until nothing is missing (as build_aosp_gfx.sh). Never android.app
 # beyond WindowConfiguration, nor android.animation: Win.apk's own. -filter:none, for what a class
 # names in its own package (the port's Clock beside PerfStatsCollector); but a nested class only
-# with its outer class here, never one of Win.apk's own classes (two implementations mixed).
+# with its outer class here, never one of Win.apk's own classes (two implementations mixed). Nor
+# libcore's own java.* classes (java.nio.NioUtils): no class loader but the JDK's defines a class of
+# those packages ("Prohibited package name"), so one in the jar could never load.
 for round in 1 2 3 4 5 6 7 8 9 10; do
     (cd "$CLASSES" && find . -name '*.class' | sed 's#^[.]/##') > "$WORK/have.txt"
     "$JDEPS" --multi-release 21 -verbose:class -filter:none -cp "$(cp_of "$GFX" "$FRAMEWORK" "$LOADER")" \
         "$CLASSES" 2> /dev/null |
         tr -d '\r' | awk '$NF == "found" && $(NF-1) == "not" { print $3 }' | sort -u |
-        grep -vE '^(android\.app\.|android\.animation\.|com\.google\.|javax\.annotation\.|org\.jspecify\.)' |
+        grep -vE '^(java\.|android\.app\.|android\.animation\.|com\.google\.|javax\.annotation\.|org\.jspecify\.)' |
         tr . / | awk -v have="$WORK/have.txt" 'BEGIN { while ((getline l < have) > 0) h[l] = 1 }
             { o = $0; sub(/[$].*/, "", o); if (o == $0 || h[o ".class"]) print $0 ".class" }' \
         > "$WORK/need.txt" || true

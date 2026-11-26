@@ -658,4 +658,136 @@ public abstract class AccessibilityService extends android.app.Service {
             if (executor != null) executor.execute(r); else r.run();
         }
     }
+
+    /** AOSP 14 AccessibilityService.Callbacks (@hide): what IAccessibilityServiceClientWrapper hands the
+     *  system's calls to; AOSP's AccessibilityDisplayProxy (aosp-views.jar) implements it. */
+    public interface Callbacks {
+        void onAccessibilityEvent(AccessibilityEvent event);
+        void onInterrupt();
+        void onServiceConnected();
+        void init(int connectionId, IBinder windowToken);
+        boolean onGesture(AccessibilityGestureEvent gestureInfo);
+        boolean onKeyEvent(KeyEvent event);
+        void onMagnificationChanged(int displayId, Region region, MagnificationConfig config);
+        void onMotionEvent(MotionEvent event);
+        void onTouchStateChanged(int displayId, int state);
+        void onSoftKeyboardShowModeChanged(int showMode);
+        void onPerformGestureResult(int sequence, boolean completedSuccessfully);
+        void onFingerprintCapturingGesturesChanged(boolean active);
+        void onFingerprintGesture(int gesture);
+        void onAccessibilityButtonClicked(int displayId);
+        void onAccessibilityButtonAvailabilityChanged(boolean available);
+        void onSystemActionsChanged();
+        void createImeSession(com.android.internal.inputmethod.IAccessibilityInputMethodSessionCallback callback);
+        void startInput(com.android.internal.inputmethod.RemoteAccessibilityInputConnection inputConnection,
+                android.view.inputmethod.EditorInfo editorInfo, boolean restarting);
+    }
+
+    /** AOSP 14 AccessibilityService.IAccessibilityServiceClientWrapper (@hide): the binder the system
+     *  calls an accessibility service through, each call handed to the Callbacks on the service's
+     *  executor; AOSP's AccessibilityDisplayProxy (aosp-views.jar) extends it. No system binds an
+     *  accessibility service here (the class note above), so the calls that answer the system through
+     *  its connection (a key event's result, the interaction client's cache and the IME session) do
+     *  nothing: a minimal faithful stub, there for what names it. */
+    public static class IAccessibilityServiceClientWrapper extends IAccessibilityServiceClient.Stub {
+        private final Callbacks mCallback;
+        private final android.content.Context mContext;
+        private final Executor mExecutor;
+        private int mConnectionId = -1;
+
+        public IAccessibilityServiceClientWrapper(android.content.Context context, Executor executor,
+                Callbacks callback) {
+            mCallback = callback;
+            mContext = context;
+            mExecutor = executor;
+        }
+
+        public IAccessibilityServiceClientWrapper(android.content.Context context, android.os.Looper looper,
+                Callbacks callback) {
+            this(context, new Handler(looper)::post, callback);
+        }
+
+        @Override public void init(IAccessibilityServiceConnection connection, int connectionId, IBinder windowToken) {
+            mExecutor.execute(() -> {
+                mConnectionId = connectionId;
+                mCallback.init(connectionId, windowToken);
+                mCallback.onServiceConnected();
+            });
+        }
+
+        @Override public void onInterrupt() { mExecutor.execute(mCallback::onInterrupt); }
+
+        @Override public void onAccessibilityEvent(AccessibilityEvent event, boolean serviceWantsEvent) {
+            if (serviceWantsEvent) mExecutor.execute(() -> mCallback.onAccessibilityEvent(event));
+        }
+
+        @Override public void onGesture(AccessibilityGestureEvent gestureInfo) {
+            mExecutor.execute(() -> mCallback.onGesture(gestureInfo));
+        }
+
+        @Override public void clearAccessibilityCache() { }
+
+        @Override public void onKeyEvent(KeyEvent event, int sequence) {
+            mExecutor.execute(() -> mCallback.onKeyEvent(event));
+        }
+
+        @Override public void onMagnificationChanged(int displayId, Region region, MagnificationConfig config) {
+            mExecutor.execute(() -> mCallback.onMagnificationChanged(displayId, region, config));
+        }
+
+        @Override public void onSoftKeyboardShowModeChanged(int showMode) {
+            mExecutor.execute(() -> mCallback.onSoftKeyboardShowModeChanged(showMode));
+        }
+
+        @Override public void onPerformGestureResult(int sequence, boolean successfully) {
+            mExecutor.execute(() -> mCallback.onPerformGestureResult(sequence, successfully));
+        }
+
+        @Override public void onFingerprintCapturingGesturesChanged(boolean active) {
+            mExecutor.execute(() -> mCallback.onFingerprintCapturingGesturesChanged(active));
+        }
+
+        @Override public void onFingerprintGesture(int gesture) {
+            mExecutor.execute(() -> mCallback.onFingerprintGesture(gesture));
+        }
+
+        @Override public void onAccessibilityButtonClicked(int displayId) {
+            mExecutor.execute(() -> mCallback.onAccessibilityButtonClicked(displayId));
+        }
+
+        @Override public void onAccessibilityButtonAvailabilityChanged(boolean available) {
+            mExecutor.execute(() -> mCallback.onAccessibilityButtonAvailabilityChanged(available));
+        }
+
+        @Override public void onSystemActionsChanged() { mExecutor.execute(mCallback::onSystemActionsChanged); }
+
+        @Override public void createImeSession(
+                com.android.internal.inputmethod.IAccessibilityInputMethodSessionCallback callback) {
+            mExecutor.execute(() -> mCallback.createImeSession(callback));
+        }
+
+        @Override public void setImeSessionEnabled(
+                com.android.internal.inputmethod.IAccessibilityInputMethodSession session, boolean enabled) { }
+
+        @Override public void bindInput() { }
+
+        @Override public void unbindInput() { }
+
+        @Override public void startInput(
+                com.android.internal.inputmethod.IRemoteAccessibilityInputConnection connection,
+                android.view.inputmethod.EditorInfo editorInfo, boolean restarting) {
+            com.android.internal.inputmethod.RemoteAccessibilityInputConnection ric = connection == null ? null
+                    : new com.android.internal.inputmethod.RemoteAccessibilityInputConnection(connection,
+                            new com.android.internal.inputmethod.CancellationGroup());
+            mExecutor.execute(() -> mCallback.startInput(ric, editorInfo, restarting));
+        }
+
+        @Override public void onMotionEvent(MotionEvent event) {
+            mExecutor.execute(() -> mCallback.onMotionEvent(event));
+        }
+
+        @Override public void onTouchStateChanged(int displayId, int state) {
+            mExecutor.execute(() -> mCallback.onTouchStateChanged(displayId, state));
+        }
+    }
 }

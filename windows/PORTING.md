@@ -690,6 +690,15 @@ stay valid after upstream merges.
 - Upstream's JVM options include SerialGC, `-Xss16m`, bytecode verification
   off, `--patch-module java.base` and
   `--add-opens java.base/jdk.internal.loader`.
+- ART has no modules: an app reflects into any class of the core library and
+  makes its private members accessible (the hidden-API lists aside), and
+  libraries count on it (Gson on `java.lang.ref.Reference.referent`). Right after
+  `JNI_CreateJavaVM`, `open_platform_packages` (`runtime_main.cpp`) opens every
+  package of every module of the boot layer to the unnamed modules through
+  `jdk.internal.module.Modules.addOpensToAllUnnamed` (what `--add-opens` does,
+  with no list to keep in step with the JRE; ~10 ms for the 770 packages of a
+  full JDK 21, fewer in the shipped JRE). The JVM options, and so the class-data
+  sharing archive's key, do not change.
 - Differences on Windows: the classpath separator is `;`, not `:`. `-Xss` does
   not apply to the thread that creates the VM, so the VM should be created on a
   thread with a large stack. Any vectored exception handler the port installs

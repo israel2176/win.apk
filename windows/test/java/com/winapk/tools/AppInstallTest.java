@@ -164,6 +164,21 @@ public class AppInstallTest {
         check("a bundle's unsafely named APK is skipped", rc == 0 && Files.isRegularFile(hbDir.resolve("base.apk"))
                 && !anyNamed(root, "splitevil"));
 
+        // INSTALL_FAILED_NO_MATCHING_ABIS: native code for none of the PC's ABIs is refused before install,
+        // native code for one of them (or none at all) installs.
+        Path arm32 = library.resolve("Arm32.apk");
+        Files.write(arm32, zip(Map.of("AndroidManifest.xml", manifest("com.example.arm32"),
+                "lib/armeabi-v7a/libreact.so", bytes("ELF arm32"))));
+        rc = AppInstall.install(arm32, android, "x86_64,arm64-v8a", android.resolve("data/app/.Arm32.installed"));
+        check("an armeabi-v7a-only app is refused", rc == 3 && !Files.exists(android.resolve("data/app")
+                .resolve(AppInstall.DIR_NONCE).resolve("com.example.arm32-" + AppInstall.NAME_NONCE)));
+        Path both = library.resolve("Both.apk");
+        Files.write(both, zip(Map.of("AndroidManifest.xml", manifest("com.example.both"),
+                "lib/armeabi-v7a/libx.so", bytes("ELF arm32"), "lib/arm64-v8a/libx.so", bytes("ELF arm64"))));
+        rc = AppInstall.install(both, android, "x86_64,arm64-v8a", android.resolve("data/app/.Both.installed"));
+        check("an app with arm64-v8a beside armeabi-v7a installs", rc == 0);
+        check("libAbis lists the ABIs", AppInstall.libAbis(both).equals(new java.util.TreeSet<>(
+                List.of("arm64-v8a", "armeabi-v7a"))));
         sessionChecks(library, android);
 
         AppInstall.deleteTree(root);

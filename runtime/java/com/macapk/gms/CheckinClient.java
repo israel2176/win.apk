@@ -11,8 +11,8 @@
 // We send what we honestly are: the Build fields android.os.Build already
 // reports to every guest (BRAND/MANUFACTURER "Apple", MODEL the host hw.model, the real SDK level,
 // the real ABI list, the real screen metrics). We register as a Mac.apk device
-// because that is what this is. Win.apk: on Windows the same Build fields say
-// "Win.apk" / "winapk" / "x86_64", and so does the User-Agent below.
+// because that is what this is. Win.apk: on Windows the same, Mac.apk's identity
+// and User-Agent, the owner's choice (Build.java).
 //
 // microG's reference implementation fabricates several identifiers that we
 // OMIT, and the omissions are deliberate rather than unfinished:
@@ -60,7 +60,7 @@ public final class CheckinClient {
      *  body already say "Mac.apk" (on Windows "Win.apk") -- a UA claiming to be
      *  a vbox86p emulator image would contradict the body it is attached to. */
     private static final String USER_AGENT = "Android-Checkin/2.0 ("
-            + (java.io.File.separatorChar == '\\' ? "Win.apk" : "Mac.apk") + "); gzip";
+            + "Mac.apk" + "); gzip";
 
     /** microG SettingsContract.kt:120. The literal first-checkin digest; the
      *  server hands back a new one to echo on later requests. */

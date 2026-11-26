@@ -25,7 +25,8 @@
 // install with its base kept as the app's .apk, a split named as a device names it, other apps' files apart.
 // Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
 // done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
-// clock went back), and waits while on battery, with no network or while an app starts.
+// clock went back), and waits while on battery, with no network or while an app starts; none once the user closed
+// the library, and the hidden launcher waits for a window it opened only when the user did not close the library.
 
 #include <cstdio>
 #include <cstdlib>
@@ -1051,6 +1052,16 @@ void test_maintenance() {
     c.app_starting = true;
     check("an app starting: wait", mw::decide(now, 0, c) == D::kWait);
     check("off wins over everything", mw::decide(now, 0, mw::Conditions{}) == D::kOff);
+    c = ok;
+    c.closed_by_user = true;
+    check("the user closed the library: no window", mw::decide(now, 0, c) == D::kClosed);
+    c.window_running = true;
+    check("the user closed the library while one runs: not a second", mw::decide(now, 0, c) == D::kClosed);
+    c.setting_on = false;
+    check("closed, setting off: off", mw::decide(now, 0, c) == D::kOff);
+    check("never shown, a window runs: the launcher waits for it", mw::wait_for_window(true, false));
+    check("library closed by the user, a window runs: quit, ending it", !mw::wait_for_window(true, true));
+    check("no window: nothing to wait for", !mw::wait_for_window(false, false) && !mw::wait_for_window(false, true));
 }
 
 void test_install_sets() {

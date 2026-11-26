@@ -29,4 +29,25 @@ public interface SplashScreen {
             synchronized (this) { mExitAnimationListener = null; }
         }
     }
+
+    /** AOSP 14 SplashScreen.SplashScreenManagerGlobal: the process's record of the activities whose
+     *  splash screen has an exit listener, which ActivityThread asks when an activity goes and when
+     *  the system hands over its splash screen view (its field names the type, so reflection on
+     *  ActivityThread builds it). Win.apk's system hands over no splash screen view (SplashScreenImpl
+     *  above), so no activity has one to hand over and none is listed: a minimal faithful stub. */
+    class SplashScreenManagerGlobal {
+        private static final SplashScreenManagerGlobal sInstance = new SplashScreenManagerGlobal();
+
+        private SplashScreenManagerGlobal() { }
+
+        public static SplashScreenManagerGlobal getInstance() { return sInstance; }
+
+        public void tokenDestroyed(android.os.IBinder token) { }
+
+        public void handOverSplashScreenView(android.os.IBinder token, SplashScreenView splashScreenView) {
+            if (splashScreenView != null) splashScreenView.remove();
+        }
+
+        public boolean containsExitListener(android.os.IBinder token) { return false; }
+    }
 }

@@ -235,4 +235,22 @@ public class SystemProperties {
         } catch (Throwable ignored) {}
         return "320";
     }
+
+    /** AOSP 14 SystemProperties.Handle: a property looked up once (SystemProperties.find), read again
+     *  cheaply; PropertyInvalidatedCache names it, so reflection on that class builds it. AOSP holds the
+     *  native property's address; here it holds the name and reads through the getters above. find
+     *  answers none here (com.winapk.aospviews.Compat.find), so none is made yet. */
+    public static final class Handle {
+        private final String mName;
+
+        private Handle(String name) { mName = name; }
+
+        public String get() { return SystemProperties.get(mName); }
+
+        public int getInt(int def) { return SystemProperties.getInt(mName, def); }
+
+        public long getLong(long def) { return SystemProperties.getLong(mName, def); }
+
+        public boolean getBoolean(boolean def) { return SystemProperties.getBoolean(mName, def); }
+    }
 }

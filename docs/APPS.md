@@ -30,7 +30,7 @@ keeping a copy.
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
+| OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX, an app's own GL thread on EGL10 or EGL14, each drawing on its own thread as on Android) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
 | `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
 | Vulkan | ❌ | | Not implemented | |
 | Pictures (`BitmapFactory`, `ImageDecoder`) | ✅ | PNG, JPEG, WebP, GIF, BMP and ICO by Android's own decoders; HEIF/HEIC (a phone's photos) and AVIF through Windows | HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video Extension (Microsoft Store); without them such a picture does not open, as on a phone that cannot read it | `windows/java/aosp_gfx/` (`HostImageDecode`), `native_image.cpp` |
@@ -141,7 +141,7 @@ what to look for in the app or in its log.
 
 | Sign | What it is | Workaround |
 |---|---|---|
-| The APK has only `lib/armeabi-v7a` | 32-bit ARM code, which Win.apk cannot run | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
+| The install says the app is built only for 32-bit ARM (`INSTALL_FAILED_NO_MATCHING_ABIS` in the install log) | 32-bit ARM code, which Win.apk cannot run: the install is refused, as on a phone with no ARM support | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
 | The APK has only `lib/arm64-v8a` | Runs, slowly at first, while it is translated | Give it a few minutes on its first runs |
 | A video plays without sound in an ExoPlayer app | Vorbis or FLAC audio | Pick a stream with AAC or Opus audio, if the app lets you |
 | "Sign in with Google" fails, or the app says Play services are missing | The app checks for Google's own Play services | Try [Google services](google-services.md) (experimental) |

@@ -1,7 +1,7 @@
 // The app's process started as Android starts it, on AOSP 14's own ActivityThread
 // (docs/research/aosp-app.md): what ActivityThread.main does on the main thread, with the system side
-// in this process. The activity manager, the activity task manager, the activity client controller
-// and the package manager are registered with ServiceManager under their names; then a new
+// in this process. The activity manager, the activity task manager, the activity client controller,
+// the package manager and the slice manager are registered with ServiceManager under their names; then a new
 // ActivityThread attaches (ActivityThread.attach(false, seq): IActivityManager.attachApplication),
 // the activity manager binds the application (handleBindApplication: LoadedApk, ContextImpl, the
 // Application and its onCreate) and the task manager launches the first activity, each step a
@@ -90,6 +90,8 @@ public final class AospApp {
         Services.register(Context.ACTIVITY_SERVICE, IActivityManager.class, new ActivityManagerService(this));
         Services.register("activity_task", IActivityTaskManager.class, new ActivityTaskService(this));
         Services.register("package", android.content.pm.IPackageManager.class, new PackageService(this));
+        Services.register(Context.SLICE_SERVICE, android.app.slice.ISliceManager.class,
+                new SliceService(this, new Handler(system.getLooper())));
     }
 
     /** PackageManager.resolveActivity, as ActivityTaskManagerService resolves a start through

@@ -37,11 +37,6 @@ public final class Compat {
 
     public static void sanitize(android.view.SurfaceControl.Transaction t, int pid, int uid) {}
 
-    public static void clear(android.view.SurfaceControl.Transaction t) {}
-
-    public static android.view.SurfaceControl.Transaction remove(android.view.SurfaceControl.Transaction t,
-            android.view.SurfaceControl sc) { return t; }
-
     public static android.view.SurfaceControl.Transaction setBlurRegions(android.view.SurfaceControl.Transaction t,
             android.view.SurfaceControl sc, float[][] regions) { return t; }
 

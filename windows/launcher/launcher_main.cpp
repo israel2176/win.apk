@@ -146,7 +146,6 @@ constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: 0 broke off, else up
 constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
-constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms device-id's id, or empty)
 constexpr UINT kSetupFetched = WM_APP + 22;   // lParam: new SetupFetch (apkeep's download of one of Google's apps)
 constexpr UINT kInstallSets = WM_APP + 23;    // lParam: new std::vector<InstallSet> (a batch's files as installs)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
@@ -238,10 +237,11 @@ const wchar_t* tr(const wchar_t* en) {
          L"ממיר ברקע קוד ARM לקוד של המחשב, כדי שהאפליקציות ירוצו מהר יותר. פועל בעדיפות נמוכה."},
         {L"Report Google Play as the installer", L"דיווח על Google Play כמקור ההתקנה"},
         {L"Update apps in the background", L"עדכון אפליקציות ברקע"},
-        {L"While Win.apk is open, even in the background, Google services start for a few minutes every few hours "
-         L"so the Play Store can update your apps, as a phone does. Only on mains power.",
-         L"כל עוד Win.apk פתוחה, גם ברקע, שירותי Google פועלים לכמה דקות כל כמה שעות כדי שחנות Play תוכל לעדכן "
-         L"את האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל."},
+        {L"While Win.apk is open, even with only an app showing, Google services start for a few minutes every few "
+         L"hours so the Play Store can update your apps, as a phone does. Only on mains power. Closing Win.apk stops "
+         L"them.",
+         L"כל עוד Win.apk פתוחה, גם כשמוצגת רק אפליקציה, שירותי Google פועלים לכמה דקות כל כמה שעות כדי שחנות Play "
+         L"תוכל לעדכן את האפליקציות שלך, כמו בטלפון. רק כשהמחשב מחובר לחשמל. סגירת Win.apk עוצרת אותם."},
         {L"Apps you install appear to come from Google Play, as some banking apps require.",
          L"האפליקציות שמתקינים נראות כאילו הותקנו מ-Google Play, כפי שחלק מאפליקציות הבנקים דורשות."},
         {L"Performance", L"ביצועים"},
@@ -327,13 +327,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The account and its tokens are removed from this PC. Apps that used it will ask you to sign in again.",
          L"החשבון והאסימונים שלו יוסרו מהמחשב. אפליקציות שהשתמשו בו יבקשו להתחבר שוב."},
         {L"Signed out of {0}.", L"החשבון {0} נותק."},
-        {L"Device ID for Google", L"מזהה המכשיר עבור Google"},
-        {L"This device isn't Play Protect certified. Google lets you register it to your account so that Google "
-         L"apps sign in.",
-         L"המכשיר הזה אינו מאושר על ידי Play Protect. ‏Google מאפשרת לרשום אותו בחשבון שלך כדי שאפליקציות "
-         L"Google יאפשרו להתחבר."},
-        {L"Register this device", L"רישום המכשיר הזה"},
-        {L"Device ID copied.", L"מזהה המכשיר הועתק."},
         {L"Could not sign out", L"ההתנתקות נכשלה"},
         {L"{0} could not be read as an Android app. It may be damaged or not fully downloaded; download it again.", L"לא ניתן היה לקרוא את {0} כאפליקציית אנדרואיד. ייתכן שהקובץ פגום או שההורדה לא הושלמה; הורד אותו שוב."},
         {L"Win.apk could not remove the account from this PC. The log says why.", L"Win.apk לא הצליחה להסיר את החשבון מהמחשב הזה. הסיבה כתובה ביומן."},
@@ -547,6 +540,10 @@ const wchar_t* tr(const wchar_t* en) {
          L"for you to attach; nothing is sent automatically.",
          L"ייפתח טופס ב-GitHub עם פרטי הגרסה והמערכת. היומן יסומן בתיקייה לצירוף; שום דבר לא נשלח אוטומטית."},
         {L"Couldn't install", L"ההתקנה נכשלה"},
+        {L"This app is built only for 32-bit ARM, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
+         L"האפליקציה הזו בנויה רק לארם 32 ביט, ו-Win.apk לא יכול להריץ אותה. הורד את הגרסה שלה ל-x86_64 או ל-arm64-v8a."},
+        {L"This app has code only for {0}, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
+         L"לאפליקציה הזו יש קוד רק ל-{0}, ו-Win.apk לא יכול להריץ אותו. הורד את הגרסה שלה ל-x86_64 או ל-arm64-v8a."},
         {L"This file is only a part of an app. Install the app's whole bundle (.apkm, .xapk or .apks), or all of its "
          L".apk files together.",
          L"הקובץ הזה הוא רק חלק מאפליקציה. יש להתקין את החבילה המלאה של האפליקציה (‎.apkm, ‎.xapk או ‎.apks), או את כל "
@@ -3344,9 +3341,11 @@ void compute_layout() {
     g_l.info_close = RectF(g_l.infobar.GetRight() - px(40), g_l.infobar.Y + px(8), px(32), px(32));
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
                       g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
-    // The Store and Google Play: the app's own window, a child of the panel under the title, edge to edge in the
-    // layer. Once it ended (or the Store could not be set up), Show log beside Open; else Open alone, centred.
-    g_l.panel = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
+    // The Store and Google Play: the app's own window, a child of the panel filling the whole content layer, as
+    // an app fills a phone's screen: no title over it (the app has its own). The title shows only while the app
+    // is not up (getting the Store, starting, ended). Once it ended (or the Store could not be set up), Show log
+    // beside Open; else Open alone, centred.
+    g_l.panel = RectF(g_l.content.X + 1, g_l.content.Y, g_l.content.Width - 1, (std::max)(1.0f, g_l.content.Height));
     const bool panel_log = panel_shows_log();
     g_l.panel_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (panel_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
     g_l.panel_log = RectF(g_l.panel_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
@@ -5624,37 +5623,6 @@ void google_signout(const std::wstring& account) {
     }
 }
 
-// The device ID Google's page for uncertified devices takes (google.com/android/uncertified): the Services
-// Framework's android_id, as `--gms device-id` reads it from gservices.db with the runtime's own SQLite (or the
-// layer's own checkin without the real GSF). Win.apk is not a Play Protect certified device and never claims to
-// be; registering the ID is Google's own way on for such a device (custom ROMs use it). Asked on a
-// thread (a JVM start) once per opening of Settings, and posted to the library's window, which owns these.
-std::wstring g_device_id;
-bool g_device_id_asking = false;
-int g_device_id_page = -1;  // the page generation it was last asked for
-
-DWORD WINAPI device_id_thread(void*) {
-    std::wstring text;
-    auto* out = new std::wstring();
-    if (run_gms(L"device-id", &text) == 0) {
-        if (const size_t at = text.find(L"DEVICE_ID\t"); at != std::wstring::npos) {
-            const size_t end = text.find_first_of(L"\t\r\n", at + 10);
-            *out = text.substr(at + 10, end == std::wstring::npos ? std::wstring::npos : end - at - 10);
-        }
-    }
-    if (!PostMessageW(g_main, kGmsDeviceId, 0, reinterpret_cast<LPARAM>(out))) delete out;
-    return 0;
-}
-
-void ask_device_id() {
-    if (g_device_id_asking || g_device_id_page == g_page.generation) return;
-    g_device_id_page = g_page.generation;
-    g_device_id_asking = true;
-    HANDLE t = CreateThread(nullptr, 0, device_id_thread, nullptr, 0, nullptr);
-    if (t) CloseHandle(t);
-    else g_device_id_asking = false;
-}
-
 // An older install kept the account's master token in plain text in gms_state.properties. The runtime's
 // owner side moves it into the sealed tokens.dat the first time it reads the file (com.macapk.gms.GmsStore);
 // an app's process has the token service do that first, which costs it a JVM start. So at its start the
@@ -5670,24 +5638,6 @@ void seal_gms_tokens() {
     std::error_code ec;
     if (!fs::exists(gms_dir() / L"gms_state.properties", ec) || fs::exists(gms_dir() / L"tokens.dat", ec)) return;
     if (HANDLE t = CreateThread(nullptr, 0, seal_gms_tokens_thread, nullptr, 0, nullptr)) CloseHandle(t);
-}
-
-// The row: the ID, Copy, and the registration page as a link (the page is Google's, and the user signs in there).
-Row device_id_row() {
-    // Left to right in Hebrew too: a signed ID's minus stays in front of its digits.
-    Row r = button_row(tr(L"Device ID for Google"),
-                       L"\u202A" + g_device_id + L"\u202C\n" +
-                           tr(L"This device isn't Play Protect certified. Google lets you register it to your "
-                              L"account so that Google apps sign in."),
-                       tr(L"Copy"), [] {
-                           if (copy_text(g_main, g_device_id)) info(tr(L"Device ID copied."), kSuccess);
-                       });
-    r.link = tr(L"Register this device");
-    r.link_act = [] {
-        ShellExecuteW(nullptr, L"open", L"https://www.google.com/android/uncertified", nullptr, nullptr,
-                      SW_SHOWNORMAL);
-    };
-    return r;
 }
 
 bool google_apps_ready();
@@ -5732,9 +5682,9 @@ Section google_account_section() {
         Row bg;
         bg.kind = Row::kToggle;
         bg.title = tr(L"Update apps in the background");
-        bg.detail = tr(L"While Win.apk is open, even in the background, Google services start for a few minutes "
-                       L"every few hours so the Play Store can update your apps, as a phone does. Only on mains "
-                       L"power.");
+        bg.detail = tr(L"While Win.apk is open, even with only an app showing, Google services start for a few "
+                       L"minutes every few hours so the Play Store can update your apps, as a phone does. Only on "
+                       L"mains power. Closing Win.apk stops them.");
         bg.on = setting(L"BackgroundUpdates", 1) != 0;
         bg.act = [](int on) {
             set_setting(L"BackgroundUpdates", static_cast<DWORD>(on));
@@ -5750,8 +5700,6 @@ Section google_account_section() {
                                                           : tr(L"Install Play services, Services Framework and "
                                                                L"Play Store from their downloads."),
                                       tr(L"Open"), [] { show_gms_setup(true); }));
-        ask_device_id();
-        if (!g_device_id.empty()) sec.rows.push_back(device_id_row());
     }
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
@@ -5837,9 +5785,12 @@ bool google_apps_ready() {
 // maintenance window every few hours while it runs, shown or hidden: `winapk-runtime --system --maintenance`
 // boots Google services, runs the jobs that are due (their own constraints decide: network, unmetered,
 // charging) and stops a few minutes after the last. The rule: only while Win.apk runs, never from a
-// Windows scheduled task or a service; the launcher is not kept alive for it, but waits for a window it opened
-// (maybe_quit). When is decided in maintenance.h; the window's conditions are Android's too: only on mains
-// power, with a network. Logs: logs\maintenance.log.
+// Windows scheduled task or a service; the launcher is not kept alive for it, but a launcher never shown waits
+// for a window it opened (maybe_quit). Closing the library is closing Win.apk: from then on no window is
+// opened, and once no app window is on screen the launcher quits without waiting, which ends the window's
+// broker and the apps it started (end_background_work; the broker writes its files whole, and a Play Store
+// install under way is cut off as a phone's power-off cuts it). When is decided in maintenance.h; the
+// window's conditions are Android's too: only on mains power, with a network. Logs: logs\maintenance.log.
 
 namespace mw = winapk::launcher::maintenance;
 
@@ -5851,6 +5802,9 @@ bool any_splash();
 constexpr wchar_t kMaintenanceTask[] = L"Win.apk\\Background updates";
 
 HANDLE g_maintenance = nullptr;  // the window this launcher opened, until kMaintenanceEnded
+// The user closed the library (WM_CLOSE) and has not shown it again (show_library): Win.apk is on its way out,
+// so no maintenance window is opened and a running one is not waited for (maintenance.h).
+bool g_closed_by_user = false;
 
 bool background_updates_on() { return google_services_on() && setting(L"BackgroundUpdates", 1) != 0; }
 
@@ -5932,6 +5886,7 @@ void maintenance_check() {
     c.apps_ready = c.setting_on && google_apps_ready();
     c.window_running = g_maintenance != nullptr;
     c.app_starting = any_splash();
+    c.closed_by_user = g_closed_by_user;
     if (c.setting_on && c.apps_ready && !c.window_running) {
         c.broker_running = broker_running();
         c.on_mains = on_mains_power();
@@ -6493,8 +6448,7 @@ Embedded* shown_embedded() {
     return nullptr;
 }
 
-// Each panel's place and visibility: over the content under the title while its view is shown and the app is
-// starting or up.
+// Each panel's place and visibility: over the whole content while its view is shown and the app is up.
 void place_panels() {
     const RectF& r = g_l.panel;
     for (Embedded* e : {&g_store_app, &g_play}) {
@@ -6682,8 +6636,9 @@ void paint_play(Graphics& g) {
 // installed the same way, once the store app is not running. Nothing of what the user does is sent: the request is
 // GitHub's public list of releases.
 //
-// What the store app installs goes through the install helper (helper_main): the confirmation, the progress and
-// "App installed." with Open and Done, and the installer of record its runtime writes (PackageInstallerBackend).
+// What the store app installs goes through the install helper (helper_main) with no question, as a phone's
+// preinstalled store installs what the user picked in it (appops::caller_is_builtin_store), and the installer of
+// record its runtime writes (PackageInstallerBackend).
 // Its "Install unknown apps" is allowed from its first install (grant_builtin_store), as a device's preinstalled
 // store is; the user's later answer to that switch is kept across its updates.
 
@@ -7782,6 +7737,19 @@ std::wstring install_failure_reason(const fs::path& log) {
     if (no_native_code) {
         return tr(L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes "
                   L"the arm64-v8a part.");
+    }
+    // AppInstall's INSTALL_FAILED_NO_MATCHING_ABIS: code only for processors this PC is not, as a device refuses it.
+    const std::string abi_tail = read_tail(log, 16384);
+    if (const size_t at = abi_tail.find("INSTALL_FAILED_NO_MATCHING_ABIS"); at != std::string::npos) {
+        const size_t only = abi_tail.find("only for ", at), end = abi_tail.find(';', only);
+        const std::string list = only == std::string::npos || end == std::string::npos
+                                     ? std::string() : abi_tail.substr(only + 9, end - only - 9);
+        if (list.find("x86") == std::string::npos && list.find("arm64") == std::string::npos &&
+            list.find("armeabi") != std::string::npos)
+            return tr(L"This app is built only for 32-bit ARM, which Win.apk cannot run. Download its x86_64 or "
+                      L"arm64-v8a build.");
+        return fmt(L"This app has code only for {0}, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
+                   {utf8_to_wide(list)});
     }
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
@@ -10781,15 +10749,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // An app may have added the account (its "Sign in with Google") or the user signed out.
             if (wp && google_account_present() != !g_account.empty()) refresh_account();
             break;
-        case kGmsDeviceId: {
-            std::unique_ptr<std::wstring> id(reinterpret_cast<std::wstring*>(lp));
-            g_device_id_asking = false;
-            if (*id != g_device_id) {
-                g_device_id = *id;
-                if (g_view == kSettingsView) rebuild_page();
-            }
-            return 0;
-        }
         case kGmsAccount: {
             std::unique_ptr<std::wstring> account(reinterpret_cast<std::wstring*>(lp));
             g_account = *account;
@@ -10805,6 +10764,9 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         case WM_CLOSE:
             save_window_size();
+            // The user closes Win.apk: what it started in the background ends once nothing of it is on screen,
+            // a maintenance window included (g_closed_by_user, maybe_quit).
+            g_closed_by_user = true;
             // The Store and Google Play live in this window: they close with it.
             for (const Embedded* e : {&g_store_app, &g_play}) {
                 if (!e->name.empty() && e->up()) stop_run(e->name);
@@ -11020,6 +10982,7 @@ void notify_library() {
 
 namespace appops {
 bool caller_is_play_store();
+bool caller_is_builtin_store();
 bool installs_allowed_from_caller();
 }
 
@@ -11195,28 +11158,31 @@ int helper_main(int argc, wchar_t** argv) {
     const std::wstring wpkg = utf8_to_wide(pkg);
     // The Play Store installs as a phone's system installer does, with no question: it holds INSTALL_PACKAGES
     // there, and the user already chose the app in it. Only the real one: the asking runtime runs the
-    // library's com.android.vending and Google signed that APK (appops::caller_is_play_store).
-    const bool play = appops::caller_is_play_store();
+    // library's com.android.vending and Google signed that APK (appops::caller_is_play_store). Win.apk's own
+    // Store is a store that came with the PC, as a phone's preinstalled store holds INSTALL_PACKAGES: the user
+    // chose the app in it, so it asks no second time (appops::caller_is_builtin_store: the very release asset
+    // the launcher installed).
+    const bool system_store = appops::caller_is_play_store() || appops::caller_is_builtin_store();
     // Any other app installs only from a source the user allowed ("Install unknown apps"), as Android's
     // installer checks before its question (PackageInstallerActivity: the blocked dialog, Settings, back).
-    if (!play && !appops::installs_allowed_from_caller())
+    if (!system_store && !appops::installs_allowed_from_caller())
         return helper_fail(3, "unknown-sources", "installs from this app are not allowed");
     // PackageInstallerActivity's question: the app's name over "Do you want to install this app?" (a new app's
     // name is not known before its install reads it: its package stands in).
     const bool agreed =
-        play || (update ? helper_consent(existing, tr(L"Do you want to update this app?"),
-                                         fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}),
-                                         tr(L"Update"))
-                        : helper_consent(nullptr, tr(L"Do you want to install this app?"),
-                                         fmt(L"{0} asks to install it.", {who}), tr(L"Install"), wpkg));
+        system_store ||
+        (update ? helper_consent(existing, tr(L"Do you want to update this app?"),
+                                 fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
+                : helper_consent(nullptr, tr(L"Do you want to install this app?"),
+                                 fmt(L"{0} asks to install it.", {who}), tr(L"Install"), wpkg));
     if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
     // Everyone else's install is shown as Android's installer shows it after the question: its progress, then
     // its end with Open and Done (helper_install_ui).
-    if (!play) return helper_install_ui(apk, name, pkg, update, update ? existing->label : wpkg);
-    // The Play Store's update of an app open in a window: PackageManagerService kills an app it replaces, and
+    if (!system_store) return helper_install_ui(apk, name, pkg, update, update ? existing->label : wpkg);
+    // A system store's update of an app open in a window: PackageManagerService kills an app it replaces, and
     // the Play Store has already waited for it when it asked to (an auto-update's InstallConstraints, "app not
     // interacting"), or the user tapped Update in it. So the app is stopped, not the update refused. Any other
     // installer's update leaves an open window to the user (stop_app_for_install).
@@ -12014,6 +11980,19 @@ bool caller_is_play_store() {
     return pkg && verified && google;
 }
 
+// Whether the app asking is Win.apk's own Store as the launcher installed it: the parent runtime runs the
+// library's app.apkstore and its APK is the release asset whose SHA-256 the launcher checked against GitHub's and
+// noted at its install (store-app\installed.sha256). A copy of the Store from anywhere else is an ordinary store.
+bool caller_is_builtin_store() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why) || c.id.package != winapk::launcher::kStorePackage) return false;
+    const App* app = find_app(c.name);
+    if (!app) return false;
+    const std::string want = installed_store_sha();
+    return !want.empty() && sha256_of(app->apk) == want;
+}
+
 // ---- the dialog ----------------------------------------------------------------
 //
 // Every question an app asks is the launcher's dialog (Prompt, run_prompt): the
@@ -12696,6 +12675,7 @@ bool forward_to_running(bool show_library, const std::vector<fs::path>& files) {
 
 // The library window as it was last left: its size and whether it was maximized.
 void show_library(int show) {
+    g_closed_by_user = false;  // Win.apk is open again: background updates go on (maintenance_check)
     if (IsWindowVisible(g_main)) {
         if (IsIconic(g_main)) ShowWindow(g_main, SW_RESTORE);
     } else {
@@ -12772,17 +12752,20 @@ void end_background_work() {
 }
 
 // When the library is not shown, the process lives only for what it is doing: an install window,
-// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened,
-// and an app's window it did not start (looked at again every few seconds), so that the broker such an
-// app uses is not ended under it (end_background_work).
+// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened
+// (only when the user did not close the library: maintenance.h, wait_for_window), and an app's window it
+// did not start (looked at again every few seconds), so that the broker such an app uses is not ended under
+// it (end_background_work).
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
     if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
-    if (g_maintenance) return;  // a maintenance window it opened: waits for its end (kMaintenanceEnded)
     if (!windowed_processes().empty()) {
         SetTimer(g_main, kQuitTimer, 3000, nullptr);
         return;
     }
+    // Nothing of Win.apk on screen: a maintenance window it opened is waited for (kMaintenanceEnded) unless
+    // the user closed the library, when the process ends now and end_background_work ends the window too.
+    if (mw::wait_for_window(g_maintenance != nullptr, g_closed_by_user)) return;
     DestroyWindow(g_main);
 }
 
