@@ -919,7 +919,6 @@ com/google/firebase/app/internal/cpp/JniResultCallback$Callback
 com/google/android/gms/tasks/Task
 com/google/firebase/app/internal/cpp/Log
 com/macapk/gms/NativeSignIn
-com/macapk/icu/HostIcu
 com/macapk/loader/AudioInputBridge
 com/macapk/loader/CameraBridge
 com/macapk/loader/DocumentPickerHandler
