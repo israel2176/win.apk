@@ -451,6 +451,8 @@ jobs:
           ./build/winapk-aot-cache-test.exe "$(cygpath -w "$PWD/aot-cache-scratch")"
       - name: Run the translation stamp test (its line, what the loader refuses, when the worker has work)
         run: ./build/winapk-aot-stamp-test.exe
+      - name: Run the host code test (which pages of a PE image an arm64 library may not mprotect)
+        run: ./build/winapk-host-code-test.exe
       - name: Run the App Link sign-in window test (which navigation returns to the app)
         run: ./build/winapk-applink-test.exe
       - name: Run the WebView file URL test (the file origin both ways, which pages may read it)
@@ -485,10 +487,16 @@ jobs:
         run: ./build/winapk-opensles-test.exe "$(cygpath -w "$PWD/windows/test/audio")"
       - name: Run the video backend test
         run: ./build/winapk-video-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK media test
+        run: ./build/winapk-ndk-media-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK camera test
+        run: ./build/winapk-ndk-camera-test.exe
       - name: Run the software codecs and WebM demuxer test
         run: ./build/winapk-soft-codecs-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the shared-folder mapping test
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
+      - name: Run the notification toast test
+        run: ./build/winapk-toast-xml-test.exe
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
       - name: Run the screen-reader model test (names, patterns, events, text units)
@@ -650,6 +658,14 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
+      - name: Run the notification actions test
+        run: |
+          # Which of a notification's actions become the host's buttons, and the reply's intent.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/notification-actions-test windows/test/java/com/macapk/loader/NotificationActionsTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/notification-actions-test)" \
+            com.macapk.loader.NotificationActionsTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
@@ -679,6 +695,16 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
           MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
             --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/stubs-test)" FrameworkStubsTest
+      - name: Run the PBE providers test
+        run: |
+          # The password-based crypto Android answers from BC (PBEWithMD5AndDES with any salt, the
+          # PBEWithHmacSHA* Macs) resolves to BC with AOSP 14's bytes, as the host's preference set at
+          # JVM start makes it, and AES, GCM, SHA, HMAC, PBKDF2 and TLS stay on the JDK's providers.
+          # In winapk-runtime (--java-test): the preference is the host's, set before any Java runs.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/pbe-test windows/test/java/PbeProvidersTest.java
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/pbe-test)" PbeProvidersTest
       - name: Run the DateTimeView test
         run: |
           # android.widget.DateTimeView (a notification template's time) as

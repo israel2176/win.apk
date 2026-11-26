@@ -25,6 +25,14 @@ import javax.microedition.khronos.egl.EGLSurface;
  * points back at its view, as AOSP's GLThread does (mGLSurfaceViewWeakRef). The thread makes its
  * context and a window surface on the SurfaceView's holder (EGL10; {@link Fork14Activity}: EGL14 on
  * the holder's Surface) and draws there. Logs (tag GLPROBE); clears its frames blue (red for EGL14).
+ *
+ * Beside it a loader thread ({@link Loader}) uploads textures all the time on a context that shares
+ * the GL thread's, current on a 1x1 pbuffer, as Flutter's IO thread does beside its raster thread
+ * and a game's loading thread beside its renderer: from before the window surface exists, across
+ * the resize, at which the GL thread destroys its window surface and makes a new one (AOSP's
+ * GLThread does the same on a size change, and Flutter's Impeller). Nothing but the app's own
+ * threads may draw on the app's display meanwhile (the host's render tick once did, and City Car
+ * crashed in the Direct3D driver at a resize).
  */
 public class ForkActivity extends Activity {
     static final String TAG = PlatformActivity.TAG;
@@ -168,6 +176,14 @@ public class ForkActivity extends Activity {
                 throw new RuntimeException("createContext failed: " + egl.eglGetError());
             }
             Log.i(TAG, getName() + " has a context");
+            new Loader(gl.egl14() ? "fork14" : "fork", () -> {
+                EGLContext shared = egl.eglCreateContext(dpy, configs[0], ctx,
+                        new int[] {0x3098 /* EGL_CONTEXT_CLIENT_VERSION */, 2, EGL10.EGL_NONE});
+                EGLSurface pb = egl.eglCreatePbufferSurface(dpy, configs[0],
+                        new int[] {EGL10.EGL_WIDTH, 1, EGL10.EGL_HEIGHT, 1, EGL10.EGL_NONE});
+                return shared != null && shared != EGL10.EGL_NO_CONTEXT && pb != null && pb != EGL10.EGL_NO_SURFACE
+                        && egl.eglMakeCurrent(dpy, pb, pb, shared);
+            }).start();
             EGLSurface surface = null;
             boolean created = false;
             for (;;) {
@@ -210,6 +226,14 @@ public class ForkActivity extends Activity {
                 throw new RuntimeException("createContext failed: " + EGL14.eglGetError());
             }
             Log.i(TAG, getName() + " has a context");
+            new Loader(gl.egl14() ? "fork14" : "fork", () -> {
+                android.opengl.EGLContext shared = EGL14.eglCreateContext(dpy, configs[0], ctx,
+                        new int[] {EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE}, 0);
+                android.opengl.EGLSurface pb = EGL14.eglCreatePbufferSurface(dpy, configs[0],
+                        new int[] {EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE}, 0);
+                return shared != null && !shared.equals(EGL14.EGL_NO_CONTEXT) && pb != null
+                        && !pb.equals(EGL14.EGL_NO_SURFACE) && EGL14.eglMakeCurrent(dpy, pb, pb, shared);
+            }).start();
             android.opengl.EGLSurface surface = null;
             boolean created = false;
             for (;;) {
@@ -234,6 +258,50 @@ public class ForkActivity extends Activity {
                 gl.renderer.c();
                 EGL14.eglSwapBuffers(dpy, surface);
                 Thread.sleep(16);
+            }
+        }
+    }
+
+    /** Makes a context sharing the GL thread's current on this thread; false when it cannot. */
+    interface Bind {
+        boolean bind();
+    }
+
+    /** Uploads a 256x256 texture again and again, waiting for each (glFinish), until the process ends. */
+    static final class Loader extends Thread {
+        private final String name;
+        private final Bind bind;
+
+        Loader(String renderer, Bind bind) {
+            super("GLThread " + renderer + " loader");
+            this.name = renderer + " loader";
+            this.bind = bind;
+            setDaemon(true);
+        }
+
+        @Override public void run() {
+            try {
+                if (!bind.bind()) throw new RuntimeException("no shared context on a pbuffer");
+                int[] tex = new int[1];
+                GLES20.glGenTextures(1, tex, 0);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, tex[0]);
+                java.nio.ByteBuffer px = java.nio.ByteBuffer.allocateDirect(256 * 256 * 4);
+                for (long n = 1;; n++) {
+                    px.put((int) (n % px.capacity()), (byte) n).rewind();
+                    GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, 256, 256, 0, GLES20.GL_RGBA,
+                            GLES20.GL_UNSIGNED_BYTE, px);
+                    GLES20.glFinish();
+                    int err = GLES20.glGetError();
+                    if (err != GLES20.GL_NO_ERROR) {
+                        throw new RuntimeException("glTexImage2D: 0x" + Integer.toHexString(err));
+                    }
+                    if (n == 1 || n == 300) {
+                        Log.i(TAG, name + " uploaded #" + n + " on " + Thread.currentThread().getName());
+                    }
+                    Thread.sleep(1);
+                }
+            } catch (Throwable t) {
+                Log.e(TAG, name + " died: " + t);
             }
         }
     }

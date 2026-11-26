@@ -6777,7 +6777,7 @@ bool store_app_running() {
     return run_active(name) || app_running(name);
 }
 
-// Reads the newest release: the Store item with no store app, Try again, or the daily update check.
+// Reads the newest release: the Store item with no store app, Try again, the daily update check or its Check.
 void store_app_check() {
     if (!g_store_setup.begin_check()) return;  // one is under way
     std::error_code ec;
@@ -7177,7 +7177,10 @@ std::vector<Section> update_sections() {
     Section sec{tr(L"Updates"), {}, L""};
     sec.rows.push_back(button_row(fmt(L"Version {0}", {version()}), status,
                                   g_update.asking() ? tr(L"Checking…") : tr(L"Check"),
-                                  [] { start_update_check(true, true); }));
+                                  [] {
+                                      start_update_check(true, true);
+                                      if (store_app()) store_app_check();  // the Store's app too, as the daily check
+                                  }));
     Row autoc;
     autoc.kind = Row::kToggle;
     autoc.title = tr(L"Check for updates automatically");

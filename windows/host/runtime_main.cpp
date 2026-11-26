@@ -314,6 +314,22 @@ void open_platform_packages(JNIEnv* env) {
                  static_cast<int>(n_mods));
 }
 
+// The password-based crypto names Android answers from its BC provider (PBEWithMD5AndDES, the
+// PBEWithHmacSHA* Macs) resolve to BC here too, ahead of the JDK's SunJCE, whose PBES1 refuses a salt
+// that is not 8 bytes (android.security.MacApkProviderPreference says which and why). The JDK reads
+// that preference once, when the first security provider is looked up, so this runs before any of
+// our Java. A JVM without the framework (the DEX conversion's) has no such class and needs none.
+void prefer_android_crypto_providers(JNIEnv* env) {
+    jclass cls = env->FindClass("android/security/MacApkProviderPreference");
+    jmethodID install = cls ? env->GetStaticMethodID(cls, "install", "()V") : nullptr;
+    if (install) env->CallStaticVoidMethod(cls, install);
+    if (env->ExceptionCheck()) {
+        if (install) std::fprintf(stderr, "[win.apk] the BC provider's preference for PBE could not be set\n");
+        env->ExceptionClear();
+    }
+    if (cls) env->DeleteLocalRef(cls);
+}
+
 // `exit_hook`, when given, is HotSpot's "exit" hook: System.exit ends there rather than in the CRT's exit.
 bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env,
                void(JNICALL* exit_hook)(jint) = nullptr) {
@@ -338,6 +354,7 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
         return false;
     }
     winapk::host::rearm_crash_report();  // HotSpot installed its own unhandled-exception filter
+    prefer_android_crypto_providers(*env);
     winapk::host::cds_vm_created(*vm, *env);
     open_platform_packages(*env);
     return true;
@@ -2253,6 +2270,8 @@ DWORD WINAPI boot_thread(void* param) {
         check_exception(env, "Boot.run lookup");
         return 1;
     }
+    // The app's APKs in its /proc/self/maps, as on a device.
+    winapk::set_app_code(utf8(o.apk.wstring()).c_str());
     // The manifest argument names a decoded text manifest, which Windows does
     // not produce; Manifest.parse then reads the binary one from the APK.
     env->CallStaticVoidMethod(boot, run, jstr(o.apk), jstr(b->app_jar), jstr(b->app_dir),

@@ -5,7 +5,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <map>
 #include <mutex>
 
 #include <GLES3/gl3.h>
@@ -25,17 +24,9 @@ constexpr EGLint kPlatformAngle = 0x3202, kPlatformType = 0x3203, kTypeD3D11 = 0
 const EGLNativeDisplayType kD3D11OnlyDisplay = reinterpret_cast<EGLNativeDisplayType>(-3);
 
 EGLDisplay g_display = EGL_NO_DISPLAY;
-EGLConfig g_config = nullptr;
-EGLContext g_context = EGL_NO_CONTEXT;
+bool g_ready = false;
 bool g_tried = false;
 std::mutex g_init_lock;
-
-struct ViewSurface {
-    EGLSurface surface = EGL_NO_SURFACE;
-    int w = 0, h = 0;
-};
-std::map<long long, ViewSurface> g_surfaces;
-int g_cur_w = 0, g_cur_h = 0;
 
 EGLDisplay open_display(EGLint type, EGLint device) {
     using GetPlatformDisplay = EGLDisplay(EGLAPIENTRY*)(EGLenum, void*, const EGLint*);
@@ -65,7 +56,7 @@ EGLDisplay open_display(EGLint type, EGLint device) {
 
 bool init() {
     std::lock_guard<std::mutex> hold(g_init_lock);
-    if (g_tried) return g_context != EGL_NO_CONTEXT;
+    if (g_tried) return g_ready;
     g_tried = true;
     if (!gl_available()) {
         std::fprintf(stderr, "[win.apk] GL: ANGLE (libEGL.dll, libGLESv2.dll) is not next to the runtime\n");
@@ -90,56 +81,30 @@ bool init() {
     const EGLint config_attribs[] = {EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
                                      EGL_DEPTH_SIZE, 24, EGL_STENCIL_SIZE, 8, EGL_SURFACE_TYPE, EGL_PBUFFER_BIT,
                                      EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT, EGL_NONE};
+    EGLConfig config = nullptr;
     EGLint n = 0;
-    if (!eglChooseConfig(g_display, config_attribs, &g_config, 1, &n) || n < 1) {
+    if (!eglChooseConfig(g_display, config_attribs, &config, 1, &n) || n < 1) {
         std::fprintf(stderr, "[win.apk] GL: no RGBA8888/D24S8 config\n");
         return false;
     }
-    // ES 3 when the backend has it (a superset an ES 2 app runs on), else ES 2.
+    // Whether the backend makes a context, and which version: ES 3 when it has it (a superset an ES 2
+    // app runs on), else ES 2. The context is only that answer: the display is the app's alone, and a
+    // context of the host's made current on it would draw beside the app's threads (native_cocoa.cpp,
+    // gl_tick), so it goes before the app is handed the display.
     for (EGLint version : {3, 2}) {
         const EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, version, EGL_NONE};
-        g_context = eglCreateContext(g_display, g_config, EGL_NO_CONTEXT, ctx_attribs);
-        if (g_context != EGL_NO_CONTEXT) {
+        const EGLContext probe = eglCreateContext(g_display, config, EGL_NO_CONTEXT, ctx_attribs);
+        if (probe != EGL_NO_CONTEXT) {
+            eglDestroyContext(g_display, probe);
             std::fprintf(stderr, "[win.apk] GL: ANGLE on %s, OpenGL ES %d (%s)\n", used, version,
                          reinterpret_cast<const char*>(eglQueryString(g_display, EGL_VERSION)));
+            g_ready = true;
             return true;
         }
     }
     std::fprintf(stderr, "[win.apk] GL: eglCreateContext failed (0x%x)\n", eglGetError());
     return false;
 }
-
-}  // namespace
-
-bool gl_frame_begin(long long view, int w, int h) {
-    if (w <= 0 || h <= 0 || !init()) return false;
-    ViewSurface& s = g_surfaces[view];
-    if (s.surface == EGL_NO_SURFACE || s.w != w || s.h != h) {
-        if (s.surface != EGL_NO_SURFACE) {
-            eglMakeCurrent(g_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-            eglDestroySurface(g_display, s.surface);
-        }
-        const EGLint attribs[] = {EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE};
-        s.surface = eglCreatePbufferSurface(g_display, g_config, attribs);
-        s.w = w;
-        s.h = h;
-        if (s.surface == EGL_NO_SURFACE) return false;
-    }
-    if (!eglMakeCurrent(g_display, s.surface, s.surface, g_context)) return false;
-    g_cur_w = w;
-    g_cur_h = h;
-    return true;
-}
-
-bool gl_frame_read(std::vector<uint32_t>* argb, int* w, int* h) {
-    if (g_cur_w <= 0 || g_cur_h <= 0 || g_context == EGL_NO_CONTEXT) return false;
-    gl_read_current(argb, g_cur_w, g_cur_h);
-    *w = g_cur_w;
-    *h = g_cur_h;
-    return true;
-}
-
-namespace {
 
 // GL rows run bottom-up; the RGBA bytes of `rgba` (tightly packed, W x H)
 // become top-row-first ARGB (opaque: nothing is behind a GL frame in the
@@ -181,15 +146,5 @@ void gl_read_current(std::vector<uint32_t>* argb, int W, int H) {
 }
 
 void* gl_shared_display() { return init() ? g_display : nullptr; }
-
-void gl_view_release(long long view) {
-    auto it = g_surfaces.find(view);
-    if (it == g_surfaces.end()) return;
-    if (it->second.surface != EGL_NO_SURFACE) {
-        eglMakeCurrent(g_display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
-        eglDestroySurface(g_display, it->second.surface);
-    }
-    g_surfaces.erase(it);
-}
 
 }  // namespace winapk::host
