@@ -26,6 +26,8 @@
 // Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
 // done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
 // clock went back), and waits while on battery, with no network or while an app starts.
+// Which app a file is (launcher/installs.h, place_install): the app of its package, whatever the file's name; a
+// downgrade asked first; another package's file never over an app of the same name.
 // The choice settings (launcher/settings.h): a value the Settings page never writes is the default, 0, both for what
 // is drawn and for what the page shows chosen.
 
@@ -1078,6 +1080,54 @@ void test_maintenance() {
     check("off wins over everything", mw::decide(now, 0, mw::Conditions{}) == D::kOff);
 }
 
+void test_place_install() {
+    std::printf("which app a file is\n");
+    using namespace winapk::launcher;
+    const std::vector<LibraryApp> library = {
+        {L"app-release", L"com.one", 20},
+        {L"com.waze", L"com.waze", 1030744},
+        {L"Old", L"", -1},  // from before .package files
+    };
+    auto file = [](const std::wstring& package, long long version) {
+        FileIdentity f;
+        f.package = package;
+        f.version = version;
+        return f;
+    };
+    auto placed = [&](const std::wstring& name, const FileIdentity& f, Placement how, const std::wstring& as) {
+        const PlaceResult r = place_install(name, f, library, {L"com.two_queued"});
+        return r.how == how && r.name == as;
+    };
+    check("a new package under a new name: new", placed(L"Fresh", file(L"com.fresh", 1), Placement::kNew, L"Fresh"));
+    check("the same package, newer: an update", placed(L"app-release", file(L"com.one", 21), Placement::kUpdate,
+                                                       L"app-release"));
+    check("the same package, the same version: an update (installed again)",
+          placed(L"app-release", file(L"com.one", 20), Placement::kUpdate, L"app-release"));
+    check("the same package, older: a downgrade, asked", placed(L"app-release", file(L"com.one", 19),
+                                                                Placement::kDowngrade, L"app-release"));
+    check("another package under that name: a new app named by its package",
+          placed(L"app-release", file(L"com.two", 5), Placement::kOtherApp, L"com.two"));
+    check("a name in any case is the same name", placed(L"APP-RELEASE", file(L"com.two", 5), Placement::kOtherApp,
+                                                        L"com.two"));
+    check("its package's name taken: <name>_2", place_install(L"app-release", file(L"com.two_queued", 5), library,
+                                                              {L"com.two_queued"}).name == L"app-release_2");
+    check("a package the library has, under another name: that app's update, or its downgrade",
+          placed(L"Waze_4.0", file(L"com.waze", 1030745), Placement::kUpdate, L"com.waze") &&
+              placed(L"Waze_4.0", file(L"com.waze", 900000), Placement::kDowngrade, L"com.waze"));
+    check("an unknown version is no downgrade", placed(L"app-release", file(L"com.one", -1), Placement::kUpdate,
+                                                       L"app-release"));
+    check("a file that could not be read installs as before",
+          placed(L"app-release", FileIdentity{}, Placement::kUpdate, L"app-release") &&
+              placed(L"New", FileIdentity{}, Placement::kNew, L"New"));
+    check("an app of unknown package keeps its name", placed(L"Old", file(L"com.old", 3), Placement::kUpdate, L"Old"));
+    const FileIdentity id = parse_file_identity(L"PACKAGE\tcom.one\r\nVERIFIED\t1\nVERSIONCODE\t19\n"
+                                                L"VERSIONNAME\t1.9 beta\n");
+    check("--verify-apk's answer read", id.package == L"com.one" && id.version == 19 && id.version_name == L"1.9 beta");
+    check("--verify-apk: a versionCode that is not a number is unknown",
+          parse_file_identity(L"PACKAGE\tx\nVERSIONCODE\t1a\n").version == -1 &&
+              parse_file_identity(L"").package.empty());
+}
+
 void test_install_sets() {
     std::printf("A batch's APK files as installs\n");
     using winapk::launcher::ApkPart;
@@ -1132,6 +1182,7 @@ int main() {
     test_runs();
     test_settings();
     test_install_sets();
+    test_place_install();
     test_installs();
     test_updates();
     test_update_integrity();

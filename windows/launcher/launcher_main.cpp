@@ -151,6 +151,7 @@ constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms
 constexpr UINT kSetupFetched = WM_APP + 22;   // lParam: new SetupFetch (apkeep's download of one of Google's apps)
 constexpr UINT kInstallSets = WM_APP + 23;    // lParam: new std::vector<InstallSet> (a batch's files as installs)
 constexpr UINT kQuitIfIdle = WM_APP + 24;     // maybe_quit found nothing left: end, if that is still so
+constexpr UINT kInstallProbed = WM_APP + 25;  // lParam: new InstallProbe (a file read before its install)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
@@ -362,6 +363,14 @@ const wchar_t* tr(const wchar_t* en) {
         {L"All {0} apps and their shortcuts will be removed. App data is kept.",
          L"כל {0} האפליקציות וקיצורי הדרך שלהן יוסרו. נתוני האפליקציות נשמרים."},
         {L"The library was cleared.", L"הספרייה נוקתה."},
+        {L"Reading {0}…", L"קריאת {0}…"},
+        {L"Replace {0} with an older version?", L"להחליף את {0} בגרסה ישנה יותר?"},
+        {L"The installed version is {0}, and this file is version {1}. What the app saved with the newer version may "
+         L"not work with the older one.",
+         L"הגרסה המותקנת היא {0}, והקובץ הזה הוא גרסה {1}. ייתכן שמה שהאפליקציה שמרה בגרסה החדשה לא יעבוד בגרסה "
+         L"הישנה."},
+        {L"Replace", L"החלפה"},
+        {L"{0} was not replaced: the installed version is newer.", L"{0} לא הוחלפה: הגרסה המותקנת חדשה יותר."},
         {L"The library was cleared, except {0}. Close it, then try again.",
          L"הספרייה נוקתה, מלבד {0}. יש לסגור את האפליקציה ולנסות שוב."},
         {L"The library was cleared, except {0} apps: {1}. Close them, then try again.",
@@ -4546,16 +4555,18 @@ DWORD WINAPI install_sets_thread(void* param) {
     return 0;
 }
 
+void probe_install(const fs::path& file, std::vector<SplitFile> splits = {});
+
 void install_files(const std::vector<fs::path>& files) {
     auto* apks = new std::vector<fs::path>;
     for (const fs::path& f : files) {
         std::wstring ext = f.extension().wstring();
         for (wchar_t& c : ext) c = static_cast<wchar_t>(towlower(c));
         if (ext == L".apk") apks->push_back(f);
-        else install(f);
+        else probe_install(f);
     }
     if (apks->size() < 2) {
-        for (const fs::path& f : *apks) install(f);
+        for (const fs::path& f : *apks) probe_install(f);
         delete apks;
         return;
     }
@@ -5578,6 +5589,109 @@ std::wstring gms_arg(const std::wstring& a) {
     }
     q.append(slashes * 2, L'\\');
     return q + L"\"";
+}
+
+// ---- a file the user opened, read before its install ----
+//
+// Its package and versionCode (winapk-runtime --verify-apk) decide which app it is (installs.h, place_install): the
+// app of its package whatever the file is called, never another package's app that has the same name, and an older
+// version only once the user agrees. One file at a time, in the order opened, so that the installs queue in that
+// order and no two JVMs start at once.
+
+struct InstallProbe {
+    fs::path file;
+    std::vector<SplitFile> splits;  // a batch's other APKs of the same app (install_sets_thread)
+    winapk::launcher::FileIdentity id;
+};
+
+std::deque<std::unique_ptr<InstallProbe>> g_probe_queue;
+bool g_probe_running = false;
+// The package of each install queued from a probe, until it ends: a second file of the same name and another
+// package is then another app, and the same file twice is one install.
+std::map<std::wstring, std::wstring> g_queued_packages;
+
+bool probes_pending() { return g_probe_running || !g_probe_queue.empty(); }
+
+DWORD WINAPI install_probe_thread(void* param) {
+    auto* p = static_cast<InstallProbe*>(param);
+    std::wstring out;
+    // Its exit code says whether the signature verifies; the package and version are read either way, and an
+    // answer with no package installs the file as before (its install then says what is wrong with it).
+    run_runtime_captured(L"--verify-apk " + gms_arg(p->file.wstring()), &out, logs_dir() / L"install-check.log");
+    p->id = winapk::launcher::parse_file_identity(out);
+    if (!PostMessageW(g_main, kInstallProbed, 0, reinterpret_cast<LPARAM>(p))) delete p;
+    return 0;
+}
+
+void probe_next() {
+    if (g_probe_running || g_probe_queue.empty()) return;
+    InstallProbe* p = g_probe_queue.front().release();
+    g_probe_queue.pop_front();
+    if (HANDLE t = CreateThread(nullptr, 0, install_probe_thread, p, 0, nullptr)) {
+        CloseHandle(t);
+        g_probe_running = true;
+        info(fmt(L"Reading {0}…", {p->file.filename().wstring()}), kInfo);
+    } else {
+        install(p->file, L"", false, std::move(p->splits));  // unread: as before
+        delete p;
+        probe_next();
+    }
+}
+
+void probe_install(const fs::path& file, std::vector<SplitFile> splits) {
+    auto p = std::make_unique<InstallProbe>();
+    p->file = file;
+    p->splits = std::move(splits);
+    g_probe_queue.push_back(std::move(p));
+    probe_next();
+}
+
+std::wstring version_text(const std::wstring& name, long long code) {
+    return !name.empty() ? name : code >= 0 ? std::to_wstring(code) : std::wstring(tr(L"unknown"));
+}
+
+// Android's installer refuses an older version of an installed app (INSTALL_FAILED_VERSION_DOWNGRADE); here the
+// user may still choose it, warned of what that does to the app's data. Cancel is the answer on Enter.
+bool confirm_downgrade(const App& app, const winapk::launcher::FileIdentity& file) {
+    const std::vector<std::string> lines = package_of(app.name);
+    const std::wstring installed = version_text(lines.size() > 2 ? utf8_to_wide(lines[2]) : L"",
+                                                lines.size() > 1 ? _wtoi64(utf8_to_wide(lines[1]).c_str()) : -1);
+    Prompt p;
+    p.caption = L"Win.apk";
+    p.question = fmt(L"Replace {0} with an older version?", {app.label});
+    p.note = fmt(L"The installed version is {0}, and this file is version {1}. What the app saved with the newer "
+                 L"version may not work with the older one.",
+                 {installed, version_text(file.version_name, file.version)});
+    p.buttons = {{IDOK, tr(L"Replace")}, {IDCANCEL, tr(L"Cancel")}};
+    p.default_id = IDCANCEL;
+    return run_dialog(p, owner()) == IDOK;
+}
+
+void install_probed(InstallProbe& p) {
+    using winapk::launcher::Placement;
+    std::vector<winapk::launcher::LibraryApp> library;
+    for (const App& a : g_apps) {
+        const std::vector<std::string> lines = package_of(a.name);
+        winapk::launcher::LibraryApp l;
+        l.name = a.name;
+        if (!lines.empty()) l.package = utf8_to_wide(lines[0]);
+        if (lines.size() > 1 && !lines[1].empty()) l.version = _wtoi64(utf8_to_wide(lines[1]).c_str());
+        library.push_back(l);
+    }
+    for (const auto& [name, pkg] : g_queued_packages) {
+        if (!find_app(name)) library.push_back({name, pkg, -1});
+    }
+    const winapk::launcher::PlaceResult r = winapk::launcher::place_install(install_name(p.file), p.id, library,
+                                                                            pending_names());
+    if (r.how == Placement::kDowngrade) {
+        const App* app = find_app(r.name);
+        if (app && !confirm_downgrade(*app, p.id)) {
+            info(fmt(L"{0} was not replaced: the installed version is newer.", {app->label}), kInfo);
+            return;
+        }
+    }
+    if (!p.id.package.empty()) g_queued_packages[r.name] = p.id.package;
+    install(p.file, r.name, false, std::move(p.splits));
 }
 
 // The signed-in accounts: `ACCOUNT<tab>email<tab>services` lines from
@@ -10650,13 +10764,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             break;
         }
         case WM_CHAR: return 0;  // no beep
+        case kInstallProbed: {  // install_probe_thread: a file read
+            std::unique_ptr<InstallProbe> p(reinterpret_cast<InstallProbe*>(lp));
+            g_probe_running = false;
+            install_probed(*p);
+            probe_next();
+            maybe_quit();  // a downgrade refused, and nothing else under way
+            return 0;
+        }
         case kInstallSets: {  // install_sets_thread: the batch's files, as installs
             std::unique_ptr<std::vector<winapk::launcher::InstallSet>> sets(
                 reinterpret_cast<std::vector<winapk::launcher::InstallSet>*>(lp));
             for (const winapk::launcher::InstallSet& set : *sets) {
                 std::vector<SplitFile> splits;
                 for (const auto& f : set.splits) splits.emplace_back(fs::path(f.first), f.second);
-                install(set.base, L"", false, std::move(splits));
+                probe_install(set.base, std::move(splits));
             }
             return 0;
         }
@@ -10680,6 +10802,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             const InstallEnd end = finish_install(*name);
             const InstallEnd::Kind how = end.kind();
+            g_queued_packages.erase(*name);  // the library has it now, with its .package, or it is not there
             refresh();
             // The Store's own app: no word in the library, the Store's page says how it went.
             const bool store = store_app_installed(*name, how);
@@ -12852,13 +12975,13 @@ void end_background_work() {
 }
 
 // What keeps the process when the library is not shown, besides an app's window it did not start
-// (windowed_processes): an install window, a splash, an app it started (to report how it ended), the log
-// or Threads window, a maintenance window it opened (until kMaintenanceEnded), and a download the user started:
+// (windowed_processes): an install window, a splash, a file being read before its install, an app it started (to
+// report how it ended), the log or Threads window, a maintenance window it opened (until kMaintenanceEnded), and a download the user started:
 // Win.apk's update (whose installer then runs, as if the library were still open) and the Store's own app
 // (which then installs), as an install goes on with the library closed.
 bool work_keeps_process() {
     return g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending() ||
-           g_maintenance || g_update.downloading() || g_store_setup.busy();
+           probes_pending() || g_maintenance || g_update.downloading() || g_store_setup.busy();
 }
 
 // When the library is not shown, the process lives only for what it is doing (work_keeps_process), and for

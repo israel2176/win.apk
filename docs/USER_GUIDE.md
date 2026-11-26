@@ -103,10 +103,17 @@ Installs run one at a time, in a small install window:
   log, in the window) and **Copy details** (the reason, Win.apk's version and
   the end of the log, for a bug report).
 
-Two apps with the same library name (the app's label) cannot coexist: a
-second install of the same app replaces the first and keeps the app's data.
+Before a file installs, Win.apk reads which app it is (its package and
+version), as a phone's package installer does, so an app is known by its
+package, not by its file's name: a file of an installed app replaces that app
+and keeps the app's data, whatever the file is called, and a file of another
+app never replaces an app whose file had the same name (two different
+`app-release.apk` files are two apps; the second is named after its package).
 To update an app, open or drop a newer file of it: there is no separate
-update button. An app open in a window has to be closed first; what runs of
+update button. A file older than the installed version asks first (**Replace
+... with an older version?**; Enter is **Cancel**), since what the app saved
+with the newer version may not work with the older one; **Cancel** keeps the
+installed version. An app open in a window has to be closed first; what runs of
 it with no window (started in the background for another app, with Google
 services on, and Google's own apps) is stopped for the update, as Android
 stops an app it updates.
