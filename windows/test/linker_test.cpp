@@ -341,6 +341,7 @@ int main(int argc, char** argv) {
         void* packed = linker.open(name, winapk::GuestLinker::kRtldNow, &error);
         check((std::string("open ") + name).c_str(), packed != nullptr, error);
         if (!packed) continue;
+        expect_eq("its constructor put the name right in memory", call(linker, packed, "link_packed_state"), 4);
         expect_eq("dlsym finds an export by the name its constructor put right",
                   call(linker, packed, "link_packed_secret"), 42);
         check("the name the file had is not an export",

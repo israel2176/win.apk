@@ -211,32 +211,45 @@ extern Dyn _DYNAMIC[] __attribute__((visibility("hidden")));
 extern char __ehdr_start[] __attribute__((visibility("hidden")));
 
 // The file has "LINK_PACKED_SECRET" where the linker wrote the export's name;
-// the constructor lowers it back, as a packer decrypts its .dynstr.
+// the constructor lowers it back, as a packer decrypts its .dynstr. How far it
+// got is link_packed_state's answer: 1 found .dynstr, 2 found the name, 3
+// mprotect made it writable, 4 the name is put right; minus when mprotect failed.
+static int g_state;
+
 __attribute__((constructor)) static void packed_init(void) {
     char* strtab = 0;
     unsigned long strsz = 0;
     for (Dyn* d = _DYNAMIC; d->d_tag != 0; ++d) {
-        if (d->d_tag == 5) strtab = __ehdr_start + d->d_val;  // DT_STRTAB
-        if (d->d_tag == 10) strsz = d->d_val;                 // DT_STRSZ
+        // DT_STRTAB: a vaddr, as bionic leaves it (glibc makes it an address).
+        if (d->d_tag == 5) strtab = d->d_val >= (unsigned long)__ehdr_start ? (char*)d->d_val : __ehdr_start + d->d_val;
+        if (d->d_tag == 10) strsz = d->d_val;  // DT_STRSZ
     }
     if (!strtab) return;
+    g_state = 1;
     const char* sealed = "LINK_PACKED_SECRET";
     const size_t n = strlen(sealed);
     for (unsigned long i = 0; i + n <= strsz; ++i) {
         size_t k = 0;
         while (k < n && strtab[i + k] == sealed[k]) ++k;
         if (k != n) continue;
+        g_state = 2;
         unsigned long page = (unsigned long)(strtab + i) & ~4095ul;
         unsigned long end = (unsigned long)(strtab + i + n + 4095) & ~4095ul;
-        mprotect((void*)page, end - page, 3);  // PROT_READ | PROT_WRITE
+        if (mprotect((void*)page, end - page, 3) != 0) {  // PROT_READ | PROT_WRITE
+            g_state = -2;
+            return;
+        }
+        g_state = 3;
         for (k = 0; k < n; ++k) {
             if (strtab[i + k] >= 'A' && strtab[i + k] <= 'Z') strtab[i + k] = (char)(strtab[i + k] + 32);
         }
         mprotect((void*)page, end - page, 1);  // PROT_READ
+        g_state = 4;
         return;
     }
 }
 
+EXPORT int link_packed_state(void) { return g_state; }
 EXPORT int link_packed_secret(void) { return 42; }
 
 #elif defined(WINAPK_LINK_PLUGIN)
