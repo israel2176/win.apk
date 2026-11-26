@@ -1225,6 +1225,15 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   libEGL has one default display per process, and an app's `eglTerminate` of
   it does not reach ANGLE while the framework draws on it. Nothing crosses between the two
   displays: the app's frames reach the compositor as the host layer's pixels.
+  The app's own GL threads share that display, and so its one renderer, which
+  holds the state of the context made current last on any thread
+  (`StateManager11`): every GL and EGL call through the runtime's forwarders
+  (`gl_stubs.inc`: the GLES bindings, EGL10/EGL14, native code) takes the
+  display's turn (`host/gl/gl_turn.h`), one call at a time, and a thread whose
+  context another one displaced has it made current again first. Without it a
+  thread drew with another's state: Telegram's welcome screen beside a second
+  GL view, an access violation in `StateManager11::updateState` (issue #195).
+  `winapk-gl-turn-test`, and `winapk-gl-test`'s two GL threads on real ANGLE.
   A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
   makes an EGL window surface on the view's holder (the host's window surface
   on the SurfaceView, read back at each swap), as does an app's own copy of

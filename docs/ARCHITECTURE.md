@@ -513,7 +513,10 @@ checked against its SHA-256.
 
 Each GL view renders into its own pbuffer; after a frame the pixels are read
 back and become a layer under the app's windows (below). Vulkan is not
-implemented.
+implemented. The app's GL threads share one ANGLE display, whose Direct3D 11
+renderer holds one context's state at a time, so each GL call takes the
+display's turn (`host/gl/gl_turn.h`): one call at a time, and a context
+another thread displaced is made current again before its thread's next call.
 
 ### The view tree's frames
 

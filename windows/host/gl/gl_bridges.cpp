@@ -36,7 +36,10 @@
 namespace {
 
 constexpr void* RTLD_DEFAULT = nullptr;
+// The forwarder first (gl_turn.h: upstream's GLES 3 bindings call what this answers), ANGLE's
+// own only for a name the forwarders lack.
 void* dlsym(void*, const char* name) {
+    if (void* p = winapk::host::gl_stub(name)) return p;
     if (void* p = winapk::host::gl_proc(name, winapk::host::GlLib::Gles)) return p;
     return winapk::host::gl_proc(name, winapk::host::GlLib::Egl);
 }

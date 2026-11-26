@@ -12,6 +12,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglBindTexImage(EGLDisplay dpy, EGLSurface sur
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface, EGLint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglBindTexImage", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface, buffer);
 }
 
@@ -19,6 +20,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy, const EGLint *
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, const EGLint *attrib_list, EGLConfig *configs, EGLint config_size, EGLint *num_config);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglChooseConfig", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, attrib_list, configs, config_size, num_config);
 }
 
@@ -26,6 +28,7 @@ extern "C" EGLint EGLAPIENTRY eglClientWaitSync(EGLDisplay dpy, EGLSync sync, EG
     using Fn = EGLint(EGLAPIENTRY*)(EGLDisplay dpy, EGLSync sync, EGLint flags, EGLTime timeout);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglClientWaitSync", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, sync, flags, timeout);
 }
 
@@ -33,6 +36,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglCopyBuffers(EGLDisplay dpy, EGLSurface surf
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface, EGLNativePixmapType target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCopyBuffers", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface, target);
 }
 
@@ -40,6 +44,7 @@ extern "C" EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy, EGLConfig con
     using Fn = EGLContext(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreateContext", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, share_context, attrib_list);
 }
 
@@ -47,6 +52,7 @@ extern "C" EGLImage EGLAPIENTRY eglCreateImage(EGLDisplay dpy, EGLContext ctx, E
     using Fn = EGLImage(EGLAPIENTRY*)(EGLDisplay dpy, EGLContext ctx, EGLenum target, EGLClientBuffer buffer, const EGLAttrib *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreateImage", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, ctx, target, buffer, attrib_list);
 }
 
@@ -54,6 +60,7 @@ extern "C" EGLSurface EGLAPIENTRY eglCreatePbufferFromClientBuffer(EGLDisplay dp
     using Fn = EGLSurface(EGLAPIENTRY*)(EGLDisplay dpy, EGLenum buftype, EGLClientBuffer buffer, EGLConfig config, const EGLint *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreatePbufferFromClientBuffer", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, buftype, buffer, config, attrib_list);
 }
 
@@ -61,6 +68,7 @@ extern "C" EGLSurface EGLAPIENTRY eglCreatePbufferSurface(EGLDisplay dpy, EGLCon
     using Fn = EGLSurface(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, const EGLint *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreatePbufferSurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, attrib_list);
 }
 
@@ -68,6 +76,7 @@ extern "C" EGLSurface EGLAPIENTRY eglCreatePixmapSurface(EGLDisplay dpy, EGLConf
     using Fn = EGLSurface(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, EGLNativePixmapType pixmap, const EGLint *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreatePixmapSurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, pixmap, attrib_list);
 }
 
@@ -75,6 +84,7 @@ extern "C" EGLSurface EGLAPIENTRY eglCreatePlatformPixmapSurface(EGLDisplay dpy,
     using Fn = EGLSurface(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, void *native_pixmap, const EGLAttrib *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreatePlatformPixmapSurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, native_pixmap, attrib_list);
 }
 
@@ -82,6 +92,7 @@ extern "C" EGLSurface EGLAPIENTRY eglCreatePlatformWindowSurface(EGLDisplay dpy,
     using Fn = EGLSurface(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, void *native_window, const EGLAttrib *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreatePlatformWindowSurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, native_window, attrib_list);
 }
 
@@ -89,6 +100,7 @@ extern "C" EGLSync EGLAPIENTRY eglCreateSync(EGLDisplay dpy, EGLenum type, const
     using Fn = EGLSync(EGLAPIENTRY*)(EGLDisplay dpy, EGLenum type, const EGLAttrib *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreateSync", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, type, attrib_list);
 }
 
@@ -96,6 +108,7 @@ extern "C" EGLSurface EGLAPIENTRY eglCreateWindowSurface(EGLDisplay dpy, EGLConf
     using Fn = EGLSurface(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, EGLNativeWindowType win, const EGLint *attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglCreateWindowSurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, win, attrib_list);
 }
 
@@ -103,6 +116,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext c
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLContext ctx);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglDestroyContext", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, ctx);
 }
 
@@ -110,6 +124,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglDestroyImage(EGLDisplay dpy, EGLImage image
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLImage image);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglDestroyImage", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, image);
 }
 
@@ -117,6 +132,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface s
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglDestroySurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface);
 }
 
@@ -124,6 +140,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglDestroySync(EGLDisplay dpy, EGLSync sync) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSync sync);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglDestroySync", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, sync);
 }
 
@@ -131,6 +148,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy, EGLConfig c
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig config, EGLint attribute, EGLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglGetConfigAttrib", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, config, attribute, value);
 }
 
@@ -138,6 +156,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglGetConfigs(EGLDisplay dpy, EGLConfig *confi
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLConfig *configs, EGLint config_size, EGLint *num_config);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglGetConfigs", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, configs, config_size, num_config);
 }
 
@@ -194,6 +213,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglGetSyncAttrib(EGLDisplay dpy, EGLSync sync,
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSync sync, EGLint attribute, EGLAttrib *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglGetSyncAttrib", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, sync, attribute, value);
 }
 
@@ -201,6 +221,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy, EGLint *major, E
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLint *major, EGLint *minor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglInitialize", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, major, minor);
 }
 
@@ -208,7 +229,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy, EGLSurface draw
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglMakeCurrent", winapk::host::GlLib::Egl));
     if (!fn) return {};
-    return fn(dpy, draw, read, ctx);
+    return winapk::host::gl_turn_make_current(fn, dpy, draw, read, ctx);
 }
 
 extern "C" EGLenum EGLAPIENTRY eglQueryAPI(void) {
@@ -222,6 +243,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglQueryContext(EGLDisplay dpy, EGLContext ctx
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLContext ctx, EGLint attribute, EGLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglQueryContext", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, ctx, attribute, value);
 }
 
@@ -236,6 +258,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy, EGLSurface sur
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglQuerySurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface, attribute, value);
 }
 
@@ -243,6 +266,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglReleaseTexImage(EGLDisplay dpy, EGLSurface 
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface, EGLint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglReleaseTexImage", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface, buffer);
 }
 
@@ -250,13 +274,14 @@ extern "C" EGLBoolean EGLAPIENTRY eglReleaseThread(void) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglReleaseThread", winapk::host::GlLib::Egl));
     if (!fn) return {};
-    return fn();
+    return winapk::host::gl_turn_release_thread(fn);
 }
 
 extern "C" EGLBoolean EGLAPIENTRY eglSurfaceAttrib(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint value) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglSurfaceAttrib", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface, attribute, value);
 }
 
@@ -264,6 +289,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglSwapBuffers(EGLDisplay dpy, EGLSurface surf
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglSwapBuffers", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, surface);
 }
 
@@ -271,6 +297,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interva
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLint interval);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglSwapInterval", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, interval);
 }
 
@@ -278,6 +305,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglTerminate", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy);
 }
 
@@ -285,6 +313,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglWaitClient(void) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglWaitClient", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn();
 }
 
@@ -292,6 +321,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglWaitGL(void) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglWaitGL", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn();
 }
 
@@ -299,6 +329,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglWaitNative(EGLint engine) {
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLint engine);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglWaitNative", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(engine);
 }
 
@@ -306,6 +337,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglWaitSync(EGLDisplay dpy, EGLSync sync, EGLi
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSync sync, EGLint flags);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglWaitSync", winapk::host::GlLib::Egl));
     if (!fn) return {};
+    winapk::host::GlTurn turn(false);
     return fn(dpy, sync, flags);
 }
 
@@ -313,6 +345,7 @@ extern "C" GLboolean GL_APIENTRY glAcquireKeyedMutexWin32EXT(GLuint memory, GLui
     using Fn = GLboolean(GL_APIENTRY*)(GLuint memory, GLuint64 key, GLuint timeout);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glAcquireKeyedMutexWin32EXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(memory, key, timeout);
 }
 
@@ -320,6 +353,7 @@ extern "C" void GL_APIENTRY glAcquireTexturesANGLE(GLuint numTexture, const GLui
     using Fn = void(GL_APIENTRY*)(GLuint numTexture, const GLuint *textures, const GLenum *layouts);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glAcquireTexturesANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numTexture, textures, layouts);
 }
 
@@ -327,6 +361,7 @@ extern "C" void GL_APIENTRY glActiveShaderProgram(GLuint pipeline, GLuint progra
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glActiveShaderProgram", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, program);
 }
 
@@ -334,6 +369,7 @@ extern "C" void GL_APIENTRY glActiveShaderProgramEXT(GLuint pipeline, GLuint pro
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glActiveShaderProgramEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, program);
 }
 
@@ -341,6 +377,7 @@ extern "C" void GL_APIENTRY glActiveTexture(GLenum texture) {
     using Fn = void(GL_APIENTRY*)(GLenum texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glActiveTexture", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture);
 }
 
@@ -348,6 +385,7 @@ extern "C" void GL_APIENTRY glAlphaFunc(GLenum func, GLfloat ref) {
     using Fn = void(GL_APIENTRY*)(GLenum func, GLfloat ref);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glAlphaFunc", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func, ref);
 }
 
@@ -355,6 +393,7 @@ extern "C" void GL_APIENTRY glAlphaFuncQCOM(GLenum func, GLclampf ref) {
     using Fn = void(GL_APIENTRY*)(GLenum func, GLclampf ref);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glAlphaFuncQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func, ref);
 }
 
@@ -362,6 +401,7 @@ extern "C" void GL_APIENTRY glAlphaFuncx(GLenum func, GLfixed ref) {
     using Fn = void(GL_APIENTRY*)(GLenum func, GLfixed ref);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glAlphaFuncx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func, ref);
 }
 
@@ -369,6 +409,7 @@ extern "C" void GL_APIENTRY glApplyFramebufferAttachmentCMAAINTEL(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glApplyFramebufferAttachmentCMAAINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -376,6 +417,7 @@ extern "C" void GL_APIENTRY glAttachShader(GLuint program, GLuint shader) {
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint shader);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glAttachShader", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, shader);
 }
 
@@ -383,6 +425,7 @@ extern "C" void GL_APIENTRY glBeginConditionalRenderNV(GLuint id, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginConditionalRenderNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, mode);
 }
 
@@ -390,6 +433,7 @@ extern "C" void GL_APIENTRY glBeginPerfMonitorAMD(GLuint monitor) {
     using Fn = void(GL_APIENTRY*)(GLuint monitor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginPerfMonitorAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(monitor);
 }
 
@@ -397,6 +441,7 @@ extern "C" void GL_APIENTRY glBeginPerfQueryINTEL(GLuint queryHandle) {
     using Fn = void(GL_APIENTRY*)(GLuint queryHandle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginPerfQueryINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryHandle);
 }
 
@@ -404,6 +449,7 @@ extern "C" void GL_APIENTRY glBeginPixelLocalStorageANGLE(GLsizei n, const GLenu
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLenum loadops[]);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginPixelLocalStorageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, loadops);
 }
 
@@ -411,6 +457,7 @@ extern "C" void GL_APIENTRY glBeginQuery(GLenum target, GLuint id) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginQuery", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, id);
 }
 
@@ -418,6 +465,7 @@ extern "C" void GL_APIENTRY glBeginQueryEXT(GLenum target, GLuint id) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginQueryEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, id);
 }
 
@@ -425,6 +473,7 @@ extern "C" void GL_APIENTRY glBeginTransformFeedback(GLenum primitiveMode) {
     using Fn = void(GL_APIENTRY*)(GLenum primitiveMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBeginTransformFeedback", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(primitiveMode);
 }
 
@@ -432,6 +481,7 @@ extern "C" void GL_APIENTRY glBindAttribLocation(GLuint program, GLuint index, c
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint index, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindAttribLocation", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, index, name);
 }
 
@@ -439,6 +489,7 @@ extern "C" void GL_APIENTRY glBindBuffer(GLenum target, GLuint buffer) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindBuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, buffer);
 }
 
@@ -446,6 +497,7 @@ extern "C" void GL_APIENTRY glBindBufferBase(GLenum target, GLuint index, GLuint
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLuint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindBufferBase", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, buffer);
 }
 
@@ -453,6 +505,7 @@ extern "C" void GL_APIENTRY glBindBufferRange(GLenum target, GLuint index, GLuin
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLuint buffer, GLintptr offset, GLsizeiptr size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindBufferRange", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, buffer, offset, size);
 }
 
@@ -460,6 +513,7 @@ extern "C" void GL_APIENTRY glBindFragDataLocationEXT(GLuint program, GLuint col
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint color, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindFragDataLocationEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, color, name);
 }
 
@@ -467,6 +521,7 @@ extern "C" void GL_APIENTRY glBindFragDataLocationIndexedEXT(GLuint program, GLu
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint colorNumber, GLuint index, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindFragDataLocationIndexedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, colorNumber, index, name);
 }
 
@@ -474,6 +529,7 @@ extern "C" void GL_APIENTRY glBindFramebuffer(GLenum target, GLuint framebuffer)
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint framebuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindFramebuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, framebuffer);
 }
 
@@ -481,6 +537,7 @@ extern "C" void GL_APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLin
     using Fn = void(GL_APIENTRY*)(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindImageTexture", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(unit, texture, level, layered, layer, access, format);
 }
 
@@ -488,6 +545,7 @@ extern "C" void GL_APIENTRY glBindProgramPipeline(GLuint pipeline) {
     using Fn = void(GL_APIENTRY*)(GLuint pipeline);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindProgramPipeline", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline);
 }
 
@@ -495,6 +553,7 @@ extern "C" void GL_APIENTRY glBindProgramPipelineEXT(GLuint pipeline) {
     using Fn = void(GL_APIENTRY*)(GLuint pipeline);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindProgramPipelineEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline);
 }
 
@@ -502,6 +561,7 @@ extern "C" void GL_APIENTRY glBindRenderbuffer(GLenum target, GLuint renderbuffe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint renderbuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindRenderbuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, renderbuffer);
 }
 
@@ -509,6 +569,7 @@ extern "C" void GL_APIENTRY glBindSampler(GLuint unit, GLuint sampler) {
     using Fn = void(GL_APIENTRY*)(GLuint unit, GLuint sampler);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindSampler", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(unit, sampler);
 }
 
@@ -516,6 +577,7 @@ extern "C" void GL_APIENTRY glBindShadingRateImageNV(GLuint texture) {
     using Fn = void(GL_APIENTRY*)(GLuint texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindShadingRateImageNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture);
 }
 
@@ -523,6 +585,7 @@ extern "C" void GL_APIENTRY glBindTexture(GLenum target, GLuint texture) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindTexture", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, texture);
 }
 
@@ -530,6 +593,7 @@ extern "C" void GL_APIENTRY glBindTransformFeedback(GLenum target, GLuint id) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindTransformFeedback", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, id);
 }
 
@@ -537,6 +601,7 @@ extern "C" void GL_APIENTRY glBindUniformLocationCHROMIUM(GLuint program, GLint 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindUniformLocationCHROMIUM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, name);
 }
 
@@ -544,6 +609,7 @@ extern "C" void GL_APIENTRY glBindVertexArray(GLuint array) {
     using Fn = void(GL_APIENTRY*)(GLuint array);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindVertexArray", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(array);
 }
 
@@ -551,6 +617,7 @@ extern "C" void GL_APIENTRY glBindVertexArrayOES(GLuint array) {
     using Fn = void(GL_APIENTRY*)(GLuint array);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindVertexArrayOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(array);
 }
 
@@ -558,6 +625,7 @@ extern "C" void GL_APIENTRY glBindVertexBuffer(GLuint bindingindex, GLuint buffe
     using Fn = void(GL_APIENTRY*)(GLuint bindingindex, GLuint buffer, GLintptr offset, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindVertexBuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(bindingindex, buffer, offset, stride);
 }
 
@@ -565,6 +633,7 @@ extern "C" void GL_APIENTRY glBlendBarrier(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendBarrier", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -572,6 +641,7 @@ extern "C" void GL_APIENTRY glBlendBarrierKHR(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendBarrierKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -579,6 +649,7 @@ extern "C" void GL_APIENTRY glBlendBarrierNV(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendBarrierNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -586,6 +657,7 @@ extern "C" void GL_APIENTRY glBlendColor(GLfloat red, GLfloat green, GLfloat blu
     using Fn = void(GL_APIENTRY*)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendColor", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -593,6 +665,7 @@ extern "C" void GL_APIENTRY glBlendEquation(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquation", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -600,6 +673,7 @@ extern "C" void GL_APIENTRY glBlendEquationSeparate(GLenum modeRGB, GLenum modeA
     using Fn = void(GL_APIENTRY*)(GLenum modeRGB, GLenum modeAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationSeparate", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(modeRGB, modeAlpha);
 }
 
@@ -607,6 +681,7 @@ extern "C" void GL_APIENTRY glBlendEquationSeparatei(GLuint buf, GLenum modeRGB,
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum modeRGB, GLenum modeAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationSeparatei", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, modeRGB, modeAlpha);
 }
 
@@ -614,6 +689,7 @@ extern "C" void GL_APIENTRY glBlendEquationSeparateiEXT(GLuint buf, GLenum modeR
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum modeRGB, GLenum modeAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationSeparateiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, modeRGB, modeAlpha);
 }
 
@@ -621,6 +697,7 @@ extern "C" void GL_APIENTRY glBlendEquationSeparateiOES(GLuint buf, GLenum modeR
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum modeRGB, GLenum modeAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationSeparateiOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, modeRGB, modeAlpha);
 }
 
@@ -628,6 +705,7 @@ extern "C" void GL_APIENTRY glBlendEquationi(GLuint buf, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationi", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, mode);
 }
 
@@ -635,6 +713,7 @@ extern "C" void GL_APIENTRY glBlendEquationiEXT(GLuint buf, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, mode);
 }
 
@@ -642,6 +721,7 @@ extern "C" void GL_APIENTRY glBlendEquationiOES(GLuint buf, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendEquationiOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, mode);
 }
 
@@ -649,6 +729,7 @@ extern "C" void GL_APIENTRY glBlendFunc(GLenum sfactor, GLenum dfactor) {
     using Fn = void(GL_APIENTRY*)(GLenum sfactor, GLenum dfactor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFunc", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sfactor, dfactor);
 }
 
@@ -656,6 +737,7 @@ extern "C" void GL_APIENTRY glBlendFuncSeparate(GLenum sfactorRGB, GLenum dfacto
     using Fn = void(GL_APIENTRY*)(GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFuncSeparate", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sfactorRGB, dfactorRGB, sfactorAlpha, dfactorAlpha);
 }
 
@@ -663,6 +745,7 @@ extern "C" void GL_APIENTRY glBlendFuncSeparatei(GLuint buf, GLenum srcRGB, GLen
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFuncSeparatei", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, srcRGB, dstRGB, srcAlpha, dstAlpha);
 }
 
@@ -670,6 +753,7 @@ extern "C" void GL_APIENTRY glBlendFuncSeparateiEXT(GLuint buf, GLenum srcRGB, G
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFuncSeparateiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, srcRGB, dstRGB, srcAlpha, dstAlpha);
 }
 
@@ -677,6 +761,7 @@ extern "C" void GL_APIENTRY glBlendFuncSeparateiOES(GLuint buf, GLenum srcRGB, G
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum srcRGB, GLenum dstRGB, GLenum srcAlpha, GLenum dstAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFuncSeparateiOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, srcRGB, dstRGB, srcAlpha, dstAlpha);
 }
 
@@ -684,6 +769,7 @@ extern "C" void GL_APIENTRY glBlendFunci(GLuint buf, GLenum src, GLenum dst) {
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum src, GLenum dst);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFunci", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, src, dst);
 }
 
@@ -691,6 +777,7 @@ extern "C" void GL_APIENTRY glBlendFunciEXT(GLuint buf, GLenum src, GLenum dst) 
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum src, GLenum dst);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFunciEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, src, dst);
 }
 
@@ -698,6 +785,7 @@ extern "C" void GL_APIENTRY glBlendFunciOES(GLuint buf, GLenum src, GLenum dst) 
     using Fn = void(GL_APIENTRY*)(GLuint buf, GLenum src, GLenum dst);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendFunciOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buf, src, dst);
 }
 
@@ -705,6 +793,7 @@ extern "C" void GL_APIENTRY glBlendParameteriNV(GLenum pname, GLint value) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlendParameteriNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, value);
 }
 
@@ -712,6 +801,7 @@ extern "C" void GL_APIENTRY glBlitFramebuffer(GLint srcX0, GLint srcY0, GLint sr
     using Fn = void(GL_APIENTRY*)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlitFramebuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
 }
 
@@ -719,6 +809,7 @@ extern "C" void GL_APIENTRY glBlitFramebufferANGLE(GLint srcX0, GLint srcY0, GLi
     using Fn = void(GL_APIENTRY*)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlitFramebufferANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
 }
 
@@ -726,6 +817,7 @@ extern "C" void GL_APIENTRY glBlitFramebufferLayerEXT(GLint srcX0, GLint srcY0, 
     using Fn = void(GL_APIENTRY*)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint srcLayer, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLint dstLayer, GLbitfield mask, GLenum filter);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlitFramebufferLayerEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcX0, srcY0, srcX1, srcY1, srcLayer, dstX0, dstY0, dstX1, dstY1, dstLayer, mask, filter);
 }
 
@@ -733,6 +825,7 @@ extern "C" void GL_APIENTRY glBlitFramebufferLayersEXT(GLint srcX0, GLint srcY0,
     using Fn = void(GL_APIENTRY*)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlitFramebufferLayersEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
 }
 
@@ -740,6 +833,7 @@ extern "C" void GL_APIENTRY glBlitFramebufferNV(GLint srcX0, GLint srcY0, GLint 
     using Fn = void(GL_APIENTRY*)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBlitFramebufferNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
 }
 
@@ -747,6 +841,7 @@ extern "C" void GL_APIENTRY glBufferAttachMemoryNV(GLenum target, GLuint memory,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferAttachMemoryNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, memory, offset);
 }
 
@@ -754,6 +849,7 @@ extern "C" void GL_APIENTRY glBufferData(GLenum target, GLsizeiptr size, const v
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizeiptr size, const void *data, GLenum usage);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferData", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, size, data, usage);
 }
 
@@ -761,6 +857,7 @@ extern "C" void GL_APIENTRY glBufferPageCommitmentMemNV(GLenum target, GLintptr 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr size, GLuint memory, GLuint64 memOffset, GLboolean commit);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferPageCommitmentMemNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, offset, size, memory, memOffset, commit);
 }
 
@@ -768,6 +865,7 @@ extern "C" void GL_APIENTRY glBufferStorageEXT(GLenum target, GLsizeiptr size, c
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizeiptr size, const void *data, GLbitfield flags);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferStorageEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, size, data, flags);
 }
 
@@ -775,6 +873,7 @@ extern "C" void GL_APIENTRY glBufferStorageExternalEXT(GLenum target, GLintptr o
     using Fn = void(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr size, GLeglClientBufferEXT clientBuffer, GLbitfield flags);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferStorageExternalEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, offset, size, clientBuffer, flags);
 }
 
@@ -782,6 +881,7 @@ extern "C" void GL_APIENTRY glBufferStorageMemEXT(GLenum target, GLsizeiptr size
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizeiptr size, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferStorageMemEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, size, memory, offset);
 }
 
@@ -789,6 +889,7 @@ extern "C" void GL_APIENTRY glBufferSubData(GLenum target, GLintptr offset, GLsi
     using Fn = void(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr size, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBufferSubData", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, offset, size, data);
 }
 
@@ -796,6 +897,7 @@ extern "C" GLenum GL_APIENTRY glCheckFramebufferStatus(GLenum target) {
     using Fn = GLenum(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCheckFramebufferStatus", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target);
 }
 
@@ -803,6 +905,7 @@ extern "C" void GL_APIENTRY glClear(GLbitfield mask) {
     using Fn = void(GL_APIENTRY*)(GLbitfield mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClear", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mask);
 }
 
@@ -810,6 +913,7 @@ extern "C" void GL_APIENTRY glClearBufferfi(GLenum buffer, GLint drawbuffer, GLf
     using Fn = void(GL_APIENTRY*)(GLenum buffer, GLint drawbuffer, GLfloat depth, GLint stencil);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearBufferfi", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, drawbuffer, depth, stencil);
 }
 
@@ -817,6 +921,7 @@ extern "C" void GL_APIENTRY glClearBufferfv(GLenum buffer, GLint drawbuffer, con
     using Fn = void(GL_APIENTRY*)(GLenum buffer, GLint drawbuffer, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearBufferfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, drawbuffer, value);
 }
 
@@ -824,6 +929,7 @@ extern "C" void GL_APIENTRY glClearBufferiv(GLenum buffer, GLint drawbuffer, con
     using Fn = void(GL_APIENTRY*)(GLenum buffer, GLint drawbuffer, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearBufferiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, drawbuffer, value);
 }
 
@@ -831,6 +937,7 @@ extern "C" void GL_APIENTRY glClearBufferuiv(GLenum buffer, GLint drawbuffer, co
     using Fn = void(GL_APIENTRY*)(GLenum buffer, GLint drawbuffer, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearBufferuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, drawbuffer, value);
 }
 
@@ -838,6 +945,7 @@ extern "C" void GL_APIENTRY glClearColor(GLfloat red, GLfloat green, GLfloat blu
     using Fn = void(GL_APIENTRY*)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearColor", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -845,6 +953,7 @@ extern "C" void GL_APIENTRY glClearColorx(GLfixed red, GLfixed green, GLfixed bl
     using Fn = void(GL_APIENTRY*)(GLfixed red, GLfixed green, GLfixed blue, GLfixed alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearColorx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -852,6 +961,7 @@ extern "C" void GL_APIENTRY glClearDepthf(GLfloat d) {
     using Fn = void(GL_APIENTRY*)(GLfloat d);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearDepthf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(d);
 }
 
@@ -859,6 +969,7 @@ extern "C" void GL_APIENTRY glClearDepthx(GLfixed depth) {
     using Fn = void(GL_APIENTRY*)(GLfixed depth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearDepthx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(depth);
 }
 
@@ -866,6 +977,7 @@ extern "C" void GL_APIENTRY glClearPixelLocalStorageuiEXT(GLsizei offset, GLsize
     using Fn = void(GL_APIENTRY*)(GLsizei offset, GLsizei n, const GLuint *values);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearPixelLocalStorageuiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(offset, n, values);
 }
 
@@ -873,6 +985,7 @@ extern "C" void GL_APIENTRY glClearStencil(GLint s) {
     using Fn = void(GL_APIENTRY*)(GLint s);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearStencil", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(s);
 }
 
@@ -880,6 +993,7 @@ extern "C" void GL_APIENTRY glClearTexImageEXT(GLuint texture, GLint level, GLen
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLint level, GLenum format, GLenum type, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearTexImageEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, level, format, type, data);
 }
 
@@ -887,6 +1001,7 @@ extern "C" void GL_APIENTRY glClearTexSubImageEXT(GLuint texture, GLint level, G
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClearTexSubImageEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, level, xoffset, yoffset, zoffset, width, height, depth, format, type, data);
 }
 
@@ -894,6 +1009,7 @@ extern "C" void GL_APIENTRY glClientActiveTexture(GLenum texture) {
     using Fn = void(GL_APIENTRY*)(GLenum texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClientActiveTexture", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture);
 }
 
@@ -901,6 +1017,7 @@ extern "C" GLenum GL_APIENTRY glClientWaitSync(GLsync sync, GLbitfield flags, GL
     using Fn = GLenum(GL_APIENTRY*)(GLsync sync, GLbitfield flags, GLuint64 timeout);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClientWaitSync", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(sync, flags, timeout);
 }
 
@@ -908,6 +1025,7 @@ extern "C" GLenum GL_APIENTRY glClientWaitSyncAPPLE(GLsync sync, GLbitfield flag
     using Fn = GLenum(GL_APIENTRY*)(GLsync sync, GLbitfield flags, GLuint64 timeout);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClientWaitSyncAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(sync, flags, timeout);
 }
 
@@ -915,6 +1033,7 @@ extern "C" void GL_APIENTRY glClipControlEXT(GLenum origin, GLenum depth) {
     using Fn = void(GL_APIENTRY*)(GLenum origin, GLenum depth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClipControlEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(origin, depth);
 }
 
@@ -922,6 +1041,7 @@ extern "C" void GL_APIENTRY glClipPlanef(GLenum p, const GLfloat *eqn) {
     using Fn = void(GL_APIENTRY*)(GLenum p, const GLfloat *eqn);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClipPlanef", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(p, eqn);
 }
 
@@ -929,6 +1049,7 @@ extern "C" void GL_APIENTRY glClipPlanex(GLenum plane, const GLfixed *equation) 
     using Fn = void(GL_APIENTRY*)(GLenum plane, const GLfixed *equation);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glClipPlanex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, equation);
 }
 
@@ -936,6 +1057,7 @@ extern "C" void GL_APIENTRY glColor4f(GLfloat red, GLfloat green, GLfloat blue, 
     using Fn = void(GL_APIENTRY*)(GLfloat red, GLfloat green, GLfloat blue, GLfloat alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColor4f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -943,6 +1065,7 @@ extern "C" void GL_APIENTRY glColor4ub(GLubyte red, GLubyte green, GLubyte blue,
     using Fn = void(GL_APIENTRY*)(GLubyte red, GLubyte green, GLubyte blue, GLubyte alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColor4ub", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -950,6 +1073,7 @@ extern "C" void GL_APIENTRY glColor4x(GLfixed red, GLfixed green, GLfixed blue, 
     using Fn = void(GL_APIENTRY*)(GLfixed red, GLfixed green, GLfixed blue, GLfixed alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColor4x", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -957,6 +1081,7 @@ extern "C" void GL_APIENTRY glColorMask(GLboolean red, GLboolean green, GLboolea
     using Fn = void(GL_APIENTRY*)(GLboolean red, GLboolean green, GLboolean blue, GLboolean alpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColorMask", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(red, green, blue, alpha);
 }
 
@@ -964,6 +1089,7 @@ extern "C" void GL_APIENTRY glColorMaski(GLuint index, GLboolean r, GLboolean g,
     using Fn = void(GL_APIENTRY*)(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColorMaski", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, r, g, b, a);
 }
 
@@ -971,6 +1097,7 @@ extern "C" void GL_APIENTRY glColorMaskiEXT(GLuint index, GLboolean r, GLboolean
     using Fn = void(GL_APIENTRY*)(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColorMaskiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, r, g, b, a);
 }
 
@@ -978,6 +1105,7 @@ extern "C" void GL_APIENTRY glColorMaskiOES(GLuint index, GLboolean r, GLboolean
     using Fn = void(GL_APIENTRY*)(GLuint index, GLboolean r, GLboolean g, GLboolean b, GLboolean a);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColorMaskiOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, r, g, b, a);
 }
 
@@ -985,6 +1113,7 @@ extern "C" void GL_APIENTRY glColorPointer(GLint size, GLenum type, GLsizei stri
     using Fn = void(GL_APIENTRY*)(GLint size, GLenum type, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glColorPointer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(size, type, stride, pointer);
 }
 
@@ -992,6 +1121,7 @@ extern "C" void GL_APIENTRY glCompileShader(GLuint shader) {
     using Fn = void(GL_APIENTRY*)(GLuint shader);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompileShader", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader);
 }
 
@@ -999,6 +1129,7 @@ extern "C" void GL_APIENTRY glCompressedCopyTextureCHROMIUM(GLuint sourceId, GLu
     using Fn = void(GL_APIENTRY*)(GLuint sourceId, GLuint destId);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedCopyTextureCHROMIUM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sourceId, destId);
 }
 
@@ -1006,6 +1137,7 @@ extern "C" void GL_APIENTRY glCompressedTexImage2D(GLenum target, GLint level, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexImage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, border, imageSize, data);
 }
 
@@ -1013,6 +1145,7 @@ extern "C" void GL_APIENTRY glCompressedTexImage2DRobustANGLE(GLenum target, GLi
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, GLsizei bufSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexImage2DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, border, imageSize, bufSize, data);
 }
 
@@ -1020,6 +1153,7 @@ extern "C" void GL_APIENTRY glCompressedTexImage3D(GLenum target, GLint level, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexImage3D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, depth, border, imageSize, data);
 }
 
@@ -1027,6 +1161,7 @@ extern "C" void GL_APIENTRY glCompressedTexImage3DOES(GLenum target, GLint level
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexImage3DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, depth, border, imageSize, data);
 }
 
@@ -1034,6 +1169,7 @@ extern "C" void GL_APIENTRY glCompressedTexImage3DRobustANGLE(GLenum target, GLi
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLsizei imageSize, GLsizei bufSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexImage3DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, depth, border, imageSize, bufSize, data);
 }
 
@@ -1041,6 +1177,7 @@ extern "C" void GL_APIENTRY glCompressedTexSubImage2D(GLenum target, GLint level
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLsizei imageSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexSubImage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, width, height, format, imageSize, data);
 }
 
@@ -1048,6 +1185,7 @@ extern "C" void GL_APIENTRY glCompressedTexSubImage2DRobustANGLE(GLenum target, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLsizei imageSize, GLsizei bufSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexSubImage2DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, width, height, format, imageSize, bufSize, data);
 }
 
@@ -1055,6 +1193,7 @@ extern "C" void GL_APIENTRY glCompressedTexSubImage3D(GLenum target, GLint level
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLsizei imageSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexSubImage3D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data);
 }
 
@@ -1062,6 +1201,7 @@ extern "C" void GL_APIENTRY glCompressedTexSubImage3DOES(GLenum target, GLint le
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLsizei imageSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexSubImage3DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, data);
 }
 
@@ -1069,6 +1209,7 @@ extern "C" void GL_APIENTRY glCompressedTexSubImage3DRobustANGLE(GLenum target, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLsizei imageSize, GLsizei bufSize, const void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCompressedTexSubImage3DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, imageSize, bufSize, data);
 }
 
@@ -1076,6 +1217,7 @@ extern "C" void GL_APIENTRY glConservativeRasterParameteriNV(GLenum pname, GLint
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glConservativeRasterParameteriNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -1083,6 +1225,7 @@ extern "C" void GL_APIENTRY glCopyBufferSubData(GLenum readTarget, GLenum writeT
     using Fn = void(GL_APIENTRY*)(GLenum readTarget, GLenum writeTarget, GLintptr readOffset, GLintptr writeOffset, GLsizeiptr size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyBufferSubData", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(readTarget, writeTarget, readOffset, writeOffset, size);
 }
 
@@ -1090,6 +1233,7 @@ extern "C" void GL_APIENTRY glCopyBufferSubDataNV(GLenum readTarget, GLenum writ
     using Fn = void(GL_APIENTRY*)(GLenum readTarget, GLenum writeTarget, GLintptr readOffset, GLintptr writeOffset, GLsizeiptr size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyBufferSubDataNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(readTarget, writeTarget, readOffset, writeOffset, size);
 }
 
@@ -1097,6 +1241,7 @@ extern "C" void GL_APIENTRY glCopyImageSubData(GLuint srcName, GLenum srcTarget,
     using Fn = void(GL_APIENTRY*)(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyImageSubData", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
 }
 
@@ -1104,6 +1249,7 @@ extern "C" void GL_APIENTRY glCopyImageSubDataEXT(GLuint srcName, GLenum srcTarg
     using Fn = void(GL_APIENTRY*)(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyImageSubDataEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
 }
 
@@ -1111,6 +1257,7 @@ extern "C" void GL_APIENTRY glCopyImageSubDataOES(GLuint srcName, GLenum srcTarg
     using Fn = void(GL_APIENTRY*)(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ, GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyImageSubDataOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(srcName, srcTarget, srcLevel, srcX, srcY, srcZ, dstName, dstTarget, dstLevel, dstX, dstY, dstZ, srcWidth, srcHeight, srcDepth);
 }
 
@@ -1118,6 +1265,7 @@ extern "C" void GL_APIENTRY glCopyPathNV(GLuint resultPath, GLuint srcPath) {
     using Fn = void(GL_APIENTRY*)(GLuint resultPath, GLuint srcPath);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyPathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(resultPath, srcPath);
 }
 
@@ -1125,6 +1273,7 @@ extern "C" void GL_APIENTRY glCopySubTexture3DANGLE(GLuint sourceId, GLint sourc
     using Fn = void(GL_APIENTRY*)(GLuint sourceId, GLint sourceLevel, GLenum destTarget, GLuint destId, GLint destLevel, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLint z, GLsizei width, GLsizei height, GLsizei depth, GLboolean unpackFlipY, GLboolean unpackPremultiplyAlpha, GLboolean unpackUnmultiplyAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopySubTexture3DANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sourceId, sourceLevel, destTarget, destId, destLevel, xoffset, yoffset, zoffset, x, y, z, width, height, depth, unpackFlipY, unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
 }
 
@@ -1132,6 +1281,7 @@ extern "C" void GL_APIENTRY glCopySubTextureCHROMIUM(GLuint sourceId, GLint sour
     using Fn = void(GL_APIENTRY*)(GLuint sourceId, GLint sourceLevel, GLenum destTarget, GLuint destId, GLint destLevel, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height, GLboolean unpackFlipY, GLboolean unpackPremultiplyAlpha, GLboolean unpackUnmultiplyAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopySubTextureCHROMIUM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sourceId, sourceLevel, destTarget, destId, destLevel, xoffset, yoffset, x, y, width, height, unpackFlipY, unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
 }
 
@@ -1139,6 +1289,7 @@ extern "C" void GL_APIENTRY glCopyTexImage2D(GLenum target, GLint level, GLenum 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, GLsizei width, GLsizei height, GLint border);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTexImage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, x, y, width, height, border);
 }
 
@@ -1146,6 +1297,7 @@ extern "C" void GL_APIENTRY glCopyTexSubImage2D(GLenum target, GLint level, GLin
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTexSubImage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, x, y, width, height);
 }
 
@@ -1153,6 +1305,7 @@ extern "C" void GL_APIENTRY glCopyTexSubImage3D(GLenum target, GLint level, GLin
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTexSubImage3D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, x, y, width, height);
 }
 
@@ -1160,6 +1313,7 @@ extern "C" void GL_APIENTRY glCopyTexSubImage3DOES(GLenum target, GLint level, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTexSubImage3DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, x, y, width, height);
 }
 
@@ -1167,6 +1321,7 @@ extern "C" void GL_APIENTRY glCopyTexture3DANGLE(GLuint sourceId, GLint sourceLe
     using Fn = void(GL_APIENTRY*)(GLuint sourceId, GLint sourceLevel, GLenum destTarget, GLuint destId, GLint destLevel, GLint internalFormat, GLenum destType, GLboolean unpackFlipY, GLboolean unpackPremultiplyAlpha, GLboolean unpackUnmultiplyAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTexture3DANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sourceId, sourceLevel, destTarget, destId, destLevel, internalFormat, destType, unpackFlipY, unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
 }
 
@@ -1174,6 +1329,7 @@ extern "C" void GL_APIENTRY glCopyTextureCHROMIUM(GLuint sourceId, GLint sourceL
     using Fn = void(GL_APIENTRY*)(GLuint sourceId, GLint sourceLevel, GLenum destTarget, GLuint destId, GLint destLevel, GLint internalFormat, GLenum destType, GLboolean unpackFlipY, GLboolean unpackPremultiplyAlpha, GLboolean unpackUnmultiplyAlpha);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTextureCHROMIUM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sourceId, sourceLevel, destTarget, destId, destLevel, internalFormat, destType, unpackFlipY, unpackPremultiplyAlpha, unpackUnmultiplyAlpha);
 }
 
@@ -1181,6 +1337,7 @@ extern "C" void GL_APIENTRY glCopyTextureLevelsAPPLE(GLuint destinationTexture, 
     using Fn = void(GL_APIENTRY*)(GLuint destinationTexture, GLuint sourceTexture, GLint sourceBaseLevel, GLsizei sourceLevelCount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCopyTextureLevelsAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(destinationTexture, sourceTexture, sourceBaseLevel, sourceLevelCount);
 }
 
@@ -1188,6 +1345,7 @@ extern "C" void GL_APIENTRY glCoverFillPathInstancedNV(GLsizei numPaths, GLenum 
     using Fn = void(GL_APIENTRY*)(GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLenum coverMode, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverFillPathInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numPaths, pathNameType, paths, pathBase, coverMode, transformType, transformValues);
 }
 
@@ -1195,6 +1353,7 @@ extern "C" void GL_APIENTRY glCoverFillPathNV(GLuint path, GLenum coverMode) {
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum coverMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverFillPathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, coverMode);
 }
 
@@ -1202,6 +1361,7 @@ extern "C" void GL_APIENTRY glCoverStrokePathInstancedNV(GLsizei numPaths, GLenu
     using Fn = void(GL_APIENTRY*)(GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLenum coverMode, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverStrokePathInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numPaths, pathNameType, paths, pathBase, coverMode, transformType, transformValues);
 }
 
@@ -1209,6 +1369,7 @@ extern "C" void GL_APIENTRY glCoverStrokePathNV(GLuint path, GLenum coverMode) {
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum coverMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverStrokePathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, coverMode);
 }
 
@@ -1216,6 +1377,7 @@ extern "C" void GL_APIENTRY glCoverageMaskNV(GLboolean mask) {
     using Fn = void(GL_APIENTRY*)(GLboolean mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverageMaskNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mask);
 }
 
@@ -1223,6 +1385,7 @@ extern "C" void GL_APIENTRY glCoverageModulationCHROMIUM(GLenum components) {
     using Fn = void(GL_APIENTRY*)(GLenum components);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverageModulationCHROMIUM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(components);
 }
 
@@ -1230,6 +1393,7 @@ extern "C" void GL_APIENTRY glCoverageModulationNV(GLenum components) {
     using Fn = void(GL_APIENTRY*)(GLenum components);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverageModulationNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(components);
 }
 
@@ -1237,6 +1401,7 @@ extern "C" void GL_APIENTRY glCoverageModulationTableNV(GLsizei n, const GLfloat
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverageModulationTableNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, v);
 }
 
@@ -1244,6 +1409,7 @@ extern "C" void GL_APIENTRY glCoverageOperationNV(GLenum operation) {
     using Fn = void(GL_APIENTRY*)(GLenum operation);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCoverageOperationNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(operation);
 }
 
@@ -1251,6 +1417,7 @@ extern "C" void GL_APIENTRY glCreateMemoryObjectsEXT(GLsizei n, GLuint *memoryOb
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *memoryObjects);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreateMemoryObjectsEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, memoryObjects);
 }
 
@@ -1258,6 +1425,7 @@ extern "C" void GL_APIENTRY glCreatePerfQueryINTEL(GLuint queryId, GLuint *query
     using Fn = void(GL_APIENTRY*)(GLuint queryId, GLuint *queryHandle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreatePerfQueryINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryId, queryHandle);
 }
 
@@ -1265,6 +1433,7 @@ extern "C" GLuint GL_APIENTRY glCreateProgram(void) {
     using Fn = GLuint(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreateProgram", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn();
 }
 
@@ -1272,6 +1441,7 @@ extern "C" void GL_APIENTRY glCreateSemaphoresNV(GLsizei n, GLuint *semaphores) 
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *semaphores);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreateSemaphoresNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, semaphores);
 }
 
@@ -1279,6 +1449,7 @@ extern "C" GLuint GL_APIENTRY glCreateShader(GLenum type) {
     using Fn = GLuint(GL_APIENTRY*)(GLenum type);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreateShader", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(type);
 }
 
@@ -1286,6 +1457,7 @@ extern "C" GLuint GL_APIENTRY glCreateShaderProgramv(GLenum type, GLsizei count,
     using Fn = GLuint(GL_APIENTRY*)(GLenum type, GLsizei count, const GLchar *const*strings);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreateShaderProgramv", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(type, count, strings);
 }
 
@@ -1293,6 +1465,7 @@ extern "C" GLuint GL_APIENTRY glCreateShaderProgramvEXT(GLenum type, GLsizei cou
     using Fn = GLuint(GL_APIENTRY*)(GLenum type, GLsizei count, const GLchar *const*strings);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCreateShaderProgramvEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(type, count, strings);
 }
 
@@ -1300,6 +1473,7 @@ extern "C" void GL_APIENTRY glCullFace(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCullFace", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -1307,6 +1481,7 @@ extern "C" void GL_APIENTRY glDebugMessageCallback(GLDEBUGPROC callback, const v
     using Fn = void(GL_APIENTRY*)(GLDEBUGPROC callback, const void *userParam);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageCallback", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(callback, userParam);
 }
 
@@ -1314,6 +1489,7 @@ extern "C" void GL_APIENTRY glDebugMessageCallbackKHR(GLDEBUGPROCKHR callback, c
     using Fn = void(GL_APIENTRY*)(GLDEBUGPROCKHR callback, const void *userParam);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageCallbackKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(callback, userParam);
 }
 
@@ -1321,6 +1497,7 @@ extern "C" void GL_APIENTRY glDebugMessageControl(GLenum source, GLenum type, GL
     using Fn = void(GL_APIENTRY*)(GLenum source, GLenum type, GLenum severity, GLsizei count, const GLuint *ids, GLboolean enabled);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageControl", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(source, type, severity, count, ids, enabled);
 }
 
@@ -1328,6 +1505,7 @@ extern "C" void GL_APIENTRY glDebugMessageControlKHR(GLenum source, GLenum type,
     using Fn = void(GL_APIENTRY*)(GLenum source, GLenum type, GLenum severity, GLsizei count, const GLuint *ids, GLboolean enabled);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageControlKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(source, type, severity, count, ids, enabled);
 }
 
@@ -1335,6 +1513,7 @@ extern "C" void GL_APIENTRY glDebugMessageInsert(GLenum source, GLenum type, GLu
     using Fn = void(GL_APIENTRY*)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *buf);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageInsert", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(source, type, id, severity, length, buf);
 }
 
@@ -1342,6 +1521,7 @@ extern "C" void GL_APIENTRY glDebugMessageInsertKHR(GLenum source, GLenum type, 
     using Fn = void(GL_APIENTRY*)(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length, const GLchar *buf);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageInsertKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(source, type, id, severity, length, buf);
 }
 
@@ -1349,6 +1529,7 @@ extern "C" void GL_APIENTRY glDeleteBuffers(GLsizei n, const GLuint *buffers) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *buffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteBuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, buffers);
 }
 
@@ -1356,6 +1537,7 @@ extern "C" void GL_APIENTRY glDeleteFencesNV(GLsizei n, const GLuint *fences) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *fences);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteFencesNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, fences);
 }
 
@@ -1363,6 +1545,7 @@ extern "C" void GL_APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint *frameb
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *framebuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteFramebuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, framebuffers);
 }
 
@@ -1370,6 +1553,7 @@ extern "C" void GL_APIENTRY glDeleteMemoryObjectsEXT(GLsizei n, const GLuint *me
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *memoryObjects);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteMemoryObjectsEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, memoryObjects);
 }
 
@@ -1377,6 +1561,7 @@ extern "C" void GL_APIENTRY glDeletePathsNV(GLuint path, GLsizei range) {
     using Fn = void(GL_APIENTRY*)(GLuint path, GLsizei range);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeletePathsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, range);
 }
 
@@ -1384,6 +1569,7 @@ extern "C" void GL_APIENTRY glDeletePerfMonitorsAMD(GLsizei n, GLuint *monitors)
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *monitors);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeletePerfMonitorsAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, monitors);
 }
 
@@ -1391,6 +1577,7 @@ extern "C" void GL_APIENTRY glDeletePerfQueryINTEL(GLuint queryHandle) {
     using Fn = void(GL_APIENTRY*)(GLuint queryHandle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeletePerfQueryINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryHandle);
 }
 
@@ -1398,6 +1585,7 @@ extern "C" void GL_APIENTRY glDeleteProgram(GLuint program) {
     using Fn = void(GL_APIENTRY*)(GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteProgram", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program);
 }
 
@@ -1405,6 +1593,7 @@ extern "C" void GL_APIENTRY glDeleteProgramPipelines(GLsizei n, const GLuint *pi
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *pipelines);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteProgramPipelines", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, pipelines);
 }
 
@@ -1412,6 +1601,7 @@ extern "C" void GL_APIENTRY glDeleteProgramPipelinesEXT(GLsizei n, const GLuint 
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *pipelines);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteProgramPipelinesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, pipelines);
 }
 
@@ -1419,6 +1609,7 @@ extern "C" void GL_APIENTRY glDeleteQueries(GLsizei n, const GLuint *ids) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *ids);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteQueries", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, ids);
 }
 
@@ -1426,6 +1617,7 @@ extern "C" void GL_APIENTRY glDeleteQueriesEXT(GLsizei n, const GLuint *ids) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *ids);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteQueriesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, ids);
 }
 
@@ -1433,6 +1625,7 @@ extern "C" void GL_APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *rende
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *renderbuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteRenderbuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, renderbuffers);
 }
 
@@ -1440,6 +1633,7 @@ extern "C" void GL_APIENTRY glDeleteSamplers(GLsizei count, const GLuint *sample
     using Fn = void(GL_APIENTRY*)(GLsizei count, const GLuint *samplers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteSamplers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(count, samplers);
 }
 
@@ -1447,6 +1641,7 @@ extern "C" void GL_APIENTRY glDeleteSemaphoresEXT(GLsizei n, const GLuint *semap
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *semaphores);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteSemaphoresEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, semaphores);
 }
 
@@ -1454,6 +1649,7 @@ extern "C" void GL_APIENTRY glDeleteShader(GLuint shader) {
     using Fn = void(GL_APIENTRY*)(GLuint shader);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteShader", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader);
 }
 
@@ -1461,6 +1657,7 @@ extern "C" void GL_APIENTRY glDeleteSync(GLsync sync) {
     using Fn = void(GL_APIENTRY*)(GLsync sync);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteSync", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sync);
 }
 
@@ -1468,6 +1665,7 @@ extern "C" void GL_APIENTRY glDeleteSyncAPPLE(GLsync sync) {
     using Fn = void(GL_APIENTRY*)(GLsync sync);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteSyncAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sync);
 }
 
@@ -1475,6 +1673,7 @@ extern "C" void GL_APIENTRY glDeleteTextures(GLsizei n, const GLuint *textures) 
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *textures);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteTextures", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, textures);
 }
 
@@ -1482,6 +1681,7 @@ extern "C" void GL_APIENTRY glDeleteTransformFeedbacks(GLsizei n, const GLuint *
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *ids);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteTransformFeedbacks", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, ids);
 }
 
@@ -1489,6 +1689,7 @@ extern "C" void GL_APIENTRY glDeleteVertexArrays(GLsizei n, const GLuint *arrays
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *arrays);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteVertexArrays", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, arrays);
 }
 
@@ -1496,6 +1697,7 @@ extern "C" void GL_APIENTRY glDeleteVertexArraysOES(GLsizei n, const GLuint *arr
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *arrays);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteVertexArraysOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, arrays);
 }
 
@@ -1503,6 +1705,7 @@ extern "C" void GL_APIENTRY glDepthFunc(GLenum func) {
     using Fn = void(GL_APIENTRY*)(GLenum func);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthFunc", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func);
 }
 
@@ -1510,6 +1713,7 @@ extern "C" void GL_APIENTRY glDepthMask(GLboolean flag) {
     using Fn = void(GL_APIENTRY*)(GLboolean flag);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthMask", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(flag);
 }
 
@@ -1517,6 +1721,7 @@ extern "C" void GL_APIENTRY glDepthRangeArrayfvNV(GLuint first, GLsizei count, c
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthRangeArrayfvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -1524,6 +1729,7 @@ extern "C" void GL_APIENTRY glDepthRangeArrayfvOES(GLuint first, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthRangeArrayfvOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -1531,6 +1737,7 @@ extern "C" void GL_APIENTRY glDepthRangeIndexedfNV(GLuint index, GLfloat n, GLfl
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat n, GLfloat f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthRangeIndexedfNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, n, f);
 }
 
@@ -1538,6 +1745,7 @@ extern "C" void GL_APIENTRY glDepthRangeIndexedfOES(GLuint index, GLfloat n, GLf
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat n, GLfloat f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthRangeIndexedfOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, n, f);
 }
 
@@ -1545,6 +1753,7 @@ extern "C" void GL_APIENTRY glDepthRangef(GLfloat n, GLfloat f) {
     using Fn = void(GL_APIENTRY*)(GLfloat n, GLfloat f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthRangef", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, f);
 }
 
@@ -1552,6 +1761,7 @@ extern "C" void GL_APIENTRY glDepthRangex(GLfixed n, GLfixed f) {
     using Fn = void(GL_APIENTRY*)(GLfixed n, GLfixed f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDepthRangex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, f);
 }
 
@@ -1559,6 +1769,7 @@ extern "C" void GL_APIENTRY glDetachShader(GLuint program, GLuint shader) {
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint shader);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDetachShader", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, shader);
 }
 
@@ -1566,6 +1777,7 @@ extern "C" void GL_APIENTRY glDisable(GLenum cap) {
     using Fn = void(GL_APIENTRY*)(GLenum cap);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisable", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(cap);
 }
 
@@ -1573,6 +1785,7 @@ extern "C" void GL_APIENTRY glDisableClientState(GLenum array) {
     using Fn = void(GL_APIENTRY*)(GLenum array);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableClientState", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(array);
 }
 
@@ -1580,6 +1793,7 @@ extern "C" void GL_APIENTRY glDisableDriverControlQCOM(GLuint driverControl) {
     using Fn = void(GL_APIENTRY*)(GLuint driverControl);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableDriverControlQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(driverControl);
 }
 
@@ -1587,6 +1801,7 @@ extern "C" void GL_APIENTRY glDisableExtensionANGLE(const GLchar *name) {
     using Fn = void(GL_APIENTRY*)(const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableExtensionANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(name);
 }
 
@@ -1594,6 +1809,7 @@ extern "C" void GL_APIENTRY glDisableVertexAttribArray(GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableVertexAttribArray", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index);
 }
 
@@ -1601,6 +1817,7 @@ extern "C" void GL_APIENTRY glDisablei(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisablei", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1608,6 +1825,7 @@ extern "C" void GL_APIENTRY glDisableiEXT(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1615,6 +1833,7 @@ extern "C" void GL_APIENTRY glDisableiNV(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableiNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1622,6 +1841,7 @@ extern "C" void GL_APIENTRY glDisableiOES(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDisableiOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1629,6 +1849,7 @@ extern "C" void GL_APIENTRY glDiscardFramebufferEXT(GLenum target, GLsizei numAt
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei numAttachments, const GLenum *attachments);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDiscardFramebufferEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, numAttachments, attachments);
 }
 
@@ -1636,6 +1857,7 @@ extern "C" void GL_APIENTRY glDispatchCompute(GLuint num_groups_x, GLuint num_gr
     using Fn = void(GL_APIENTRY*)(GLuint num_groups_x, GLuint num_groups_y, GLuint num_groups_z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDispatchCompute", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(num_groups_x, num_groups_y, num_groups_z);
 }
 
@@ -1643,6 +1865,7 @@ extern "C" void GL_APIENTRY glDispatchComputeIndirect(GLintptr indirect) {
     using Fn = void(GL_APIENTRY*)(GLintptr indirect);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDispatchComputeIndirect", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect);
 }
 
@@ -1650,6 +1873,7 @@ extern "C" void GL_APIENTRY glDrawArrays(GLenum mode, GLint first, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint first, GLsizei count);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArrays", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count);
 }
 
@@ -1657,6 +1881,7 @@ extern "C" void GL_APIENTRY glDrawArraysIndirect(GLenum mode, const void *indire
     using Fn = void(GL_APIENTRY*)(GLenum mode, const void *indirect);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysIndirect", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, indirect);
 }
 
@@ -1664,6 +1889,7 @@ extern "C" void GL_APIENTRY glDrawArraysInstanced(GLenum mode, GLint first, GLsi
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysInstanced", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count, instancecount);
 }
 
@@ -1671,6 +1897,7 @@ extern "C" void GL_APIENTRY glDrawArraysInstancedANGLE(GLenum mode, GLint first,
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint first, GLsizei count, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysInstancedANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count, primcount);
 }
 
@@ -1678,6 +1905,7 @@ extern "C" void GL_APIENTRY glDrawArraysInstancedBaseInstanceANGLE(GLenum mode, 
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint first, GLsizei count, GLsizei instanceCount, GLuint baseInstance);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysInstancedBaseInstanceANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count, instanceCount, baseInstance);
 }
 
@@ -1685,6 +1913,7 @@ extern "C" void GL_APIENTRY glDrawArraysInstancedBaseInstanceEXT(GLenum mode, GL
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint first, GLsizei count, GLsizei instancecount, GLuint baseinstance);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysInstancedBaseInstanceEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count, instancecount, baseinstance);
 }
 
@@ -1692,6 +1921,7 @@ extern "C" void GL_APIENTRY glDrawArraysInstancedEXT(GLenum mode, GLint start, G
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint start, GLsizei count, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysInstancedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, start, count, primcount);
 }
 
@@ -1699,6 +1929,7 @@ extern "C" void GL_APIENTRY glDrawArraysInstancedNV(GLenum mode, GLint first, GL
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLint first, GLsizei count, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawArraysInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count, primcount);
 }
 
@@ -1706,6 +1937,7 @@ extern "C" void GL_APIENTRY glDrawBuffers(GLsizei n, const GLenum *bufs) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLenum *bufs);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawBuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, bufs);
 }
 
@@ -1713,6 +1945,7 @@ extern "C" void GL_APIENTRY glDrawBuffersEXT(GLsizei n, const GLenum *bufs) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLenum *bufs);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawBuffersEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, bufs);
 }
 
@@ -1720,6 +1953,7 @@ extern "C" void GL_APIENTRY glDrawBuffersIndexedEXT(GLint n, const GLenum *locat
     using Fn = void(GL_APIENTRY*)(GLint n, const GLenum *location, const GLint *indices);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawBuffersIndexedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, location, indices);
 }
 
@@ -1727,6 +1961,7 @@ extern "C" void GL_APIENTRY glDrawBuffersNV(GLsizei n, const GLenum *bufs) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLenum *bufs);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawBuffersNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, bufs);
 }
 
@@ -1734,6 +1969,7 @@ extern "C" void GL_APIENTRY glDrawElements(GLenum mode, GLsizei count, GLenum ty
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElements", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices);
 }
 
@@ -1741,6 +1977,7 @@ extern "C" void GL_APIENTRY glDrawElementsBaseVertex(GLenum mode, GLsizei count,
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsBaseVertex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, basevertex);
 }
 
@@ -1748,6 +1985,7 @@ extern "C" void GL_APIENTRY glDrawElementsBaseVertexEXT(GLenum mode, GLsizei cou
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsBaseVertexEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, basevertex);
 }
 
@@ -1755,6 +1993,7 @@ extern "C" void GL_APIENTRY glDrawElementsBaseVertexOES(GLenum mode, GLsizei cou
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsBaseVertexOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, basevertex);
 }
 
@@ -1762,6 +2001,7 @@ extern "C" void GL_APIENTRY glDrawElementsIndirect(GLenum mode, GLenum type, con
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLenum type, const void *indirect);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsIndirect", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, type, indirect);
 }
 
@@ -1769,6 +2009,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstanced(GLenum mode, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstanced", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instancecount);
 }
 
@@ -1776,6 +2017,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedANGLE(GLenum mode, GLsizei co
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, primcount);
 }
 
@@ -1783,6 +2025,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedBaseInstanceEXT(GLenum mode, 
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount, GLuint baseinstance);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedBaseInstanceEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instancecount, baseinstance);
 }
 
@@ -1790,6 +2033,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedBaseVertex(GLenum mode, GLsiz
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedBaseVertex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instancecount, basevertex);
 }
 
@@ -1797,6 +2041,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedBaseVertexBaseInstanceANGLE(G
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const GLvoid *indices, GLsizei instanceCount, GLint baseVertex, GLuint baseInstance);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedBaseVertexBaseInstanceANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instanceCount, baseVertex, baseInstance);
 }
 
@@ -1804,6 +2049,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedBaseVertexBaseInstanceEXT(GLe
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount, GLint basevertex, GLuint baseinstance);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedBaseVertexBaseInstanceEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instancecount, basevertex, baseinstance);
 }
 
@@ -1811,6 +2057,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedBaseVertexEXT(GLenum mode, GL
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedBaseVertexEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instancecount, basevertex);
 }
 
@@ -1818,6 +2065,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedBaseVertexOES(GLenum mode, GL
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei instancecount, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedBaseVertexOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, instancecount, basevertex);
 }
 
@@ -1825,6 +2073,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedEXT(GLenum mode, GLsizei coun
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, primcount);
 }
 
@@ -1832,6 +2081,7 @@ extern "C" void GL_APIENTRY glDrawElementsInstancedNV(GLenum mode, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, GLenum type, const void *indices, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawElementsInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, primcount);
 }
 
@@ -1839,6 +2089,7 @@ extern "C" void GL_APIENTRY glDrawMeshTasksEXT(GLuint num_groups_x, GLuint num_g
     using Fn = void(GL_APIENTRY*)(GLuint num_groups_x, GLuint num_groups_y, GLuint num_groups_z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawMeshTasksEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(num_groups_x, num_groups_y, num_groups_z);
 }
 
@@ -1846,6 +2097,7 @@ extern "C" void GL_APIENTRY glDrawMeshTasksIndirectEXT(GLintptr indirect) {
     using Fn = void(GL_APIENTRY*)(GLintptr indirect);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawMeshTasksIndirectEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect);
 }
 
@@ -1853,6 +2105,7 @@ extern "C" void GL_APIENTRY glDrawMeshTasksIndirectNV(GLintptr indirect) {
     using Fn = void(GL_APIENTRY*)(GLintptr indirect);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawMeshTasksIndirectNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect);
 }
 
@@ -1860,6 +2113,7 @@ extern "C" void GL_APIENTRY glDrawMeshTasksNV(GLuint first, GLuint count) {
     using Fn = void(GL_APIENTRY*)(GLuint first, GLuint count);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawMeshTasksNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count);
 }
 
@@ -1867,6 +2121,7 @@ extern "C" void GL_APIENTRY glDrawRangeElements(GLenum mode, GLuint start, GLuin
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawRangeElements", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, start, end, count, type, indices);
 }
 
@@ -1874,6 +2129,7 @@ extern "C" void GL_APIENTRY glDrawRangeElementsBaseVertex(GLenum mode, GLuint st
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawRangeElementsBaseVertex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, start, end, count, type, indices, basevertex);
 }
 
@@ -1881,6 +2137,7 @@ extern "C" void GL_APIENTRY glDrawRangeElementsBaseVertexEXT(GLenum mode, GLuint
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawRangeElementsBaseVertexEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, start, end, count, type, indices, basevertex);
 }
 
@@ -1888,6 +2145,7 @@ extern "C" void GL_APIENTRY glDrawRangeElementsBaseVertexOES(GLenum mode, GLuint
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint start, GLuint end, GLsizei count, GLenum type, const void *indices, GLint basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawRangeElementsBaseVertexOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, start, end, count, type, indices, basevertex);
 }
 
@@ -1895,6 +2153,7 @@ extern "C" void GL_APIENTRY glDrawTransformFeedbackEXT(GLenum mode, GLuint id) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTransformFeedbackEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, id);
 }
 
@@ -1902,6 +2161,7 @@ extern "C" void GL_APIENTRY glDrawTransformFeedbackInstancedEXT(GLenum mode, GLu
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint id, GLsizei instancecount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTransformFeedbackInstancedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, id, instancecount);
 }
 
@@ -1909,6 +2169,7 @@ extern "C" void GL_APIENTRY glDrawVkImageNV(GLuint64 vkImage, GLuint sampler, GL
     using Fn = void(GL_APIENTRY*)(GLuint64 vkImage, GLuint sampler, GLfloat x0, GLfloat y0, GLfloat x1, GLfloat y1, GLfloat z, GLfloat s0, GLfloat t0, GLfloat s1, GLfloat t1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawVkImageNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(vkImage, sampler, x0, y0, x1, y1, z, s0, t0, s1, t1);
 }
 
@@ -1916,6 +2177,7 @@ extern "C" void GL_APIENTRY glEGLImageTargetRenderbufferStorageOES(GLenum target
     using Fn = void(GL_APIENTRY*)(GLenum target, GLeglImageOES image);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEGLImageTargetRenderbufferStorageOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, image);
 }
 
@@ -1923,6 +2185,7 @@ extern "C" void GL_APIENTRY glEGLImageTargetTexStorageEXT(GLenum target, GLeglIm
     using Fn = void(GL_APIENTRY*)(GLenum target, GLeglImageOES image, const GLint* attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEGLImageTargetTexStorageEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, image, attrib_list);
 }
 
@@ -1930,6 +2193,7 @@ extern "C" void GL_APIENTRY glEGLImageTargetTexture2DOES(GLenum target, GLeglIma
     using Fn = void(GL_APIENTRY*)(GLenum target, GLeglImageOES image);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEGLImageTargetTexture2DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, image);
 }
 
@@ -1937,6 +2201,7 @@ extern "C" void GL_APIENTRY glEGLImageTargetTextureStorageEXT(GLuint texture, GL
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLeglImageOES image, const GLint* attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEGLImageTargetTextureStorageEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, image, attrib_list);
 }
 
@@ -1944,6 +2209,7 @@ extern "C" void GL_APIENTRY glEnable(GLenum cap) {
     using Fn = void(GL_APIENTRY*)(GLenum cap);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnable", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(cap);
 }
 
@@ -1951,6 +2217,7 @@ extern "C" void GL_APIENTRY glEnableClientState(GLenum array) {
     using Fn = void(GL_APIENTRY*)(GLenum array);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnableClientState", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(array);
 }
 
@@ -1958,6 +2225,7 @@ extern "C" void GL_APIENTRY glEnableDriverControlQCOM(GLuint driverControl) {
     using Fn = void(GL_APIENTRY*)(GLuint driverControl);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnableDriverControlQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(driverControl);
 }
 
@@ -1965,6 +2233,7 @@ extern "C" void GL_APIENTRY glEnableVertexAttribArray(GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnableVertexAttribArray", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index);
 }
 
@@ -1972,6 +2241,7 @@ extern "C" void GL_APIENTRY glEnablei(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnablei", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1979,6 +2249,7 @@ extern "C" void GL_APIENTRY glEnableiEXT(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnableiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1986,6 +2257,7 @@ extern "C" void GL_APIENTRY glEnableiNV(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnableiNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -1993,6 +2265,7 @@ extern "C" void GL_APIENTRY glEnableiOES(GLenum target, GLuint index) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEnableiOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index);
 }
 
@@ -2000,6 +2273,7 @@ extern "C" void GL_APIENTRY glEndConditionalRenderNV(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndConditionalRenderNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2007,6 +2281,7 @@ extern "C" void GL_APIENTRY glEndPerfMonitorAMD(GLuint monitor) {
     using Fn = void(GL_APIENTRY*)(GLuint monitor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndPerfMonitorAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(monitor);
 }
 
@@ -2014,6 +2289,7 @@ extern "C" void GL_APIENTRY glEndPerfQueryINTEL(GLuint queryHandle) {
     using Fn = void(GL_APIENTRY*)(GLuint queryHandle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndPerfQueryINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryHandle);
 }
 
@@ -2021,6 +2297,7 @@ extern "C" void GL_APIENTRY glEndPixelLocalStorageANGLE(GLsizei n, const GLenum 
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLenum storeops[]);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndPixelLocalStorageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, storeops);
 }
 
@@ -2028,6 +2305,7 @@ extern "C" void GL_APIENTRY glEndQuery(GLenum target) {
     using Fn = void(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndQuery", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target);
 }
 
@@ -2035,6 +2313,7 @@ extern "C" void GL_APIENTRY glEndQueryEXT(GLenum target) {
     using Fn = void(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndQueryEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target);
 }
 
@@ -2042,6 +2321,7 @@ extern "C" void GL_APIENTRY glEndTilingQCOM(GLbitfield preserveMask) {
     using Fn = void(GL_APIENTRY*)(GLbitfield preserveMask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndTilingQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(preserveMask);
 }
 
@@ -2049,6 +2329,7 @@ extern "C" void GL_APIENTRY glEndTransformFeedback(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glEndTransformFeedback", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2056,6 +2337,7 @@ extern "C" void GL_APIENTRY glExtGetBufferPointervQCOM(GLenum target, void **par
     using Fn = void(GL_APIENTRY*)(GLenum target, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetBufferPointervQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, params);
 }
 
@@ -2063,6 +2345,7 @@ extern "C" void GL_APIENTRY glExtGetBuffersQCOM(GLuint *buffers, GLint maxBuffer
     using Fn = void(GL_APIENTRY*)(GLuint *buffers, GLint maxBuffers, GLint *numBuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetBuffersQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffers, maxBuffers, numBuffers);
 }
 
@@ -2070,6 +2353,7 @@ extern "C" void GL_APIENTRY glExtGetFramebuffersQCOM(GLuint *framebuffers, GLint
     using Fn = void(GL_APIENTRY*)(GLuint *framebuffers, GLint maxFramebuffers, GLint *numFramebuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetFramebuffersQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(framebuffers, maxFramebuffers, numFramebuffers);
 }
 
@@ -2077,6 +2361,7 @@ extern "C" void GL_APIENTRY glExtGetProgramBinarySourceQCOM(GLuint program, GLen
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum shadertype, GLchar *source, GLint *length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetProgramBinarySourceQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, shadertype, source, length);
 }
 
@@ -2084,6 +2369,7 @@ extern "C" void GL_APIENTRY glExtGetProgramsQCOM(GLuint *programs, GLint maxProg
     using Fn = void(GL_APIENTRY*)(GLuint *programs, GLint maxPrograms, GLint *numPrograms);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetProgramsQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(programs, maxPrograms, numPrograms);
 }
 
@@ -2091,6 +2377,7 @@ extern "C" void GL_APIENTRY glExtGetRenderbuffersQCOM(GLuint *renderbuffers, GLi
     using Fn = void(GL_APIENTRY*)(GLuint *renderbuffers, GLint maxRenderbuffers, GLint *numRenderbuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetRenderbuffersQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(renderbuffers, maxRenderbuffers, numRenderbuffers);
 }
 
@@ -2098,6 +2385,7 @@ extern "C" void GL_APIENTRY glExtGetShadersQCOM(GLuint *shaders, GLint maxShader
     using Fn = void(GL_APIENTRY*)(GLuint *shaders, GLint maxShaders, GLint *numShaders);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetShadersQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shaders, maxShaders, numShaders);
 }
 
@@ -2105,6 +2393,7 @@ extern "C" void GL_APIENTRY glExtGetTexLevelParameterivQCOM(GLuint texture, GLen
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLenum face, GLint level, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetTexLevelParameterivQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, face, level, pname, params);
 }
 
@@ -2112,6 +2401,7 @@ extern "C" void GL_APIENTRY glExtGetTexSubImageQCOM(GLenum target, GLint level, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, void *texels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetTexSubImageQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, texels);
 }
 
@@ -2119,6 +2409,7 @@ extern "C" void GL_APIENTRY glExtGetTexturesQCOM(GLuint *textures, GLint maxText
     using Fn = void(GL_APIENTRY*)(GLuint *textures, GLint maxTextures, GLint *numTextures);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtGetTexturesQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(textures, maxTextures, numTextures);
 }
 
@@ -2126,6 +2417,7 @@ extern "C" GLboolean GL_APIENTRY glExtIsProgramBinaryQCOM(GLuint program) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtIsProgramBinaryQCOM", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program);
 }
 
@@ -2133,6 +2425,7 @@ extern "C" void GL_APIENTRY glExtTexObjectStateOverrideiQCOM(GLenum target, GLen
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtTexObjectStateOverrideiQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -2140,6 +2433,7 @@ extern "C" void GL_APIENTRY glExtrapolateTex2DQCOM(GLuint src1, GLuint src2, GLu
     using Fn = void(GL_APIENTRY*)(GLuint src1, GLuint src2, GLuint output, GLfloat scaleFactor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glExtrapolateTex2DQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(src1, src2, output, scaleFactor);
 }
 
@@ -2147,6 +2441,7 @@ extern "C" GLsync GL_APIENTRY glFenceSync(GLenum condition, GLbitfield flags) {
     using Fn = GLsync(GL_APIENTRY*)(GLenum condition, GLbitfield flags);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFenceSync", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(condition, flags);
 }
 
@@ -2154,6 +2449,7 @@ extern "C" GLsync GL_APIENTRY glFenceSyncAPPLE(GLenum condition, GLbitfield flag
     using Fn = GLsync(GL_APIENTRY*)(GLenum condition, GLbitfield flags);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFenceSyncAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(condition, flags);
 }
 
@@ -2161,6 +2457,7 @@ extern "C" void GL_APIENTRY glFinish(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFinish", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2168,6 +2465,7 @@ extern "C" void GL_APIENTRY glFinishFenceNV(GLuint fence) {
     using Fn = void(GL_APIENTRY*)(GLuint fence);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFinishFenceNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(fence);
 }
 
@@ -2175,6 +2473,7 @@ extern "C" void GL_APIENTRY glFlush(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFlush", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2182,6 +2481,7 @@ extern "C" void GL_APIENTRY glFlushMappedBufferRange(GLenum target, GLintptr off
     using Fn = void(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFlushMappedBufferRange", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, offset, length);
 }
 
@@ -2189,6 +2489,7 @@ extern "C" void GL_APIENTRY glFlushMappedBufferRangeEXT(GLenum target, GLintptr 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFlushMappedBufferRangeEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, offset, length);
 }
 
@@ -2196,6 +2497,7 @@ extern "C" void GL_APIENTRY glFogf(GLenum pname, GLfloat param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFogf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -2203,6 +2505,7 @@ extern "C" void GL_APIENTRY glFogfv(GLenum pname, const GLfloat *params) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFogfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -2210,6 +2513,7 @@ extern "C" void GL_APIENTRY glFogx(GLenum pname, GLfixed param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFogx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -2217,6 +2521,7 @@ extern "C" void GL_APIENTRY glFogxv(GLenum pname, const GLfixed *param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, const GLfixed *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFogxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -2224,6 +2529,7 @@ extern "C" void GL_APIENTRY glFragmentCoverageColorNV(GLuint color) {
     using Fn = void(GL_APIENTRY*)(GLuint color);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFragmentCoverageColorNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(color);
 }
 
@@ -2231,6 +2537,7 @@ extern "C" void GL_APIENTRY glFramebufferFetchBarrierEXT(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferFetchBarrierEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2238,6 +2545,7 @@ extern "C" void GL_APIENTRY glFramebufferFetchBarrierQCOM(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferFetchBarrierQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2245,6 +2553,7 @@ extern "C" void GL_APIENTRY glFramebufferFoveationConfigQCOM(GLuint framebuffer,
     using Fn = void(GL_APIENTRY*)(GLuint framebuffer, GLuint numLayers, GLuint focalPointsPerLayer, GLuint requestedFeatures, GLuint *providedFeatures);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferFoveationConfigQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(framebuffer, numLayers, focalPointsPerLayer, requestedFeatures, providedFeatures);
 }
 
@@ -2252,6 +2561,7 @@ extern "C" void GL_APIENTRY glFramebufferFoveationParametersQCOM(GLuint framebuf
     using Fn = void(GL_APIENTRY*)(GLuint framebuffer, GLuint layer, GLuint focalPoint, GLfloat focalX, GLfloat focalY, GLfloat gainX, GLfloat gainY, GLfloat foveaArea);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferFoveationParametersQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(framebuffer, layer, focalPoint, focalX, focalY, gainX, gainY, foveaArea);
 }
 
@@ -2259,6 +2569,7 @@ extern "C" void GL_APIENTRY glFramebufferMemorylessPixelLocalStorageANGLE(GLint 
     using Fn = void(GL_APIENTRY*)(GLint plane, GLenum internalformat);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferMemorylessPixelLocalStorageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, internalformat);
 }
 
@@ -2266,6 +2577,7 @@ extern "C" void GL_APIENTRY glFramebufferParameteri(GLenum target, GLenum pname,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferParameteri", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -2273,6 +2585,7 @@ extern "C" void GL_APIENTRY glFramebufferParameteriMESA(GLenum target, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferParameteriMESA", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -2280,6 +2593,7 @@ extern "C" void GL_APIENTRY glFramebufferPixelLocalClearValuefvANGLE(GLint plane
     using Fn = void(GL_APIENTRY*)(GLint plane, const GLfloat value[]);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferPixelLocalClearValuefvANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, value);
 }
 
@@ -2287,6 +2601,7 @@ extern "C" void GL_APIENTRY glFramebufferPixelLocalClearValueivANGLE(GLint plane
     using Fn = void(GL_APIENTRY*)(GLint plane, const GLint value[]);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferPixelLocalClearValueivANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, value);
 }
 
@@ -2294,6 +2609,7 @@ extern "C" void GL_APIENTRY glFramebufferPixelLocalClearValueuivANGLE(GLint plan
     using Fn = void(GL_APIENTRY*)(GLint plane, const GLuint value[]);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferPixelLocalClearValueuivANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, value);
 }
 
@@ -2301,6 +2617,7 @@ extern "C" void GL_APIENTRY glFramebufferPixelLocalStorageInterruptANGLE(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferPixelLocalStorageInterruptANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2308,6 +2625,7 @@ extern "C" void GL_APIENTRY glFramebufferPixelLocalStorageRestoreANGLE(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferPixelLocalStorageRestoreANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -2315,6 +2633,7 @@ extern "C" void GL_APIENTRY glFramebufferPixelLocalStorageSizeEXT(GLuint target,
     using Fn = void(GL_APIENTRY*)(GLuint target, GLsizei size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferPixelLocalStorageSizeEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, size);
 }
 
@@ -2322,6 +2641,7 @@ extern "C" void GL_APIENTRY glFramebufferRenderbuffer(GLenum target, GLenum atta
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferRenderbuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, renderbuffertarget, renderbuffer);
 }
 
@@ -2329,6 +2649,7 @@ extern "C" void GL_APIENTRY glFramebufferSampleLocationsfvNV(GLenum target, GLui
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint start, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferSampleLocationsfvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, start, count, v);
 }
 
@@ -2336,6 +2657,7 @@ extern "C" void GL_APIENTRY glFramebufferShadingRateEXT(GLenum target, GLenum at
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint baseLayer, GLsizei numLayers, GLsizei texelWidth, GLsizei texelHeight);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferShadingRateEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, baseLayer, numLayers, texelWidth, texelHeight);
 }
 
@@ -2343,6 +2665,7 @@ extern "C" void GL_APIENTRY glFramebufferTexture(GLenum target, GLenum attachmen
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level);
 }
 
@@ -2350,6 +2673,7 @@ extern "C" void GL_APIENTRY glFramebufferTexture2D(GLenum target, GLenum attachm
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, textarget, texture, level);
 }
 
@@ -2357,6 +2681,7 @@ extern "C" void GL_APIENTRY glFramebufferTexture2DDownsampleIMG(GLenum target, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLint xscale, GLint yscale);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture2DDownsampleIMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, textarget, texture, level, xscale, yscale);
 }
 
@@ -2364,6 +2689,7 @@ extern "C" void GL_APIENTRY glFramebufferTexture2DMultisampleEXT(GLenum target, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture2DMultisampleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, textarget, texture, level, samples);
 }
 
@@ -2371,6 +2697,7 @@ extern "C" void GL_APIENTRY glFramebufferTexture2DMultisampleIMG(GLenum target, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLsizei samples);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture2DMultisampleIMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, textarget, texture, level, samples);
 }
 
@@ -2378,6 +2705,7 @@ extern "C" void GL_APIENTRY glFramebufferTexture3DOES(GLenum target, GLenum atta
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLint zoffset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture3DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, textarget, texture, level, zoffset);
 }
 
@@ -2385,6 +2713,7 @@ extern "C" void GL_APIENTRY glFramebufferTextureEXT(GLenum target, GLenum attach
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTextureEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level);
 }
 
@@ -2392,6 +2721,7 @@ extern "C" void GL_APIENTRY glFramebufferTextureLayer(GLenum target, GLenum atta
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTextureLayer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level, layer);
 }
 
@@ -2399,6 +2729,7 @@ extern "C" void GL_APIENTRY glFramebufferTextureLayerDownsampleIMG(GLenum target
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer, GLint xscale, GLint yscale);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTextureLayerDownsampleIMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level, layer, xscale, yscale);
 }
 
@@ -2406,6 +2737,7 @@ extern "C" void GL_APIENTRY glFramebufferTextureMultisampleMultiviewOVR(GLenum t
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLsizei samples, GLint baseViewIndex, GLsizei numViews);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTextureMultisampleMultiviewOVR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level, samples, baseViewIndex, numViews);
 }
 
@@ -2413,6 +2745,7 @@ extern "C" void GL_APIENTRY glFramebufferTextureMultiviewOVR(GLenum target, GLen
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint baseViewIndex, GLsizei numViews);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTextureMultiviewOVR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level, baseViewIndex, numViews);
 }
 
@@ -2420,6 +2753,7 @@ extern "C" void GL_APIENTRY glFramebufferTextureOES(GLenum target, GLenum attach
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLuint texture, GLint level);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTextureOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, texture, level);
 }
 
@@ -2427,6 +2761,7 @@ extern "C" void GL_APIENTRY glFramebufferTexturePixelLocalStorageANGLE(GLint pla
     using Fn = void(GL_APIENTRY*)(GLint plane, GLuint backingtexture, GLint level, GLint layer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexturePixelLocalStorageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, backingtexture, level, layer);
 }
 
@@ -2434,6 +2769,7 @@ extern "C" void GL_APIENTRY glFrontFace(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFrontFace", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -2441,6 +2777,7 @@ extern "C" void GL_APIENTRY glFrustumf(GLfloat l, GLfloat r, GLfloat b, GLfloat 
     using Fn = void(GL_APIENTRY*)(GLfloat l, GLfloat r, GLfloat b, GLfloat t, GLfloat n, GLfloat f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFrustumf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(l, r, b, t, n, f);
 }
 
@@ -2448,6 +2785,7 @@ extern "C" void GL_APIENTRY glFrustumx(GLfixed l, GLfixed r, GLfixed b, GLfixed 
     using Fn = void(GL_APIENTRY*)(GLfixed l, GLfixed r, GLfixed b, GLfixed t, GLfixed n, GLfixed f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFrustumx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(l, r, b, t, n, f);
 }
 
@@ -2455,6 +2793,7 @@ extern "C" void GL_APIENTRY glGenBuffers(GLsizei n, GLuint *buffers) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *buffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenBuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, buffers);
 }
 
@@ -2462,6 +2801,7 @@ extern "C" void GL_APIENTRY glGenFencesNV(GLsizei n, GLuint *fences) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *fences);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenFencesNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, fences);
 }
 
@@ -2469,6 +2809,7 @@ extern "C" void GL_APIENTRY glGenFramebuffers(GLsizei n, GLuint *framebuffers) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *framebuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenFramebuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, framebuffers);
 }
 
@@ -2476,6 +2817,7 @@ extern "C" GLuint GL_APIENTRY glGenPathsNV(GLsizei range) {
     using Fn = GLuint(GL_APIENTRY*)(GLsizei range);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenPathsNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(range);
 }
 
@@ -2483,6 +2825,7 @@ extern "C" void GL_APIENTRY glGenPerfMonitorsAMD(GLsizei n, GLuint *monitors) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *monitors);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenPerfMonitorsAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, monitors);
 }
 
@@ -2490,6 +2833,7 @@ extern "C" void GL_APIENTRY glGenProgramPipelines(GLsizei n, GLuint *pipelines) 
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *pipelines);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenProgramPipelines", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, pipelines);
 }
 
@@ -2497,6 +2841,7 @@ extern "C" void GL_APIENTRY glGenProgramPipelinesEXT(GLsizei n, GLuint *pipeline
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *pipelines);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenProgramPipelinesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, pipelines);
 }
 
@@ -2504,6 +2849,7 @@ extern "C" void GL_APIENTRY glGenQueries(GLsizei n, GLuint *ids) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *ids);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenQueries", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, ids);
 }
 
@@ -2511,6 +2857,7 @@ extern "C" void GL_APIENTRY glGenQueriesEXT(GLsizei n, GLuint *ids) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *ids);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenQueriesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, ids);
 }
 
@@ -2518,6 +2865,7 @@ extern "C" void GL_APIENTRY glGenRenderbuffers(GLsizei n, GLuint *renderbuffers)
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *renderbuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenRenderbuffers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, renderbuffers);
 }
 
@@ -2525,6 +2873,7 @@ extern "C" void GL_APIENTRY glGenSamplers(GLsizei count, GLuint *samplers) {
     using Fn = void(GL_APIENTRY*)(GLsizei count, GLuint *samplers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenSamplers", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(count, samplers);
 }
 
@@ -2532,6 +2881,7 @@ extern "C" void GL_APIENTRY glGenSemaphoresEXT(GLsizei n, GLuint *semaphores) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *semaphores);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenSemaphoresEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, semaphores);
 }
 
@@ -2539,6 +2889,7 @@ extern "C" void GL_APIENTRY glGenTextures(GLsizei n, GLuint *textures) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *textures);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenTextures", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, textures);
 }
 
@@ -2546,6 +2897,7 @@ extern "C" void GL_APIENTRY glGenTransformFeedbacks(GLsizei n, GLuint *ids) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *ids);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenTransformFeedbacks", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, ids);
 }
 
@@ -2553,6 +2905,7 @@ extern "C" void GL_APIENTRY glGenVertexArrays(GLsizei n, GLuint *arrays) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *arrays);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenVertexArrays", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, arrays);
 }
 
@@ -2560,6 +2913,7 @@ extern "C" void GL_APIENTRY glGenVertexArraysOES(GLsizei n, GLuint *arrays) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *arrays);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenVertexArraysOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(n, arrays);
 }
 
@@ -2567,6 +2921,7 @@ extern "C" void GL_APIENTRY glGenerateMipmap(GLenum target) {
     using Fn = void(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenerateMipmap", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target);
 }
 
@@ -2574,6 +2929,7 @@ extern "C" void GL_APIENTRY glGetActiveAttrib(GLuint program, GLuint index, GLsi
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetActiveAttrib", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, index, bufSize, length, size, type, name);
 }
 
@@ -2581,6 +2937,7 @@ extern "C" void GL_APIENTRY glGetActiveUniform(GLuint program, GLuint index, GLs
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetActiveUniform", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, index, bufSize, length, size, type, name);
 }
 
@@ -2588,6 +2945,7 @@ extern "C" void GL_APIENTRY glGetActiveUniformBlockName(GLuint program, GLuint u
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint uniformBlockIndex, GLsizei bufSize, GLsizei *length, GLchar *uniformBlockName);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetActiveUniformBlockName", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, uniformBlockIndex, bufSize, length, uniformBlockName);
 }
 
@@ -2595,6 +2953,7 @@ extern "C" void GL_APIENTRY glGetActiveUniformBlockiv(GLuint program, GLuint uni
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint uniformBlockIndex, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetActiveUniformBlockiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, uniformBlockIndex, pname, params);
 }
 
@@ -2602,6 +2961,7 @@ extern "C" void GL_APIENTRY glGetActiveUniformBlockivRobustANGLE(GLuint program,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint uniformBlockIndex, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetActiveUniformBlockivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, uniformBlockIndex, pname, bufSize, length, params);
 }
 
@@ -2609,6 +2969,7 @@ extern "C" void GL_APIENTRY glGetActiveUniformsiv(GLuint program, GLsizei unifor
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei uniformCount, const GLuint *uniformIndices, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetActiveUniformsiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, uniformCount, uniformIndices, pname, params);
 }
 
@@ -2616,6 +2977,7 @@ extern "C" void GL_APIENTRY glGetAttachedShaders(GLuint program, GLsizei maxCoun
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei maxCount, GLsizei *count, GLuint *shaders);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetAttachedShaders", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, maxCount, count, shaders);
 }
 
@@ -2623,6 +2985,7 @@ extern "C" GLint GL_APIENTRY glGetAttribLocation(GLuint program, const GLchar *n
     using Fn = GLint(GL_APIENTRY*)(GLuint program, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetAttribLocation", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, name);
 }
 
@@ -2630,6 +2993,7 @@ extern "C" void GL_APIENTRY glGetBooleani_v(GLenum target, GLuint index, GLboole
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLboolean *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBooleani_v", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -2637,6 +3001,7 @@ extern "C" void GL_APIENTRY glGetBooleani_vRobustANGLE(GLenum target, GLuint ind
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLsizei bufSize, GLsizei *length, GLboolean *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBooleani_vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, bufSize, length, data);
 }
 
@@ -2644,6 +3009,7 @@ extern "C" void GL_APIENTRY glGetBooleanv(GLenum pname, GLboolean *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLboolean *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBooleanv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -2651,6 +3017,7 @@ extern "C" void GL_APIENTRY glGetBooleanvRobustANGLE(GLenum pname, GLsizei bufSi
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLsizei bufSize, GLsizei *length, GLboolean *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBooleanvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, bufSize, length, data);
 }
 
@@ -2658,6 +3025,7 @@ extern "C" void GL_APIENTRY glGetBufferParameteri64v(GLenum target, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferParameteri64v", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -2665,6 +3033,7 @@ extern "C" void GL_APIENTRY glGetBufferParameteri64vRobustANGLE(GLenum target, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferParameteri64vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -2672,6 +3041,7 @@ extern "C" void GL_APIENTRY glGetBufferParameteriv(GLenum target, GLenum pname, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -2679,6 +3049,7 @@ extern "C" void GL_APIENTRY glGetBufferParameterivRobustANGLE(GLenum target, GLe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -2686,6 +3057,7 @@ extern "C" void GL_APIENTRY glGetBufferPointerv(GLenum target, GLenum pname, voi
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferPointerv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -2693,6 +3065,7 @@ extern "C" void GL_APIENTRY glGetBufferPointervOES(GLenum target, GLenum pname, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferPointervOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -2700,6 +3073,7 @@ extern "C" void GL_APIENTRY glGetBufferPointervRobustANGLE(GLenum target, GLenum
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetBufferPointervRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -2707,6 +3081,7 @@ extern "C" void GL_APIENTRY glGetClipPlanef(GLenum plane, GLfloat *equation) {
     using Fn = void(GL_APIENTRY*)(GLenum plane, GLfloat *equation);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetClipPlanef", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, equation);
 }
 
@@ -2714,6 +3089,7 @@ extern "C" void GL_APIENTRY glGetClipPlanex(GLenum plane, GLfixed *equation) {
     using Fn = void(GL_APIENTRY*)(GLenum plane, GLfixed *equation);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetClipPlanex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, equation);
 }
 
@@ -2721,6 +3097,7 @@ extern "C" void GL_APIENTRY glGetCompressedTexImageANGLE(GLenum target, GLint le
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetCompressedTexImageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pixels);
 }
 
@@ -2728,6 +3105,7 @@ extern "C" void GL_APIENTRY glGetCoverageModulationTableNV(GLsizei bufSize, GLfl
     using Fn = void(GL_APIENTRY*)(GLsizei bufSize, GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetCoverageModulationTableNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(bufSize, v);
 }
 
@@ -2735,6 +3113,7 @@ extern "C" GLuint GL_APIENTRY glGetDebugMessageLog(GLuint count, GLsizei bufSize
     using Fn = GLuint(GL_APIENTRY*)(GLuint count, GLsizei bufSize, GLenum *sources, GLenum *types, GLuint *ids, GLenum *severities, GLsizei *lengths, GLchar *messageLog);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetDebugMessageLog", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(count, bufSize, sources, types, ids, severities, lengths, messageLog);
 }
 
@@ -2742,6 +3121,7 @@ extern "C" GLuint GL_APIENTRY glGetDebugMessageLogKHR(GLuint count, GLsizei bufS
     using Fn = GLuint(GL_APIENTRY*)(GLuint count, GLsizei bufSize, GLenum *sources, GLenum *types, GLuint *ids, GLenum *severities, GLsizei *lengths, GLchar *messageLog);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetDebugMessageLogKHR", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(count, bufSize, sources, types, ids, severities, lengths, messageLog);
 }
 
@@ -2749,6 +3129,7 @@ extern "C" void GL_APIENTRY glGetDriverControlStringQCOM(GLuint driverControl, G
     using Fn = void(GL_APIENTRY*)(GLuint driverControl, GLsizei bufSize, GLsizei *length, GLchar *driverControlString);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetDriverControlStringQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(driverControl, bufSize, length, driverControlString);
 }
 
@@ -2756,6 +3137,7 @@ extern "C" void GL_APIENTRY glGetDriverControlsQCOM(GLint *num, GLsizei size, GL
     using Fn = void(GL_APIENTRY*)(GLint *num, GLsizei size, GLuint *driverControls);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetDriverControlsQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(num, size, driverControls);
 }
 
@@ -2763,6 +3145,7 @@ extern "C" GLenum GL_APIENTRY glGetError(void) {
     using Fn = GLenum(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetError", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn();
 }
 
@@ -2770,6 +3153,7 @@ extern "C" void GL_APIENTRY glGetFenceivNV(GLuint fence, GLenum pname, GLint *pa
     using Fn = void(GL_APIENTRY*)(GLuint fence, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFenceivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(fence, pname, params);
 }
 
@@ -2777,6 +3161,7 @@ extern "C" void GL_APIENTRY glGetFirstPerfQueryIdINTEL(GLuint *queryId) {
     using Fn = void(GL_APIENTRY*)(GLuint *queryId);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFirstPerfQueryIdINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryId);
 }
 
@@ -2784,6 +3169,7 @@ extern "C" void GL_APIENTRY glGetFixedv(GLenum pname, GLfixed *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfixed *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFixedv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -2791,6 +3177,7 @@ extern "C" void GL_APIENTRY glGetFloati_vNV(GLenum target, GLuint index, GLfloat
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLfloat *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFloati_vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -2798,6 +3185,7 @@ extern "C" void GL_APIENTRY glGetFloati_vOES(GLenum target, GLuint index, GLfloa
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLfloat *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFloati_vOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -2805,6 +3193,7 @@ extern "C" void GL_APIENTRY glGetFloatv(GLenum pname, GLfloat *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfloat *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFloatv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -2812,6 +3201,7 @@ extern "C" void GL_APIENTRY glGetFloatvRobustANGLE(GLenum pname, GLsizei bufSize
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFloatvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, bufSize, length, data);
 }
 
@@ -2819,6 +3209,7 @@ extern "C" GLint GL_APIENTRY glGetFragDataIndexEXT(GLuint program, const GLchar 
     using Fn = GLint(GL_APIENTRY*)(GLuint program, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFragDataIndexEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, name);
 }
 
@@ -2826,6 +3217,7 @@ extern "C" GLint GL_APIENTRY glGetFragDataLocation(GLuint program, const GLchar 
     using Fn = GLint(GL_APIENTRY*)(GLuint program, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFragDataLocation", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, name);
 }
 
@@ -2833,6 +3225,7 @@ extern "C" void GL_APIENTRY glGetFragmentShadingRatesEXT(GLsizei samples, GLsize
     using Fn = void(GL_APIENTRY*)(GLsizei samples, GLsizei maxCount, GLsizei *count, GLenum *shadingRates);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFragmentShadingRatesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(samples, maxCount, count, shadingRates);
 }
 
@@ -2840,6 +3233,7 @@ extern "C" void GL_APIENTRY glGetFramebufferAttachmentParameteriv(GLenum target,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferAttachmentParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, pname, params);
 }
 
@@ -2847,6 +3241,7 @@ extern "C" void GL_APIENTRY glGetFramebufferAttachmentParameterivRobustANGLE(GLe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferAttachmentParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, attachment, pname, bufSize, length, params);
 }
 
@@ -2854,6 +3249,7 @@ extern "C" void GL_APIENTRY glGetFramebufferParameteriv(GLenum target, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -2861,6 +3257,7 @@ extern "C" void GL_APIENTRY glGetFramebufferParameterivMESA(GLenum target, GLenu
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferParameterivMESA", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -2868,6 +3265,7 @@ extern "C" void GL_APIENTRY glGetFramebufferParameterivRobustANGLE(GLenum target
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -2875,6 +3273,7 @@ extern "C" void GL_APIENTRY glGetFramebufferPixelLocalStorageParameterfvANGLE(GL
     using Fn = void(GL_APIENTRY*)(GLint plane, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferPixelLocalStorageParameterfvANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, pname, params);
 }
 
@@ -2882,6 +3281,7 @@ extern "C" void GL_APIENTRY glGetFramebufferPixelLocalStorageParameterfvRobustAN
     using Fn = void(GL_APIENTRY*)(GLint plane, GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferPixelLocalStorageParameterfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, pname, bufSize, length, params);
 }
 
@@ -2889,6 +3289,7 @@ extern "C" void GL_APIENTRY glGetFramebufferPixelLocalStorageParameterivANGLE(GL
     using Fn = void(GL_APIENTRY*)(GLint plane, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferPixelLocalStorageParameterivANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, pname, params);
 }
 
@@ -2896,6 +3297,7 @@ extern "C" void GL_APIENTRY glGetFramebufferPixelLocalStorageParameterivRobustAN
     using Fn = void(GL_APIENTRY*)(GLint plane, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferPixelLocalStorageParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(plane, pname, bufSize, length, params);
 }
 
@@ -2903,6 +3305,7 @@ extern "C" GLsizei GL_APIENTRY glGetFramebufferPixelLocalStorageSizeEXT(GLuint t
     using Fn = GLsizei(GL_APIENTRY*)(GLuint target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferPixelLocalStorageSizeEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target);
 }
 
@@ -2910,6 +3313,7 @@ extern "C" GLenum GL_APIENTRY glGetGraphicsResetStatus(void) {
     using Fn = GLenum(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetGraphicsResetStatus", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn();
 }
 
@@ -2917,6 +3321,7 @@ extern "C" GLenum GL_APIENTRY glGetGraphicsResetStatusEXT(void) {
     using Fn = GLenum(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetGraphicsResetStatusEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn();
 }
 
@@ -2924,6 +3329,7 @@ extern "C" GLenum GL_APIENTRY glGetGraphicsResetStatusKHR(void) {
     using Fn = GLenum(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetGraphicsResetStatusKHR", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn();
 }
 
@@ -2931,6 +3337,7 @@ extern "C" GLuint64 GL_APIENTRY glGetImageHandleNV(GLuint texture, GLint level, 
     using Fn = GLuint64(GL_APIENTRY*)(GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum format);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetImageHandleNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(texture, level, layered, layer, format);
 }
 
@@ -2938,6 +3345,7 @@ extern "C" void GL_APIENTRY glGetInteger64i_v(GLenum target, GLuint index, GLint
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLint64 *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInteger64i_v", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -2945,6 +3353,7 @@ extern "C" void GL_APIENTRY glGetInteger64i_vRobustANGLE(GLenum target, GLuint i
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLsizei bufSize, GLsizei *length, GLint64 *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInteger64i_vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, bufSize, length, data);
 }
 
@@ -2952,6 +3361,7 @@ extern "C" void GL_APIENTRY glGetInteger64v(GLenum pname, GLint64 *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint64 *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInteger64v", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -2959,6 +3369,7 @@ extern "C" void GL_APIENTRY glGetInteger64vAPPLE(GLenum pname, GLint64 *params) 
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInteger64vAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -2966,6 +3377,7 @@ extern "C" void GL_APIENTRY glGetInteger64vEXT(GLenum pname, GLint64 *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint64 *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInteger64vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -2973,6 +3385,7 @@ extern "C" void GL_APIENTRY glGetInteger64vRobustANGLE(GLenum pname, GLsizei buf
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLsizei bufSize, GLsizei *length, GLint64 *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInteger64vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, bufSize, length, data);
 }
 
@@ -2980,6 +3393,7 @@ extern "C" void GL_APIENTRY glGetIntegeri_v(GLenum target, GLuint index, GLint *
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLint *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetIntegeri_v", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -2987,6 +3401,7 @@ extern "C" void GL_APIENTRY glGetIntegeri_vEXT(GLenum target, GLuint index, GLin
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLint *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetIntegeri_vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -2994,6 +3409,7 @@ extern "C" void GL_APIENTRY glGetIntegeri_vRobustANGLE(GLenum target, GLuint ind
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLsizei bufSize, GLsizei *length, GLint *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetIntegeri_vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, bufSize, length, data);
 }
 
@@ -3001,6 +3417,7 @@ extern "C" void GL_APIENTRY glGetIntegerv(GLenum pname, GLint *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetIntegerv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -3008,6 +3425,7 @@ extern "C" void GL_APIENTRY glGetIntegervRobustANGLE(GLenum pname, GLsizei bufSi
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLsizei bufSize, GLsizei *length, GLint *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetIntegervRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, bufSize, length, data);
 }
 
@@ -3015,6 +3433,7 @@ extern "C" void GL_APIENTRY glGetInternalformatSampleivNV(GLenum target, GLenum 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLsizei samples, GLenum pname, GLsizei count, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInternalformatSampleivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, samples, pname, count, params);
 }
 
@@ -3022,6 +3441,7 @@ extern "C" void GL_APIENTRY glGetInternalformativ(GLenum target, GLenum internal
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLenum pname, GLsizei count, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInternalformativ", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, pname, count, params);
 }
 
@@ -3029,6 +3449,7 @@ extern "C" void GL_APIENTRY glGetInternalformativRobustANGLE(GLenum target, GLen
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetInternalformativRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, pname, bufSize, length, params);
 }
 
@@ -3036,6 +3457,7 @@ extern "C" void GL_APIENTRY glGetLightfv(GLenum light, GLenum pname, GLfloat *pa
     using Fn = void(GL_APIENTRY*)(GLenum light, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetLightfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(light, pname, params);
 }
 
@@ -3043,6 +3465,7 @@ extern "C" void GL_APIENTRY glGetLightxv(GLenum light, GLenum pname, GLfixed *pa
     using Fn = void(GL_APIENTRY*)(GLenum light, GLenum pname, GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetLightxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(light, pname, params);
 }
 
@@ -3050,6 +3473,7 @@ extern "C" void GL_APIENTRY glGetMaterialfv(GLenum face, GLenum pname, GLfloat *
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMaterialfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, pname, params);
 }
 
@@ -3057,6 +3481,7 @@ extern "C" void GL_APIENTRY glGetMaterialxv(GLenum face, GLenum pname, GLfixed *
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum pname, GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMaterialxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, pname, params);
 }
 
@@ -3064,6 +3489,7 @@ extern "C" void GL_APIENTRY glGetMemoryObjectDetachedResourcesuivNV(GLuint memor
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLenum pname, GLint first, GLsizei count, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMemoryObjectDetachedResourcesuivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, pname, first, count, params);
 }
 
@@ -3071,6 +3497,7 @@ extern "C" void GL_APIENTRY glGetMemoryObjectParameterivEXT(GLuint memoryObject,
     using Fn = void(GL_APIENTRY*)(GLuint memoryObject, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMemoryObjectParameterivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memoryObject, pname, params);
 }
 
@@ -3078,6 +3505,7 @@ extern "C" void GL_APIENTRY glGetMultisamplefv(GLenum pname, GLuint index, GLflo
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLuint index, GLfloat *val);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMultisamplefv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, index, val);
 }
 
@@ -3085,6 +3513,7 @@ extern "C" void GL_APIENTRY glGetMultisamplefvANGLE(GLenum pname, GLuint index, 
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLuint index, GLfloat *val);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMultisamplefvANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, index, val);
 }
 
@@ -3092,6 +3521,7 @@ extern "C" void GL_APIENTRY glGetMultisamplefvRobustANGLE(GLenum pname, GLuint i
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLuint index, GLsizei bufSize, GLsizei *length, GLfloat *val);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetMultisamplefvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, index, bufSize, length, val);
 }
 
@@ -3099,6 +3529,7 @@ extern "C" void GL_APIENTRY glGetNextPerfQueryIdINTEL(GLuint queryId, GLuint *ne
     using Fn = void(GL_APIENTRY*)(GLuint queryId, GLuint *nextQueryId);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetNextPerfQueryIdINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryId, nextQueryId);
 }
 
@@ -3106,6 +3537,7 @@ extern "C" void GL_APIENTRY glGetObjectLabel(GLenum identifier, GLuint name, GLs
     using Fn = void(GL_APIENTRY*)(GLenum identifier, GLuint name, GLsizei bufSize, GLsizei *length, GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetObjectLabel", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(identifier, name, bufSize, length, label);
 }
 
@@ -3113,6 +3545,7 @@ extern "C" void GL_APIENTRY glGetObjectLabelEXT(GLenum type, GLuint object, GLsi
     using Fn = void(GL_APIENTRY*)(GLenum type, GLuint object, GLsizei bufSize, GLsizei *length, GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetObjectLabelEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(type, object, bufSize, length, label);
 }
 
@@ -3120,6 +3553,7 @@ extern "C" void GL_APIENTRY glGetObjectLabelKHR(GLenum identifier, GLuint name, 
     using Fn = void(GL_APIENTRY*)(GLenum identifier, GLuint name, GLsizei bufSize, GLsizei *length, GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetObjectLabelKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(identifier, name, bufSize, length, label);
 }
 
@@ -3127,6 +3561,7 @@ extern "C" void GL_APIENTRY glGetObjectPtrLabel(const void *ptr, GLsizei bufSize
     using Fn = void(GL_APIENTRY*)(const void *ptr, GLsizei bufSize, GLsizei *length, GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetObjectPtrLabel", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(ptr, bufSize, length, label);
 }
 
@@ -3134,6 +3569,7 @@ extern "C" void GL_APIENTRY glGetObjectPtrLabelKHR(const void *ptr, GLsizei bufS
     using Fn = void(GL_APIENTRY*)(const void *ptr, GLsizei bufSize, GLsizei *length, GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetObjectPtrLabelKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(ptr, bufSize, length, label);
 }
 
@@ -3141,6 +3577,7 @@ extern "C" void GL_APIENTRY glGetPathCommandsNV(GLuint path, GLubyte *commands) 
     using Fn = void(GL_APIENTRY*)(GLuint path, GLubyte *commands);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathCommandsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, commands);
 }
 
@@ -3148,6 +3585,7 @@ extern "C" void GL_APIENTRY glGetPathCoordsNV(GLuint path, GLfloat *coords) {
     using Fn = void(GL_APIENTRY*)(GLuint path, GLfloat *coords);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathCoordsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, coords);
 }
 
@@ -3155,6 +3593,7 @@ extern "C" void GL_APIENTRY glGetPathDashArrayNV(GLuint path, GLfloat *dashArray
     using Fn = void(GL_APIENTRY*)(GLuint path, GLfloat *dashArray);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathDashArrayNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, dashArray);
 }
 
@@ -3162,6 +3601,7 @@ extern "C" GLfloat GL_APIENTRY glGetPathLengthNV(GLuint path, GLsizei startSegme
     using Fn = GLfloat(GL_APIENTRY*)(GLuint path, GLsizei startSegment, GLsizei numSegments);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathLengthNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(path, startSegment, numSegments);
 }
 
@@ -3169,6 +3609,7 @@ extern "C" void GL_APIENTRY glGetPathMetricRangeNV(GLbitfield metricQueryMask, G
     using Fn = void(GL_APIENTRY*)(GLbitfield metricQueryMask, GLuint firstPathName, GLsizei numPaths, GLsizei stride, GLfloat *metrics);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathMetricRangeNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(metricQueryMask, firstPathName, numPaths, stride, metrics);
 }
 
@@ -3176,6 +3617,7 @@ extern "C" void GL_APIENTRY glGetPathMetricsNV(GLbitfield metricQueryMask, GLsiz
     using Fn = void(GL_APIENTRY*)(GLbitfield metricQueryMask, GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLsizei stride, GLfloat *metrics);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathMetricsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(metricQueryMask, numPaths, pathNameType, paths, pathBase, stride, metrics);
 }
 
@@ -3183,6 +3625,7 @@ extern "C" void GL_APIENTRY glGetPathParameterfvNV(GLuint path, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum pname, GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathParameterfvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, pname, value);
 }
 
@@ -3190,6 +3633,7 @@ extern "C" void GL_APIENTRY glGetPathParameterivNV(GLuint path, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum pname, GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathParameterivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, pname, value);
 }
 
@@ -3197,6 +3641,7 @@ extern "C" void GL_APIENTRY glGetPathSpacingNV(GLenum pathListMode, GLsizei numP
     using Fn = void(GL_APIENTRY*)(GLenum pathListMode, GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLfloat advanceScale, GLfloat kerningScale, GLenum transformType, GLfloat *returnedSpacing);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPathSpacingNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pathListMode, numPaths, pathNameType, paths, pathBase, advanceScale, kerningScale, transformType, returnedSpacing);
 }
 
@@ -3204,6 +3649,7 @@ extern "C" void GL_APIENTRY glGetPerfCounterInfoINTEL(GLuint queryId, GLuint cou
     using Fn = void(GL_APIENTRY*)(GLuint queryId, GLuint counterId, GLuint counterNameLength, GLchar *counterName, GLuint counterDescLength, GLchar *counterDesc, GLuint *counterOffset, GLuint *counterDataSize, GLuint *counterTypeEnum, GLuint *counterDataTypeEnum, GLuint64 *rawCounterMaxValue);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfCounterInfoINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryId, counterId, counterNameLength, counterName, counterDescLength, counterDesc, counterOffset, counterDataSize, counterTypeEnum, counterDataTypeEnum, rawCounterMaxValue);
 }
 
@@ -3211,6 +3657,7 @@ extern "C" void GL_APIENTRY glGetPerfMonitorCounterDataAMD(GLuint monitor, GLenu
     using Fn = void(GL_APIENTRY*)(GLuint monitor, GLenum pname, GLsizei dataSize, GLuint *data, GLint *bytesWritten);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfMonitorCounterDataAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(monitor, pname, dataSize, data, bytesWritten);
 }
 
@@ -3218,6 +3665,7 @@ extern "C" void GL_APIENTRY glGetPerfMonitorCounterInfoAMD(GLuint group, GLuint 
     using Fn = void(GL_APIENTRY*)(GLuint group, GLuint counter, GLenum pname, void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfMonitorCounterInfoAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(group, counter, pname, data);
 }
 
@@ -3225,6 +3673,7 @@ extern "C" void GL_APIENTRY glGetPerfMonitorCounterStringAMD(GLuint group, GLuin
     using Fn = void(GL_APIENTRY*)(GLuint group, GLuint counter, GLsizei bufSize, GLsizei *length, GLchar *counterString);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfMonitorCounterStringAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(group, counter, bufSize, length, counterString);
 }
 
@@ -3232,6 +3681,7 @@ extern "C" void GL_APIENTRY glGetPerfMonitorCountersAMD(GLuint group, GLint *num
     using Fn = void(GL_APIENTRY*)(GLuint group, GLint *numCounters, GLint *maxActiveCounters, GLsizei counterSize, GLuint *counters);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfMonitorCountersAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(group, numCounters, maxActiveCounters, counterSize, counters);
 }
 
@@ -3239,6 +3689,7 @@ extern "C" void GL_APIENTRY glGetPerfMonitorGroupStringAMD(GLuint group, GLsizei
     using Fn = void(GL_APIENTRY*)(GLuint group, GLsizei bufSize, GLsizei *length, GLchar *groupString);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfMonitorGroupStringAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(group, bufSize, length, groupString);
 }
 
@@ -3246,6 +3697,7 @@ extern "C" void GL_APIENTRY glGetPerfMonitorGroupsAMD(GLint *numGroups, GLsizei 
     using Fn = void(GL_APIENTRY*)(GLint *numGroups, GLsizei groupsSize, GLuint *groups);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfMonitorGroupsAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numGroups, groupsSize, groups);
 }
 
@@ -3253,6 +3705,7 @@ extern "C" void GL_APIENTRY glGetPerfQueryDataINTEL(GLuint queryHandle, GLuint f
     using Fn = void(GL_APIENTRY*)(GLuint queryHandle, GLuint flags, GLsizei dataSize, void *data, GLuint *bytesWritten);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfQueryDataINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryHandle, flags, dataSize, data, bytesWritten);
 }
 
@@ -3260,6 +3713,7 @@ extern "C" void GL_APIENTRY glGetPerfQueryIdByNameINTEL(GLchar *queryName, GLuin
     using Fn = void(GL_APIENTRY*)(GLchar *queryName, GLuint *queryId);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfQueryIdByNameINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryName, queryId);
 }
 
@@ -3267,6 +3721,7 @@ extern "C" void GL_APIENTRY glGetPerfQueryInfoINTEL(GLuint queryId, GLuint query
     using Fn = void(GL_APIENTRY*)(GLuint queryId, GLuint queryNameLength, GLchar *queryName, GLuint *dataSize, GLuint *noCounters, GLuint *noInstances, GLuint *capsMask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPerfQueryInfoINTEL", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(queryId, queryNameLength, queryName, dataSize, noCounters, noInstances, capsMask);
 }
 
@@ -3274,6 +3729,7 @@ extern "C" void GL_APIENTRY glGetPointerv(GLenum pname, void **params) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPointerv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -3281,6 +3737,7 @@ extern "C" void GL_APIENTRY glGetPointervANGLE(GLenum pname, void **params) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPointervANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -3288,6 +3745,7 @@ extern "C" void GL_APIENTRY glGetPointervKHR(GLenum pname, void **params) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPointervKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -3295,6 +3753,7 @@ extern "C" void GL_APIENTRY glGetPointervRobustANGLERobustANGLE(GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLsizei bufSize, GLsizei *length, void **params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetPointervRobustANGLERobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, bufSize, length, params);
 }
 
@@ -3302,6 +3761,7 @@ extern "C" void GL_APIENTRY glGetProgramBinary(GLuint program, GLsizei bufSize, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei bufSize, GLsizei *length, GLenum *binaryFormat, void *binary);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramBinary", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, bufSize, length, binaryFormat, binary);
 }
 
@@ -3309,6 +3769,7 @@ extern "C" void GL_APIENTRY glGetProgramBinaryOES(GLuint program, GLsizei bufSiz
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei bufSize, GLsizei *length, GLenum *binaryFormat, void *binary);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramBinaryOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, bufSize, length, binaryFormat, binary);
 }
 
@@ -3316,6 +3777,7 @@ extern "C" void GL_APIENTRY glGetProgramInfoLog(GLuint program, GLsizei bufSize,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramInfoLog", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, bufSize, length, infoLog);
 }
 
@@ -3323,6 +3785,7 @@ extern "C" void GL_APIENTRY glGetProgramInterfaceiv(GLuint program, GLenum progr
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum programInterface, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramInterfaceiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, programInterface, pname, params);
 }
 
@@ -3330,6 +3793,7 @@ extern "C" void GL_APIENTRY glGetProgramInterfaceivRobustANGLE(GLuint program, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum programInterface, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramInterfaceivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, programInterface, pname, bufSize, length, params);
 }
 
@@ -3337,6 +3801,7 @@ extern "C" void GL_APIENTRY glGetProgramPipelineInfoLog(GLuint pipeline, GLsizei
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramPipelineInfoLog", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, bufSize, length, infoLog);
 }
 
@@ -3344,6 +3809,7 @@ extern "C" void GL_APIENTRY glGetProgramPipelineInfoLogEXT(GLuint pipeline, GLsi
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramPipelineInfoLogEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, bufSize, length, infoLog);
 }
 
@@ -3351,6 +3817,7 @@ extern "C" void GL_APIENTRY glGetProgramPipelineiv(GLuint pipeline, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramPipelineiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, pname, params);
 }
 
@@ -3358,6 +3825,7 @@ extern "C" void GL_APIENTRY glGetProgramPipelineivEXT(GLuint pipeline, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramPipelineivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, pname, params);
 }
 
@@ -3365,6 +3833,7 @@ extern "C" GLuint GL_APIENTRY glGetProgramResourceIndex(GLuint program, GLenum p
     using Fn = GLuint(GL_APIENTRY*)(GLuint program, GLenum programInterface, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramResourceIndex", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, programInterface, name);
 }
 
@@ -3372,6 +3841,7 @@ extern "C" GLint GL_APIENTRY glGetProgramResourceLocation(GLuint program, GLenum
     using Fn = GLint(GL_APIENTRY*)(GLuint program, GLenum programInterface, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramResourceLocation", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, programInterface, name);
 }
 
@@ -3379,6 +3849,7 @@ extern "C" GLint GL_APIENTRY glGetProgramResourceLocationIndexEXT(GLuint program
     using Fn = GLint(GL_APIENTRY*)(GLuint program, GLenum programInterface, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramResourceLocationIndexEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, programInterface, name);
 }
 
@@ -3386,6 +3857,7 @@ extern "C" void GL_APIENTRY glGetProgramResourceName(GLuint program, GLenum prog
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum programInterface, GLuint index, GLsizei bufSize, GLsizei *length, GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramResourceName", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, programInterface, index, bufSize, length, name);
 }
 
@@ -3393,6 +3865,7 @@ extern "C" void GL_APIENTRY glGetProgramResourcefvNV(GLuint program, GLenum prog
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum programInterface, GLuint index, GLsizei propCount, const GLenum *props, GLsizei count, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramResourcefvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, programInterface, index, propCount, props, count, length, params);
 }
 
@@ -3400,6 +3873,7 @@ extern "C" void GL_APIENTRY glGetProgramResourceiv(GLuint program, GLenum progra
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum programInterface, GLuint index, GLsizei propCount, const GLenum *props, GLsizei count, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramResourceiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, programInterface, index, propCount, props, count, length, params);
 }
 
@@ -3407,6 +3881,7 @@ extern "C" void GL_APIENTRY glGetProgramiv(GLuint program, GLenum pname, GLint *
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, pname, params);
 }
 
@@ -3414,6 +3889,7 @@ extern "C" void GL_APIENTRY glGetProgramivRobustANGLE(GLuint program, GLenum pna
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetProgramivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, pname, bufSize, length, params);
 }
 
@@ -3421,6 +3897,7 @@ extern "C" void GL_APIENTRY glGetQueryObjecti64vEXT(GLuint id, GLenum pname, GLi
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjecti64vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, params);
 }
 
@@ -3428,6 +3905,7 @@ extern "C" void GL_APIENTRY glGetQueryObjecti64vRobustANGLE(GLuint id, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLsizei bufSize, GLsizei *length, GLint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjecti64vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, bufSize, length, params);
 }
 
@@ -3435,6 +3913,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectivEXT(GLuint id, GLenum pname, GLint
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, params);
 }
 
@@ -3442,6 +3921,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectivRobustANGLE(GLuint id, GLenum pnam
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, bufSize, length, params);
 }
 
@@ -3449,6 +3929,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectui64vEXT(GLuint id, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLuint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectui64vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, params);
 }
 
@@ -3456,6 +3937,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectui64vRobustANGLE(GLuint id, GLenum p
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLsizei bufSize, GLsizei *length, GLuint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectui64vRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, bufSize, length, params);
 }
 
@@ -3463,6 +3945,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectuiv(GLuint id, GLenum pname, GLuint 
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, params);
 }
 
@@ -3470,6 +3953,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectuivEXT(GLuint id, GLenum pname, GLui
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectuivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, params);
 }
 
@@ -3477,6 +3961,7 @@ extern "C" void GL_APIENTRY glGetQueryObjectuivRobustANGLE(GLuint id, GLenum pna
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum pname, GLsizei bufSize, GLsizei *length, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryObjectuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, pname, bufSize, length, params);
 }
 
@@ -3484,6 +3969,7 @@ extern "C" void GL_APIENTRY glGetQueryiv(GLenum target, GLenum pname, GLint *par
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3491,6 +3977,7 @@ extern "C" void GL_APIENTRY glGetQueryivEXT(GLenum target, GLenum pname, GLint *
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3498,6 +3985,7 @@ extern "C" void GL_APIENTRY glGetQueryivRobustANGLE(GLenum target, GLenum pname,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetQueryivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -3505,6 +3993,7 @@ extern "C" void GL_APIENTRY glGetRenderbufferImageANGLE(GLenum target, GLenum fo
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum format, GLenum type, void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetRenderbufferImageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, format, type, pixels);
 }
 
@@ -3512,6 +4001,7 @@ extern "C" void GL_APIENTRY glGetRenderbufferParameteriv(GLenum target, GLenum p
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetRenderbufferParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3519,6 +4009,7 @@ extern "C" void GL_APIENTRY glGetRenderbufferParameterivRobustANGLE(GLenum targe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetRenderbufferParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -3526,6 +4017,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIiv(GLuint sampler, GLenum pnam
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3533,6 +4025,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIivEXT(GLuint sampler, GLenum p
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3540,6 +4033,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIivOES(GLuint sampler, GLenum p
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3547,6 +4041,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIivRobustANGLE(GLuint sampler, 
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, length, params);
 }
 
@@ -3554,6 +4049,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIuiv(GLuint sampler, GLenum pna
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3561,6 +4057,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIuivEXT(GLuint sampler, GLenum 
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIuivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3568,6 +4065,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIuivOES(GLuint sampler, GLenum 
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIuivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3575,6 +4073,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterIuivRobustANGLE(GLuint sampler,
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei *length, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterIuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, length, params);
 }
 
@@ -3582,6 +4081,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterfv(GLuint sampler, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3589,6 +4089,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterfvRobustANGLE(GLuint sampler, G
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, length, params);
 }
 
@@ -3596,6 +4097,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameteriv(GLuint sampler, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, params);
 }
 
@@ -3603,6 +4105,7 @@ extern "C" void GL_APIENTRY glGetSamplerParameterivRobustANGLE(GLuint sampler, G
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSamplerParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, length, params);
 }
 
@@ -3610,6 +4113,7 @@ extern "C" void GL_APIENTRY glGetSemaphoreParameterivNV(GLuint semaphore, GLenum
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSemaphoreParameterivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, pname, params);
 }
 
@@ -3617,6 +4121,7 @@ extern "C" void GL_APIENTRY glGetSemaphoreParameterui64vEXT(GLuint semaphore, GL
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum pname, GLuint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSemaphoreParameterui64vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, pname, params);
 }
 
@@ -3624,6 +4129,7 @@ extern "C" void GL_APIENTRY glGetShaderInfoLog(GLuint shader, GLsizei bufSize, G
     using Fn = void(GL_APIENTRY*)(GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *infoLog);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShaderInfoLog", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader, bufSize, length, infoLog);
 }
 
@@ -3631,6 +4137,7 @@ extern "C" void GL_APIENTRY glGetShaderPrecisionFormat(GLenum shadertype, GLenum
     using Fn = void(GL_APIENTRY*)(GLenum shadertype, GLenum precisiontype, GLint *range, GLint *precision);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShaderPrecisionFormat", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shadertype, precisiontype, range, precision);
 }
 
@@ -3638,6 +4145,7 @@ extern "C" void GL_APIENTRY glGetShaderSource(GLuint shader, GLsizei bufSize, GL
     using Fn = void(GL_APIENTRY*)(GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *source);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShaderSource", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader, bufSize, length, source);
 }
 
@@ -3645,6 +4153,7 @@ extern "C" void GL_APIENTRY glGetShaderiv(GLuint shader, GLenum pname, GLint *pa
     using Fn = void(GL_APIENTRY*)(GLuint shader, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShaderiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader, pname, params);
 }
 
@@ -3652,6 +4161,7 @@ extern "C" void GL_APIENTRY glGetShaderivRobustANGLE(GLuint shader, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLuint shader, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShaderivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader, pname, bufSize, length, params);
 }
 
@@ -3659,6 +4169,7 @@ extern "C" void GL_APIENTRY glGetShadingRateImagePaletteNV(GLuint viewport, GLui
     using Fn = void(GL_APIENTRY*)(GLuint viewport, GLuint entry, GLenum *rate);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShadingRateImagePaletteNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(viewport, entry, rate);
 }
 
@@ -3666,6 +4177,7 @@ extern "C" void GL_APIENTRY glGetShadingRateSampleLocationivNV(GLenum rate, GLui
     using Fn = void(GL_APIENTRY*)(GLenum rate, GLuint samples, GLuint index, GLint *location);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetShadingRateSampleLocationivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(rate, samples, index, location);
 }
 
@@ -3673,6 +4185,7 @@ extern "C" const GLubyte * GL_APIENTRY glGetString(GLenum name) {
     using Fn = const GLubyte *(GL_APIENTRY*)(GLenum name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetString", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(name);
 }
 
@@ -3680,6 +4193,7 @@ extern "C" const GLubyte * GL_APIENTRY glGetStringi(GLenum name, GLuint index) {
     using Fn = const GLubyte *(GL_APIENTRY*)(GLenum name, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetStringi", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(name, index);
 }
 
@@ -3687,6 +4201,7 @@ extern "C" void GL_APIENTRY glGetSynciv(GLsync sync, GLenum pname, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLsync sync, GLenum pname, GLsizei count, GLsizei *length, GLint *values);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSynciv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sync, pname, count, length, values);
 }
 
@@ -3694,6 +4209,7 @@ extern "C" void GL_APIENTRY glGetSyncivAPPLE(GLsync sync, GLenum pname, GLsizei 
     using Fn = void(GL_APIENTRY*)(GLsync sync, GLenum pname, GLsizei count, GLsizei *length, GLint *values);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetSyncivAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sync, pname, count, length, values);
 }
 
@@ -3701,6 +4217,7 @@ extern "C" void GL_APIENTRY glGetTexEnvfv(GLenum target, GLenum pname, GLfloat *
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexEnvfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3708,6 +4225,7 @@ extern "C" void GL_APIENTRY glGetTexEnviv(GLenum target, GLenum pname, GLint *pa
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexEnviv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3715,6 +4233,7 @@ extern "C" void GL_APIENTRY glGetTexEnvxv(GLenum target, GLenum pname, GLfixed *
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexEnvxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3722,6 +4241,7 @@ extern "C" void GL_APIENTRY glGetTexImageANGLE(GLenum target, GLint level, GLenu
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum format, GLenum type, void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexImageANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, format, type, pixels);
 }
 
@@ -3729,6 +4249,7 @@ extern "C" void GL_APIENTRY glGetTexLevelParameterfv(GLenum target, GLint level,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexLevelParameterfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pname, params);
 }
 
@@ -3736,6 +4257,7 @@ extern "C" void GL_APIENTRY glGetTexLevelParameterfvANGLE(GLenum target, GLint l
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexLevelParameterfvANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pname, params);
 }
 
@@ -3743,6 +4265,7 @@ extern "C" void GL_APIENTRY glGetTexLevelParameterfvRobustANGLE(GLenum target, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexLevelParameterfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pname, bufSize, length, params);
 }
 
@@ -3750,6 +4273,7 @@ extern "C" void GL_APIENTRY glGetTexLevelParameteriv(GLenum target, GLint level,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexLevelParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pname, params);
 }
 
@@ -3757,6 +4281,7 @@ extern "C" void GL_APIENTRY glGetTexLevelParameterivANGLE(GLenum target, GLint l
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexLevelParameterivANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pname, params);
 }
 
@@ -3764,6 +4289,7 @@ extern "C" void GL_APIENTRY glGetTexLevelParameterivRobustANGLE(GLenum target, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexLevelParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, pname, bufSize, length, params);
 }
 
@@ -3771,6 +4297,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIiv(GLenum target, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3778,6 +4305,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIivEXT(GLenum target, GLenum pname,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3785,6 +4313,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIivOES(GLenum target, GLenum pname,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3792,6 +4321,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIivRobustANGLE(GLenum target, GLenu
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -3799,6 +4329,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIuiv(GLenum target, GLenum pname, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3806,6 +4337,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIuivEXT(GLenum target, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIuivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3813,6 +4345,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIuivOES(GLenum target, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIuivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3820,6 +4353,7 @@ extern "C" void GL_APIENTRY glGetTexParameterIuivRobustANGLE(GLenum target, GLen
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterIuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -3827,6 +4361,7 @@ extern "C" void GL_APIENTRY glGetTexParameterfv(GLenum target, GLenum pname, GLf
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3834,6 +4369,7 @@ extern "C" void GL_APIENTRY glGetTexParameterfvRobustANGLE(GLenum target, GLenum
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -3841,6 +4377,7 @@ extern "C" void GL_APIENTRY glGetTexParameteriv(GLenum target, GLenum pname, GLi
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3848,6 +4385,7 @@ extern "C" void GL_APIENTRY glGetTexParameterivRobustANGLE(GLenum target, GLenum
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, length, params);
 }
 
@@ -3855,6 +4393,7 @@ extern "C" void GL_APIENTRY glGetTexParameterxv(GLenum target, GLenum pname, GLf
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexParameterxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -3862,6 +4401,7 @@ extern "C" GLuint64 GL_APIENTRY glGetTextureHandleIMG(GLuint texture) {
     using Fn = GLuint64(GL_APIENTRY*)(GLuint texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTextureHandleIMG", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(texture);
 }
 
@@ -3869,6 +4409,7 @@ extern "C" GLuint64 GL_APIENTRY glGetTextureHandleNV(GLuint texture) {
     using Fn = GLuint64(GL_APIENTRY*)(GLuint texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTextureHandleNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(texture);
 }
 
@@ -3876,6 +4417,7 @@ extern "C" GLuint64 GL_APIENTRY glGetTextureSamplerHandleIMG(GLuint texture, GLu
     using Fn = GLuint64(GL_APIENTRY*)(GLuint texture, GLuint sampler);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTextureSamplerHandleIMG", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(texture, sampler);
 }
 
@@ -3883,6 +4425,7 @@ extern "C" GLuint64 GL_APIENTRY glGetTextureSamplerHandleNV(GLuint texture, GLui
     using Fn = GLuint64(GL_APIENTRY*)(GLuint texture, GLuint sampler);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTextureSamplerHandleNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(texture, sampler);
 }
 
@@ -3890,6 +4433,7 @@ extern "C" void GL_APIENTRY glGetTransformFeedbackVarying(GLuint program, GLuint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLsizei *size, GLenum *type, GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTransformFeedbackVarying", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, index, bufSize, length, size, type, name);
 }
 
@@ -3897,6 +4441,7 @@ extern "C" void GL_APIENTRY glGetTranslatedShaderSourceANGLE(GLuint shader, GLsi
     using Fn = void(GL_APIENTRY*)(GLuint shader, GLsizei bufSize, GLsizei *length, GLchar *source);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTranslatedShaderSourceANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader, bufSize, length, source);
 }
 
@@ -3904,6 +4449,7 @@ extern "C" GLuint GL_APIENTRY glGetUniformBlockIndex(GLuint program, const GLcha
     using Fn = GLuint(GL_APIENTRY*)(GLuint program, const GLchar *uniformBlockName);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformBlockIndex", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, uniformBlockName);
 }
 
@@ -3911,6 +4457,7 @@ extern "C" void GL_APIENTRY glGetUniformIndices(GLuint program, GLsizei uniformC
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei uniformCount, const GLchar *const*uniformNames, GLuint *uniformIndices);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformIndices", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, uniformCount, uniformNames, uniformIndices);
 }
 
@@ -3918,6 +4465,7 @@ extern "C" GLint GL_APIENTRY glGetUniformLocation(GLuint program, const GLchar *
     using Fn = GLint(GL_APIENTRY*)(GLuint program, const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformLocation", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program, name);
 }
 
@@ -3925,6 +4473,7 @@ extern "C" void GL_APIENTRY glGetUniformfv(GLuint program, GLint location, GLflo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, params);
 }
 
@@ -3932,6 +4481,7 @@ extern "C" void GL_APIENTRY glGetUniformfvRobustANGLE(GLuint program, GLint loca
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, length, params);
 }
 
@@ -3939,6 +4489,7 @@ extern "C" void GL_APIENTRY glGetUniformi64vNV(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint64EXT *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformi64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, params);
 }
 
@@ -3946,6 +4497,7 @@ extern "C" void GL_APIENTRY glGetUniformiv(GLuint program, GLint location, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, params);
 }
 
@@ -3953,6 +4505,7 @@ extern "C" void GL_APIENTRY glGetUniformivRobustANGLE(GLuint program, GLint loca
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, length, params);
 }
 
@@ -3960,6 +4513,7 @@ extern "C" void GL_APIENTRY glGetUniformuiv(GLuint program, GLint location, GLui
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, params);
 }
 
@@ -3967,6 +4521,7 @@ extern "C" void GL_APIENTRY glGetUniformuivRobustANGLE(GLuint program, GLint loc
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLsizei *length, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUniformuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, length, params);
 }
 
@@ -3974,6 +4529,7 @@ extern "C" void GL_APIENTRY glGetUnsignedBytei_vEXT(GLenum target, GLuint index,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint index, GLubyte *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUnsignedBytei_vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, index, data);
 }
 
@@ -3981,6 +4537,7 @@ extern "C" void GL_APIENTRY glGetUnsignedBytevEXT(GLenum pname, GLubyte *data) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLubyte *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetUnsignedBytevEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, data);
 }
 
@@ -3988,6 +4545,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribIiv(GLuint index, GLenum pname, GLi
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribIiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, params);
 }
 
@@ -3995,6 +4553,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribIivRobustANGLE(GLuint index, GLenum
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribIivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, bufSize, length, params);
 }
 
@@ -4002,6 +4561,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribIuiv(GLuint index, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribIuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, params);
 }
 
@@ -4009,6 +4569,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribIuivRobustANGLE(GLuint index, GLenu
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLsizei bufSize, GLsizei *length, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribIuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, bufSize, length, params);
 }
 
@@ -4016,6 +4577,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribPointerv(GLuint index, GLenum pname
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, void **pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribPointerv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, pointer);
 }
 
@@ -4023,6 +4585,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribPointervRobustANGLE(GLuint index, G
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLsizei bufSize, GLsizei *length, void **pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribPointervRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, bufSize, length, pointer);
 }
 
@@ -4030,6 +4593,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribfv(GLuint index, GLenum pname, GLfl
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, params);
 }
 
@@ -4037,6 +4601,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribfvRobustANGLE(GLuint index, GLenum 
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, bufSize, length, params);
 }
 
@@ -4044,6 +4609,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribiv(GLuint index, GLenum pname, GLin
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, params);
 }
 
@@ -4051,6 +4617,7 @@ extern "C" void GL_APIENTRY glGetVertexAttribivRobustANGLE(GLuint index, GLenum 
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVertexAttribivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, pname, bufSize, length, params);
 }
 
@@ -4058,6 +4625,7 @@ extern "C" GLVULKANPROCNV GL_APIENTRY glGetVkProcAddrNV(const GLchar *name) {
     using Fn = GLVULKANPROCNV(GL_APIENTRY*)(const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetVkProcAddrNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(name);
 }
 
@@ -4065,6 +4633,7 @@ extern "C" void GL_APIENTRY glGetnUniformfv(GLuint program, GLint location, GLsi
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4072,6 +4641,7 @@ extern "C" void GL_APIENTRY glGetnUniformfvEXT(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformfvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4079,6 +4649,7 @@ extern "C" void GL_APIENTRY glGetnUniformfvKHR(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformfvKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4086,6 +4657,7 @@ extern "C" void GL_APIENTRY glGetnUniformfvRobustANGLE(GLuint program, GLint loc
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLsizei *length, GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, length, params);
 }
 
@@ -4093,6 +4665,7 @@ extern "C" void GL_APIENTRY glGetnUniformiv(GLuint program, GLint location, GLsi
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4100,6 +4673,7 @@ extern "C" void GL_APIENTRY glGetnUniformivEXT(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4107,6 +4681,7 @@ extern "C" void GL_APIENTRY glGetnUniformivKHR(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformivKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4114,6 +4689,7 @@ extern "C" void GL_APIENTRY glGetnUniformivRobustANGLE(GLuint program, GLint loc
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, length, params);
 }
 
@@ -4121,6 +4697,7 @@ extern "C" void GL_APIENTRY glGetnUniformuiv(GLuint program, GLint location, GLs
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4128,6 +4705,7 @@ extern "C" void GL_APIENTRY glGetnUniformuivKHR(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformuivKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, params);
 }
 
@@ -4135,6 +4713,7 @@ extern "C" void GL_APIENTRY glGetnUniformuivRobustANGLE(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei bufSize, GLsizei *length, GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetnUniformuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, bufSize, length, params);
 }
 
@@ -4142,6 +4721,7 @@ extern "C" void GL_APIENTRY glHint(GLenum target, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glHint", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, mode);
 }
 
@@ -4149,6 +4729,7 @@ extern "C" void GL_APIENTRY glImportMemoryFdEXT(GLuint memory, GLuint64 size, GL
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLuint64 size, GLenum handleType, GLint fd);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportMemoryFdEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, size, handleType, fd);
 }
 
@@ -4156,6 +4737,7 @@ extern "C" void GL_APIENTRY glImportMemoryWin32HandleEXT(GLuint memory, GLuint64
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLuint64 size, GLenum handleType, void *handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportMemoryWin32HandleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, size, handleType, handle);
 }
 
@@ -4163,6 +4745,7 @@ extern "C" void GL_APIENTRY glImportMemoryWin32NameEXT(GLuint memory, GLuint64 s
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLuint64 size, GLenum handleType, const void *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportMemoryWin32NameEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, size, handleType, name);
 }
 
@@ -4170,6 +4753,7 @@ extern "C" void GL_APIENTRY glImportMemoryZirconHandleANGLE(GLuint memory, GLuin
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLuint64 size, GLenum handleType, GLuint handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportMemoryZirconHandleANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, size, handleType, handle);
 }
 
@@ -4177,6 +4761,7 @@ extern "C" void GL_APIENTRY glImportSemaphoreFdEXT(GLuint semaphore, GLenum hand
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum handleType, GLint fd);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportSemaphoreFdEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, handleType, fd);
 }
 
@@ -4184,6 +4769,7 @@ extern "C" void GL_APIENTRY glImportSemaphoreWin32HandleEXT(GLuint semaphore, GL
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum handleType, void *handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportSemaphoreWin32HandleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, handleType, handle);
 }
 
@@ -4191,6 +4777,7 @@ extern "C" void GL_APIENTRY glImportSemaphoreWin32NameEXT(GLuint semaphore, GLen
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum handleType, const void *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportSemaphoreWin32NameEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, handleType, name);
 }
 
@@ -4198,6 +4785,7 @@ extern "C" void GL_APIENTRY glImportSemaphoreZirconHandleANGLE(GLuint memory, GL
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLenum handleType, GLuint handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glImportSemaphoreZirconHandleANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, handleType, handle);
 }
 
@@ -4205,6 +4793,7 @@ extern "C" void GL_APIENTRY glInsertEventMarkerEXT(GLsizei length, const GLchar 
     using Fn = void(GL_APIENTRY*)(GLsizei length, const GLchar *marker);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glInsertEventMarkerEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(length, marker);
 }
 
@@ -4212,6 +4801,7 @@ extern "C" void GL_APIENTRY glInterpolatePathsNV(GLuint resultPath, GLuint pathA
     using Fn = void(GL_APIENTRY*)(GLuint resultPath, GLuint pathA, GLuint pathB, GLfloat weight);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glInterpolatePathsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(resultPath, pathA, pathB, weight);
 }
 
@@ -4219,6 +4809,7 @@ extern "C" void GL_APIENTRY glInvalidateFramebuffer(GLenum target, GLsizei numAt
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei numAttachments, const GLenum *attachments);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glInvalidateFramebuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, numAttachments, attachments);
 }
 
@@ -4226,6 +4817,7 @@ extern "C" void GL_APIENTRY glInvalidateSubFramebuffer(GLenum target, GLsizei nu
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei numAttachments, const GLenum *attachments, GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glInvalidateSubFramebuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, numAttachments, attachments, x, y, width, height);
 }
 
@@ -4233,6 +4825,7 @@ extern "C" void GL_APIENTRY glInvalidateTextureANGLE(GLenum target) {
     using Fn = void(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glInvalidateTextureANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target);
 }
 
@@ -4240,6 +4833,7 @@ extern "C" GLboolean GL_APIENTRY glIsBuffer(GLuint buffer) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsBuffer", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(buffer);
 }
 
@@ -4247,6 +4841,7 @@ extern "C" GLboolean GL_APIENTRY glIsEnabled(GLenum cap) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum cap);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsEnabled", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(cap);
 }
 
@@ -4254,6 +4849,7 @@ extern "C" GLboolean GL_APIENTRY glIsEnabledi(GLenum target, GLuint index) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsEnabledi", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, index);
 }
 
@@ -4261,6 +4857,7 @@ extern "C" GLboolean GL_APIENTRY glIsEnablediEXT(GLenum target, GLuint index) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsEnablediEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, index);
 }
 
@@ -4268,6 +4865,7 @@ extern "C" GLboolean GL_APIENTRY glIsEnablediNV(GLenum target, GLuint index) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsEnablediNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, index);
 }
 
@@ -4275,6 +4873,7 @@ extern "C" GLboolean GL_APIENTRY glIsEnablediOES(GLenum target, GLuint index) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum target, GLuint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsEnablediOES", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, index);
 }
 
@@ -4282,6 +4881,7 @@ extern "C" GLboolean GL_APIENTRY glIsFenceNV(GLuint fence) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint fence);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsFenceNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(fence);
 }
 
@@ -4289,6 +4889,7 @@ extern "C" GLboolean GL_APIENTRY glIsFramebuffer(GLuint framebuffer) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint framebuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsFramebuffer", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(framebuffer);
 }
 
@@ -4296,6 +4897,7 @@ extern "C" GLboolean GL_APIENTRY glIsImageHandleResidentNV(GLuint64 handle) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint64 handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsImageHandleResidentNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(handle);
 }
 
@@ -4303,6 +4905,7 @@ extern "C" GLboolean GL_APIENTRY glIsMemoryObjectEXT(GLuint memoryObject) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint memoryObject);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsMemoryObjectEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(memoryObject);
 }
 
@@ -4310,6 +4913,7 @@ extern "C" GLboolean GL_APIENTRY glIsPathNV(GLuint path) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint path);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsPathNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(path);
 }
 
@@ -4317,6 +4921,7 @@ extern "C" GLboolean GL_APIENTRY glIsPointInFillPathNV(GLuint path, GLuint mask,
     using Fn = GLboolean(GL_APIENTRY*)(GLuint path, GLuint mask, GLfloat x, GLfloat y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsPointInFillPathNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(path, mask, x, y);
 }
 
@@ -4324,6 +4929,7 @@ extern "C" GLboolean GL_APIENTRY glIsPointInStrokePathNV(GLuint path, GLfloat x,
     using Fn = GLboolean(GL_APIENTRY*)(GLuint path, GLfloat x, GLfloat y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsPointInStrokePathNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(path, x, y);
 }
 
@@ -4331,6 +4937,7 @@ extern "C" GLboolean GL_APIENTRY glIsProgram(GLuint program) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsProgram", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(program);
 }
 
@@ -4338,6 +4945,7 @@ extern "C" GLboolean GL_APIENTRY glIsProgramPipeline(GLuint pipeline) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint pipeline);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsProgramPipeline", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(pipeline);
 }
 
@@ -4345,6 +4953,7 @@ extern "C" GLboolean GL_APIENTRY glIsProgramPipelineEXT(GLuint pipeline) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint pipeline);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsProgramPipelineEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(pipeline);
 }
 
@@ -4352,6 +4961,7 @@ extern "C" GLboolean GL_APIENTRY glIsQuery(GLuint id) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsQuery", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(id);
 }
 
@@ -4359,6 +4969,7 @@ extern "C" GLboolean GL_APIENTRY glIsQueryEXT(GLuint id) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsQueryEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(id);
 }
 
@@ -4366,6 +4977,7 @@ extern "C" GLboolean GL_APIENTRY glIsRenderbuffer(GLuint renderbuffer) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint renderbuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsRenderbuffer", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(renderbuffer);
 }
 
@@ -4373,6 +4985,7 @@ extern "C" GLboolean GL_APIENTRY glIsSampler(GLuint sampler) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint sampler);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsSampler", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(sampler);
 }
 
@@ -4380,6 +4993,7 @@ extern "C" GLboolean GL_APIENTRY glIsSemaphoreEXT(GLuint semaphore) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint semaphore);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsSemaphoreEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(semaphore);
 }
 
@@ -4387,6 +5001,7 @@ extern "C" GLboolean GL_APIENTRY glIsShader(GLuint shader) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint shader);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsShader", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(shader);
 }
 
@@ -4394,6 +5009,7 @@ extern "C" GLboolean GL_APIENTRY glIsSync(GLsync sync) {
     using Fn = GLboolean(GL_APIENTRY*)(GLsync sync);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsSync", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(sync);
 }
 
@@ -4401,6 +5017,7 @@ extern "C" GLboolean GL_APIENTRY glIsSyncAPPLE(GLsync sync) {
     using Fn = GLboolean(GL_APIENTRY*)(GLsync sync);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsSyncAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(sync);
 }
 
@@ -4408,6 +5025,7 @@ extern "C" GLboolean GL_APIENTRY glIsTexture(GLuint texture) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint texture);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsTexture", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(texture);
 }
 
@@ -4415,6 +5033,7 @@ extern "C" GLboolean GL_APIENTRY glIsTextureHandleResidentNV(GLuint64 handle) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint64 handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsTextureHandleResidentNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(handle);
 }
 
@@ -4422,6 +5041,7 @@ extern "C" GLboolean GL_APIENTRY glIsTransformFeedback(GLuint id) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsTransformFeedback", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(id);
 }
 
@@ -4429,6 +5049,7 @@ extern "C" GLboolean GL_APIENTRY glIsVertexArray(GLuint array) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint array);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsVertexArray", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(array);
 }
 
@@ -4436,6 +5057,7 @@ extern "C" GLboolean GL_APIENTRY glIsVertexArrayOES(GLuint array) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint array);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsVertexArrayOES", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(array);
 }
 
@@ -4443,6 +5065,7 @@ extern "C" void GL_APIENTRY glLabelObjectEXT(GLenum type, GLuint object, GLsizei
     using Fn = void(GL_APIENTRY*)(GLenum type, GLuint object, GLsizei length, const GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLabelObjectEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(type, object, length, label);
 }
 
@@ -4450,6 +5073,7 @@ extern "C" void GL_APIENTRY glLightModelf(GLenum pname, GLfloat param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightModelf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -4457,6 +5081,7 @@ extern "C" void GL_APIENTRY glLightModelfv(GLenum pname, const GLfloat *params) 
     using Fn = void(GL_APIENTRY*)(GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightModelfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -4464,6 +5089,7 @@ extern "C" void GL_APIENTRY glLightModelx(GLenum pname, GLfixed param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightModelx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -4471,6 +5097,7 @@ extern "C" void GL_APIENTRY glLightModelxv(GLenum pname, const GLfixed *param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, const GLfixed *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightModelxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -4478,6 +5105,7 @@ extern "C" void GL_APIENTRY glLightf(GLenum light, GLenum pname, GLfloat param) 
     using Fn = void(GL_APIENTRY*)(GLenum light, GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(light, pname, param);
 }
 
@@ -4485,6 +5113,7 @@ extern "C" void GL_APIENTRY glLightfv(GLenum light, GLenum pname, const GLfloat 
     using Fn = void(GL_APIENTRY*)(GLenum light, GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(light, pname, params);
 }
 
@@ -4492,6 +5121,7 @@ extern "C" void GL_APIENTRY glLightx(GLenum light, GLenum pname, GLfixed param) 
     using Fn = void(GL_APIENTRY*)(GLenum light, GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(light, pname, param);
 }
 
@@ -4499,6 +5129,7 @@ extern "C" void GL_APIENTRY glLightxv(GLenum light, GLenum pname, const GLfixed 
     using Fn = void(GL_APIENTRY*)(GLenum light, GLenum pname, const GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLightxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(light, pname, params);
 }
 
@@ -4506,6 +5137,7 @@ extern "C" void GL_APIENTRY glLineWidth(GLfloat width) {
     using Fn = void(GL_APIENTRY*)(GLfloat width);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLineWidth", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(width);
 }
 
@@ -4513,6 +5145,7 @@ extern "C" void GL_APIENTRY glLineWidthx(GLfixed width) {
     using Fn = void(GL_APIENTRY*)(GLfixed width);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLineWidthx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(width);
 }
 
@@ -4520,6 +5153,7 @@ extern "C" void GL_APIENTRY glLinkProgram(GLuint program) {
     using Fn = void(GL_APIENTRY*)(GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLinkProgram", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program);
 }
 
@@ -4527,6 +5161,7 @@ extern "C" void GL_APIENTRY glLoadIdentity(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLoadIdentity", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -4534,6 +5169,7 @@ extern "C" void GL_APIENTRY glLoadMatrixf(const GLfloat *m) {
     using Fn = void(GL_APIENTRY*)(const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLoadMatrixf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(m);
 }
 
@@ -4541,6 +5177,7 @@ extern "C" void GL_APIENTRY glLoadMatrixx(const GLfixed *m) {
     using Fn = void(GL_APIENTRY*)(const GLfixed *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLoadMatrixx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(m);
 }
 
@@ -4548,6 +5185,7 @@ extern "C" void GL_APIENTRY glLogicOp(GLenum opcode) {
     using Fn = void(GL_APIENTRY*)(GLenum opcode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLogicOp", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(opcode);
 }
 
@@ -4555,6 +5193,7 @@ extern "C" void GL_APIENTRY glLogicOpANGLE(GLenum a0) {
     using Fn = void(GL_APIENTRY*)(GLenum a0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLogicOpANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(a0);
 }
 
@@ -4562,6 +5201,7 @@ extern "C" void GL_APIENTRY glLoseContextCHROMIUM(GLenum current, GLenum other) 
     using Fn = void(GL_APIENTRY*)(GLenum current, GLenum other);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLoseContextCHROMIUM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(current, other);
 }
 
@@ -4569,6 +5209,7 @@ extern "C" void GL_APIENTRY glMakeImageHandleNonResidentNV(GLuint64 handle) {
     using Fn = void(GL_APIENTRY*)(GLuint64 handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMakeImageHandleNonResidentNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(handle);
 }
 
@@ -4576,6 +5217,7 @@ extern "C" void GL_APIENTRY glMakeImageHandleResidentNV(GLuint64 handle, GLenum 
     using Fn = void(GL_APIENTRY*)(GLuint64 handle, GLenum access);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMakeImageHandleResidentNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(handle, access);
 }
 
@@ -4583,6 +5225,7 @@ extern "C" void GL_APIENTRY glMakeTextureHandleNonResidentNV(GLuint64 handle) {
     using Fn = void(GL_APIENTRY*)(GLuint64 handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMakeTextureHandleNonResidentNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(handle);
 }
 
@@ -4590,6 +5233,7 @@ extern "C" void GL_APIENTRY glMakeTextureHandleResidentNV(GLuint64 handle) {
     using Fn = void(GL_APIENTRY*)(GLuint64 handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMakeTextureHandleResidentNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(handle);
 }
 
@@ -4597,6 +5241,7 @@ extern "C" void * GL_APIENTRY glMapBufferOES(GLenum target, GLenum access) {
     using Fn = void *(GL_APIENTRY*)(GLenum target, GLenum access);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMapBufferOES", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, access);
 }
 
@@ -4604,6 +5249,7 @@ extern "C" void * GL_APIENTRY glMapBufferRange(GLenum target, GLintptr offset, G
     using Fn = void *(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMapBufferRange", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, offset, length, access);
 }
 
@@ -4611,6 +5257,7 @@ extern "C" void * GL_APIENTRY glMapBufferRangeEXT(GLenum target, GLintptr offset
     using Fn = void *(GL_APIENTRY*)(GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMapBufferRangeEXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target, offset, length, access);
 }
 
@@ -4618,6 +5265,7 @@ extern "C" void GL_APIENTRY glMaterialf(GLenum face, GLenum pname, GLfloat param
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMaterialf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, pname, param);
 }
 
@@ -4625,6 +5273,7 @@ extern "C" void GL_APIENTRY glMaterialfv(GLenum face, GLenum pname, const GLfloa
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMaterialfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, pname, params);
 }
 
@@ -4632,6 +5281,7 @@ extern "C" void GL_APIENTRY glMaterialx(GLenum face, GLenum pname, GLfixed param
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMaterialx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, pname, param);
 }
 
@@ -4639,6 +5289,7 @@ extern "C" void GL_APIENTRY glMaterialxv(GLenum face, GLenum pname, const GLfixe
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum pname, const GLfixed *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMaterialxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, pname, param);
 }
 
@@ -4646,6 +5297,7 @@ extern "C" void GL_APIENTRY glMatrixFrustumEXT(GLenum mode, GLdouble left, GLdou
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLdouble zNear, GLdouble zFar);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixFrustumEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, left, right, bottom, top, zNear, zFar);
 }
 
@@ -4653,6 +5305,7 @@ extern "C" void GL_APIENTRY glMatrixLoad3x2fNV(GLenum matrixMode, const GLfloat 
     using Fn = void(GL_APIENTRY*)(GLenum matrixMode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoad3x2fNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(matrixMode, m);
 }
 
@@ -4660,6 +5313,7 @@ extern "C" void GL_APIENTRY glMatrixLoad3x3fNV(GLenum matrixMode, const GLfloat 
     using Fn = void(GL_APIENTRY*)(GLenum matrixMode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoad3x3fNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(matrixMode, m);
 }
 
@@ -4667,6 +5321,7 @@ extern "C" void GL_APIENTRY glMatrixLoadIdentityEXT(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoadIdentityEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -4674,6 +5329,7 @@ extern "C" void GL_APIENTRY glMatrixLoadTranspose3x3fNV(GLenum matrixMode, const
     using Fn = void(GL_APIENTRY*)(GLenum matrixMode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoadTranspose3x3fNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(matrixMode, m);
 }
 
@@ -4681,6 +5337,7 @@ extern "C" void GL_APIENTRY glMatrixLoadTransposedEXT(GLenum mode, const GLdoubl
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLdouble *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoadTransposedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4688,6 +5345,7 @@ extern "C" void GL_APIENTRY glMatrixLoadTransposefEXT(GLenum mode, const GLfloat
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoadTransposefEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4695,6 +5353,7 @@ extern "C" void GL_APIENTRY glMatrixLoaddEXT(GLenum mode, const GLdouble *m) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLdouble *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoaddEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4702,6 +5361,7 @@ extern "C" void GL_APIENTRY glMatrixLoadfEXT(GLenum mode, const GLfloat *m) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixLoadfEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4709,6 +5369,7 @@ extern "C" void GL_APIENTRY glMatrixMode(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMode", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -4716,6 +5377,7 @@ extern "C" void GL_APIENTRY glMatrixMult3x2fNV(GLenum matrixMode, const GLfloat 
     using Fn = void(GL_APIENTRY*)(GLenum matrixMode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMult3x2fNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(matrixMode, m);
 }
 
@@ -4723,6 +5385,7 @@ extern "C" void GL_APIENTRY glMatrixMult3x3fNV(GLenum matrixMode, const GLfloat 
     using Fn = void(GL_APIENTRY*)(GLenum matrixMode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMult3x3fNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(matrixMode, m);
 }
 
@@ -4730,6 +5393,7 @@ extern "C" void GL_APIENTRY glMatrixMultTranspose3x3fNV(GLenum matrixMode, const
     using Fn = void(GL_APIENTRY*)(GLenum matrixMode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMultTranspose3x3fNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(matrixMode, m);
 }
 
@@ -4737,6 +5401,7 @@ extern "C" void GL_APIENTRY glMatrixMultTransposedEXT(GLenum mode, const GLdoubl
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLdouble *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMultTransposedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4744,6 +5409,7 @@ extern "C" void GL_APIENTRY glMatrixMultTransposefEXT(GLenum mode, const GLfloat
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMultTransposefEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4751,6 +5417,7 @@ extern "C" void GL_APIENTRY glMatrixMultdEXT(GLenum mode, const GLdouble *m) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLdouble *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMultdEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4758,6 +5425,7 @@ extern "C" void GL_APIENTRY glMatrixMultfEXT(GLenum mode, const GLfloat *m) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixMultfEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, m);
 }
 
@@ -4765,6 +5433,7 @@ extern "C" void GL_APIENTRY glMatrixOrthoEXT(GLenum mode, GLdouble left, GLdoubl
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLdouble left, GLdouble right, GLdouble bottom, GLdouble top, GLdouble zNear, GLdouble zFar);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixOrthoEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, left, right, bottom, top, zNear, zFar);
 }
 
@@ -4772,6 +5441,7 @@ extern "C" void GL_APIENTRY glMatrixPopEXT(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixPopEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -4779,6 +5449,7 @@ extern "C" void GL_APIENTRY glMatrixPushEXT(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixPushEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -4786,6 +5457,7 @@ extern "C" void GL_APIENTRY glMatrixRotatedEXT(GLenum mode, GLdouble angle, GLdo
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLdouble angle, GLdouble x, GLdouble y, GLdouble z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixRotatedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, angle, x, y, z);
 }
 
@@ -4793,6 +5465,7 @@ extern "C" void GL_APIENTRY glMatrixRotatefEXT(GLenum mode, GLfloat angle, GLflo
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixRotatefEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, angle, x, y, z);
 }
 
@@ -4800,6 +5473,7 @@ extern "C" void GL_APIENTRY glMatrixScaledEXT(GLenum mode, GLdouble x, GLdouble 
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLdouble x, GLdouble y, GLdouble z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixScaledEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, x, y, z);
 }
 
@@ -4807,6 +5481,7 @@ extern "C" void GL_APIENTRY glMatrixScalefEXT(GLenum mode, GLfloat x, GLfloat y,
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixScalefEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, x, y, z);
 }
 
@@ -4814,6 +5489,7 @@ extern "C" void GL_APIENTRY glMatrixTranslatedEXT(GLenum mode, GLdouble x, GLdou
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLdouble x, GLdouble y, GLdouble z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixTranslatedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, x, y, z);
 }
 
@@ -4821,6 +5497,7 @@ extern "C" void GL_APIENTRY glMatrixTranslatefEXT(GLenum mode, GLfloat x, GLfloa
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixTranslatefEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, x, y, z);
 }
 
@@ -4828,6 +5505,7 @@ extern "C" void GL_APIENTRY glMaxActiveShaderCoresARM(GLuint count) {
     using Fn = void(GL_APIENTRY*)(GLuint count);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMaxActiveShaderCoresARM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(count);
 }
 
@@ -4835,6 +5513,7 @@ extern "C" void GL_APIENTRY glMaxShaderCompilerThreadsKHR(GLuint count) {
     using Fn = void(GL_APIENTRY*)(GLuint count);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMaxShaderCompilerThreadsKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(count);
 }
 
@@ -4842,6 +5521,7 @@ extern "C" void GL_APIENTRY glMemoryBarrier(GLbitfield barriers) {
     using Fn = void(GL_APIENTRY*)(GLbitfield barriers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMemoryBarrier", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(barriers);
 }
 
@@ -4849,6 +5529,7 @@ extern "C" void GL_APIENTRY glMemoryBarrierByRegion(GLbitfield barriers) {
     using Fn = void(GL_APIENTRY*)(GLbitfield barriers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMemoryBarrierByRegion", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(barriers);
 }
 
@@ -4856,6 +5537,7 @@ extern "C" void GL_APIENTRY glMemoryObjectParameterivEXT(GLuint memoryObject, GL
     using Fn = void(GL_APIENTRY*)(GLuint memoryObject, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMemoryObjectParameterivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memoryObject, pname, params);
 }
 
@@ -4863,6 +5545,7 @@ extern "C" void GL_APIENTRY glMinSampleShading(GLfloat value) {
     using Fn = void(GL_APIENTRY*)(GLfloat value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMinSampleShading", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(value);
 }
 
@@ -4870,6 +5553,7 @@ extern "C" void GL_APIENTRY glMinSampleShadingOES(GLfloat value) {
     using Fn = void(GL_APIENTRY*)(GLfloat value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMinSampleShadingOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(value);
 }
 
@@ -4877,6 +5561,7 @@ extern "C" void GL_APIENTRY glMultMatrixf(const GLfloat *m) {
     using Fn = void(GL_APIENTRY*)(const GLfloat *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultMatrixf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(m);
 }
 
@@ -4884,6 +5569,7 @@ extern "C" void GL_APIENTRY glMultMatrixx(const GLfixed *m) {
     using Fn = void(GL_APIENTRY*)(const GLfixed *m);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultMatrixx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(m);
 }
 
@@ -4891,6 +5577,7 @@ extern "C" void GL_APIENTRY glMultiDrawArraysANGLE(GLenum mode, const GLint *fir
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLint *firsts, const GLsizei *counts, GLsizei drawcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawArraysANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, firsts, counts, drawcount);
 }
 
@@ -4898,6 +5585,7 @@ extern "C" void GL_APIENTRY glMultiDrawArraysEXT(GLenum mode, const GLint *first
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLint *first, const GLsizei *count, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawArraysEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, first, count, primcount);
 }
 
@@ -4905,6 +5593,7 @@ extern "C" void GL_APIENTRY glMultiDrawArraysIndirectEXT(GLenum mode, const void
     using Fn = void(GL_APIENTRY*)(GLenum mode, const void *indirect, GLsizei drawcount, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawArraysIndirectEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, indirect, drawcount, stride);
 }
 
@@ -4912,6 +5601,7 @@ extern "C" void GL_APIENTRY glMultiDrawArraysInstancedANGLE(GLenum mode, const G
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLint *firsts, const GLsizei *counts, const GLsizei *instanceCounts, GLsizei drawcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawArraysInstancedANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, firsts, counts, instanceCounts, drawcount);
 }
 
@@ -4919,6 +5609,7 @@ extern "C" void GL_APIENTRY glMultiDrawArraysInstancedBaseInstanceANGLE(GLenum m
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLsizei *firsts, const GLsizei *counts, const GLsizei *instanceCounts, const GLuint *baseInstances, GLsizei drawCount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawArraysInstancedBaseInstanceANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, firsts, counts, instanceCounts, baseInstances, drawCount);
 }
 
@@ -4926,6 +5617,7 @@ extern "C" void GL_APIENTRY glMultiDrawElementsANGLE(GLenum mode, const GLsizei 
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLsizei *counts, GLenum type, const GLvoid* const *indices, GLsizei drawcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawElementsANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, counts, type, indices, drawcount);
 }
 
@@ -4933,6 +5625,7 @@ extern "C" void GL_APIENTRY glMultiDrawElementsBaseVertexEXT(GLenum mode, const 
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLsizei *count, GLenum type, const void *const*indices, GLsizei drawcount, const GLint *basevertex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawElementsBaseVertexEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, drawcount, basevertex);
 }
 
@@ -4940,6 +5633,7 @@ extern "C" void GL_APIENTRY glMultiDrawElementsEXT(GLenum mode, const GLsizei *c
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLsizei *count, GLenum type, const void *const*indices, GLsizei primcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawElementsEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, type, indices, primcount);
 }
 
@@ -4947,6 +5641,7 @@ extern "C" void GL_APIENTRY glMultiDrawElementsIndirectEXT(GLenum mode, GLenum t
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLenum type, const void *indirect, GLsizei drawcount, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawElementsIndirectEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, type, indirect, drawcount, stride);
 }
 
@@ -4954,6 +5649,7 @@ extern "C" void GL_APIENTRY glMultiDrawElementsInstancedANGLE(GLenum mode, const
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLsizei *counts, GLenum type, const GLvoid* const *indices, const GLsizei *instanceCounts, GLsizei drawcount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawElementsInstancedANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, counts, type, indices, instanceCounts, drawcount);
 }
 
@@ -4961,6 +5657,7 @@ extern "C" void GL_APIENTRY glMultiDrawElementsInstancedBaseVertexBaseInstanceAN
     using Fn = void(GL_APIENTRY*)(GLenum mode, const GLsizei *counts, GLenum type, const GLvoid* const *indices, const GLsizei *instanceCounts, const GLint *baseVertices, const GLuint *baseInstances, GLsizei drawCount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawElementsInstancedBaseVertexBaseInstanceANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, counts, type, indices, instanceCounts, baseVertices, baseInstances, drawCount);
 }
 
@@ -4968,6 +5665,7 @@ extern "C" void GL_APIENTRY glMultiDrawMeshTasksIndirectCountEXT(GLintptr indire
     using Fn = void(GL_APIENTRY*)(GLintptr indirect, GLintptr drawcount, GLsizei maxdrawcount, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawMeshTasksIndirectCountEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect, drawcount, maxdrawcount, stride);
 }
 
@@ -4975,6 +5673,7 @@ extern "C" void GL_APIENTRY glMultiDrawMeshTasksIndirectCountNV(GLintptr indirec
     using Fn = void(GL_APIENTRY*)(GLintptr indirect, GLintptr drawcount, GLsizei maxdrawcount, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawMeshTasksIndirectCountNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect, drawcount, maxdrawcount, stride);
 }
 
@@ -4982,6 +5681,7 @@ extern "C" void GL_APIENTRY glMultiDrawMeshTasksIndirectEXT(GLintptr indirect, G
     using Fn = void(GL_APIENTRY*)(GLintptr indirect, GLsizei drawcount, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawMeshTasksIndirectEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect, drawcount, stride);
 }
 
@@ -4989,6 +5689,7 @@ extern "C" void GL_APIENTRY glMultiDrawMeshTasksIndirectNV(GLintptr indirect, GL
     using Fn = void(GL_APIENTRY*)(GLintptr indirect, GLsizei drawcount, GLsizei stride);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiDrawMeshTasksIndirectNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(indirect, drawcount, stride);
 }
 
@@ -4996,6 +5697,7 @@ extern "C" void GL_APIENTRY glMultiTexCoord4f(GLenum target, GLfloat s, GLfloat 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLfloat s, GLfloat t, GLfloat r, GLfloat q);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiTexCoord4f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, s, t, r, q);
 }
 
@@ -5003,6 +5705,7 @@ extern "C" void GL_APIENTRY glMultiTexCoord4x(GLenum texture, GLfixed s, GLfixed
     using Fn = void(GL_APIENTRY*)(GLenum texture, GLfixed s, GLfixed t, GLfixed r, GLfixed q);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMultiTexCoord4x", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, s, t, r, q);
 }
 
@@ -5010,6 +5713,7 @@ extern "C" void GL_APIENTRY glNamedBufferAttachMemoryNV(GLuint buffer, GLuint me
     using Fn = void(GL_APIENTRY*)(GLuint buffer, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedBufferAttachMemoryNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, memory, offset);
 }
 
@@ -5017,6 +5721,7 @@ extern "C" void GL_APIENTRY glNamedBufferPageCommitmentMemNV(GLuint buffer, GLin
     using Fn = void(GL_APIENTRY*)(GLuint buffer, GLintptr offset, GLsizeiptr size, GLuint memory, GLuint64 memOffset, GLboolean commit);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedBufferPageCommitmentMemNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, offset, size, memory, memOffset, commit);
 }
 
@@ -5024,6 +5729,7 @@ extern "C" void GL_APIENTRY glNamedBufferStorageExternalEXT(GLuint buffer, GLint
     using Fn = void(GL_APIENTRY*)(GLuint buffer, GLintptr offset, GLsizeiptr size, GLeglClientBufferEXT clientBuffer, GLbitfield flags);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedBufferStorageExternalEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, offset, size, clientBuffer, flags);
 }
 
@@ -5031,6 +5737,7 @@ extern "C" void GL_APIENTRY glNamedBufferStorageMemEXT(GLuint buffer, GLsizeiptr
     using Fn = void(GL_APIENTRY*)(GLuint buffer, GLsizeiptr size, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedBufferStorageMemEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(buffer, size, memory, offset);
 }
 
@@ -5038,6 +5745,7 @@ extern "C" void GL_APIENTRY glNamedFramebufferSampleLocationsfvNV(GLuint framebu
     using Fn = void(GL_APIENTRY*)(GLuint framebuffer, GLuint start, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedFramebufferSampleLocationsfvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(framebuffer, start, count, v);
 }
 
@@ -5045,6 +5753,7 @@ extern "C" void GL_APIENTRY glNamedFramebufferTextureMultiviewOVR(GLuint framebu
     using Fn = void(GL_APIENTRY*)(GLuint framebuffer, GLenum attachment, GLuint texture, GLint level, GLint baseViewIndex, GLsizei numViews);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedFramebufferTextureMultiviewOVR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(framebuffer, attachment, texture, level, baseViewIndex, numViews);
 }
 
@@ -5052,6 +5761,7 @@ extern "C" void GL_APIENTRY glNamedRenderbufferStorageMultisampleAdvancedAMD(GLu
     using Fn = void(GL_APIENTRY*)(GLuint renderbuffer, GLsizei samples, GLsizei storageSamples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNamedRenderbufferStorageMultisampleAdvancedAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(renderbuffer, samples, storageSamples, internalformat, width, height);
 }
 
@@ -5059,6 +5769,7 @@ extern "C" void GL_APIENTRY glNormal3f(GLfloat nx, GLfloat ny, GLfloat nz) {
     using Fn = void(GL_APIENTRY*)(GLfloat nx, GLfloat ny, GLfloat nz);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNormal3f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(nx, ny, nz);
 }
 
@@ -5066,6 +5777,7 @@ extern "C" void GL_APIENTRY glNormal3x(GLfixed nx, GLfixed ny, GLfixed nz) {
     using Fn = void(GL_APIENTRY*)(GLfixed nx, GLfixed ny, GLfixed nz);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNormal3x", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(nx, ny, nz);
 }
 
@@ -5073,6 +5785,7 @@ extern "C" void GL_APIENTRY glNormalPointer(GLenum type, GLsizei stride, const v
     using Fn = void(GL_APIENTRY*)(GLenum type, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glNormalPointer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(type, stride, pointer);
 }
 
@@ -5080,6 +5793,7 @@ extern "C" void GL_APIENTRY glObjectLabel(GLenum identifier, GLuint name, GLsize
     using Fn = void(GL_APIENTRY*)(GLenum identifier, GLuint name, GLsizei length, const GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glObjectLabel", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(identifier, name, length, label);
 }
 
@@ -5087,6 +5801,7 @@ extern "C" void GL_APIENTRY glObjectLabelKHR(GLenum identifier, GLuint name, GLs
     using Fn = void(GL_APIENTRY*)(GLenum identifier, GLuint name, GLsizei length, const GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glObjectLabelKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(identifier, name, length, label);
 }
 
@@ -5094,6 +5809,7 @@ extern "C" void GL_APIENTRY glObjectPtrLabel(const void *ptr, GLsizei length, co
     using Fn = void(GL_APIENTRY*)(const void *ptr, GLsizei length, const GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glObjectPtrLabel", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(ptr, length, label);
 }
 
@@ -5101,6 +5817,7 @@ extern "C" void GL_APIENTRY glObjectPtrLabelKHR(const void *ptr, GLsizei length,
     using Fn = void(GL_APIENTRY*)(const void *ptr, GLsizei length, const GLchar *label);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glObjectPtrLabelKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(ptr, length, label);
 }
 
@@ -5108,6 +5825,7 @@ extern "C" void GL_APIENTRY glOrthof(GLfloat l, GLfloat r, GLfloat b, GLfloat t,
     using Fn = void(GL_APIENTRY*)(GLfloat l, GLfloat r, GLfloat b, GLfloat t, GLfloat n, GLfloat f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glOrthof", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(l, r, b, t, n, f);
 }
 
@@ -5115,6 +5833,7 @@ extern "C" void GL_APIENTRY glOrthox(GLfixed l, GLfixed r, GLfixed b, GLfixed t,
     using Fn = void(GL_APIENTRY*)(GLfixed l, GLfixed r, GLfixed b, GLfixed t, GLfixed n, GLfixed f);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glOrthox", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(l, r, b, t, n, f);
 }
 
@@ -5122,6 +5841,7 @@ extern "C" void GL_APIENTRY glPatchParameteri(GLenum pname, GLint value) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPatchParameteri", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, value);
 }
 
@@ -5129,6 +5849,7 @@ extern "C" void GL_APIENTRY glPatchParameteriEXT(GLenum pname, GLint value) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPatchParameteriEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, value);
 }
 
@@ -5136,6 +5857,7 @@ extern "C" void GL_APIENTRY glPatchParameteriOES(GLenum pname, GLint value) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPatchParameteriOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, value);
 }
 
@@ -5143,6 +5865,7 @@ extern "C" void GL_APIENTRY glPathCommandsNV(GLuint path, GLsizei numCommands, c
     using Fn = void(GL_APIENTRY*)(GLuint path, GLsizei numCommands, const GLubyte *commands, GLsizei numCoords, GLenum coordType, const void *coords);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathCommandsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, numCommands, commands, numCoords, coordType, coords);
 }
 
@@ -5150,6 +5873,7 @@ extern "C" void GL_APIENTRY glPathCoordsNV(GLuint path, GLsizei numCoords, GLenu
     using Fn = void(GL_APIENTRY*)(GLuint path, GLsizei numCoords, GLenum coordType, const void *coords);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathCoordsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, numCoords, coordType, coords);
 }
 
@@ -5157,6 +5881,7 @@ extern "C" void GL_APIENTRY glPathCoverDepthFuncNV(GLenum func) {
     using Fn = void(GL_APIENTRY*)(GLenum func);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathCoverDepthFuncNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func);
 }
 
@@ -5164,6 +5889,7 @@ extern "C" void GL_APIENTRY glPathDashArrayNV(GLuint path, GLsizei dashCount, co
     using Fn = void(GL_APIENTRY*)(GLuint path, GLsizei dashCount, const GLfloat *dashArray);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathDashArrayNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, dashCount, dashArray);
 }
 
@@ -5171,6 +5897,7 @@ extern "C" GLenum GL_APIENTRY glPathGlyphIndexArrayNV(GLuint firstPathName, GLen
     using Fn = GLenum(GL_APIENTRY*)(GLuint firstPathName, GLenum fontTarget, const void *fontName, GLbitfield fontStyle, GLuint firstGlyphIndex, GLsizei numGlyphs, GLuint pathParameterTemplate, GLfloat emScale);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathGlyphIndexArrayNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(firstPathName, fontTarget, fontName, fontStyle, firstGlyphIndex, numGlyphs, pathParameterTemplate, emScale);
 }
 
@@ -5178,6 +5905,7 @@ extern "C" GLenum GL_APIENTRY glPathGlyphIndexRangeNV(GLenum fontTarget, const v
     using Fn = GLenum(GL_APIENTRY*)(GLenum fontTarget, const void *fontName, GLbitfield fontStyle, GLuint pathParameterTemplate, GLfloat emScale, GLuint *baseAndCount);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathGlyphIndexRangeNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(fontTarget, fontName, fontStyle, pathParameterTemplate, emScale, baseAndCount);
 }
 
@@ -5185,6 +5913,7 @@ extern "C" void GL_APIENTRY glPathGlyphRangeNV(GLuint firstPathName, GLenum font
     using Fn = void(GL_APIENTRY*)(GLuint firstPathName, GLenum fontTarget, const void *fontName, GLbitfield fontStyle, GLuint firstGlyph, GLsizei numGlyphs, GLenum handleMissingGlyphs, GLuint pathParameterTemplate, GLfloat emScale);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathGlyphRangeNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(firstPathName, fontTarget, fontName, fontStyle, firstGlyph, numGlyphs, handleMissingGlyphs, pathParameterTemplate, emScale);
 }
 
@@ -5192,6 +5921,7 @@ extern "C" void GL_APIENTRY glPathGlyphsNV(GLuint firstPathName, GLenum fontTarg
     using Fn = void(GL_APIENTRY*)(GLuint firstPathName, GLenum fontTarget, const void *fontName, GLbitfield fontStyle, GLsizei numGlyphs, GLenum type, const void *charcodes, GLenum handleMissingGlyphs, GLuint pathParameterTemplate, GLfloat emScale);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathGlyphsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(firstPathName, fontTarget, fontName, fontStyle, numGlyphs, type, charcodes, handleMissingGlyphs, pathParameterTemplate, emScale);
 }
 
@@ -5199,6 +5929,7 @@ extern "C" GLenum GL_APIENTRY glPathMemoryGlyphIndexArrayNV(GLuint firstPathName
     using Fn = GLenum(GL_APIENTRY*)(GLuint firstPathName, GLenum fontTarget, GLsizeiptr fontSize, const void *fontData, GLsizei faceIndex, GLuint firstGlyphIndex, GLsizei numGlyphs, GLuint pathParameterTemplate, GLfloat emScale);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathMemoryGlyphIndexArrayNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(firstPathName, fontTarget, fontSize, fontData, faceIndex, firstGlyphIndex, numGlyphs, pathParameterTemplate, emScale);
 }
 
@@ -5206,6 +5937,7 @@ extern "C" void GL_APIENTRY glPathParameterfNV(GLuint path, GLenum pname, GLfloa
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum pname, GLfloat value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathParameterfNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, pname, value);
 }
 
@@ -5213,6 +5945,7 @@ extern "C" void GL_APIENTRY glPathParameterfvNV(GLuint path, GLenum pname, const
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum pname, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathParameterfvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, pname, value);
 }
 
@@ -5220,6 +5953,7 @@ extern "C" void GL_APIENTRY glPathParameteriNV(GLuint path, GLenum pname, GLint 
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathParameteriNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, pname, value);
 }
 
@@ -5227,6 +5961,7 @@ extern "C" void GL_APIENTRY glPathParameterivNV(GLuint path, GLenum pname, const
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum pname, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathParameterivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, pname, value);
 }
 
@@ -5234,6 +5969,7 @@ extern "C" void GL_APIENTRY glPathStencilDepthOffsetNV(GLfloat factor, GLfloat u
     using Fn = void(GL_APIENTRY*)(GLfloat factor, GLfloat units);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathStencilDepthOffsetNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(factor, units);
 }
 
@@ -5241,6 +5977,7 @@ extern "C" void GL_APIENTRY glPathStencilFuncNV(GLenum func, GLint ref, GLuint m
     using Fn = void(GL_APIENTRY*)(GLenum func, GLint ref, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathStencilFuncNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func, ref, mask);
 }
 
@@ -5248,6 +5985,7 @@ extern "C" void GL_APIENTRY glPathStringNV(GLuint path, GLenum format, GLsizei l
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum format, GLsizei length, const void *pathString);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathStringNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, format, length, pathString);
 }
 
@@ -5255,6 +5993,7 @@ extern "C" void GL_APIENTRY glPathSubCommandsNV(GLuint path, GLsizei commandStar
     using Fn = void(GL_APIENTRY*)(GLuint path, GLsizei commandStart, GLsizei commandsToDelete, GLsizei numCommands, const GLubyte *commands, GLsizei numCoords, GLenum coordType, const void *coords);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathSubCommandsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, commandStart, commandsToDelete, numCommands, commands, numCoords, coordType, coords);
 }
 
@@ -5262,6 +6001,7 @@ extern "C" void GL_APIENTRY glPathSubCoordsNV(GLuint path, GLsizei coordStart, G
     using Fn = void(GL_APIENTRY*)(GLuint path, GLsizei coordStart, GLsizei numCoords, GLenum coordType, const void *coords);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPathSubCoordsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, coordStart, numCoords, coordType, coords);
 }
 
@@ -5269,6 +6009,7 @@ extern "C" void GL_APIENTRY glPauseTransformFeedback(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPauseTransformFeedback", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -5276,6 +6017,7 @@ extern "C" void GL_APIENTRY glPixelLocalStorageBarrierANGLE(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPixelLocalStorageBarrierANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -5283,6 +6025,7 @@ extern "C" void GL_APIENTRY glPixelStorei(GLenum pname, GLint param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPixelStorei", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -5290,6 +6033,7 @@ extern "C" GLboolean GL_APIENTRY glPointAlongPathNV(GLuint path, GLsizei startSe
     using Fn = GLboolean(GL_APIENTRY*)(GLuint path, GLsizei startSegment, GLsizei numSegments, GLfloat distance, GLfloat *x, GLfloat *y, GLfloat *tangentX, GLfloat *tangentY);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointAlongPathNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(path, startSegment, numSegments, distance, x, y, tangentX, tangentY);
 }
 
@@ -5297,6 +6041,7 @@ extern "C" void GL_APIENTRY glPointParameterf(GLenum pname, GLfloat param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointParameterf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -5304,6 +6049,7 @@ extern "C" void GL_APIENTRY glPointParameterfv(GLenum pname, const GLfloat *para
     using Fn = void(GL_APIENTRY*)(GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointParameterfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -5311,6 +6057,7 @@ extern "C" void GL_APIENTRY glPointParameterx(GLenum pname, GLfixed param) {
     using Fn = void(GL_APIENTRY*)(GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointParameterx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, param);
 }
 
@@ -5318,6 +6065,7 @@ extern "C" void GL_APIENTRY glPointParameterxv(GLenum pname, const GLfixed *para
     using Fn = void(GL_APIENTRY*)(GLenum pname, const GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointParameterxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pname, params);
 }
 
@@ -5325,6 +6073,7 @@ extern "C" void GL_APIENTRY glPointSize(GLfloat size) {
     using Fn = void(GL_APIENTRY*)(GLfloat size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointSize", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(size);
 }
 
@@ -5332,6 +6081,7 @@ extern "C" void GL_APIENTRY glPointSizePointerOES(GLenum type, GLsizei stride, c
     using Fn = void(GL_APIENTRY*)(GLenum type, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointSizePointerOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(type, stride, pointer);
 }
 
@@ -5339,6 +6089,7 @@ extern "C" void GL_APIENTRY glPointSizex(GLfixed size) {
     using Fn = void(GL_APIENTRY*)(GLfixed size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPointSizex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(size);
 }
 
@@ -5346,6 +6097,7 @@ extern "C" void GL_APIENTRY glPolygonModeANGLE(GLenum face, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPolygonModeANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, mode);
 }
 
@@ -5353,6 +6105,7 @@ extern "C" void GL_APIENTRY glPolygonModeNV(GLenum face, GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPolygonModeNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, mode);
 }
 
@@ -5360,6 +6113,7 @@ extern "C" void GL_APIENTRY glPolygonOffset(GLfloat factor, GLfloat units) {
     using Fn = void(GL_APIENTRY*)(GLfloat factor, GLfloat units);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPolygonOffset", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(factor, units);
 }
 
@@ -5367,6 +6121,7 @@ extern "C" void GL_APIENTRY glPolygonOffsetClampEXT(GLfloat factor, GLfloat unit
     using Fn = void(GL_APIENTRY*)(GLfloat factor, GLfloat units, GLfloat clamp);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPolygonOffsetClampEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(factor, units, clamp);
 }
 
@@ -5374,6 +6129,7 @@ extern "C" void GL_APIENTRY glPolygonOffsetx(GLfixed factor, GLfixed units) {
     using Fn = void(GL_APIENTRY*)(GLfixed factor, GLfixed units);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPolygonOffsetx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(factor, units);
 }
 
@@ -5381,6 +6137,7 @@ extern "C" void GL_APIENTRY glPopDebugGroup(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPopDebugGroup", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -5388,6 +6145,7 @@ extern "C" void GL_APIENTRY glPopDebugGroupKHR(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPopDebugGroupKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -5395,6 +6153,7 @@ extern "C" void GL_APIENTRY glPopGroupMarkerEXT(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPopGroupMarkerEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -5402,6 +6161,7 @@ extern "C" void GL_APIENTRY glPopMatrix(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPopMatrix", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -5409,6 +6169,7 @@ extern "C" void GL_APIENTRY glPrimitiveBoundingBox(GLfloat minX, GLfloat minY, G
     using Fn = void(GL_APIENTRY*)(GLfloat minX, GLfloat minY, GLfloat minZ, GLfloat minW, GLfloat maxX, GLfloat maxY, GLfloat maxZ, GLfloat maxW);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPrimitiveBoundingBox", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(minX, minY, minZ, minW, maxX, maxY, maxZ, maxW);
 }
 
@@ -5416,6 +6177,7 @@ extern "C" void GL_APIENTRY glPrimitiveBoundingBoxEXT(GLfloat minX, GLfloat minY
     using Fn = void(GL_APIENTRY*)(GLfloat minX, GLfloat minY, GLfloat minZ, GLfloat minW, GLfloat maxX, GLfloat maxY, GLfloat maxZ, GLfloat maxW);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPrimitiveBoundingBoxEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(minX, minY, minZ, minW, maxX, maxY, maxZ, maxW);
 }
 
@@ -5423,6 +6185,7 @@ extern "C" void GL_APIENTRY glPrimitiveBoundingBoxOES(GLfloat minX, GLfloat minY
     using Fn = void(GL_APIENTRY*)(GLfloat minX, GLfloat minY, GLfloat minZ, GLfloat minW, GLfloat maxX, GLfloat maxY, GLfloat maxZ, GLfloat maxW);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPrimitiveBoundingBoxOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(minX, minY, minZ, minW, maxX, maxY, maxZ, maxW);
 }
 
@@ -5430,6 +6193,7 @@ extern "C" void GL_APIENTRY glProgramBinary(GLuint program, GLenum binaryFormat,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum binaryFormat, const void *binary, GLsizei length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramBinary", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, binaryFormat, binary, length);
 }
 
@@ -5437,6 +6201,7 @@ extern "C" void GL_APIENTRY glProgramBinaryOES(GLuint program, GLenum binaryForm
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum binaryFormat, const void *binary, GLint length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramBinaryOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, binaryFormat, binary, length);
 }
 
@@ -5444,6 +6209,7 @@ extern "C" void GL_APIENTRY glProgramParameteri(GLuint program, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramParameteri", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, pname, value);
 }
 
@@ -5451,6 +6217,7 @@ extern "C" void GL_APIENTRY glProgramParameteriEXT(GLuint program, GLenum pname,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLenum pname, GLint value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramParameteriEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, pname, value);
 }
 
@@ -5458,6 +6225,7 @@ extern "C" void GL_APIENTRY glProgramPathFragmentInputGenNV(GLuint program, GLin
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLenum genMode, GLint components, const GLfloat *coeffs);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramPathFragmentInputGenNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, genMode, components, coeffs);
 }
 
@@ -5465,6 +6233,7 @@ extern "C" void GL_APIENTRY glProgramUniform1f(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0);
 }
 
@@ -5472,6 +6241,7 @@ extern "C" void GL_APIENTRY glProgramUniform1fEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1fEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0);
 }
 
@@ -5479,6 +6249,7 @@ extern "C" void GL_APIENTRY glProgramUniform1fv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5486,6 +6257,7 @@ extern "C" void GL_APIENTRY glProgramUniform1fvEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5493,6 +6265,7 @@ extern "C" void GL_APIENTRY glProgramUniform1i(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0);
 }
 
@@ -5500,6 +6273,7 @@ extern "C" void GL_APIENTRY glProgramUniform1i64NV(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint64EXT x);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x);
 }
 
@@ -5507,6 +6281,7 @@ extern "C" void GL_APIENTRY glProgramUniform1i64vNV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5514,6 +6289,7 @@ extern "C" void GL_APIENTRY glProgramUniform1iEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1iEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0);
 }
 
@@ -5521,6 +6297,7 @@ extern "C" void GL_APIENTRY glProgramUniform1iv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5528,6 +6305,7 @@ extern "C" void GL_APIENTRY glProgramUniform1ivEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1ivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5535,6 +6313,7 @@ extern "C" void GL_APIENTRY glProgramUniform1ui(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0);
 }
 
@@ -5542,6 +6321,7 @@ extern "C" void GL_APIENTRY glProgramUniform1ui64NV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint64EXT x);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x);
 }
 
@@ -5549,6 +6329,7 @@ extern "C" void GL_APIENTRY glProgramUniform1ui64vNV(GLuint program, GLint locat
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5556,6 +6337,7 @@ extern "C" void GL_APIENTRY glProgramUniform1uiEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1uiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0);
 }
 
@@ -5563,6 +6345,7 @@ extern "C" void GL_APIENTRY glProgramUniform1uiv(GLuint program, GLint location,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5570,6 +6353,7 @@ extern "C" void GL_APIENTRY glProgramUniform1uivEXT(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform1uivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5577,6 +6361,7 @@ extern "C" void GL_APIENTRY glProgramUniform2f(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0, GLfloat v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1);
 }
 
@@ -5584,6 +6369,7 @@ extern "C" void GL_APIENTRY glProgramUniform2fEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0, GLfloat v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2fEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1);
 }
 
@@ -5591,6 +6377,7 @@ extern "C" void GL_APIENTRY glProgramUniform2fv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5598,6 +6385,7 @@ extern "C" void GL_APIENTRY glProgramUniform2fvEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5605,6 +6393,7 @@ extern "C" void GL_APIENTRY glProgramUniform2i(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0, GLint v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1);
 }
 
@@ -5612,6 +6401,7 @@ extern "C" void GL_APIENTRY glProgramUniform2i64NV(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint64EXT x, GLint64EXT y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x, y);
 }
 
@@ -5619,6 +6409,7 @@ extern "C" void GL_APIENTRY glProgramUniform2i64vNV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5626,6 +6417,7 @@ extern "C" void GL_APIENTRY glProgramUniform2iEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0, GLint v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2iEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1);
 }
 
@@ -5633,6 +6425,7 @@ extern "C" void GL_APIENTRY glProgramUniform2iv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5640,6 +6433,7 @@ extern "C" void GL_APIENTRY glProgramUniform2ivEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2ivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5647,6 +6441,7 @@ extern "C" void GL_APIENTRY glProgramUniform2ui(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0, GLuint v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1);
 }
 
@@ -5654,6 +6449,7 @@ extern "C" void GL_APIENTRY glProgramUniform2ui64NV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint64EXT x, GLuint64EXT y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x, y);
 }
 
@@ -5661,6 +6457,7 @@ extern "C" void GL_APIENTRY glProgramUniform2ui64vNV(GLuint program, GLint locat
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5668,6 +6465,7 @@ extern "C" void GL_APIENTRY glProgramUniform2uiEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0, GLuint v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2uiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1);
 }
 
@@ -5675,6 +6473,7 @@ extern "C" void GL_APIENTRY glProgramUniform2uiv(GLuint program, GLint location,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5682,6 +6481,7 @@ extern "C" void GL_APIENTRY glProgramUniform2uivEXT(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform2uivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5689,6 +6489,7 @@ extern "C" void GL_APIENTRY glProgramUniform3f(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2);
 }
 
@@ -5696,6 +6497,7 @@ extern "C" void GL_APIENTRY glProgramUniform3fEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3fEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2);
 }
 
@@ -5703,6 +6505,7 @@ extern "C" void GL_APIENTRY glProgramUniform3fv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5710,6 +6513,7 @@ extern "C" void GL_APIENTRY glProgramUniform3fvEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5717,6 +6521,7 @@ extern "C" void GL_APIENTRY glProgramUniform3i(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0, GLint v1, GLint v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2);
 }
 
@@ -5724,6 +6529,7 @@ extern "C" void GL_APIENTRY glProgramUniform3i64NV(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint64EXT x, GLint64EXT y, GLint64EXT z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x, y, z);
 }
 
@@ -5731,6 +6537,7 @@ extern "C" void GL_APIENTRY glProgramUniform3i64vNV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5738,6 +6545,7 @@ extern "C" void GL_APIENTRY glProgramUniform3iEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0, GLint v1, GLint v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3iEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2);
 }
 
@@ -5745,6 +6553,7 @@ extern "C" void GL_APIENTRY glProgramUniform3iv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5752,6 +6561,7 @@ extern "C" void GL_APIENTRY glProgramUniform3ivEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3ivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5759,6 +6569,7 @@ extern "C" void GL_APIENTRY glProgramUniform3ui(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0, GLuint v1, GLuint v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2);
 }
 
@@ -5766,6 +6577,7 @@ extern "C" void GL_APIENTRY glProgramUniform3ui64NV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint64EXT x, GLuint64EXT y, GLuint64EXT z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x, y, z);
 }
 
@@ -5773,6 +6585,7 @@ extern "C" void GL_APIENTRY glProgramUniform3ui64vNV(GLuint program, GLint locat
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5780,6 +6593,7 @@ extern "C" void GL_APIENTRY glProgramUniform3uiEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0, GLuint v1, GLuint v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3uiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2);
 }
 
@@ -5787,6 +6601,7 @@ extern "C" void GL_APIENTRY glProgramUniform3uiv(GLuint program, GLint location,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5794,6 +6609,7 @@ extern "C" void GL_APIENTRY glProgramUniform3uivEXT(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform3uivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5801,6 +6617,7 @@ extern "C" void GL_APIENTRY glProgramUniform4f(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2, v3);
 }
 
@@ -5808,6 +6625,7 @@ extern "C" void GL_APIENTRY glProgramUniform4fEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4fEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2, v3);
 }
 
@@ -5815,6 +6633,7 @@ extern "C" void GL_APIENTRY glProgramUniform4fv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5822,6 +6641,7 @@ extern "C" void GL_APIENTRY glProgramUniform4fvEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5829,6 +6649,7 @@ extern "C" void GL_APIENTRY glProgramUniform4i(GLuint program, GLint location, G
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2, v3);
 }
 
@@ -5836,6 +6657,7 @@ extern "C" void GL_APIENTRY glProgramUniform4i64NV(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint64EXT x, GLint64EXT y, GLint64EXT z, GLint64EXT w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x, y, z, w);
 }
 
@@ -5843,6 +6665,7 @@ extern "C" void GL_APIENTRY glProgramUniform4i64vNV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5850,6 +6673,7 @@ extern "C" void GL_APIENTRY glProgramUniform4iEXT(GLuint program, GLint location
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4iEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2, v3);
 }
 
@@ -5857,6 +6681,7 @@ extern "C" void GL_APIENTRY glProgramUniform4iv(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5864,6 +6689,7 @@ extern "C" void GL_APIENTRY glProgramUniform4ivEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4ivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5871,6 +6697,7 @@ extern "C" void GL_APIENTRY glProgramUniform4ui(GLuint program, GLint location, 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2, v3);
 }
 
@@ -5878,6 +6705,7 @@ extern "C" void GL_APIENTRY glProgramUniform4ui64NV(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint64EXT x, GLuint64EXT y, GLuint64EXT z, GLuint64EXT w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, x, y, z, w);
 }
 
@@ -5885,6 +6713,7 @@ extern "C" void GL_APIENTRY glProgramUniform4ui64vNV(GLuint program, GLint locat
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5892,6 +6721,7 @@ extern "C" void GL_APIENTRY glProgramUniform4uiEXT(GLuint program, GLint locatio
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4uiEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, v0, v1, v2, v3);
 }
 
@@ -5899,6 +6729,7 @@ extern "C" void GL_APIENTRY glProgramUniform4uiv(GLuint program, GLint location,
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5906,6 +6737,7 @@ extern "C" void GL_APIENTRY glProgramUniform4uivEXT(GLuint program, GLint locati
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniform4uivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, value);
 }
 
@@ -5913,6 +6745,7 @@ extern "C" void GL_APIENTRY glProgramUniformHandleui64IMG(GLuint program, GLint 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint64 value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformHandleui64IMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, value);
 }
 
@@ -5920,6 +6753,7 @@ extern "C" void GL_APIENTRY glProgramUniformHandleui64NV(GLuint program, GLint l
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLuint64 value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformHandleui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, value);
 }
 
@@ -5927,6 +6761,7 @@ extern "C" void GL_APIENTRY glProgramUniformHandleui64vIMG(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint64 *values);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformHandleui64vIMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, values);
 }
 
@@ -5934,6 +6769,7 @@ extern "C" void GL_APIENTRY glProgramUniformHandleui64vNV(GLuint program, GLint 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, const GLuint64 *values);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformHandleui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, values);
 }
 
@@ -5941,6 +6777,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix2fv(GLuint program, GLint loca
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5948,6 +6785,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix2fvEXT(GLuint program, GLint l
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix2fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5955,6 +6793,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix2x3fv(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix2x3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5962,6 +6801,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix2x3fvEXT(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix2x3fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5969,6 +6809,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix2x4fv(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix2x4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5976,6 +6817,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix2x4fvEXT(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix2x4fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5983,6 +6825,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix3fv(GLuint program, GLint loca
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5990,6 +6833,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix3fvEXT(GLuint program, GLint l
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix3fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -5997,6 +6841,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix3x2fv(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix3x2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6004,6 +6849,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix3x2fvEXT(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix3x2fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6011,6 +6857,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix3x4fv(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix3x4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6018,6 +6865,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix3x4fvEXT(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix3x4fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6025,6 +6873,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix4fv(GLuint program, GLint loca
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6032,6 +6881,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix4fvEXT(GLuint program, GLint l
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix4fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6039,6 +6889,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix4x2fv(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix4x2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6046,6 +6897,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix4x2fvEXT(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix4x2fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6053,6 +6905,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix4x3fv(GLuint program, GLint lo
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix4x3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6060,6 +6913,7 @@ extern "C" void GL_APIENTRY glProgramUniformMatrix4x3fvEXT(GLuint program, GLint
     using Fn = void(GL_APIENTRY*)(GLuint program, GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProgramUniformMatrix4x3fvEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, location, count, transpose, value);
 }
 
@@ -6067,6 +6921,7 @@ extern "C" void GL_APIENTRY glProvokingVertexANGLE(GLenum provokeMode) {
     using Fn = void(GL_APIENTRY*)(GLenum provokeMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glProvokingVertexANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(provokeMode);
 }
 
@@ -6074,6 +6929,7 @@ extern "C" void GL_APIENTRY glPushDebugGroup(GLenum source, GLuint id, GLsizei l
     using Fn = void(GL_APIENTRY*)(GLenum source, GLuint id, GLsizei length, const GLchar *message);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPushDebugGroup", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(source, id, length, message);
 }
 
@@ -6081,6 +6937,7 @@ extern "C" void GL_APIENTRY glPushDebugGroupKHR(GLenum source, GLuint id, GLsize
     using Fn = void(GL_APIENTRY*)(GLenum source, GLuint id, GLsizei length, const GLchar *message);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPushDebugGroupKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(source, id, length, message);
 }
 
@@ -6088,6 +6945,7 @@ extern "C" void GL_APIENTRY glPushGroupMarkerEXT(GLsizei length, const GLchar *m
     using Fn = void(GL_APIENTRY*)(GLsizei length, const GLchar *marker);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPushGroupMarkerEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(length, marker);
 }
 
@@ -6095,6 +6953,7 @@ extern "C" void GL_APIENTRY glPushMatrix(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glPushMatrix", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -6102,6 +6961,7 @@ extern "C" void GL_APIENTRY glQueryCounterEXT(GLuint id, GLenum target) {
     using Fn = void(GL_APIENTRY*)(GLuint id, GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glQueryCounterEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(id, target);
 }
 
@@ -6109,6 +6969,7 @@ extern "C" void GL_APIENTRY glRasterSamplesEXT(GLuint samples, GLboolean fixedsa
     using Fn = void(GL_APIENTRY*)(GLuint samples, GLboolean fixedsamplelocations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRasterSamplesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(samples, fixedsamplelocations);
 }
 
@@ -6116,6 +6977,7 @@ extern "C" void GL_APIENTRY glReadBuffer(GLenum src) {
     using Fn = void(GL_APIENTRY*)(GLenum src);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadBuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(src);
 }
 
@@ -6123,6 +6985,7 @@ extern "C" void GL_APIENTRY glReadBufferIndexedEXT(GLenum src, GLint index) {
     using Fn = void(GL_APIENTRY*)(GLenum src, GLint index);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadBufferIndexedEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(src, index);
 }
 
@@ -6130,6 +6993,7 @@ extern "C" void GL_APIENTRY glReadBufferNV(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadBufferNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -6137,6 +7001,7 @@ extern "C" void GL_APIENTRY glReadPixels(GLint x, GLint y, GLsizei width, GLsize
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadPixels", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, format, type, pixels);
 }
 
@@ -6144,6 +7009,7 @@ extern "C" void GL_APIENTRY glReadPixelsRobustANGLE(GLint x, GLint y, GLsizei wi
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLsizei bufSize, GLsizei *length, GLsizei *columns, GLsizei *rows, void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadPixelsRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, format, type, bufSize, length, columns, rows, pixels);
 }
 
@@ -6151,6 +7017,7 @@ extern "C" void GL_APIENTRY glReadnPixels(GLint x, GLint y, GLsizei width, GLsiz
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLsizei bufSize, void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadnPixels", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, format, type, bufSize, data);
 }
 
@@ -6158,6 +7025,7 @@ extern "C" void GL_APIENTRY glReadnPixelsEXT(GLint x, GLint y, GLsizei width, GL
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLsizei bufSize, void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadnPixelsEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, format, type, bufSize, data);
 }
 
@@ -6165,6 +7033,7 @@ extern "C" void GL_APIENTRY glReadnPixelsKHR(GLint x, GLint y, GLsizei width, GL
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLsizei bufSize, void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadnPixelsKHR", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, format, type, bufSize, data);
 }
 
@@ -6172,6 +7041,7 @@ extern "C" void GL_APIENTRY glReadnPixelsRobustANGLE(GLint x, GLint y, GLsizei w
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLsizei bufSize, GLsizei *length, GLsizei *columns, GLsizei *rows, void *data);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReadnPixelsRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, format, type, bufSize, length, columns, rows, data);
 }
 
@@ -6179,6 +7049,7 @@ extern "C" GLboolean GL_APIENTRY glReleaseKeyedMutexWin32EXT(GLuint memory, GLui
     using Fn = GLboolean(GL_APIENTRY*)(GLuint memory, GLuint64 key);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReleaseKeyedMutexWin32EXT", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(memory, key);
 }
 
@@ -6186,6 +7057,7 @@ extern "C" void GL_APIENTRY glReleaseShaderCompiler(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReleaseShaderCompiler", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -6193,6 +7065,7 @@ extern "C" void GL_APIENTRY glReleaseTexturesANGLE(GLuint numTexture, const GLui
     using Fn = void(GL_APIENTRY*)(GLuint numTexture, const GLuint *textures, GLenum *layouts);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glReleaseTexturesANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numTexture, textures, layouts);
 }
 
@@ -6200,6 +7073,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorage(GLenum target, GLenum internal
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorage", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, width, height);
 }
 
@@ -6207,6 +7081,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisample(GLenum target, GLsi
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisample", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
 }
 
@@ -6214,6 +7089,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleANGLE(GLenum target,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisampleANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
 }
 
@@ -6221,6 +7097,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleAPPLE(GLenum target,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisampleAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
 }
 
@@ -6228,6 +7105,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleAdvancedAMD(GLenum t
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLsizei storageSamples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisampleAdvancedAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, storageSamples, internalformat, width, height);
 }
 
@@ -6235,6 +7113,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleEXT(GLenum target, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisampleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
 }
 
@@ -6242,6 +7121,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleIMG(GLenum target, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisampleIMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
 }
 
@@ -6249,6 +7129,7 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleNV(GLenum target, GL
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageMultisampleNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
 }
 
@@ -6256,6 +7137,7 @@ extern "C" void GL_APIENTRY glRequestExtensionANGLE(const GLchar *name) {
     using Fn = void(GL_APIENTRY*)(const GLchar *name);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRequestExtensionANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(name);
 }
 
@@ -6263,6 +7145,7 @@ extern "C" void GL_APIENTRY glResetMemoryObjectParameterNV(GLuint memory, GLenum
     using Fn = void(GL_APIENTRY*)(GLuint memory, GLenum pname);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glResetMemoryObjectParameterNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(memory, pname);
 }
 
@@ -6270,6 +7153,7 @@ extern "C" void GL_APIENTRY glResolveDepthValuesNV(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glResolveDepthValuesNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -6277,6 +7161,7 @@ extern "C" void GL_APIENTRY glResolveMultisampleFramebufferAPPLE(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glResolveMultisampleFramebufferAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -6284,6 +7169,7 @@ extern "C" void GL_APIENTRY glResumeTransformFeedback(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glResumeTransformFeedback", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -6291,6 +7177,7 @@ extern "C" void GL_APIENTRY glRotatef(GLfloat angle, GLfloat x, GLfloat y, GLflo
     using Fn = void(GL_APIENTRY*)(GLfloat angle, GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRotatef", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(angle, x, y, z);
 }
 
@@ -6298,6 +7185,7 @@ extern "C" void GL_APIENTRY glRotatex(GLfixed angle, GLfixed x, GLfixed y, GLfix
     using Fn = void(GL_APIENTRY*)(GLfixed angle, GLfixed x, GLfixed y, GLfixed z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRotatex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(angle, x, y, z);
 }
 
@@ -6305,6 +7193,7 @@ extern "C" void GL_APIENTRY glSampleCoverage(GLfloat value, GLboolean invert) {
     using Fn = void(GL_APIENTRY*)(GLfloat value, GLboolean invert);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSampleCoverage", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(value, invert);
 }
 
@@ -6312,6 +7201,7 @@ extern "C" void GL_APIENTRY glSampleCoveragex(GLclampx value, GLboolean invert) 
     using Fn = void(GL_APIENTRY*)(GLclampx value, GLboolean invert);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSampleCoveragex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(value, invert);
 }
 
@@ -6319,6 +7209,7 @@ extern "C" void GL_APIENTRY glSampleMaski(GLuint maskNumber, GLbitfield mask) {
     using Fn = void(GL_APIENTRY*)(GLuint maskNumber, GLbitfield mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSampleMaski", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(maskNumber, mask);
 }
 
@@ -6326,6 +7217,7 @@ extern "C" void GL_APIENTRY glSampleMaskiANGLE(GLuint maskNumber, GLbitfield mas
     using Fn = void(GL_APIENTRY*)(GLuint maskNumber, GLbitfield mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSampleMaskiANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(maskNumber, mask);
 }
 
@@ -6333,6 +7225,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIiv(GLuint sampler, GLenum pname, 
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6340,6 +7233,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIivEXT(GLuint sampler, GLenum pnam
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6347,6 +7241,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIivOES(GLuint sampler, GLenum pnam
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6354,6 +7249,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIivRobustANGLE(GLuint sampler, GLe
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, const GLint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, param);
 }
 
@@ -6361,6 +7257,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIuiv(GLuint sampler, GLenum pname,
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLuint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6368,6 +7265,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIuivEXT(GLuint sampler, GLenum pna
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLuint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIuivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6375,6 +7273,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIuivOES(GLuint sampler, GLenum pna
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLuint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIuivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6382,6 +7281,7 @@ extern "C" void GL_APIENTRY glSamplerParameterIuivRobustANGLE(GLuint sampler, GL
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, const GLuint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterIuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, param);
 }
 
@@ -6389,6 +7289,7 @@ extern "C" void GL_APIENTRY glSamplerParameterf(GLuint sampler, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6396,6 +7297,7 @@ extern "C" void GL_APIENTRY glSamplerParameterfv(GLuint sampler, GLenum pname, c
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLfloat *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6403,6 +7305,7 @@ extern "C" void GL_APIENTRY glSamplerParameterfvRobustANGLE(GLuint sampler, GLen
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, const GLfloat *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, param);
 }
 
@@ -6410,6 +7313,7 @@ extern "C" void GL_APIENTRY glSamplerParameteri(GLuint sampler, GLenum pname, GL
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameteri", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6417,6 +7321,7 @@ extern "C" void GL_APIENTRY glSamplerParameteriv(GLuint sampler, GLenum pname, c
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, const GLint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, param);
 }
 
@@ -6424,6 +7329,7 @@ extern "C" void GL_APIENTRY glSamplerParameterivRobustANGLE(GLuint sampler, GLen
     using Fn = void(GL_APIENTRY*)(GLuint sampler, GLenum pname, GLsizei bufSize, const GLint *param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSamplerParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sampler, pname, bufSize, param);
 }
 
@@ -6431,6 +7337,7 @@ extern "C" void GL_APIENTRY glScalef(GLfloat x, GLfloat y, GLfloat z) {
     using Fn = void(GL_APIENTRY*)(GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScalef", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, z);
 }
 
@@ -6438,6 +7345,7 @@ extern "C" void GL_APIENTRY glScalex(GLfixed x, GLfixed y, GLfixed z) {
     using Fn = void(GL_APIENTRY*)(GLfixed x, GLfixed y, GLfixed z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScalex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, z);
 }
 
@@ -6445,6 +7353,7 @@ extern "C" void GL_APIENTRY glScissor(GLint x, GLint y, GLsizei width, GLsizei h
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissor", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height);
 }
 
@@ -6452,6 +7361,7 @@ extern "C" void GL_APIENTRY glScissorArrayvNV(GLuint first, GLsizei count, const
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorArrayvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -6459,6 +7369,7 @@ extern "C" void GL_APIENTRY glScissorArrayvOES(GLuint first, GLsizei count, cons
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorArrayvOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -6466,6 +7377,7 @@ extern "C" void GL_APIENTRY glScissorExclusiveArrayvNV(GLuint first, GLsizei cou
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorExclusiveArrayvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -6473,6 +7385,7 @@ extern "C" void GL_APIENTRY glScissorExclusiveNV(GLint x, GLint y, GLsizei width
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorExclusiveNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height);
 }
 
@@ -6480,6 +7393,7 @@ extern "C" void GL_APIENTRY glScissorIndexedNV(GLuint index, GLint left, GLint b
     using Fn = void(GL_APIENTRY*)(GLuint index, GLint left, GLint bottom, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorIndexedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, left, bottom, width, height);
 }
 
@@ -6487,6 +7401,7 @@ extern "C" void GL_APIENTRY glScissorIndexedOES(GLuint index, GLint left, GLint 
     using Fn = void(GL_APIENTRY*)(GLuint index, GLint left, GLint bottom, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorIndexedOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, left, bottom, width, height);
 }
 
@@ -6494,6 +7409,7 @@ extern "C" void GL_APIENTRY glScissorIndexedvNV(GLuint index, const GLint *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorIndexedvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -6501,6 +7417,7 @@ extern "C" void GL_APIENTRY glScissorIndexedvOES(GLuint index, const GLint *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glScissorIndexedvOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -6508,6 +7425,7 @@ extern "C" void GL_APIENTRY glSelectPerfMonitorCountersAMD(GLuint monitor, GLboo
     using Fn = void(GL_APIENTRY*)(GLuint monitor, GLboolean enable, GLuint group, GLint numCounters, GLuint *counterList);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSelectPerfMonitorCountersAMD", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(monitor, enable, group, numCounters, counterList);
 }
 
@@ -6515,6 +7433,7 @@ extern "C" void GL_APIENTRY glSemaphoreParameterivNV(GLuint semaphore, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSemaphoreParameterivNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, pname, params);
 }
 
@@ -6522,6 +7441,7 @@ extern "C" void GL_APIENTRY glSemaphoreParameterui64vEXT(GLuint semaphore, GLenu
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLenum pname, const GLuint64 *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSemaphoreParameterui64vEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, pname, params);
 }
 
@@ -6529,6 +7449,7 @@ extern "C" void GL_APIENTRY glSetFenceNV(GLuint fence, GLenum condition) {
     using Fn = void(GL_APIENTRY*)(GLuint fence, GLenum condition);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSetFenceNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(fence, condition);
 }
 
@@ -6536,6 +7457,7 @@ extern "C" void GL_APIENTRY glShadeModel(GLenum mode) {
     using Fn = void(GL_APIENTRY*)(GLenum mode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadeModel", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode);
 }
 
@@ -6543,6 +7465,7 @@ extern "C" void GL_APIENTRY glShaderBinary(GLsizei count, const GLuint *shaders,
     using Fn = void(GL_APIENTRY*)(GLsizei count, const GLuint *shaders, GLenum binaryFormat, const void *binary, GLsizei length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShaderBinary", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(count, shaders, binaryFormat, binary, length);
 }
 
@@ -6550,6 +7473,7 @@ extern "C" void GL_APIENTRY glShaderSource(GLuint shader, GLsizei count, const G
     using Fn = void(GL_APIENTRY*)(GLuint shader, GLsizei count, const GLchar *const*string, const GLint *length);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShaderSource", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(shader, count, string, length);
 }
 
@@ -6557,6 +7481,7 @@ extern "C" void GL_APIENTRY glShadingRateCombinerOpsEXT(GLenum combinerOp0, GLen
     using Fn = void(GL_APIENTRY*)(GLenum combinerOp0, GLenum combinerOp1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateCombinerOpsEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(combinerOp0, combinerOp1);
 }
 
@@ -6564,6 +7489,7 @@ extern "C" void GL_APIENTRY glShadingRateEXT(GLenum rate) {
     using Fn = void(GL_APIENTRY*)(GLenum rate);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(rate);
 }
 
@@ -6571,6 +7497,7 @@ extern "C" void GL_APIENTRY glShadingRateImageBarrierNV(GLboolean synchronize) {
     using Fn = void(GL_APIENTRY*)(GLboolean synchronize);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateImageBarrierNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(synchronize);
 }
 
@@ -6578,6 +7505,7 @@ extern "C" void GL_APIENTRY glShadingRateImagePaletteNV(GLuint viewport, GLuint 
     using Fn = void(GL_APIENTRY*)(GLuint viewport, GLuint first, GLsizei count, const GLenum *rates);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateImagePaletteNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(viewport, first, count, rates);
 }
 
@@ -6585,6 +7513,7 @@ extern "C" void GL_APIENTRY glShadingRateQCOM(GLenum rate) {
     using Fn = void(GL_APIENTRY*)(GLenum rate);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(rate);
 }
 
@@ -6592,6 +7521,7 @@ extern "C" void GL_APIENTRY glShadingRateSampleOrderCustomNV(GLenum rate, GLuint
     using Fn = void(GL_APIENTRY*)(GLenum rate, GLuint samples, const GLint *locations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateSampleOrderCustomNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(rate, samples, locations);
 }
 
@@ -6599,6 +7529,7 @@ extern "C" void GL_APIENTRY glShadingRateSampleOrderNV(GLenum order) {
     using Fn = void(GL_APIENTRY*)(GLenum order);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glShadingRateSampleOrderNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(order);
 }
 
@@ -6606,6 +7537,7 @@ extern "C" void GL_APIENTRY glSignalSemaphoreEXT(GLuint semaphore, GLuint numBuf
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLuint numBufferBarriers, const GLuint *buffers, GLuint numTextureBarriers, const GLuint *textures, const GLenum *dstLayouts);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSignalSemaphoreEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, numBufferBarriers, buffers, numTextureBarriers, textures, dstLayouts);
 }
 
@@ -6613,6 +7545,7 @@ extern "C" void GL_APIENTRY glSignalVkFenceNV(GLuint64 vkFence) {
     using Fn = void(GL_APIENTRY*)(GLuint64 vkFence);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSignalVkFenceNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(vkFence);
 }
 
@@ -6620,6 +7553,7 @@ extern "C" void GL_APIENTRY glSignalVkSemaphoreNV(GLuint64 vkSemaphore) {
     using Fn = void(GL_APIENTRY*)(GLuint64 vkSemaphore);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSignalVkSemaphoreNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(vkSemaphore);
 }
 
@@ -6627,6 +7561,7 @@ extern "C" void GL_APIENTRY glStartTilingQCOM(GLuint x, GLuint y, GLuint width, 
     using Fn = void(GL_APIENTRY*)(GLuint x, GLuint y, GLuint width, GLuint height, GLbitfield preserveMask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStartTilingQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height, preserveMask);
 }
 
@@ -6634,6 +7569,7 @@ extern "C" void GL_APIENTRY glStencilFillPathInstancedNV(GLsizei numPaths, GLenu
     using Fn = void(GL_APIENTRY*)(GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLenum fillMode, GLuint mask, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilFillPathInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numPaths, pathNameType, paths, pathBase, fillMode, mask, transformType, transformValues);
 }
 
@@ -6641,6 +7577,7 @@ extern "C" void GL_APIENTRY glStencilFillPathNV(GLuint path, GLenum fillMode, GL
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum fillMode, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilFillPathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, fillMode, mask);
 }
 
@@ -6648,6 +7585,7 @@ extern "C" void GL_APIENTRY glStencilFunc(GLenum func, GLint ref, GLuint mask) {
     using Fn = void(GL_APIENTRY*)(GLenum func, GLint ref, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilFunc", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(func, ref, mask);
 }
 
@@ -6655,6 +7593,7 @@ extern "C" void GL_APIENTRY glStencilFuncSeparate(GLenum face, GLenum func, GLin
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum func, GLint ref, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilFuncSeparate", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, func, ref, mask);
 }
 
@@ -6662,6 +7601,7 @@ extern "C" void GL_APIENTRY glStencilMask(GLuint mask) {
     using Fn = void(GL_APIENTRY*)(GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilMask", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mask);
 }
 
@@ -6669,6 +7609,7 @@ extern "C" void GL_APIENTRY glStencilMaskSeparate(GLenum face, GLuint mask) {
     using Fn = void(GL_APIENTRY*)(GLenum face, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilMaskSeparate", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, mask);
 }
 
@@ -6676,6 +7617,7 @@ extern "C" void GL_APIENTRY glStencilOp(GLenum fail, GLenum zfail, GLenum zpass)
     using Fn = void(GL_APIENTRY*)(GLenum fail, GLenum zfail, GLenum zpass);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilOp", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(fail, zfail, zpass);
 }
 
@@ -6683,6 +7625,7 @@ extern "C" void GL_APIENTRY glStencilOpSeparate(GLenum face, GLenum sfail, GLenu
     using Fn = void(GL_APIENTRY*)(GLenum face, GLenum sfail, GLenum dpfail, GLenum dppass);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilOpSeparate", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(face, sfail, dpfail, dppass);
 }
 
@@ -6690,6 +7633,7 @@ extern "C" void GL_APIENTRY glStencilStrokePathInstancedNV(GLsizei numPaths, GLe
     using Fn = void(GL_APIENTRY*)(GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLint reference, GLuint mask, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilStrokePathInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numPaths, pathNameType, paths, pathBase, reference, mask, transformType, transformValues);
 }
 
@@ -6697,6 +7641,7 @@ extern "C" void GL_APIENTRY glStencilStrokePathNV(GLuint path, GLint reference, 
     using Fn = void(GL_APIENTRY*)(GLuint path, GLint reference, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilStrokePathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, reference, mask);
 }
 
@@ -6704,6 +7649,7 @@ extern "C" void GL_APIENTRY glStencilThenCoverFillPathInstancedNV(GLsizei numPat
     using Fn = void(GL_APIENTRY*)(GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLenum fillMode, GLuint mask, GLenum coverMode, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilThenCoverFillPathInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numPaths, pathNameType, paths, pathBase, fillMode, mask, coverMode, transformType, transformValues);
 }
 
@@ -6711,6 +7657,7 @@ extern "C" void GL_APIENTRY glStencilThenCoverFillPathNV(GLuint path, GLenum fil
     using Fn = void(GL_APIENTRY*)(GLuint path, GLenum fillMode, GLuint mask, GLenum coverMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilThenCoverFillPathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, fillMode, mask, coverMode);
 }
 
@@ -6718,6 +7665,7 @@ extern "C" void GL_APIENTRY glStencilThenCoverStrokePathInstancedNV(GLsizei numP
     using Fn = void(GL_APIENTRY*)(GLsizei numPaths, GLenum pathNameType, const void *paths, GLuint pathBase, GLint reference, GLuint mask, GLenum coverMode, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilThenCoverStrokePathInstancedNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(numPaths, pathNameType, paths, pathBase, reference, mask, coverMode, transformType, transformValues);
 }
 
@@ -6725,6 +7673,7 @@ extern "C" void GL_APIENTRY glStencilThenCoverStrokePathNV(GLuint path, GLint re
     using Fn = void(GL_APIENTRY*)(GLuint path, GLint reference, GLuint mask, GLenum coverMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glStencilThenCoverStrokePathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(path, reference, mask, coverMode);
 }
 
@@ -6732,6 +7681,7 @@ extern "C" void GL_APIENTRY glSubpixelPrecisionBiasNV(GLuint xbits, GLuint ybits
     using Fn = void(GL_APIENTRY*)(GLuint xbits, GLuint ybits);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glSubpixelPrecisionBiasNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(xbits, ybits);
 }
 
@@ -6739,6 +7689,7 @@ extern "C" GLboolean GL_APIENTRY glTestFenceNV(GLuint fence) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint fence);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTestFenceNV", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(fence);
 }
 
@@ -6746,6 +7697,7 @@ extern "C" void GL_APIENTRY glTexAttachMemoryNV(GLenum target, GLuint memory, GL
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexAttachMemoryNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, memory, offset);
 }
 
@@ -6753,6 +7705,7 @@ extern "C" void GL_APIENTRY glTexBuffer(GLenum target, GLenum internalformat, GL
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLuint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexBuffer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, buffer);
 }
 
@@ -6760,6 +7713,7 @@ extern "C" void GL_APIENTRY glTexBufferEXT(GLenum target, GLenum internalformat,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLuint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexBufferEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, buffer);
 }
 
@@ -6767,6 +7721,7 @@ extern "C" void GL_APIENTRY glTexBufferOES(GLenum target, GLenum internalformat,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLuint buffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexBufferOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, buffer);
 }
 
@@ -6774,6 +7729,7 @@ extern "C" void GL_APIENTRY glTexBufferRange(GLenum target, GLenum internalforma
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLuint buffer, GLintptr offset, GLsizeiptr size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexBufferRange", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, buffer, offset, size);
 }
 
@@ -6781,6 +7737,7 @@ extern "C" void GL_APIENTRY glTexBufferRangeEXT(GLenum target, GLenum internalfo
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLuint buffer, GLintptr offset, GLsizeiptr size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexBufferRangeEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, buffer, offset, size);
 }
 
@@ -6788,6 +7745,7 @@ extern "C" void GL_APIENTRY glTexBufferRangeOES(GLenum target, GLenum internalfo
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLuint buffer, GLintptr offset, GLsizeiptr size);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexBufferRangeOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, internalformat, buffer, offset, size);
 }
 
@@ -6795,6 +7753,7 @@ extern "C" void GL_APIENTRY glTexCoordPointer(GLint size, GLenum type, GLsizei s
     using Fn = void(GL_APIENTRY*)(GLint size, GLenum type, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexCoordPointer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(size, type, stride, pointer);
 }
 
@@ -6802,6 +7761,7 @@ extern "C" void GL_APIENTRY glTexEnvf(GLenum target, GLenum pname, GLfloat param
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEnvf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -6809,6 +7769,7 @@ extern "C" void GL_APIENTRY glTexEnvfv(GLenum target, GLenum pname, const GLfloa
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEnvfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6816,6 +7777,7 @@ extern "C" void GL_APIENTRY glTexEnvi(GLenum target, GLenum pname, GLint param) 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEnvi", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -6823,6 +7785,7 @@ extern "C" void GL_APIENTRY glTexEnviv(GLenum target, GLenum pname, const GLint 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEnviv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6830,6 +7793,7 @@ extern "C" void GL_APIENTRY glTexEnvx(GLenum target, GLenum pname, GLfixed param
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEnvx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -6837,6 +7801,7 @@ extern "C" void GL_APIENTRY glTexEnvxv(GLenum target, GLenum pname, const GLfixe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEnvxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6844,6 +7809,7 @@ extern "C" void GL_APIENTRY glTexEstimateMotionQCOM(GLuint ref, GLuint target, G
     using Fn = void(GL_APIENTRY*)(GLuint ref, GLuint target, GLuint output);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEstimateMotionQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(ref, target, output);
 }
 
@@ -6851,6 +7817,7 @@ extern "C" void GL_APIENTRY glTexEstimateMotionRegionsQCOM(GLuint ref, GLuint ta
     using Fn = void(GL_APIENTRY*)(GLuint ref, GLuint target, GLuint output, GLuint mask);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexEstimateMotionRegionsQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(ref, target, output, mask);
 }
 
@@ -6858,6 +7825,7 @@ extern "C" void GL_APIENTRY glTexImage2D(GLenum target, GLint level, GLint inter
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexImage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, border, format, type, pixels);
 }
 
@@ -6865,6 +7833,7 @@ extern "C" void GL_APIENTRY glTexImage2DExternalANGLE(GLenum target, GLint level
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexImage2DExternalANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, border, format, type);
 }
 
@@ -6872,6 +7841,7 @@ extern "C" void GL_APIENTRY glTexImage2DRobustANGLE(GLenum target, GLint level, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, GLsizei bufSize, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexImage2DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, border, format, type, bufSize, pixels);
 }
 
@@ -6879,6 +7849,7 @@ extern "C" void GL_APIENTRY glTexImage3D(GLenum target, GLint level, GLint inter
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexImage3D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, depth, border, format, type, pixels);
 }
 
@@ -6886,6 +7857,7 @@ extern "C" void GL_APIENTRY glTexImage3DOES(GLenum target, GLint level, GLenum i
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexImage3DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, depth, border, format, type, pixels);
 }
 
@@ -6893,6 +7865,7 @@ extern "C" void GL_APIENTRY glTexImage3DRobustANGLE(GLenum target, GLint level, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLsizei depth, GLint border, GLenum format, GLenum type, GLsizei bufSize, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexImage3DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, internalformat, width, height, depth, border, format, type, bufSize, pixels);
 }
 
@@ -6900,6 +7873,7 @@ extern "C" void GL_APIENTRY glTexPageCommitmentEXT(GLenum target, GLint level, G
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLboolean commit);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexPageCommitmentEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, commit);
 }
 
@@ -6907,6 +7881,7 @@ extern "C" void GL_APIENTRY glTexPageCommitmentMemNV(GLenum target, GLint layer,
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint layer, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLuint memory, GLuint64 offset, GLboolean commit);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexPageCommitmentMemNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, layer, level, xoffset, yoffset, zoffset, width, height, depth, memory, offset, commit);
 }
 
@@ -6914,6 +7889,7 @@ extern "C" void GL_APIENTRY glTexParameterIiv(GLenum target, GLenum pname, const
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6921,6 +7897,7 @@ extern "C" void GL_APIENTRY glTexParameterIivEXT(GLenum target, GLenum pname, co
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6928,6 +7905,7 @@ extern "C" void GL_APIENTRY glTexParameterIivOES(GLenum target, GLenum pname, co
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6935,6 +7913,7 @@ extern "C" void GL_APIENTRY glTexParameterIivRobustANGLE(GLenum target, GLenum p
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, params);
 }
 
@@ -6942,6 +7921,7 @@ extern "C" void GL_APIENTRY glTexParameterIuiv(GLenum target, GLenum pname, cons
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIuiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6949,6 +7929,7 @@ extern "C" void GL_APIENTRY glTexParameterIuivEXT(GLenum target, GLenum pname, c
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIuivEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6956,6 +7937,7 @@ extern "C" void GL_APIENTRY glTexParameterIuivOES(GLenum target, GLenum pname, c
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIuivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6963,6 +7945,7 @@ extern "C" void GL_APIENTRY glTexParameterIuivRobustANGLE(GLenum target, GLenum 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, const GLuint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterIuivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, params);
 }
 
@@ -6970,6 +7953,7 @@ extern "C" void GL_APIENTRY glTexParameterf(GLenum target, GLenum pname, GLfloat
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfloat param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterf", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -6977,6 +7961,7 @@ extern "C" void GL_APIENTRY glTexParameterfv(GLenum target, GLenum pname, const 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterfv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -6984,6 +7969,7 @@ extern "C" void GL_APIENTRY glTexParameterfvRobustANGLE(GLenum target, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, const GLfloat *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterfvRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, params);
 }
 
@@ -6991,6 +7977,7 @@ extern "C" void GL_APIENTRY glTexParameteri(GLenum target, GLenum pname, GLint p
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameteri", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -6998,6 +7985,7 @@ extern "C" void GL_APIENTRY glTexParameteriv(GLenum target, GLenum pname, const 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameteriv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -7005,6 +7993,7 @@ extern "C" void GL_APIENTRY glTexParameterivRobustANGLE(GLenum target, GLenum pn
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, const GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterivRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, bufSize, params);
 }
 
@@ -7012,6 +8001,7 @@ extern "C" void GL_APIENTRY glTexParameterx(GLenum target, GLenum pname, GLfixed
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLfixed param);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterx", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, param);
 }
 
@@ -7019,6 +8009,7 @@ extern "C" void GL_APIENTRY glTexParameterxv(GLenum target, GLenum pname, const 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, const GLfixed *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexParameterxv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, pname, params);
 }
 
@@ -7026,6 +8017,7 @@ extern "C" void GL_APIENTRY glTexStorage1DEXT(GLenum target, GLsizei levels, GLe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage1DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width);
 }
 
@@ -7033,6 +8025,7 @@ extern "C" void GL_APIENTRY glTexStorage2D(GLenum target, GLsizei levels, GLenum
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width, height);
 }
 
@@ -7040,6 +8033,7 @@ extern "C" void GL_APIENTRY glTexStorage2DEXT(GLenum target, GLsizei levels, GLe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage2DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width, height);
 }
 
@@ -7047,6 +8041,7 @@ extern "C" void GL_APIENTRY glTexStorage2DMultisample(GLenum target, GLsizei sam
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage2DMultisample", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height, fixedsamplelocations);
 }
 
@@ -7054,6 +8049,7 @@ extern "C" void GL_APIENTRY glTexStorage2DMultisampleANGLE(GLenum target, GLsize
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLboolean fixedsamplelocations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage2DMultisampleANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height, fixedsamplelocations);
 }
 
@@ -7061,6 +8057,7 @@ extern "C" void GL_APIENTRY glTexStorage3D(GLenum target, GLsizei levels, GLenum
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage3D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width, height, depth);
 }
 
@@ -7068,6 +8065,7 @@ extern "C" void GL_APIENTRY glTexStorage3DEXT(GLenum target, GLsizei levels, GLe
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage3DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width, height, depth);
 }
 
@@ -7075,6 +8073,7 @@ extern "C" void GL_APIENTRY glTexStorage3DMultisample(GLenum target, GLsizei sam
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLboolean fixedsamplelocations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage3DMultisample", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height, depth, fixedsamplelocations);
 }
 
@@ -7082,6 +8081,7 @@ extern "C" void GL_APIENTRY glTexStorage3DMultisampleOES(GLenum target, GLsizei 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, GLboolean fixedsamplelocations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorage3DMultisampleOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height, depth, fixedsamplelocations);
 }
 
@@ -7089,6 +8089,7 @@ extern "C" void GL_APIENTRY glTexStorageAttribs2DEXT(GLenum target, GLsizei leve
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, const GLint* attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageAttribs2DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width, height, attrib_list);
 }
 
@@ -7096,6 +8097,7 @@ extern "C" void GL_APIENTRY glTexStorageAttribs3DEXT(GLenum target, GLsizei leve
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth, const GLint* attrib_list);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageAttribs3DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalformat, width, height, depth, attrib_list);
 }
 
@@ -7103,6 +8105,7 @@ extern "C" void GL_APIENTRY glTexStorageMem2DEXT(GLenum target, GLsizei levels, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMem2DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalFormat, width, height, memory, offset);
 }
 
@@ -7110,6 +8113,7 @@ extern "C" void GL_APIENTRY glTexStorageMem2DMultisampleEXT(GLenum target, GLsiz
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalFormat, GLsizei width, GLsizei height, GLboolean fixedSampleLocations, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMem2DMultisampleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalFormat, width, height, fixedSampleLocations, memory, offset);
 }
 
@@ -7117,6 +8121,7 @@ extern "C" void GL_APIENTRY glTexStorageMem3DEXT(GLenum target, GLsizei levels, 
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMem3DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalFormat, width, height, depth, memory, offset);
 }
 
@@ -7124,6 +8129,7 @@ extern "C" void GL_APIENTRY glTexStorageMem3DMultisampleEXT(GLenum target, GLsiz
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLboolean fixedSampleLocations, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMem3DMultisampleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalFormat, width, height, depth, fixedSampleLocations, memory, offset);
 }
 
@@ -7131,6 +8137,7 @@ extern "C" void GL_APIENTRY glTexStorageMemFlags2DANGLE(GLenum target, GLsizei l
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLuint memory, GLuint64 offset, GLbitfield createFlags, GLbitfield usageFlags, const void *imageCreateInfoPNext);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMemFlags2DANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalFormat, width, height, memory, offset, createFlags, usageFlags, imageCreateInfoPNext);
 }
 
@@ -7138,6 +8145,7 @@ extern "C" void GL_APIENTRY glTexStorageMemFlags2DMultisampleANGLE(GLenum target
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalFormat, GLsizei width, GLsizei height, GLboolean fixedSampleLocations, GLuint memory, GLuint64 offset, GLbitfield createFlags, GLbitfield usageFlags, const void *imageCreateInfoPNext);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMemFlags2DMultisampleANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalFormat, width, height, fixedSampleLocations, memory, offset, createFlags, usageFlags, imageCreateInfoPNext);
 }
 
@@ -7145,6 +8153,7 @@ extern "C" void GL_APIENTRY glTexStorageMemFlags3DANGLE(GLenum target, GLsizei l
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLuint memory, GLuint64 offset, GLbitfield createFlags, GLbitfield usageFlags, const void *imageCreateInfoPNext);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMemFlags3DANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, levels, internalFormat, width, height, depth, memory, offset, createFlags, usageFlags, imageCreateInfoPNext);
 }
 
@@ -7152,6 +8161,7 @@ extern "C" void GL_APIENTRY glTexStorageMemFlags3DMultisampleANGLE(GLenum target
     using Fn = void(GL_APIENTRY*)(GLenum target, GLsizei samples, GLenum internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLboolean fixedSampleLocations, GLuint memory, GLuint64 offset, GLbitfield createFlags, GLbitfield usageFlags, const void *imageCreateInfoPNext);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexStorageMemFlags3DMultisampleANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, samples, internalFormat, width, height, depth, fixedSampleLocations, memory, offset, createFlags, usageFlags, imageCreateInfoPNext);
 }
 
@@ -7159,6 +8169,7 @@ extern "C" void GL_APIENTRY glTexSubImage2D(GLenum target, GLint level, GLint xo
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexSubImage2D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, width, height, format, type, pixels);
 }
 
@@ -7166,6 +8177,7 @@ extern "C" void GL_APIENTRY glTexSubImage2DRobustANGLE(GLenum target, GLint leve
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width, GLsizei height, GLenum format, GLenum type, GLsizei bufSize, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexSubImage2DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, width, height, format, type, bufSize, pixels);
 }
 
@@ -7173,6 +8185,7 @@ extern "C" void GL_APIENTRY glTexSubImage3D(GLenum target, GLint level, GLint xo
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexSubImage3D", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels);
 }
 
@@ -7180,6 +8193,7 @@ extern "C" void GL_APIENTRY glTexSubImage3DOES(GLenum target, GLint level, GLint
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexSubImage3DOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, pixels);
 }
 
@@ -7187,6 +8201,7 @@ extern "C" void GL_APIENTRY glTexSubImage3DRobustANGLE(GLenum target, GLint leve
     using Fn = void(GL_APIENTRY*)(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLenum type, GLsizei bufSize, const void *pixels);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexSubImage3DRobustANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(target, level, xoffset, yoffset, zoffset, width, height, depth, format, type, bufSize, pixels);
 }
 
@@ -7194,6 +8209,7 @@ extern "C" void GL_APIENTRY glTextureAttachMemoryNV(GLuint texture, GLuint memor
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureAttachMemoryNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, memory, offset);
 }
 
@@ -7201,6 +8217,7 @@ extern "C" void GL_APIENTRY glTextureBarrierNV(void) {
     using Fn = void(GL_APIENTRY*)(void);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureBarrierNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn();
 }
 
@@ -7208,6 +8225,7 @@ extern "C" void GL_APIENTRY glTextureFoveationParametersQCOM(GLuint texture, GLu
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLuint layer, GLuint focalPoint, GLfloat focalX, GLfloat focalY, GLfloat gainX, GLfloat gainY, GLfloat foveaArea);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureFoveationParametersQCOM", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, layer, focalPoint, focalX, focalY, gainX, gainY, foveaArea);
 }
 
@@ -7215,6 +8233,7 @@ extern "C" void GL_APIENTRY glTexturePageCommitmentMemNV(GLuint texture, GLint l
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLint layer, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, GLuint memory, GLuint64 offset, GLboolean commit);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexturePageCommitmentMemNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, layer, level, xoffset, yoffset, zoffset, width, height, depth, memory, offset, commit);
 }
 
@@ -7222,6 +8241,7 @@ extern "C" void GL_APIENTRY glTextureStorage1DEXT(GLuint texture, GLenum target,
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLenum target, GLsizei levels, GLenum internalformat, GLsizei width);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorage1DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, target, levels, internalformat, width);
 }
 
@@ -7229,6 +8249,7 @@ extern "C" void GL_APIENTRY glTextureStorage2DEXT(GLuint texture, GLenum target,
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorage2DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, target, levels, internalformat, width, height);
 }
 
@@ -7236,6 +8257,7 @@ extern "C" void GL_APIENTRY glTextureStorage3DEXT(GLuint texture, GLenum target,
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLenum target, GLsizei levels, GLenum internalformat, GLsizei width, GLsizei height, GLsizei depth);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorage3DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, target, levels, internalformat, width, height, depth);
 }
 
@@ -7243,6 +8265,7 @@ extern "C" void GL_APIENTRY glTextureStorageMem2DEXT(GLuint texture, GLsizei lev
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorageMem2DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, levels, internalFormat, width, height, memory, offset);
 }
 
@@ -7250,6 +8273,7 @@ extern "C" void GL_APIENTRY glTextureStorageMem2DMultisampleEXT(GLuint texture, 
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLsizei samples, GLenum internalFormat, GLsizei width, GLsizei height, GLboolean fixedSampleLocations, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorageMem2DMultisampleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, samples, internalFormat, width, height, fixedSampleLocations, memory, offset);
 }
 
@@ -7257,6 +8281,7 @@ extern "C" void GL_APIENTRY glTextureStorageMem3DEXT(GLuint texture, GLsizei lev
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLsizei levels, GLenum internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorageMem3DEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, levels, internalFormat, width, height, depth, memory, offset);
 }
 
@@ -7264,6 +8289,7 @@ extern "C" void GL_APIENTRY glTextureStorageMem3DMultisampleEXT(GLuint texture, 
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLsizei samples, GLenum internalFormat, GLsizei width, GLsizei height, GLsizei depth, GLboolean fixedSampleLocations, GLuint memory, GLuint64 offset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureStorageMem3DMultisampleEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, samples, internalFormat, width, height, depth, fixedSampleLocations, memory, offset);
 }
 
@@ -7271,6 +8297,7 @@ extern "C" void GL_APIENTRY glTextureViewEXT(GLuint texture, GLenum target, GLui
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLenum target, GLuint origtexture, GLenum internalformat, GLuint minlevel, GLuint numlevels, GLuint minlayer, GLuint numlayers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureViewEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, target, origtexture, internalformat, minlevel, numlevels, minlayer, numlayers);
 }
 
@@ -7278,6 +8305,7 @@ extern "C" void GL_APIENTRY glTextureViewOES(GLuint texture, GLenum target, GLui
     using Fn = void(GL_APIENTRY*)(GLuint texture, GLenum target, GLuint origtexture, GLenum internalformat, GLuint minlevel, GLuint numlevels, GLuint minlayer, GLuint numlayers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTextureViewOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(texture, target, origtexture, internalformat, minlevel, numlevels, minlayer, numlayers);
 }
 
@@ -7285,6 +8313,7 @@ extern "C" void GL_APIENTRY glTransformFeedbackVaryings(GLuint program, GLsizei 
     using Fn = void(GL_APIENTRY*)(GLuint program, GLsizei count, const GLchar *const*varyings, GLenum bufferMode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTransformFeedbackVaryings", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, count, varyings, bufferMode);
 }
 
@@ -7292,6 +8321,7 @@ extern "C" void GL_APIENTRY glTransformPathNV(GLuint resultPath, GLuint srcPath,
     using Fn = void(GL_APIENTRY*)(GLuint resultPath, GLuint srcPath, GLenum transformType, const GLfloat *transformValues);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTransformPathNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(resultPath, srcPath, transformType, transformValues);
 }
 
@@ -7299,6 +8329,7 @@ extern "C" void GL_APIENTRY glTranslatef(GLfloat x, GLfloat y, GLfloat z) {
     using Fn = void(GL_APIENTRY*)(GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTranslatef", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, z);
 }
 
@@ -7306,6 +8337,7 @@ extern "C" void GL_APIENTRY glTranslatex(GLfixed x, GLfixed y, GLfixed z) {
     using Fn = void(GL_APIENTRY*)(GLfixed x, GLfixed y, GLfixed z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTranslatex", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, z);
 }
 
@@ -7313,6 +8345,7 @@ extern "C" void GL_APIENTRY glUniform1f(GLint location, GLfloat v0) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLfloat v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0);
 }
 
@@ -7320,6 +8353,7 @@ extern "C" void GL_APIENTRY glUniform1fv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7327,6 +8361,7 @@ extern "C" void GL_APIENTRY glUniform1i(GLint location, GLint v0) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLint v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0);
 }
 
@@ -7334,6 +8369,7 @@ extern "C" void GL_APIENTRY glUniform1i64NV(GLint location, GLint64EXT x) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLint64EXT x);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x);
 }
 
@@ -7341,6 +8377,7 @@ extern "C" void GL_APIENTRY glUniform1i64vNV(GLint location, GLsizei count, cons
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7348,6 +8385,7 @@ extern "C" void GL_APIENTRY glUniform1iv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7355,6 +8393,7 @@ extern "C" void GL_APIENTRY glUniform1ui(GLint location, GLuint v0) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint v0);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0);
 }
 
@@ -7362,6 +8401,7 @@ extern "C" void GL_APIENTRY glUniform1ui64NV(GLint location, GLuint64EXT x) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint64EXT x);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x);
 }
 
@@ -7369,6 +8409,7 @@ extern "C" void GL_APIENTRY glUniform1ui64vNV(GLint location, GLsizei count, con
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7376,6 +8417,7 @@ extern "C" void GL_APIENTRY glUniform1uiv(GLint location, GLsizei count, const G
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform1uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7383,6 +8425,7 @@ extern "C" void GL_APIENTRY glUniform2f(GLint location, GLfloat v0, GLfloat v1) 
     using Fn = void(GL_APIENTRY*)(GLint location, GLfloat v0, GLfloat v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1);
 }
 
@@ -7390,6 +8433,7 @@ extern "C" void GL_APIENTRY glUniform2fv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7397,6 +8441,7 @@ extern "C" void GL_APIENTRY glUniform2i(GLint location, GLint v0, GLint v1) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLint v0, GLint v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1);
 }
 
@@ -7404,6 +8449,7 @@ extern "C" void GL_APIENTRY glUniform2i64NV(GLint location, GLint64EXT x, GLint6
     using Fn = void(GL_APIENTRY*)(GLint location, GLint64EXT x, GLint64EXT y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x, y);
 }
 
@@ -7411,6 +8457,7 @@ extern "C" void GL_APIENTRY glUniform2i64vNV(GLint location, GLsizei count, cons
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7418,6 +8465,7 @@ extern "C" void GL_APIENTRY glUniform2iv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7425,6 +8473,7 @@ extern "C" void GL_APIENTRY glUniform2ui(GLint location, GLuint v0, GLuint v1) {
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint v0, GLuint v1);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1);
 }
 
@@ -7432,6 +8481,7 @@ extern "C" void GL_APIENTRY glUniform2ui64NV(GLint location, GLuint64EXT x, GLui
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint64EXT x, GLuint64EXT y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x, y);
 }
 
@@ -7439,6 +8489,7 @@ extern "C" void GL_APIENTRY glUniform2ui64vNV(GLint location, GLsizei count, con
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7446,6 +8497,7 @@ extern "C" void GL_APIENTRY glUniform2uiv(GLint location, GLsizei count, const G
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform2uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7453,6 +8505,7 @@ extern "C" void GL_APIENTRY glUniform3f(GLint location, GLfloat v0, GLfloat v1, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1, v2);
 }
 
@@ -7460,6 +8513,7 @@ extern "C" void GL_APIENTRY glUniform3fv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7467,6 +8521,7 @@ extern "C" void GL_APIENTRY glUniform3i(GLint location, GLint v0, GLint v1, GLin
     using Fn = void(GL_APIENTRY*)(GLint location, GLint v0, GLint v1, GLint v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1, v2);
 }
 
@@ -7474,6 +8529,7 @@ extern "C" void GL_APIENTRY glUniform3i64NV(GLint location, GLint64EXT x, GLint6
     using Fn = void(GL_APIENTRY*)(GLint location, GLint64EXT x, GLint64EXT y, GLint64EXT z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x, y, z);
 }
 
@@ -7481,6 +8537,7 @@ extern "C" void GL_APIENTRY glUniform3i64vNV(GLint location, GLsizei count, cons
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7488,6 +8545,7 @@ extern "C" void GL_APIENTRY glUniform3iv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7495,6 +8553,7 @@ extern "C" void GL_APIENTRY glUniform3ui(GLint location, GLuint v0, GLuint v1, G
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint v0, GLuint v1, GLuint v2);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1, v2);
 }
 
@@ -7502,6 +8561,7 @@ extern "C" void GL_APIENTRY glUniform3ui64NV(GLint location, GLuint64EXT x, GLui
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint64EXT x, GLuint64EXT y, GLuint64EXT z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x, y, z);
 }
 
@@ -7509,6 +8569,7 @@ extern "C" void GL_APIENTRY glUniform3ui64vNV(GLint location, GLsizei count, con
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7516,6 +8577,7 @@ extern "C" void GL_APIENTRY glUniform3uiv(GLint location, GLsizei count, const G
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform3uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7523,6 +8585,7 @@ extern "C" void GL_APIENTRY glUniform4f(GLint location, GLfloat v0, GLfloat v1, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1, v2, v3);
 }
 
@@ -7530,6 +8593,7 @@ extern "C" void GL_APIENTRY glUniform4fv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7537,6 +8601,7 @@ extern "C" void GL_APIENTRY glUniform4i(GLint location, GLint v0, GLint v1, GLin
     using Fn = void(GL_APIENTRY*)(GLint location, GLint v0, GLint v1, GLint v2, GLint v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1, v2, v3);
 }
 
@@ -7544,6 +8609,7 @@ extern "C" void GL_APIENTRY glUniform4i64NV(GLint location, GLint64EXT x, GLint6
     using Fn = void(GL_APIENTRY*)(GLint location, GLint64EXT x, GLint64EXT y, GLint64EXT z, GLint64EXT w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4i64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x, y, z, w);
 }
 
@@ -7551,6 +8617,7 @@ extern "C" void GL_APIENTRY glUniform4i64vNV(GLint location, GLsizei count, cons
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4i64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7558,6 +8625,7 @@ extern "C" void GL_APIENTRY glUniform4iv(GLint location, GLsizei count, const GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7565,6 +8633,7 @@ extern "C" void GL_APIENTRY glUniform4ui(GLint location, GLuint v0, GLuint v1, G
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint v0, GLuint v1, GLuint v2, GLuint v3);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, v0, v1, v2, v3);
 }
 
@@ -7572,6 +8641,7 @@ extern "C" void GL_APIENTRY glUniform4ui64NV(GLint location, GLuint64EXT x, GLui
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint64EXT x, GLuint64EXT y, GLuint64EXT z, GLuint64EXT w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4ui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, x, y, z, w);
 }
 
@@ -7579,6 +8649,7 @@ extern "C" void GL_APIENTRY glUniform4ui64vNV(GLint location, GLsizei count, con
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint64EXT *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4ui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7586,6 +8657,7 @@ extern "C" void GL_APIENTRY glUniform4uiv(GLint location, GLsizei count, const G
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniform4uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7593,6 +8665,7 @@ extern "C" void GL_APIENTRY glUniformBlockBinding(GLuint program, GLuint uniform
     using Fn = void(GL_APIENTRY*)(GLuint program, GLuint uniformBlockIndex, GLuint uniformBlockBinding);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformBlockBinding", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program, uniformBlockIndex, uniformBlockBinding);
 }
 
@@ -7600,6 +8673,7 @@ extern "C" void GL_APIENTRY glUniformHandleui64IMG(GLint location, GLuint64 valu
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint64 value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformHandleui64IMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, value);
 }
 
@@ -7607,6 +8681,7 @@ extern "C" void GL_APIENTRY glUniformHandleui64NV(GLint location, GLuint64 value
     using Fn = void(GL_APIENTRY*)(GLint location, GLuint64 value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformHandleui64NV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, value);
 }
 
@@ -7614,6 +8689,7 @@ extern "C" void GL_APIENTRY glUniformHandleui64vIMG(GLint location, GLsizei coun
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint64 *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformHandleui64vIMG", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7621,6 +8697,7 @@ extern "C" void GL_APIENTRY glUniformHandleui64vNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, const GLuint64 *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformHandleui64vNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, value);
 }
 
@@ -7628,6 +8705,7 @@ extern "C" void GL_APIENTRY glUniformMatrix2fv(GLint location, GLsizei count, GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7635,6 +8713,7 @@ extern "C" void GL_APIENTRY glUniformMatrix2x3fv(GLint location, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix2x3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7642,6 +8721,7 @@ extern "C" void GL_APIENTRY glUniformMatrix2x3fvNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix2x3fvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7649,6 +8729,7 @@ extern "C" void GL_APIENTRY glUniformMatrix2x4fv(GLint location, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix2x4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7656,6 +8737,7 @@ extern "C" void GL_APIENTRY glUniformMatrix2x4fvNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix2x4fvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7663,6 +8745,7 @@ extern "C" void GL_APIENTRY glUniformMatrix3fv(GLint location, GLsizei count, GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7670,6 +8753,7 @@ extern "C" void GL_APIENTRY glUniformMatrix3x2fv(GLint location, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix3x2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7677,6 +8761,7 @@ extern "C" void GL_APIENTRY glUniformMatrix3x2fvNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix3x2fvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7684,6 +8769,7 @@ extern "C" void GL_APIENTRY glUniformMatrix3x4fv(GLint location, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix3x4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7691,6 +8777,7 @@ extern "C" void GL_APIENTRY glUniformMatrix3x4fvNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix3x4fvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7698,6 +8785,7 @@ extern "C" void GL_APIENTRY glUniformMatrix4fv(GLint location, GLsizei count, GL
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7705,6 +8793,7 @@ extern "C" void GL_APIENTRY glUniformMatrix4x2fv(GLint location, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix4x2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7712,6 +8801,7 @@ extern "C" void GL_APIENTRY glUniformMatrix4x2fvNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix4x2fvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7719,6 +8809,7 @@ extern "C" void GL_APIENTRY glUniformMatrix4x3fv(GLint location, GLsizei count, 
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix4x3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7726,6 +8817,7 @@ extern "C" void GL_APIENTRY glUniformMatrix4x3fvNV(GLint location, GLsizei count
     using Fn = void(GL_APIENTRY*)(GLint location, GLsizei count, GLboolean transpose, const GLfloat *value);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUniformMatrix4x3fvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(location, count, transpose, value);
 }
 
@@ -7733,6 +8825,7 @@ extern "C" GLboolean GL_APIENTRY glUnmapBuffer(GLenum target) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUnmapBuffer", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target);
 }
 
@@ -7740,6 +8833,7 @@ extern "C" GLboolean GL_APIENTRY glUnmapBufferOES(GLenum target) {
     using Fn = GLboolean(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUnmapBufferOES", winapk::host::GlLib::Gles));
     if (!fn) return {};
+    winapk::host::GlTurn turn(true);
     return fn(target);
 }
 
@@ -7747,6 +8841,7 @@ extern "C" void GL_APIENTRY glUseProgram(GLuint program) {
     using Fn = void(GL_APIENTRY*)(GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUseProgram", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program);
 }
 
@@ -7754,6 +8849,7 @@ extern "C" void GL_APIENTRY glUseProgramStages(GLuint pipeline, GLbitfield stage
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLbitfield stages, GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUseProgramStages", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, stages, program);
 }
 
@@ -7761,6 +8857,7 @@ extern "C" void GL_APIENTRY glUseProgramStagesEXT(GLuint pipeline, GLbitfield st
     using Fn = void(GL_APIENTRY*)(GLuint pipeline, GLbitfield stages, GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glUseProgramStagesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline, stages, program);
 }
 
@@ -7768,6 +8865,7 @@ extern "C" void GL_APIENTRY glValidateProgram(GLuint program) {
     using Fn = void(GL_APIENTRY*)(GLuint program);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glValidateProgram", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(program);
 }
 
@@ -7775,6 +8873,7 @@ extern "C" void GL_APIENTRY glValidateProgramPipeline(GLuint pipeline) {
     using Fn = void(GL_APIENTRY*)(GLuint pipeline);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glValidateProgramPipeline", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline);
 }
 
@@ -7782,6 +8881,7 @@ extern "C" void GL_APIENTRY glValidateProgramPipelineEXT(GLuint pipeline) {
     using Fn = void(GL_APIENTRY*)(GLuint pipeline);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glValidateProgramPipelineEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(pipeline);
 }
 
@@ -7789,6 +8889,7 @@ extern "C" void GL_APIENTRY glVertexAttrib1f(GLuint index, GLfloat x) {
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat x);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib1f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x);
 }
 
@@ -7796,6 +8897,7 @@ extern "C" void GL_APIENTRY glVertexAttrib1fv(GLuint index, const GLfloat *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib1fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7803,6 +8905,7 @@ extern "C" void GL_APIENTRY glVertexAttrib2f(GLuint index, GLfloat x, GLfloat y)
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat x, GLfloat y);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib2f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y);
 }
 
@@ -7810,6 +8913,7 @@ extern "C" void GL_APIENTRY glVertexAttrib2fv(GLuint index, const GLfloat *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib2fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7817,6 +8921,7 @@ extern "C" void GL_APIENTRY glVertexAttrib3f(GLuint index, GLfloat x, GLfloat y,
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat x, GLfloat y, GLfloat z);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib3f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y, z);
 }
 
@@ -7824,6 +8929,7 @@ extern "C" void GL_APIENTRY glVertexAttrib3fv(GLuint index, const GLfloat *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib3fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7831,6 +8937,7 @@ extern "C" void GL_APIENTRY glVertexAttrib4f(GLuint index, GLfloat x, GLfloat y,
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat x, GLfloat y, GLfloat z, GLfloat w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib4f", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y, z, w);
 }
 
@@ -7838,6 +8945,7 @@ extern "C" void GL_APIENTRY glVertexAttrib4fv(GLuint index, const GLfloat *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttrib4fv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7845,6 +8953,7 @@ extern "C" void GL_APIENTRY glVertexAttribBinding(GLuint attribindex, GLuint bin
     using Fn = void(GL_APIENTRY*)(GLuint attribindex, GLuint bindingindex);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribBinding", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(attribindex, bindingindex);
 }
 
@@ -7852,6 +8961,7 @@ extern "C" void GL_APIENTRY glVertexAttribDivisor(GLuint index, GLuint divisor) 
     using Fn = void(GL_APIENTRY*)(GLuint index, GLuint divisor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribDivisor", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, divisor);
 }
 
@@ -7859,6 +8969,7 @@ extern "C" void GL_APIENTRY glVertexAttribDivisorANGLE(GLuint index, GLuint divi
     using Fn = void(GL_APIENTRY*)(GLuint index, GLuint divisor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribDivisorANGLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, divisor);
 }
 
@@ -7866,6 +8977,7 @@ extern "C" void GL_APIENTRY glVertexAttribDivisorEXT(GLuint index, GLuint diviso
     using Fn = void(GL_APIENTRY*)(GLuint index, GLuint divisor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribDivisorEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, divisor);
 }
 
@@ -7873,6 +8985,7 @@ extern "C" void GL_APIENTRY glVertexAttribDivisorNV(GLuint index, GLuint divisor
     using Fn = void(GL_APIENTRY*)(GLuint index, GLuint divisor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribDivisorNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, divisor);
 }
 
@@ -7880,6 +8993,7 @@ extern "C" void GL_APIENTRY glVertexAttribFormat(GLuint attribindex, GLint size,
     using Fn = void(GL_APIENTRY*)(GLuint attribindex, GLint size, GLenum type, GLboolean normalized, GLuint relativeoffset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribFormat", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(attribindex, size, type, normalized, relativeoffset);
 }
 
@@ -7887,6 +9001,7 @@ extern "C" void GL_APIENTRY glVertexAttribI4i(GLuint index, GLint x, GLint y, GL
     using Fn = void(GL_APIENTRY*)(GLuint index, GLint x, GLint y, GLint z, GLint w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribI4i", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y, z, w);
 }
 
@@ -7894,6 +9009,7 @@ extern "C" void GL_APIENTRY glVertexAttribI4iv(GLuint index, const GLint *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribI4iv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7901,6 +9017,7 @@ extern "C" void GL_APIENTRY glVertexAttribI4ui(GLuint index, GLuint x, GLuint y,
     using Fn = void(GL_APIENTRY*)(GLuint index, GLuint x, GLuint y, GLuint z, GLuint w);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribI4ui", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y, z, w);
 }
 
@@ -7908,6 +9025,7 @@ extern "C" void GL_APIENTRY glVertexAttribI4uiv(GLuint index, const GLuint *v) {
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLuint *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribI4uiv", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7915,6 +9033,7 @@ extern "C" void GL_APIENTRY glVertexAttribIFormat(GLuint attribindex, GLint size
     using Fn = void(GL_APIENTRY*)(GLuint attribindex, GLint size, GLenum type, GLuint relativeoffset);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribIFormat", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(attribindex, size, type, relativeoffset);
 }
 
@@ -7922,6 +9041,7 @@ extern "C" void GL_APIENTRY glVertexAttribIPointer(GLuint index, GLint size, GLe
     using Fn = void(GL_APIENTRY*)(GLuint index, GLint size, GLenum type, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribIPointer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, size, type, stride, pointer);
 }
 
@@ -7929,6 +9049,7 @@ extern "C" void GL_APIENTRY glVertexAttribPointer(GLuint index, GLint size, GLen
     using Fn = void(GL_APIENTRY*)(GLuint index, GLint size, GLenum type, GLboolean normalized, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexAttribPointer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, size, type, normalized, stride, pointer);
 }
 
@@ -7936,6 +9057,7 @@ extern "C" void GL_APIENTRY glVertexBindingDivisor(GLuint bindingindex, GLuint d
     using Fn = void(GL_APIENTRY*)(GLuint bindingindex, GLuint divisor);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexBindingDivisor", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(bindingindex, divisor);
 }
 
@@ -7943,6 +9065,7 @@ extern "C" void GL_APIENTRY glVertexPointer(GLint size, GLenum type, GLsizei str
     using Fn = void(GL_APIENTRY*)(GLint size, GLenum type, GLsizei stride, const void *pointer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glVertexPointer", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(size, type, stride, pointer);
 }
 
@@ -7950,6 +9073,7 @@ extern "C" void GL_APIENTRY glViewport(GLint x, GLint y, GLsizei width, GLsizei 
     using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLsizei width, GLsizei height);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewport", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(x, y, width, height);
 }
 
@@ -7957,6 +9081,7 @@ extern "C" void GL_APIENTRY glViewportArrayvNV(GLuint first, GLsizei count, cons
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportArrayvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -7964,6 +9089,7 @@ extern "C" void GL_APIENTRY glViewportArrayvOES(GLuint first, GLsizei count, con
     using Fn = void(GL_APIENTRY*)(GLuint first, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportArrayvOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(first, count, v);
 }
 
@@ -7971,6 +9097,7 @@ extern "C" void GL_APIENTRY glViewportIndexedfNV(GLuint index, GLfloat x, GLfloa
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat x, GLfloat y, GLfloat w, GLfloat h);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportIndexedfNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y, w, h);
 }
 
@@ -7978,6 +9105,7 @@ extern "C" void GL_APIENTRY glViewportIndexedfOES(GLuint index, GLfloat x, GLflo
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat x, GLfloat y, GLfloat w, GLfloat h);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportIndexedfOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, x, y, w, h);
 }
 
@@ -7985,6 +9113,7 @@ extern "C" void GL_APIENTRY glViewportIndexedfvNV(GLuint index, const GLfloat *v
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportIndexedfvNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7992,6 +9121,7 @@ extern "C" void GL_APIENTRY glViewportIndexedfvOES(GLuint index, const GLfloat *
     using Fn = void(GL_APIENTRY*)(GLuint index, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportIndexedfvOES", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, v);
 }
 
@@ -7999,6 +9129,7 @@ extern "C" void GL_APIENTRY glViewportPositionWScaleNV(GLuint index, GLfloat xco
     using Fn = void(GL_APIENTRY*)(GLuint index, GLfloat xcoeff, GLfloat ycoeff);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportPositionWScaleNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, xcoeff, ycoeff);
 }
 
@@ -8006,6 +9137,7 @@ extern "C" void GL_APIENTRY glViewportSwizzleNV(GLuint index, GLenum swizzlex, G
     using Fn = void(GL_APIENTRY*)(GLuint index, GLenum swizzlex, GLenum swizzley, GLenum swizzlez, GLenum swizzlew);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glViewportSwizzleNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(index, swizzlex, swizzley, swizzlez, swizzlew);
 }
 
@@ -8013,6 +9145,7 @@ extern "C" void GL_APIENTRY glWaitSemaphoreEXT(GLuint semaphore, GLuint numBuffe
     using Fn = void(GL_APIENTRY*)(GLuint semaphore, GLuint numBufferBarriers, const GLuint *buffers, GLuint numTextureBarriers, const GLuint *textures, const GLenum *srcLayouts);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWaitSemaphoreEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(semaphore, numBufferBarriers, buffers, numTextureBarriers, textures, srcLayouts);
 }
 
@@ -8020,6 +9153,7 @@ extern "C" void GL_APIENTRY glWaitSync(GLsync sync, GLbitfield flags, GLuint64 t
     using Fn = void(GL_APIENTRY*)(GLsync sync, GLbitfield flags, GLuint64 timeout);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWaitSync", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sync, flags, timeout);
 }
 
@@ -8027,6 +9161,7 @@ extern "C" void GL_APIENTRY glWaitSyncAPPLE(GLsync sync, GLbitfield flags, GLuin
     using Fn = void(GL_APIENTRY*)(GLsync sync, GLbitfield flags, GLuint64 timeout);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWaitSyncAPPLE", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(sync, flags, timeout);
 }
 
@@ -8034,6 +9169,7 @@ extern "C" void GL_APIENTRY glWaitVkSemaphoreNV(GLuint64 vkSemaphore) {
     using Fn = void(GL_APIENTRY*)(GLuint64 vkSemaphore);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWaitVkSemaphoreNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(vkSemaphore);
 }
 
@@ -8041,6 +9177,7 @@ extern "C" void GL_APIENTRY glWeightPathsNV(GLuint resultPath, GLsizei numPaths,
     using Fn = void(GL_APIENTRY*)(GLuint resultPath, GLsizei numPaths, const GLuint *paths, const GLfloat *weights);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWeightPathsNV", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(resultPath, numPaths, paths, weights);
 }
 
@@ -8048,5 +9185,1159 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, const GLint *box);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWindowRectanglesEXT", winapk::host::GlLib::Gles));
     if (!fn) return;
+    winapk::host::GlTurn turn(true);
     fn(mode, count, box);
 }
+
+#define WINAPK_GL_STUB_SYMBOLS \
+    {"eglBindAPI", reinterpret_cast<void*>(&eglBindAPI)}, \
+    {"eglBindTexImage", reinterpret_cast<void*>(&eglBindTexImage)}, \
+    {"eglChooseConfig", reinterpret_cast<void*>(&eglChooseConfig)}, \
+    {"eglClientWaitSync", reinterpret_cast<void*>(&eglClientWaitSync)}, \
+    {"eglCopyBuffers", reinterpret_cast<void*>(&eglCopyBuffers)}, \
+    {"eglCreateContext", reinterpret_cast<void*>(&eglCreateContext)}, \
+    {"eglCreateImage", reinterpret_cast<void*>(&eglCreateImage)}, \
+    {"eglCreatePbufferFromClientBuffer", reinterpret_cast<void*>(&eglCreatePbufferFromClientBuffer)}, \
+    {"eglCreatePbufferSurface", reinterpret_cast<void*>(&eglCreatePbufferSurface)}, \
+    {"eglCreatePixmapSurface", reinterpret_cast<void*>(&eglCreatePixmapSurface)}, \
+    {"eglCreatePlatformPixmapSurface", reinterpret_cast<void*>(&eglCreatePlatformPixmapSurface)}, \
+    {"eglCreatePlatformWindowSurface", reinterpret_cast<void*>(&eglCreatePlatformWindowSurface)}, \
+    {"eglCreateSync", reinterpret_cast<void*>(&eglCreateSync)}, \
+    {"eglCreateWindowSurface", reinterpret_cast<void*>(&eglCreateWindowSurface)}, \
+    {"eglDestroyContext", reinterpret_cast<void*>(&eglDestroyContext)}, \
+    {"eglDestroyImage", reinterpret_cast<void*>(&eglDestroyImage)}, \
+    {"eglDestroySurface", reinterpret_cast<void*>(&eglDestroySurface)}, \
+    {"eglDestroySync", reinterpret_cast<void*>(&eglDestroySync)}, \
+    {"eglGetConfigAttrib", reinterpret_cast<void*>(&eglGetConfigAttrib)}, \
+    {"eglGetConfigs", reinterpret_cast<void*>(&eglGetConfigs)}, \
+    {"eglGetCurrentContext", reinterpret_cast<void*>(&eglGetCurrentContext)}, \
+    {"eglGetCurrentDisplay", reinterpret_cast<void*>(&eglGetCurrentDisplay)}, \
+    {"eglGetCurrentSurface", reinterpret_cast<void*>(&eglGetCurrentSurface)}, \
+    {"eglGetDisplay", reinterpret_cast<void*>(&eglGetDisplay)}, \
+    {"eglGetError", reinterpret_cast<void*>(&eglGetError)}, \
+    {"eglGetPlatformDisplay", reinterpret_cast<void*>(&eglGetPlatformDisplay)}, \
+    {"eglGetProcAddress", reinterpret_cast<void*>(&eglGetProcAddress)}, \
+    {"eglGetSyncAttrib", reinterpret_cast<void*>(&eglGetSyncAttrib)}, \
+    {"eglInitialize", reinterpret_cast<void*>(&eglInitialize)}, \
+    {"eglMakeCurrent", reinterpret_cast<void*>(&eglMakeCurrent)}, \
+    {"eglQueryAPI", reinterpret_cast<void*>(&eglQueryAPI)}, \
+    {"eglQueryContext", reinterpret_cast<void*>(&eglQueryContext)}, \
+    {"eglQueryString", reinterpret_cast<void*>(&eglQueryString)}, \
+    {"eglQuerySurface", reinterpret_cast<void*>(&eglQuerySurface)}, \
+    {"eglReleaseTexImage", reinterpret_cast<void*>(&eglReleaseTexImage)}, \
+    {"eglReleaseThread", reinterpret_cast<void*>(&eglReleaseThread)}, \
+    {"eglSurfaceAttrib", reinterpret_cast<void*>(&eglSurfaceAttrib)}, \
+    {"eglSwapBuffers", reinterpret_cast<void*>(&eglSwapBuffers)}, \
+    {"eglSwapInterval", reinterpret_cast<void*>(&eglSwapInterval)}, \
+    {"eglTerminate", reinterpret_cast<void*>(&eglTerminate)}, \
+    {"eglWaitClient", reinterpret_cast<void*>(&eglWaitClient)}, \
+    {"eglWaitGL", reinterpret_cast<void*>(&eglWaitGL)}, \
+    {"eglWaitNative", reinterpret_cast<void*>(&eglWaitNative)}, \
+    {"eglWaitSync", reinterpret_cast<void*>(&eglWaitSync)}, \
+    {"glAcquireKeyedMutexWin32EXT", reinterpret_cast<void*>(&glAcquireKeyedMutexWin32EXT)}, \
+    {"glAcquireTexturesANGLE", reinterpret_cast<void*>(&glAcquireTexturesANGLE)}, \
+    {"glActiveShaderProgram", reinterpret_cast<void*>(&glActiveShaderProgram)}, \
+    {"glActiveShaderProgramEXT", reinterpret_cast<void*>(&glActiveShaderProgramEXT)}, \
+    {"glActiveTexture", reinterpret_cast<void*>(&glActiveTexture)}, \
+    {"glAlphaFunc", reinterpret_cast<void*>(&glAlphaFunc)}, \
+    {"glAlphaFuncQCOM", reinterpret_cast<void*>(&glAlphaFuncQCOM)}, \
+    {"glAlphaFuncx", reinterpret_cast<void*>(&glAlphaFuncx)}, \
+    {"glApplyFramebufferAttachmentCMAAINTEL", reinterpret_cast<void*>(&glApplyFramebufferAttachmentCMAAINTEL)}, \
+    {"glAttachShader", reinterpret_cast<void*>(&glAttachShader)}, \
+    {"glBeginConditionalRenderNV", reinterpret_cast<void*>(&glBeginConditionalRenderNV)}, \
+    {"glBeginPerfMonitorAMD", reinterpret_cast<void*>(&glBeginPerfMonitorAMD)}, \
+    {"glBeginPerfQueryINTEL", reinterpret_cast<void*>(&glBeginPerfQueryINTEL)}, \
+    {"glBeginPixelLocalStorageANGLE", reinterpret_cast<void*>(&glBeginPixelLocalStorageANGLE)}, \
+    {"glBeginQuery", reinterpret_cast<void*>(&glBeginQuery)}, \
+    {"glBeginQueryEXT", reinterpret_cast<void*>(&glBeginQueryEXT)}, \
+    {"glBeginTransformFeedback", reinterpret_cast<void*>(&glBeginTransformFeedback)}, \
+    {"glBindAttribLocation", reinterpret_cast<void*>(&glBindAttribLocation)}, \
+    {"glBindBuffer", reinterpret_cast<void*>(&glBindBuffer)}, \
+    {"glBindBufferBase", reinterpret_cast<void*>(&glBindBufferBase)}, \
+    {"glBindBufferRange", reinterpret_cast<void*>(&glBindBufferRange)}, \
+    {"glBindFragDataLocationEXT", reinterpret_cast<void*>(&glBindFragDataLocationEXT)}, \
+    {"glBindFragDataLocationIndexedEXT", reinterpret_cast<void*>(&glBindFragDataLocationIndexedEXT)}, \
+    {"glBindFramebuffer", reinterpret_cast<void*>(&glBindFramebuffer)}, \
+    {"glBindImageTexture", reinterpret_cast<void*>(&glBindImageTexture)}, \
+    {"glBindProgramPipeline", reinterpret_cast<void*>(&glBindProgramPipeline)}, \
+    {"glBindProgramPipelineEXT", reinterpret_cast<void*>(&glBindProgramPipelineEXT)}, \
+    {"glBindRenderbuffer", reinterpret_cast<void*>(&glBindRenderbuffer)}, \
+    {"glBindSampler", reinterpret_cast<void*>(&glBindSampler)}, \
+    {"glBindShadingRateImageNV", reinterpret_cast<void*>(&glBindShadingRateImageNV)}, \
+    {"glBindTexture", reinterpret_cast<void*>(&glBindTexture)}, \
+    {"glBindTransformFeedback", reinterpret_cast<void*>(&glBindTransformFeedback)}, \
+    {"glBindUniformLocationCHROMIUM", reinterpret_cast<void*>(&glBindUniformLocationCHROMIUM)}, \
+    {"glBindVertexArray", reinterpret_cast<void*>(&glBindVertexArray)}, \
+    {"glBindVertexArrayOES", reinterpret_cast<void*>(&glBindVertexArrayOES)}, \
+    {"glBindVertexBuffer", reinterpret_cast<void*>(&glBindVertexBuffer)}, \
+    {"glBlendBarrier", reinterpret_cast<void*>(&glBlendBarrier)}, \
+    {"glBlendBarrierKHR", reinterpret_cast<void*>(&glBlendBarrierKHR)}, \
+    {"glBlendBarrierNV", reinterpret_cast<void*>(&glBlendBarrierNV)}, \
+    {"glBlendColor", reinterpret_cast<void*>(&glBlendColor)}, \
+    {"glBlendEquation", reinterpret_cast<void*>(&glBlendEquation)}, \
+    {"glBlendEquationSeparate", reinterpret_cast<void*>(&glBlendEquationSeparate)}, \
+    {"glBlendEquationSeparatei", reinterpret_cast<void*>(&glBlendEquationSeparatei)}, \
+    {"glBlendEquationSeparateiEXT", reinterpret_cast<void*>(&glBlendEquationSeparateiEXT)}, \
+    {"glBlendEquationSeparateiOES", reinterpret_cast<void*>(&glBlendEquationSeparateiOES)}, \
+    {"glBlendEquationi", reinterpret_cast<void*>(&glBlendEquationi)}, \
+    {"glBlendEquationiEXT", reinterpret_cast<void*>(&glBlendEquationiEXT)}, \
+    {"glBlendEquationiOES", reinterpret_cast<void*>(&glBlendEquationiOES)}, \
+    {"glBlendFunc", reinterpret_cast<void*>(&glBlendFunc)}, \
+    {"glBlendFuncSeparate", reinterpret_cast<void*>(&glBlendFuncSeparate)}, \
+    {"glBlendFuncSeparatei", reinterpret_cast<void*>(&glBlendFuncSeparatei)}, \
+    {"glBlendFuncSeparateiEXT", reinterpret_cast<void*>(&glBlendFuncSeparateiEXT)}, \
+    {"glBlendFuncSeparateiOES", reinterpret_cast<void*>(&glBlendFuncSeparateiOES)}, \
+    {"glBlendFunci", reinterpret_cast<void*>(&glBlendFunci)}, \
+    {"glBlendFunciEXT", reinterpret_cast<void*>(&glBlendFunciEXT)}, \
+    {"glBlendFunciOES", reinterpret_cast<void*>(&glBlendFunciOES)}, \
+    {"glBlendParameteriNV", reinterpret_cast<void*>(&glBlendParameteriNV)}, \
+    {"glBlitFramebuffer", reinterpret_cast<void*>(&glBlitFramebuffer)}, \
+    {"glBlitFramebufferANGLE", reinterpret_cast<void*>(&glBlitFramebufferANGLE)}, \
+    {"glBlitFramebufferLayerEXT", reinterpret_cast<void*>(&glBlitFramebufferLayerEXT)}, \
+    {"glBlitFramebufferLayersEXT", reinterpret_cast<void*>(&glBlitFramebufferLayersEXT)}, \
+    {"glBlitFramebufferNV", reinterpret_cast<void*>(&glBlitFramebufferNV)}, \
+    {"glBufferAttachMemoryNV", reinterpret_cast<void*>(&glBufferAttachMemoryNV)}, \
+    {"glBufferData", reinterpret_cast<void*>(&glBufferData)}, \
+    {"glBufferPageCommitmentMemNV", reinterpret_cast<void*>(&glBufferPageCommitmentMemNV)}, \
+    {"glBufferStorageEXT", reinterpret_cast<void*>(&glBufferStorageEXT)}, \
+    {"glBufferStorageExternalEXT", reinterpret_cast<void*>(&glBufferStorageExternalEXT)}, \
+    {"glBufferStorageMemEXT", reinterpret_cast<void*>(&glBufferStorageMemEXT)}, \
+    {"glBufferSubData", reinterpret_cast<void*>(&glBufferSubData)}, \
+    {"glCheckFramebufferStatus", reinterpret_cast<void*>(&glCheckFramebufferStatus)}, \
+    {"glClear", reinterpret_cast<void*>(&glClear)}, \
+    {"glClearBufferfi", reinterpret_cast<void*>(&glClearBufferfi)}, \
+    {"glClearBufferfv", reinterpret_cast<void*>(&glClearBufferfv)}, \
+    {"glClearBufferiv", reinterpret_cast<void*>(&glClearBufferiv)}, \
+    {"glClearBufferuiv", reinterpret_cast<void*>(&glClearBufferuiv)}, \
+    {"glClearColor", reinterpret_cast<void*>(&glClearColor)}, \
+    {"glClearColorx", reinterpret_cast<void*>(&glClearColorx)}, \
+    {"glClearDepthf", reinterpret_cast<void*>(&glClearDepthf)}, \
+    {"glClearDepthx", reinterpret_cast<void*>(&glClearDepthx)}, \
+    {"glClearPixelLocalStorageuiEXT", reinterpret_cast<void*>(&glClearPixelLocalStorageuiEXT)}, \
+    {"glClearStencil", reinterpret_cast<void*>(&glClearStencil)}, \
+    {"glClearTexImageEXT", reinterpret_cast<void*>(&glClearTexImageEXT)}, \
+    {"glClearTexSubImageEXT", reinterpret_cast<void*>(&glClearTexSubImageEXT)}, \
+    {"glClientActiveTexture", reinterpret_cast<void*>(&glClientActiveTexture)}, \
+    {"glClientWaitSync", reinterpret_cast<void*>(&glClientWaitSync)}, \
+    {"glClientWaitSyncAPPLE", reinterpret_cast<void*>(&glClientWaitSyncAPPLE)}, \
+    {"glClipControlEXT", reinterpret_cast<void*>(&glClipControlEXT)}, \
+    {"glClipPlanef", reinterpret_cast<void*>(&glClipPlanef)}, \
+    {"glClipPlanex", reinterpret_cast<void*>(&glClipPlanex)}, \
+    {"glColor4f", reinterpret_cast<void*>(&glColor4f)}, \
+    {"glColor4ub", reinterpret_cast<void*>(&glColor4ub)}, \
+    {"glColor4x", reinterpret_cast<void*>(&glColor4x)}, \
+    {"glColorMask", reinterpret_cast<void*>(&glColorMask)}, \
+    {"glColorMaski", reinterpret_cast<void*>(&glColorMaski)}, \
+    {"glColorMaskiEXT", reinterpret_cast<void*>(&glColorMaskiEXT)}, \
+    {"glColorMaskiOES", reinterpret_cast<void*>(&glColorMaskiOES)}, \
+    {"glColorPointer", reinterpret_cast<void*>(&glColorPointer)}, \
+    {"glCompileShader", reinterpret_cast<void*>(&glCompileShader)}, \
+    {"glCompressedCopyTextureCHROMIUM", reinterpret_cast<void*>(&glCompressedCopyTextureCHROMIUM)}, \
+    {"glCompressedTexImage2D", reinterpret_cast<void*>(&glCompressedTexImage2D)}, \
+    {"glCompressedTexImage2DRobustANGLE", reinterpret_cast<void*>(&glCompressedTexImage2DRobustANGLE)}, \
+    {"glCompressedTexImage3D", reinterpret_cast<void*>(&glCompressedTexImage3D)}, \
+    {"glCompressedTexImage3DOES", reinterpret_cast<void*>(&glCompressedTexImage3DOES)}, \
+    {"glCompressedTexImage3DRobustANGLE", reinterpret_cast<void*>(&glCompressedTexImage3DRobustANGLE)}, \
+    {"glCompressedTexSubImage2D", reinterpret_cast<void*>(&glCompressedTexSubImage2D)}, \
+    {"glCompressedTexSubImage2DRobustANGLE", reinterpret_cast<void*>(&glCompressedTexSubImage2DRobustANGLE)}, \
+    {"glCompressedTexSubImage3D", reinterpret_cast<void*>(&glCompressedTexSubImage3D)}, \
+    {"glCompressedTexSubImage3DOES", reinterpret_cast<void*>(&glCompressedTexSubImage3DOES)}, \
+    {"glCompressedTexSubImage3DRobustANGLE", reinterpret_cast<void*>(&glCompressedTexSubImage3DRobustANGLE)}, \
+    {"glConservativeRasterParameteriNV", reinterpret_cast<void*>(&glConservativeRasterParameteriNV)}, \
+    {"glCopyBufferSubData", reinterpret_cast<void*>(&glCopyBufferSubData)}, \
+    {"glCopyBufferSubDataNV", reinterpret_cast<void*>(&glCopyBufferSubDataNV)}, \
+    {"glCopyImageSubData", reinterpret_cast<void*>(&glCopyImageSubData)}, \
+    {"glCopyImageSubDataEXT", reinterpret_cast<void*>(&glCopyImageSubDataEXT)}, \
+    {"glCopyImageSubDataOES", reinterpret_cast<void*>(&glCopyImageSubDataOES)}, \
+    {"glCopyPathNV", reinterpret_cast<void*>(&glCopyPathNV)}, \
+    {"glCopySubTexture3DANGLE", reinterpret_cast<void*>(&glCopySubTexture3DANGLE)}, \
+    {"glCopySubTextureCHROMIUM", reinterpret_cast<void*>(&glCopySubTextureCHROMIUM)}, \
+    {"glCopyTexImage2D", reinterpret_cast<void*>(&glCopyTexImage2D)}, \
+    {"glCopyTexSubImage2D", reinterpret_cast<void*>(&glCopyTexSubImage2D)}, \
+    {"glCopyTexSubImage3D", reinterpret_cast<void*>(&glCopyTexSubImage3D)}, \
+    {"glCopyTexSubImage3DOES", reinterpret_cast<void*>(&glCopyTexSubImage3DOES)}, \
+    {"glCopyTexture3DANGLE", reinterpret_cast<void*>(&glCopyTexture3DANGLE)}, \
+    {"glCopyTextureCHROMIUM", reinterpret_cast<void*>(&glCopyTextureCHROMIUM)}, \
+    {"glCopyTextureLevelsAPPLE", reinterpret_cast<void*>(&glCopyTextureLevelsAPPLE)}, \
+    {"glCoverFillPathInstancedNV", reinterpret_cast<void*>(&glCoverFillPathInstancedNV)}, \
+    {"glCoverFillPathNV", reinterpret_cast<void*>(&glCoverFillPathNV)}, \
+    {"glCoverStrokePathInstancedNV", reinterpret_cast<void*>(&glCoverStrokePathInstancedNV)}, \
+    {"glCoverStrokePathNV", reinterpret_cast<void*>(&glCoverStrokePathNV)}, \
+    {"glCoverageMaskNV", reinterpret_cast<void*>(&glCoverageMaskNV)}, \
+    {"glCoverageModulationCHROMIUM", reinterpret_cast<void*>(&glCoverageModulationCHROMIUM)}, \
+    {"glCoverageModulationNV", reinterpret_cast<void*>(&glCoverageModulationNV)}, \
+    {"glCoverageModulationTableNV", reinterpret_cast<void*>(&glCoverageModulationTableNV)}, \
+    {"glCoverageOperationNV", reinterpret_cast<void*>(&glCoverageOperationNV)}, \
+    {"glCreateMemoryObjectsEXT", reinterpret_cast<void*>(&glCreateMemoryObjectsEXT)}, \
+    {"glCreatePerfQueryINTEL", reinterpret_cast<void*>(&glCreatePerfQueryINTEL)}, \
+    {"glCreateProgram", reinterpret_cast<void*>(&glCreateProgram)}, \
+    {"glCreateSemaphoresNV", reinterpret_cast<void*>(&glCreateSemaphoresNV)}, \
+    {"glCreateShader", reinterpret_cast<void*>(&glCreateShader)}, \
+    {"glCreateShaderProgramv", reinterpret_cast<void*>(&glCreateShaderProgramv)}, \
+    {"glCreateShaderProgramvEXT", reinterpret_cast<void*>(&glCreateShaderProgramvEXT)}, \
+    {"glCullFace", reinterpret_cast<void*>(&glCullFace)}, \
+    {"glDebugMessageCallback", reinterpret_cast<void*>(&glDebugMessageCallback)}, \
+    {"glDebugMessageCallbackKHR", reinterpret_cast<void*>(&glDebugMessageCallbackKHR)}, \
+    {"glDebugMessageControl", reinterpret_cast<void*>(&glDebugMessageControl)}, \
+    {"glDebugMessageControlKHR", reinterpret_cast<void*>(&glDebugMessageControlKHR)}, \
+    {"glDebugMessageInsert", reinterpret_cast<void*>(&glDebugMessageInsert)}, \
+    {"glDebugMessageInsertKHR", reinterpret_cast<void*>(&glDebugMessageInsertKHR)}, \
+    {"glDeleteBuffers", reinterpret_cast<void*>(&glDeleteBuffers)}, \
+    {"glDeleteFencesNV", reinterpret_cast<void*>(&glDeleteFencesNV)}, \
+    {"glDeleteFramebuffers", reinterpret_cast<void*>(&glDeleteFramebuffers)}, \
+    {"glDeleteMemoryObjectsEXT", reinterpret_cast<void*>(&glDeleteMemoryObjectsEXT)}, \
+    {"glDeletePathsNV", reinterpret_cast<void*>(&glDeletePathsNV)}, \
+    {"glDeletePerfMonitorsAMD", reinterpret_cast<void*>(&glDeletePerfMonitorsAMD)}, \
+    {"glDeletePerfQueryINTEL", reinterpret_cast<void*>(&glDeletePerfQueryINTEL)}, \
+    {"glDeleteProgram", reinterpret_cast<void*>(&glDeleteProgram)}, \
+    {"glDeleteProgramPipelines", reinterpret_cast<void*>(&glDeleteProgramPipelines)}, \
+    {"glDeleteProgramPipelinesEXT", reinterpret_cast<void*>(&glDeleteProgramPipelinesEXT)}, \
+    {"glDeleteQueries", reinterpret_cast<void*>(&glDeleteQueries)}, \
+    {"glDeleteQueriesEXT", reinterpret_cast<void*>(&glDeleteQueriesEXT)}, \
+    {"glDeleteRenderbuffers", reinterpret_cast<void*>(&glDeleteRenderbuffers)}, \
+    {"glDeleteSamplers", reinterpret_cast<void*>(&glDeleteSamplers)}, \
+    {"glDeleteSemaphoresEXT", reinterpret_cast<void*>(&glDeleteSemaphoresEXT)}, \
+    {"glDeleteShader", reinterpret_cast<void*>(&glDeleteShader)}, \
+    {"glDeleteSync", reinterpret_cast<void*>(&glDeleteSync)}, \
+    {"glDeleteSyncAPPLE", reinterpret_cast<void*>(&glDeleteSyncAPPLE)}, \
+    {"glDeleteTextures", reinterpret_cast<void*>(&glDeleteTextures)}, \
+    {"glDeleteTransformFeedbacks", reinterpret_cast<void*>(&glDeleteTransformFeedbacks)}, \
+    {"glDeleteVertexArrays", reinterpret_cast<void*>(&glDeleteVertexArrays)}, \
+    {"glDeleteVertexArraysOES", reinterpret_cast<void*>(&glDeleteVertexArraysOES)}, \
+    {"glDepthFunc", reinterpret_cast<void*>(&glDepthFunc)}, \
+    {"glDepthMask", reinterpret_cast<void*>(&glDepthMask)}, \
+    {"glDepthRangeArrayfvNV", reinterpret_cast<void*>(&glDepthRangeArrayfvNV)}, \
+    {"glDepthRangeArrayfvOES", reinterpret_cast<void*>(&glDepthRangeArrayfvOES)}, \
+    {"glDepthRangeIndexedfNV", reinterpret_cast<void*>(&glDepthRangeIndexedfNV)}, \
+    {"glDepthRangeIndexedfOES", reinterpret_cast<void*>(&glDepthRangeIndexedfOES)}, \
+    {"glDepthRangef", reinterpret_cast<void*>(&glDepthRangef)}, \
+    {"glDepthRangex", reinterpret_cast<void*>(&glDepthRangex)}, \
+    {"glDetachShader", reinterpret_cast<void*>(&glDetachShader)}, \
+    {"glDisable", reinterpret_cast<void*>(&glDisable)}, \
+    {"glDisableClientState", reinterpret_cast<void*>(&glDisableClientState)}, \
+    {"glDisableDriverControlQCOM", reinterpret_cast<void*>(&glDisableDriverControlQCOM)}, \
+    {"glDisableExtensionANGLE", reinterpret_cast<void*>(&glDisableExtensionANGLE)}, \
+    {"glDisableVertexAttribArray", reinterpret_cast<void*>(&glDisableVertexAttribArray)}, \
+    {"glDisablei", reinterpret_cast<void*>(&glDisablei)}, \
+    {"glDisableiEXT", reinterpret_cast<void*>(&glDisableiEXT)}, \
+    {"glDisableiNV", reinterpret_cast<void*>(&glDisableiNV)}, \
+    {"glDisableiOES", reinterpret_cast<void*>(&glDisableiOES)}, \
+    {"glDiscardFramebufferEXT", reinterpret_cast<void*>(&glDiscardFramebufferEXT)}, \
+    {"glDispatchCompute", reinterpret_cast<void*>(&glDispatchCompute)}, \
+    {"glDispatchComputeIndirect", reinterpret_cast<void*>(&glDispatchComputeIndirect)}, \
+    {"glDrawArrays", reinterpret_cast<void*>(&glDrawArrays)}, \
+    {"glDrawArraysIndirect", reinterpret_cast<void*>(&glDrawArraysIndirect)}, \
+    {"glDrawArraysInstanced", reinterpret_cast<void*>(&glDrawArraysInstanced)}, \
+    {"glDrawArraysInstancedANGLE", reinterpret_cast<void*>(&glDrawArraysInstancedANGLE)}, \
+    {"glDrawArraysInstancedBaseInstanceANGLE", reinterpret_cast<void*>(&glDrawArraysInstancedBaseInstanceANGLE)}, \
+    {"glDrawArraysInstancedBaseInstanceEXT", reinterpret_cast<void*>(&glDrawArraysInstancedBaseInstanceEXT)}, \
+    {"glDrawArraysInstancedEXT", reinterpret_cast<void*>(&glDrawArraysInstancedEXT)}, \
+    {"glDrawArraysInstancedNV", reinterpret_cast<void*>(&glDrawArraysInstancedNV)}, \
+    {"glDrawBuffers", reinterpret_cast<void*>(&glDrawBuffers)}, \
+    {"glDrawBuffersEXT", reinterpret_cast<void*>(&glDrawBuffersEXT)}, \
+    {"glDrawBuffersIndexedEXT", reinterpret_cast<void*>(&glDrawBuffersIndexedEXT)}, \
+    {"glDrawBuffersNV", reinterpret_cast<void*>(&glDrawBuffersNV)}, \
+    {"glDrawElements", reinterpret_cast<void*>(&glDrawElements)}, \
+    {"glDrawElementsBaseVertex", reinterpret_cast<void*>(&glDrawElementsBaseVertex)}, \
+    {"glDrawElementsBaseVertexEXT", reinterpret_cast<void*>(&glDrawElementsBaseVertexEXT)}, \
+    {"glDrawElementsBaseVertexOES", reinterpret_cast<void*>(&glDrawElementsBaseVertexOES)}, \
+    {"glDrawElementsIndirect", reinterpret_cast<void*>(&glDrawElementsIndirect)}, \
+    {"glDrawElementsInstanced", reinterpret_cast<void*>(&glDrawElementsInstanced)}, \
+    {"glDrawElementsInstancedANGLE", reinterpret_cast<void*>(&glDrawElementsInstancedANGLE)}, \
+    {"glDrawElementsInstancedBaseInstanceEXT", reinterpret_cast<void*>(&glDrawElementsInstancedBaseInstanceEXT)}, \
+    {"glDrawElementsInstancedBaseVertex", reinterpret_cast<void*>(&glDrawElementsInstancedBaseVertex)}, \
+    {"glDrawElementsInstancedBaseVertexBaseInstanceANGLE", reinterpret_cast<void*>(&glDrawElementsInstancedBaseVertexBaseInstanceANGLE)}, \
+    {"glDrawElementsInstancedBaseVertexBaseInstanceEXT", reinterpret_cast<void*>(&glDrawElementsInstancedBaseVertexBaseInstanceEXT)}, \
+    {"glDrawElementsInstancedBaseVertexEXT", reinterpret_cast<void*>(&glDrawElementsInstancedBaseVertexEXT)}, \
+    {"glDrawElementsInstancedBaseVertexOES", reinterpret_cast<void*>(&glDrawElementsInstancedBaseVertexOES)}, \
+    {"glDrawElementsInstancedEXT", reinterpret_cast<void*>(&glDrawElementsInstancedEXT)}, \
+    {"glDrawElementsInstancedNV", reinterpret_cast<void*>(&glDrawElementsInstancedNV)}, \
+    {"glDrawMeshTasksEXT", reinterpret_cast<void*>(&glDrawMeshTasksEXT)}, \
+    {"glDrawMeshTasksIndirectEXT", reinterpret_cast<void*>(&glDrawMeshTasksIndirectEXT)}, \
+    {"glDrawMeshTasksIndirectNV", reinterpret_cast<void*>(&glDrawMeshTasksIndirectNV)}, \
+    {"glDrawMeshTasksNV", reinterpret_cast<void*>(&glDrawMeshTasksNV)}, \
+    {"glDrawRangeElements", reinterpret_cast<void*>(&glDrawRangeElements)}, \
+    {"glDrawRangeElementsBaseVertex", reinterpret_cast<void*>(&glDrawRangeElementsBaseVertex)}, \
+    {"glDrawRangeElementsBaseVertexEXT", reinterpret_cast<void*>(&glDrawRangeElementsBaseVertexEXT)}, \
+    {"glDrawRangeElementsBaseVertexOES", reinterpret_cast<void*>(&glDrawRangeElementsBaseVertexOES)}, \
+    {"glDrawTransformFeedbackEXT", reinterpret_cast<void*>(&glDrawTransformFeedbackEXT)}, \
+    {"glDrawTransformFeedbackInstancedEXT", reinterpret_cast<void*>(&glDrawTransformFeedbackInstancedEXT)}, \
+    {"glDrawVkImageNV", reinterpret_cast<void*>(&glDrawVkImageNV)}, \
+    {"glEGLImageTargetRenderbufferStorageOES", reinterpret_cast<void*>(&glEGLImageTargetRenderbufferStorageOES)}, \
+    {"glEGLImageTargetTexStorageEXT", reinterpret_cast<void*>(&glEGLImageTargetTexStorageEXT)}, \
+    {"glEGLImageTargetTexture2DOES", reinterpret_cast<void*>(&glEGLImageTargetTexture2DOES)}, \
+    {"glEGLImageTargetTextureStorageEXT", reinterpret_cast<void*>(&glEGLImageTargetTextureStorageEXT)}, \
+    {"glEnable", reinterpret_cast<void*>(&glEnable)}, \
+    {"glEnableClientState", reinterpret_cast<void*>(&glEnableClientState)}, \
+    {"glEnableDriverControlQCOM", reinterpret_cast<void*>(&glEnableDriverControlQCOM)}, \
+    {"glEnableVertexAttribArray", reinterpret_cast<void*>(&glEnableVertexAttribArray)}, \
+    {"glEnablei", reinterpret_cast<void*>(&glEnablei)}, \
+    {"glEnableiEXT", reinterpret_cast<void*>(&glEnableiEXT)}, \
+    {"glEnableiNV", reinterpret_cast<void*>(&glEnableiNV)}, \
+    {"glEnableiOES", reinterpret_cast<void*>(&glEnableiOES)}, \
+    {"glEndConditionalRenderNV", reinterpret_cast<void*>(&glEndConditionalRenderNV)}, \
+    {"glEndPerfMonitorAMD", reinterpret_cast<void*>(&glEndPerfMonitorAMD)}, \
+    {"glEndPerfQueryINTEL", reinterpret_cast<void*>(&glEndPerfQueryINTEL)}, \
+    {"glEndPixelLocalStorageANGLE", reinterpret_cast<void*>(&glEndPixelLocalStorageANGLE)}, \
+    {"glEndQuery", reinterpret_cast<void*>(&glEndQuery)}, \
+    {"glEndQueryEXT", reinterpret_cast<void*>(&glEndQueryEXT)}, \
+    {"glEndTilingQCOM", reinterpret_cast<void*>(&glEndTilingQCOM)}, \
+    {"glEndTransformFeedback", reinterpret_cast<void*>(&glEndTransformFeedback)}, \
+    {"glExtGetBufferPointervQCOM", reinterpret_cast<void*>(&glExtGetBufferPointervQCOM)}, \
+    {"glExtGetBuffersQCOM", reinterpret_cast<void*>(&glExtGetBuffersQCOM)}, \
+    {"glExtGetFramebuffersQCOM", reinterpret_cast<void*>(&glExtGetFramebuffersQCOM)}, \
+    {"glExtGetProgramBinarySourceQCOM", reinterpret_cast<void*>(&glExtGetProgramBinarySourceQCOM)}, \
+    {"glExtGetProgramsQCOM", reinterpret_cast<void*>(&glExtGetProgramsQCOM)}, \
+    {"glExtGetRenderbuffersQCOM", reinterpret_cast<void*>(&glExtGetRenderbuffersQCOM)}, \
+    {"glExtGetShadersQCOM", reinterpret_cast<void*>(&glExtGetShadersQCOM)}, \
+    {"glExtGetTexLevelParameterivQCOM", reinterpret_cast<void*>(&glExtGetTexLevelParameterivQCOM)}, \
+    {"glExtGetTexSubImageQCOM", reinterpret_cast<void*>(&glExtGetTexSubImageQCOM)}, \
+    {"glExtGetTexturesQCOM", reinterpret_cast<void*>(&glExtGetTexturesQCOM)}, \
+    {"glExtIsProgramBinaryQCOM", reinterpret_cast<void*>(&glExtIsProgramBinaryQCOM)}, \
+    {"glExtTexObjectStateOverrideiQCOM", reinterpret_cast<void*>(&glExtTexObjectStateOverrideiQCOM)}, \
+    {"glExtrapolateTex2DQCOM", reinterpret_cast<void*>(&glExtrapolateTex2DQCOM)}, \
+    {"glFenceSync", reinterpret_cast<void*>(&glFenceSync)}, \
+    {"glFenceSyncAPPLE", reinterpret_cast<void*>(&glFenceSyncAPPLE)}, \
+    {"glFinish", reinterpret_cast<void*>(&glFinish)}, \
+    {"glFinishFenceNV", reinterpret_cast<void*>(&glFinishFenceNV)}, \
+    {"glFlush", reinterpret_cast<void*>(&glFlush)}, \
+    {"glFlushMappedBufferRange", reinterpret_cast<void*>(&glFlushMappedBufferRange)}, \
+    {"glFlushMappedBufferRangeEXT", reinterpret_cast<void*>(&glFlushMappedBufferRangeEXT)}, \
+    {"glFogf", reinterpret_cast<void*>(&glFogf)}, \
+    {"glFogfv", reinterpret_cast<void*>(&glFogfv)}, \
+    {"glFogx", reinterpret_cast<void*>(&glFogx)}, \
+    {"glFogxv", reinterpret_cast<void*>(&glFogxv)}, \
+    {"glFragmentCoverageColorNV", reinterpret_cast<void*>(&glFragmentCoverageColorNV)}, \
+    {"glFramebufferFetchBarrierEXT", reinterpret_cast<void*>(&glFramebufferFetchBarrierEXT)}, \
+    {"glFramebufferFetchBarrierQCOM", reinterpret_cast<void*>(&glFramebufferFetchBarrierQCOM)}, \
+    {"glFramebufferFoveationConfigQCOM", reinterpret_cast<void*>(&glFramebufferFoveationConfigQCOM)}, \
+    {"glFramebufferFoveationParametersQCOM", reinterpret_cast<void*>(&glFramebufferFoveationParametersQCOM)}, \
+    {"glFramebufferMemorylessPixelLocalStorageANGLE", reinterpret_cast<void*>(&glFramebufferMemorylessPixelLocalStorageANGLE)}, \
+    {"glFramebufferParameteri", reinterpret_cast<void*>(&glFramebufferParameteri)}, \
+    {"glFramebufferParameteriMESA", reinterpret_cast<void*>(&glFramebufferParameteriMESA)}, \
+    {"glFramebufferPixelLocalClearValuefvANGLE", reinterpret_cast<void*>(&glFramebufferPixelLocalClearValuefvANGLE)}, \
+    {"glFramebufferPixelLocalClearValueivANGLE", reinterpret_cast<void*>(&glFramebufferPixelLocalClearValueivANGLE)}, \
+    {"glFramebufferPixelLocalClearValueuivANGLE", reinterpret_cast<void*>(&glFramebufferPixelLocalClearValueuivANGLE)}, \
+    {"glFramebufferPixelLocalStorageInterruptANGLE", reinterpret_cast<void*>(&glFramebufferPixelLocalStorageInterruptANGLE)}, \
+    {"glFramebufferPixelLocalStorageRestoreANGLE", reinterpret_cast<void*>(&glFramebufferPixelLocalStorageRestoreANGLE)}, \
+    {"glFramebufferPixelLocalStorageSizeEXT", reinterpret_cast<void*>(&glFramebufferPixelLocalStorageSizeEXT)}, \
+    {"glFramebufferRenderbuffer", reinterpret_cast<void*>(&glFramebufferRenderbuffer)}, \
+    {"glFramebufferSampleLocationsfvNV", reinterpret_cast<void*>(&glFramebufferSampleLocationsfvNV)}, \
+    {"glFramebufferShadingRateEXT", reinterpret_cast<void*>(&glFramebufferShadingRateEXT)}, \
+    {"glFramebufferTexture", reinterpret_cast<void*>(&glFramebufferTexture)}, \
+    {"glFramebufferTexture2D", reinterpret_cast<void*>(&glFramebufferTexture2D)}, \
+    {"glFramebufferTexture2DDownsampleIMG", reinterpret_cast<void*>(&glFramebufferTexture2DDownsampleIMG)}, \
+    {"glFramebufferTexture2DMultisampleEXT", reinterpret_cast<void*>(&glFramebufferTexture2DMultisampleEXT)}, \
+    {"glFramebufferTexture2DMultisampleIMG", reinterpret_cast<void*>(&glFramebufferTexture2DMultisampleIMG)}, \
+    {"glFramebufferTexture3DOES", reinterpret_cast<void*>(&glFramebufferTexture3DOES)}, \
+    {"glFramebufferTextureEXT", reinterpret_cast<void*>(&glFramebufferTextureEXT)}, \
+    {"glFramebufferTextureLayer", reinterpret_cast<void*>(&glFramebufferTextureLayer)}, \
+    {"glFramebufferTextureLayerDownsampleIMG", reinterpret_cast<void*>(&glFramebufferTextureLayerDownsampleIMG)}, \
+    {"glFramebufferTextureMultisampleMultiviewOVR", reinterpret_cast<void*>(&glFramebufferTextureMultisampleMultiviewOVR)}, \
+    {"glFramebufferTextureMultiviewOVR", reinterpret_cast<void*>(&glFramebufferTextureMultiviewOVR)}, \
+    {"glFramebufferTextureOES", reinterpret_cast<void*>(&glFramebufferTextureOES)}, \
+    {"glFramebufferTexturePixelLocalStorageANGLE", reinterpret_cast<void*>(&glFramebufferTexturePixelLocalStorageANGLE)}, \
+    {"glFrontFace", reinterpret_cast<void*>(&glFrontFace)}, \
+    {"glFrustumf", reinterpret_cast<void*>(&glFrustumf)}, \
+    {"glFrustumx", reinterpret_cast<void*>(&glFrustumx)}, \
+    {"glGenBuffers", reinterpret_cast<void*>(&glGenBuffers)}, \
+    {"glGenFencesNV", reinterpret_cast<void*>(&glGenFencesNV)}, \
+    {"glGenFramebuffers", reinterpret_cast<void*>(&glGenFramebuffers)}, \
+    {"glGenPathsNV", reinterpret_cast<void*>(&glGenPathsNV)}, \
+    {"glGenPerfMonitorsAMD", reinterpret_cast<void*>(&glGenPerfMonitorsAMD)}, \
+    {"glGenProgramPipelines", reinterpret_cast<void*>(&glGenProgramPipelines)}, \
+    {"glGenProgramPipelinesEXT", reinterpret_cast<void*>(&glGenProgramPipelinesEXT)}, \
+    {"glGenQueries", reinterpret_cast<void*>(&glGenQueries)}, \
+    {"glGenQueriesEXT", reinterpret_cast<void*>(&glGenQueriesEXT)}, \
+    {"glGenRenderbuffers", reinterpret_cast<void*>(&glGenRenderbuffers)}, \
+    {"glGenSamplers", reinterpret_cast<void*>(&glGenSamplers)}, \
+    {"glGenSemaphoresEXT", reinterpret_cast<void*>(&glGenSemaphoresEXT)}, \
+    {"glGenTextures", reinterpret_cast<void*>(&glGenTextures)}, \
+    {"glGenTransformFeedbacks", reinterpret_cast<void*>(&glGenTransformFeedbacks)}, \
+    {"glGenVertexArrays", reinterpret_cast<void*>(&glGenVertexArrays)}, \
+    {"glGenVertexArraysOES", reinterpret_cast<void*>(&glGenVertexArraysOES)}, \
+    {"glGenerateMipmap", reinterpret_cast<void*>(&glGenerateMipmap)}, \
+    {"glGetActiveAttrib", reinterpret_cast<void*>(&glGetActiveAttrib)}, \
+    {"glGetActiveUniform", reinterpret_cast<void*>(&glGetActiveUniform)}, \
+    {"glGetActiveUniformBlockName", reinterpret_cast<void*>(&glGetActiveUniformBlockName)}, \
+    {"glGetActiveUniformBlockiv", reinterpret_cast<void*>(&glGetActiveUniformBlockiv)}, \
+    {"glGetActiveUniformBlockivRobustANGLE", reinterpret_cast<void*>(&glGetActiveUniformBlockivRobustANGLE)}, \
+    {"glGetActiveUniformsiv", reinterpret_cast<void*>(&glGetActiveUniformsiv)}, \
+    {"glGetAttachedShaders", reinterpret_cast<void*>(&glGetAttachedShaders)}, \
+    {"glGetAttribLocation", reinterpret_cast<void*>(&glGetAttribLocation)}, \
+    {"glGetBooleani_v", reinterpret_cast<void*>(&glGetBooleani_v)}, \
+    {"glGetBooleani_vRobustANGLE", reinterpret_cast<void*>(&glGetBooleani_vRobustANGLE)}, \
+    {"glGetBooleanv", reinterpret_cast<void*>(&glGetBooleanv)}, \
+    {"glGetBooleanvRobustANGLE", reinterpret_cast<void*>(&glGetBooleanvRobustANGLE)}, \
+    {"glGetBufferParameteri64v", reinterpret_cast<void*>(&glGetBufferParameteri64v)}, \
+    {"glGetBufferParameteri64vRobustANGLE", reinterpret_cast<void*>(&glGetBufferParameteri64vRobustANGLE)}, \
+    {"glGetBufferParameteriv", reinterpret_cast<void*>(&glGetBufferParameteriv)}, \
+    {"glGetBufferParameterivRobustANGLE", reinterpret_cast<void*>(&glGetBufferParameterivRobustANGLE)}, \
+    {"glGetBufferPointerv", reinterpret_cast<void*>(&glGetBufferPointerv)}, \
+    {"glGetBufferPointervOES", reinterpret_cast<void*>(&glGetBufferPointervOES)}, \
+    {"glGetBufferPointervRobustANGLE", reinterpret_cast<void*>(&glGetBufferPointervRobustANGLE)}, \
+    {"glGetClipPlanef", reinterpret_cast<void*>(&glGetClipPlanef)}, \
+    {"glGetClipPlanex", reinterpret_cast<void*>(&glGetClipPlanex)}, \
+    {"glGetCompressedTexImageANGLE", reinterpret_cast<void*>(&glGetCompressedTexImageANGLE)}, \
+    {"glGetCoverageModulationTableNV", reinterpret_cast<void*>(&glGetCoverageModulationTableNV)}, \
+    {"glGetDebugMessageLog", reinterpret_cast<void*>(&glGetDebugMessageLog)}, \
+    {"glGetDebugMessageLogKHR", reinterpret_cast<void*>(&glGetDebugMessageLogKHR)}, \
+    {"glGetDriverControlStringQCOM", reinterpret_cast<void*>(&glGetDriverControlStringQCOM)}, \
+    {"glGetDriverControlsQCOM", reinterpret_cast<void*>(&glGetDriverControlsQCOM)}, \
+    {"glGetError", reinterpret_cast<void*>(&glGetError)}, \
+    {"glGetFenceivNV", reinterpret_cast<void*>(&glGetFenceivNV)}, \
+    {"glGetFirstPerfQueryIdINTEL", reinterpret_cast<void*>(&glGetFirstPerfQueryIdINTEL)}, \
+    {"glGetFixedv", reinterpret_cast<void*>(&glGetFixedv)}, \
+    {"glGetFloati_vNV", reinterpret_cast<void*>(&glGetFloati_vNV)}, \
+    {"glGetFloati_vOES", reinterpret_cast<void*>(&glGetFloati_vOES)}, \
+    {"glGetFloatv", reinterpret_cast<void*>(&glGetFloatv)}, \
+    {"glGetFloatvRobustANGLE", reinterpret_cast<void*>(&glGetFloatvRobustANGLE)}, \
+    {"glGetFragDataIndexEXT", reinterpret_cast<void*>(&glGetFragDataIndexEXT)}, \
+    {"glGetFragDataLocation", reinterpret_cast<void*>(&glGetFragDataLocation)}, \
+    {"glGetFragmentShadingRatesEXT", reinterpret_cast<void*>(&glGetFragmentShadingRatesEXT)}, \
+    {"glGetFramebufferAttachmentParameteriv", reinterpret_cast<void*>(&glGetFramebufferAttachmentParameteriv)}, \
+    {"glGetFramebufferAttachmentParameterivRobustANGLE", reinterpret_cast<void*>(&glGetFramebufferAttachmentParameterivRobustANGLE)}, \
+    {"glGetFramebufferParameteriv", reinterpret_cast<void*>(&glGetFramebufferParameteriv)}, \
+    {"glGetFramebufferParameterivMESA", reinterpret_cast<void*>(&glGetFramebufferParameterivMESA)}, \
+    {"glGetFramebufferParameterivRobustANGLE", reinterpret_cast<void*>(&glGetFramebufferParameterivRobustANGLE)}, \
+    {"glGetFramebufferPixelLocalStorageParameterfvANGLE", reinterpret_cast<void*>(&glGetFramebufferPixelLocalStorageParameterfvANGLE)}, \
+    {"glGetFramebufferPixelLocalStorageParameterfvRobustANGLE", reinterpret_cast<void*>(&glGetFramebufferPixelLocalStorageParameterfvRobustANGLE)}, \
+    {"glGetFramebufferPixelLocalStorageParameterivANGLE", reinterpret_cast<void*>(&glGetFramebufferPixelLocalStorageParameterivANGLE)}, \
+    {"glGetFramebufferPixelLocalStorageParameterivRobustANGLE", reinterpret_cast<void*>(&glGetFramebufferPixelLocalStorageParameterivRobustANGLE)}, \
+    {"glGetFramebufferPixelLocalStorageSizeEXT", reinterpret_cast<void*>(&glGetFramebufferPixelLocalStorageSizeEXT)}, \
+    {"glGetGraphicsResetStatus", reinterpret_cast<void*>(&glGetGraphicsResetStatus)}, \
+    {"glGetGraphicsResetStatusEXT", reinterpret_cast<void*>(&glGetGraphicsResetStatusEXT)}, \
+    {"glGetGraphicsResetStatusKHR", reinterpret_cast<void*>(&glGetGraphicsResetStatusKHR)}, \
+    {"glGetImageHandleNV", reinterpret_cast<void*>(&glGetImageHandleNV)}, \
+    {"glGetInteger64i_v", reinterpret_cast<void*>(&glGetInteger64i_v)}, \
+    {"glGetInteger64i_vRobustANGLE", reinterpret_cast<void*>(&glGetInteger64i_vRobustANGLE)}, \
+    {"glGetInteger64v", reinterpret_cast<void*>(&glGetInteger64v)}, \
+    {"glGetInteger64vAPPLE", reinterpret_cast<void*>(&glGetInteger64vAPPLE)}, \
+    {"glGetInteger64vEXT", reinterpret_cast<void*>(&glGetInteger64vEXT)}, \
+    {"glGetInteger64vRobustANGLE", reinterpret_cast<void*>(&glGetInteger64vRobustANGLE)}, \
+    {"glGetIntegeri_v", reinterpret_cast<void*>(&glGetIntegeri_v)}, \
+    {"glGetIntegeri_vEXT", reinterpret_cast<void*>(&glGetIntegeri_vEXT)}, \
+    {"glGetIntegeri_vRobustANGLE", reinterpret_cast<void*>(&glGetIntegeri_vRobustANGLE)}, \
+    {"glGetIntegerv", reinterpret_cast<void*>(&glGetIntegerv)}, \
+    {"glGetIntegervRobustANGLE", reinterpret_cast<void*>(&glGetIntegervRobustANGLE)}, \
+    {"glGetInternalformatSampleivNV", reinterpret_cast<void*>(&glGetInternalformatSampleivNV)}, \
+    {"glGetInternalformativ", reinterpret_cast<void*>(&glGetInternalformativ)}, \
+    {"glGetInternalformativRobustANGLE", reinterpret_cast<void*>(&glGetInternalformativRobustANGLE)}, \
+    {"glGetLightfv", reinterpret_cast<void*>(&glGetLightfv)}, \
+    {"glGetLightxv", reinterpret_cast<void*>(&glGetLightxv)}, \
+    {"glGetMaterialfv", reinterpret_cast<void*>(&glGetMaterialfv)}, \
+    {"glGetMaterialxv", reinterpret_cast<void*>(&glGetMaterialxv)}, \
+    {"glGetMemoryObjectDetachedResourcesuivNV", reinterpret_cast<void*>(&glGetMemoryObjectDetachedResourcesuivNV)}, \
+    {"glGetMemoryObjectParameterivEXT", reinterpret_cast<void*>(&glGetMemoryObjectParameterivEXT)}, \
+    {"glGetMultisamplefv", reinterpret_cast<void*>(&glGetMultisamplefv)}, \
+    {"glGetMultisamplefvANGLE", reinterpret_cast<void*>(&glGetMultisamplefvANGLE)}, \
+    {"glGetMultisamplefvRobustANGLE", reinterpret_cast<void*>(&glGetMultisamplefvRobustANGLE)}, \
+    {"glGetNextPerfQueryIdINTEL", reinterpret_cast<void*>(&glGetNextPerfQueryIdINTEL)}, \
+    {"glGetObjectLabel", reinterpret_cast<void*>(&glGetObjectLabel)}, \
+    {"glGetObjectLabelEXT", reinterpret_cast<void*>(&glGetObjectLabelEXT)}, \
+    {"glGetObjectLabelKHR", reinterpret_cast<void*>(&glGetObjectLabelKHR)}, \
+    {"glGetObjectPtrLabel", reinterpret_cast<void*>(&glGetObjectPtrLabel)}, \
+    {"glGetObjectPtrLabelKHR", reinterpret_cast<void*>(&glGetObjectPtrLabelKHR)}, \
+    {"glGetPathCommandsNV", reinterpret_cast<void*>(&glGetPathCommandsNV)}, \
+    {"glGetPathCoordsNV", reinterpret_cast<void*>(&glGetPathCoordsNV)}, \
+    {"glGetPathDashArrayNV", reinterpret_cast<void*>(&glGetPathDashArrayNV)}, \
+    {"glGetPathLengthNV", reinterpret_cast<void*>(&glGetPathLengthNV)}, \
+    {"glGetPathMetricRangeNV", reinterpret_cast<void*>(&glGetPathMetricRangeNV)}, \
+    {"glGetPathMetricsNV", reinterpret_cast<void*>(&glGetPathMetricsNV)}, \
+    {"glGetPathParameterfvNV", reinterpret_cast<void*>(&glGetPathParameterfvNV)}, \
+    {"glGetPathParameterivNV", reinterpret_cast<void*>(&glGetPathParameterivNV)}, \
+    {"glGetPathSpacingNV", reinterpret_cast<void*>(&glGetPathSpacingNV)}, \
+    {"glGetPerfCounterInfoINTEL", reinterpret_cast<void*>(&glGetPerfCounterInfoINTEL)}, \
+    {"glGetPerfMonitorCounterDataAMD", reinterpret_cast<void*>(&glGetPerfMonitorCounterDataAMD)}, \
+    {"glGetPerfMonitorCounterInfoAMD", reinterpret_cast<void*>(&glGetPerfMonitorCounterInfoAMD)}, \
+    {"glGetPerfMonitorCounterStringAMD", reinterpret_cast<void*>(&glGetPerfMonitorCounterStringAMD)}, \
+    {"glGetPerfMonitorCountersAMD", reinterpret_cast<void*>(&glGetPerfMonitorCountersAMD)}, \
+    {"glGetPerfMonitorGroupStringAMD", reinterpret_cast<void*>(&glGetPerfMonitorGroupStringAMD)}, \
+    {"glGetPerfMonitorGroupsAMD", reinterpret_cast<void*>(&glGetPerfMonitorGroupsAMD)}, \
+    {"glGetPerfQueryDataINTEL", reinterpret_cast<void*>(&glGetPerfQueryDataINTEL)}, \
+    {"glGetPerfQueryIdByNameINTEL", reinterpret_cast<void*>(&glGetPerfQueryIdByNameINTEL)}, \
+    {"glGetPerfQueryInfoINTEL", reinterpret_cast<void*>(&glGetPerfQueryInfoINTEL)}, \
+    {"glGetPointerv", reinterpret_cast<void*>(&glGetPointerv)}, \
+    {"glGetPointervANGLE", reinterpret_cast<void*>(&glGetPointervANGLE)}, \
+    {"glGetPointervKHR", reinterpret_cast<void*>(&glGetPointervKHR)}, \
+    {"glGetPointervRobustANGLERobustANGLE", reinterpret_cast<void*>(&glGetPointervRobustANGLERobustANGLE)}, \
+    {"glGetProgramBinary", reinterpret_cast<void*>(&glGetProgramBinary)}, \
+    {"glGetProgramBinaryOES", reinterpret_cast<void*>(&glGetProgramBinaryOES)}, \
+    {"glGetProgramInfoLog", reinterpret_cast<void*>(&glGetProgramInfoLog)}, \
+    {"glGetProgramInterfaceiv", reinterpret_cast<void*>(&glGetProgramInterfaceiv)}, \
+    {"glGetProgramInterfaceivRobustANGLE", reinterpret_cast<void*>(&glGetProgramInterfaceivRobustANGLE)}, \
+    {"glGetProgramPipelineInfoLog", reinterpret_cast<void*>(&glGetProgramPipelineInfoLog)}, \
+    {"glGetProgramPipelineInfoLogEXT", reinterpret_cast<void*>(&glGetProgramPipelineInfoLogEXT)}, \
+    {"glGetProgramPipelineiv", reinterpret_cast<void*>(&glGetProgramPipelineiv)}, \
+    {"glGetProgramPipelineivEXT", reinterpret_cast<void*>(&glGetProgramPipelineivEXT)}, \
+    {"glGetProgramResourceIndex", reinterpret_cast<void*>(&glGetProgramResourceIndex)}, \
+    {"glGetProgramResourceLocation", reinterpret_cast<void*>(&glGetProgramResourceLocation)}, \
+    {"glGetProgramResourceLocationIndexEXT", reinterpret_cast<void*>(&glGetProgramResourceLocationIndexEXT)}, \
+    {"glGetProgramResourceName", reinterpret_cast<void*>(&glGetProgramResourceName)}, \
+    {"glGetProgramResourcefvNV", reinterpret_cast<void*>(&glGetProgramResourcefvNV)}, \
+    {"glGetProgramResourceiv", reinterpret_cast<void*>(&glGetProgramResourceiv)}, \
+    {"glGetProgramiv", reinterpret_cast<void*>(&glGetProgramiv)}, \
+    {"glGetProgramivRobustANGLE", reinterpret_cast<void*>(&glGetProgramivRobustANGLE)}, \
+    {"glGetQueryObjecti64vEXT", reinterpret_cast<void*>(&glGetQueryObjecti64vEXT)}, \
+    {"glGetQueryObjecti64vRobustANGLE", reinterpret_cast<void*>(&glGetQueryObjecti64vRobustANGLE)}, \
+    {"glGetQueryObjectivEXT", reinterpret_cast<void*>(&glGetQueryObjectivEXT)}, \
+    {"glGetQueryObjectivRobustANGLE", reinterpret_cast<void*>(&glGetQueryObjectivRobustANGLE)}, \
+    {"glGetQueryObjectui64vEXT", reinterpret_cast<void*>(&glGetQueryObjectui64vEXT)}, \
+    {"glGetQueryObjectui64vRobustANGLE", reinterpret_cast<void*>(&glGetQueryObjectui64vRobustANGLE)}, \
+    {"glGetQueryObjectuiv", reinterpret_cast<void*>(&glGetQueryObjectuiv)}, \
+    {"glGetQueryObjectuivEXT", reinterpret_cast<void*>(&glGetQueryObjectuivEXT)}, \
+    {"glGetQueryObjectuivRobustANGLE", reinterpret_cast<void*>(&glGetQueryObjectuivRobustANGLE)}, \
+    {"glGetQueryiv", reinterpret_cast<void*>(&glGetQueryiv)}, \
+    {"glGetQueryivEXT", reinterpret_cast<void*>(&glGetQueryivEXT)}, \
+    {"glGetQueryivRobustANGLE", reinterpret_cast<void*>(&glGetQueryivRobustANGLE)}, \
+    {"glGetRenderbufferImageANGLE", reinterpret_cast<void*>(&glGetRenderbufferImageANGLE)}, \
+    {"glGetRenderbufferParameteriv", reinterpret_cast<void*>(&glGetRenderbufferParameteriv)}, \
+    {"glGetRenderbufferParameterivRobustANGLE", reinterpret_cast<void*>(&glGetRenderbufferParameterivRobustANGLE)}, \
+    {"glGetSamplerParameterIiv", reinterpret_cast<void*>(&glGetSamplerParameterIiv)}, \
+    {"glGetSamplerParameterIivEXT", reinterpret_cast<void*>(&glGetSamplerParameterIivEXT)}, \
+    {"glGetSamplerParameterIivOES", reinterpret_cast<void*>(&glGetSamplerParameterIivOES)}, \
+    {"glGetSamplerParameterIivRobustANGLE", reinterpret_cast<void*>(&glGetSamplerParameterIivRobustANGLE)}, \
+    {"glGetSamplerParameterIuiv", reinterpret_cast<void*>(&glGetSamplerParameterIuiv)}, \
+    {"glGetSamplerParameterIuivEXT", reinterpret_cast<void*>(&glGetSamplerParameterIuivEXT)}, \
+    {"glGetSamplerParameterIuivOES", reinterpret_cast<void*>(&glGetSamplerParameterIuivOES)}, \
+    {"glGetSamplerParameterIuivRobustANGLE", reinterpret_cast<void*>(&glGetSamplerParameterIuivRobustANGLE)}, \
+    {"glGetSamplerParameterfv", reinterpret_cast<void*>(&glGetSamplerParameterfv)}, \
+    {"glGetSamplerParameterfvRobustANGLE", reinterpret_cast<void*>(&glGetSamplerParameterfvRobustANGLE)}, \
+    {"glGetSamplerParameteriv", reinterpret_cast<void*>(&glGetSamplerParameteriv)}, \
+    {"glGetSamplerParameterivRobustANGLE", reinterpret_cast<void*>(&glGetSamplerParameterivRobustANGLE)}, \
+    {"glGetSemaphoreParameterivNV", reinterpret_cast<void*>(&glGetSemaphoreParameterivNV)}, \
+    {"glGetSemaphoreParameterui64vEXT", reinterpret_cast<void*>(&glGetSemaphoreParameterui64vEXT)}, \
+    {"glGetShaderInfoLog", reinterpret_cast<void*>(&glGetShaderInfoLog)}, \
+    {"glGetShaderPrecisionFormat", reinterpret_cast<void*>(&glGetShaderPrecisionFormat)}, \
+    {"glGetShaderSource", reinterpret_cast<void*>(&glGetShaderSource)}, \
+    {"glGetShaderiv", reinterpret_cast<void*>(&glGetShaderiv)}, \
+    {"glGetShaderivRobustANGLE", reinterpret_cast<void*>(&glGetShaderivRobustANGLE)}, \
+    {"glGetShadingRateImagePaletteNV", reinterpret_cast<void*>(&glGetShadingRateImagePaletteNV)}, \
+    {"glGetShadingRateSampleLocationivNV", reinterpret_cast<void*>(&glGetShadingRateSampleLocationivNV)}, \
+    {"glGetString", reinterpret_cast<void*>(&glGetString)}, \
+    {"glGetStringi", reinterpret_cast<void*>(&glGetStringi)}, \
+    {"glGetSynciv", reinterpret_cast<void*>(&glGetSynciv)}, \
+    {"glGetSyncivAPPLE", reinterpret_cast<void*>(&glGetSyncivAPPLE)}, \
+    {"glGetTexEnvfv", reinterpret_cast<void*>(&glGetTexEnvfv)}, \
+    {"glGetTexEnviv", reinterpret_cast<void*>(&glGetTexEnviv)}, \
+    {"glGetTexEnvxv", reinterpret_cast<void*>(&glGetTexEnvxv)}, \
+    {"glGetTexImageANGLE", reinterpret_cast<void*>(&glGetTexImageANGLE)}, \
+    {"glGetTexLevelParameterfv", reinterpret_cast<void*>(&glGetTexLevelParameterfv)}, \
+    {"glGetTexLevelParameterfvANGLE", reinterpret_cast<void*>(&glGetTexLevelParameterfvANGLE)}, \
+    {"glGetTexLevelParameterfvRobustANGLE", reinterpret_cast<void*>(&glGetTexLevelParameterfvRobustANGLE)}, \
+    {"glGetTexLevelParameteriv", reinterpret_cast<void*>(&glGetTexLevelParameteriv)}, \
+    {"glGetTexLevelParameterivANGLE", reinterpret_cast<void*>(&glGetTexLevelParameterivANGLE)}, \
+    {"glGetTexLevelParameterivRobustANGLE", reinterpret_cast<void*>(&glGetTexLevelParameterivRobustANGLE)}, \
+    {"glGetTexParameterIiv", reinterpret_cast<void*>(&glGetTexParameterIiv)}, \
+    {"glGetTexParameterIivEXT", reinterpret_cast<void*>(&glGetTexParameterIivEXT)}, \
+    {"glGetTexParameterIivOES", reinterpret_cast<void*>(&glGetTexParameterIivOES)}, \
+    {"glGetTexParameterIivRobustANGLE", reinterpret_cast<void*>(&glGetTexParameterIivRobustANGLE)}, \
+    {"glGetTexParameterIuiv", reinterpret_cast<void*>(&glGetTexParameterIuiv)}, \
+    {"glGetTexParameterIuivEXT", reinterpret_cast<void*>(&glGetTexParameterIuivEXT)}, \
+    {"glGetTexParameterIuivOES", reinterpret_cast<void*>(&glGetTexParameterIuivOES)}, \
+    {"glGetTexParameterIuivRobustANGLE", reinterpret_cast<void*>(&glGetTexParameterIuivRobustANGLE)}, \
+    {"glGetTexParameterfv", reinterpret_cast<void*>(&glGetTexParameterfv)}, \
+    {"glGetTexParameterfvRobustANGLE", reinterpret_cast<void*>(&glGetTexParameterfvRobustANGLE)}, \
+    {"glGetTexParameteriv", reinterpret_cast<void*>(&glGetTexParameteriv)}, \
+    {"glGetTexParameterivRobustANGLE", reinterpret_cast<void*>(&glGetTexParameterivRobustANGLE)}, \
+    {"glGetTexParameterxv", reinterpret_cast<void*>(&glGetTexParameterxv)}, \
+    {"glGetTextureHandleIMG", reinterpret_cast<void*>(&glGetTextureHandleIMG)}, \
+    {"glGetTextureHandleNV", reinterpret_cast<void*>(&glGetTextureHandleNV)}, \
+    {"glGetTextureSamplerHandleIMG", reinterpret_cast<void*>(&glGetTextureSamplerHandleIMG)}, \
+    {"glGetTextureSamplerHandleNV", reinterpret_cast<void*>(&glGetTextureSamplerHandleNV)}, \
+    {"glGetTransformFeedbackVarying", reinterpret_cast<void*>(&glGetTransformFeedbackVarying)}, \
+    {"glGetTranslatedShaderSourceANGLE", reinterpret_cast<void*>(&glGetTranslatedShaderSourceANGLE)}, \
+    {"glGetUniformBlockIndex", reinterpret_cast<void*>(&glGetUniformBlockIndex)}, \
+    {"glGetUniformIndices", reinterpret_cast<void*>(&glGetUniformIndices)}, \
+    {"glGetUniformLocation", reinterpret_cast<void*>(&glGetUniformLocation)}, \
+    {"glGetUniformfv", reinterpret_cast<void*>(&glGetUniformfv)}, \
+    {"glGetUniformfvRobustANGLE", reinterpret_cast<void*>(&glGetUniformfvRobustANGLE)}, \
+    {"glGetUniformi64vNV", reinterpret_cast<void*>(&glGetUniformi64vNV)}, \
+    {"glGetUniformiv", reinterpret_cast<void*>(&glGetUniformiv)}, \
+    {"glGetUniformivRobustANGLE", reinterpret_cast<void*>(&glGetUniformivRobustANGLE)}, \
+    {"glGetUniformuiv", reinterpret_cast<void*>(&glGetUniformuiv)}, \
+    {"glGetUniformuivRobustANGLE", reinterpret_cast<void*>(&glGetUniformuivRobustANGLE)}, \
+    {"glGetUnsignedBytei_vEXT", reinterpret_cast<void*>(&glGetUnsignedBytei_vEXT)}, \
+    {"glGetUnsignedBytevEXT", reinterpret_cast<void*>(&glGetUnsignedBytevEXT)}, \
+    {"glGetVertexAttribIiv", reinterpret_cast<void*>(&glGetVertexAttribIiv)}, \
+    {"glGetVertexAttribIivRobustANGLE", reinterpret_cast<void*>(&glGetVertexAttribIivRobustANGLE)}, \
+    {"glGetVertexAttribIuiv", reinterpret_cast<void*>(&glGetVertexAttribIuiv)}, \
+    {"glGetVertexAttribIuivRobustANGLE", reinterpret_cast<void*>(&glGetVertexAttribIuivRobustANGLE)}, \
+    {"glGetVertexAttribPointerv", reinterpret_cast<void*>(&glGetVertexAttribPointerv)}, \
+    {"glGetVertexAttribPointervRobustANGLE", reinterpret_cast<void*>(&glGetVertexAttribPointervRobustANGLE)}, \
+    {"glGetVertexAttribfv", reinterpret_cast<void*>(&glGetVertexAttribfv)}, \
+    {"glGetVertexAttribfvRobustANGLE", reinterpret_cast<void*>(&glGetVertexAttribfvRobustANGLE)}, \
+    {"glGetVertexAttribiv", reinterpret_cast<void*>(&glGetVertexAttribiv)}, \
+    {"glGetVertexAttribivRobustANGLE", reinterpret_cast<void*>(&glGetVertexAttribivRobustANGLE)}, \
+    {"glGetVkProcAddrNV", reinterpret_cast<void*>(&glGetVkProcAddrNV)}, \
+    {"glGetnUniformfv", reinterpret_cast<void*>(&glGetnUniformfv)}, \
+    {"glGetnUniformfvEXT", reinterpret_cast<void*>(&glGetnUniformfvEXT)}, \
+    {"glGetnUniformfvKHR", reinterpret_cast<void*>(&glGetnUniformfvKHR)}, \
+    {"glGetnUniformfvRobustANGLE", reinterpret_cast<void*>(&glGetnUniformfvRobustANGLE)}, \
+    {"glGetnUniformiv", reinterpret_cast<void*>(&glGetnUniformiv)}, \
+    {"glGetnUniformivEXT", reinterpret_cast<void*>(&glGetnUniformivEXT)}, \
+    {"glGetnUniformivKHR", reinterpret_cast<void*>(&glGetnUniformivKHR)}, \
+    {"glGetnUniformivRobustANGLE", reinterpret_cast<void*>(&glGetnUniformivRobustANGLE)}, \
+    {"glGetnUniformuiv", reinterpret_cast<void*>(&glGetnUniformuiv)}, \
+    {"glGetnUniformuivKHR", reinterpret_cast<void*>(&glGetnUniformuivKHR)}, \
+    {"glGetnUniformuivRobustANGLE", reinterpret_cast<void*>(&glGetnUniformuivRobustANGLE)}, \
+    {"glHint", reinterpret_cast<void*>(&glHint)}, \
+    {"glImportMemoryFdEXT", reinterpret_cast<void*>(&glImportMemoryFdEXT)}, \
+    {"glImportMemoryWin32HandleEXT", reinterpret_cast<void*>(&glImportMemoryWin32HandleEXT)}, \
+    {"glImportMemoryWin32NameEXT", reinterpret_cast<void*>(&glImportMemoryWin32NameEXT)}, \
+    {"glImportMemoryZirconHandleANGLE", reinterpret_cast<void*>(&glImportMemoryZirconHandleANGLE)}, \
+    {"glImportSemaphoreFdEXT", reinterpret_cast<void*>(&glImportSemaphoreFdEXT)}, \
+    {"glImportSemaphoreWin32HandleEXT", reinterpret_cast<void*>(&glImportSemaphoreWin32HandleEXT)}, \
+    {"glImportSemaphoreWin32NameEXT", reinterpret_cast<void*>(&glImportSemaphoreWin32NameEXT)}, \
+    {"glImportSemaphoreZirconHandleANGLE", reinterpret_cast<void*>(&glImportSemaphoreZirconHandleANGLE)}, \
+    {"glInsertEventMarkerEXT", reinterpret_cast<void*>(&glInsertEventMarkerEXT)}, \
+    {"glInterpolatePathsNV", reinterpret_cast<void*>(&glInterpolatePathsNV)}, \
+    {"glInvalidateFramebuffer", reinterpret_cast<void*>(&glInvalidateFramebuffer)}, \
+    {"glInvalidateSubFramebuffer", reinterpret_cast<void*>(&glInvalidateSubFramebuffer)}, \
+    {"glInvalidateTextureANGLE", reinterpret_cast<void*>(&glInvalidateTextureANGLE)}, \
+    {"glIsBuffer", reinterpret_cast<void*>(&glIsBuffer)}, \
+    {"glIsEnabled", reinterpret_cast<void*>(&glIsEnabled)}, \
+    {"glIsEnabledi", reinterpret_cast<void*>(&glIsEnabledi)}, \
+    {"glIsEnablediEXT", reinterpret_cast<void*>(&glIsEnablediEXT)}, \
+    {"glIsEnablediNV", reinterpret_cast<void*>(&glIsEnablediNV)}, \
+    {"glIsEnablediOES", reinterpret_cast<void*>(&glIsEnablediOES)}, \
+    {"glIsFenceNV", reinterpret_cast<void*>(&glIsFenceNV)}, \
+    {"glIsFramebuffer", reinterpret_cast<void*>(&glIsFramebuffer)}, \
+    {"glIsImageHandleResidentNV", reinterpret_cast<void*>(&glIsImageHandleResidentNV)}, \
+    {"glIsMemoryObjectEXT", reinterpret_cast<void*>(&glIsMemoryObjectEXT)}, \
+    {"glIsPathNV", reinterpret_cast<void*>(&glIsPathNV)}, \
+    {"glIsPointInFillPathNV", reinterpret_cast<void*>(&glIsPointInFillPathNV)}, \
+    {"glIsPointInStrokePathNV", reinterpret_cast<void*>(&glIsPointInStrokePathNV)}, \
+    {"glIsProgram", reinterpret_cast<void*>(&glIsProgram)}, \
+    {"glIsProgramPipeline", reinterpret_cast<void*>(&glIsProgramPipeline)}, \
+    {"glIsProgramPipelineEXT", reinterpret_cast<void*>(&glIsProgramPipelineEXT)}, \
+    {"glIsQuery", reinterpret_cast<void*>(&glIsQuery)}, \
+    {"glIsQueryEXT", reinterpret_cast<void*>(&glIsQueryEXT)}, \
+    {"glIsRenderbuffer", reinterpret_cast<void*>(&glIsRenderbuffer)}, \
+    {"glIsSampler", reinterpret_cast<void*>(&glIsSampler)}, \
+    {"glIsSemaphoreEXT", reinterpret_cast<void*>(&glIsSemaphoreEXT)}, \
+    {"glIsShader", reinterpret_cast<void*>(&glIsShader)}, \
+    {"glIsSync", reinterpret_cast<void*>(&glIsSync)}, \
+    {"glIsSyncAPPLE", reinterpret_cast<void*>(&glIsSyncAPPLE)}, \
+    {"glIsTexture", reinterpret_cast<void*>(&glIsTexture)}, \
+    {"glIsTextureHandleResidentNV", reinterpret_cast<void*>(&glIsTextureHandleResidentNV)}, \
+    {"glIsTransformFeedback", reinterpret_cast<void*>(&glIsTransformFeedback)}, \
+    {"glIsVertexArray", reinterpret_cast<void*>(&glIsVertexArray)}, \
+    {"glIsVertexArrayOES", reinterpret_cast<void*>(&glIsVertexArrayOES)}, \
+    {"glLabelObjectEXT", reinterpret_cast<void*>(&glLabelObjectEXT)}, \
+    {"glLightModelf", reinterpret_cast<void*>(&glLightModelf)}, \
+    {"glLightModelfv", reinterpret_cast<void*>(&glLightModelfv)}, \
+    {"glLightModelx", reinterpret_cast<void*>(&glLightModelx)}, \
+    {"glLightModelxv", reinterpret_cast<void*>(&glLightModelxv)}, \
+    {"glLightf", reinterpret_cast<void*>(&glLightf)}, \
+    {"glLightfv", reinterpret_cast<void*>(&glLightfv)}, \
+    {"glLightx", reinterpret_cast<void*>(&glLightx)}, \
+    {"glLightxv", reinterpret_cast<void*>(&glLightxv)}, \
+    {"glLineWidth", reinterpret_cast<void*>(&glLineWidth)}, \
+    {"glLineWidthx", reinterpret_cast<void*>(&glLineWidthx)}, \
+    {"glLinkProgram", reinterpret_cast<void*>(&glLinkProgram)}, \
+    {"glLoadIdentity", reinterpret_cast<void*>(&glLoadIdentity)}, \
+    {"glLoadMatrixf", reinterpret_cast<void*>(&glLoadMatrixf)}, \
+    {"glLoadMatrixx", reinterpret_cast<void*>(&glLoadMatrixx)}, \
+    {"glLogicOp", reinterpret_cast<void*>(&glLogicOp)}, \
+    {"glLogicOpANGLE", reinterpret_cast<void*>(&glLogicOpANGLE)}, \
+    {"glLoseContextCHROMIUM", reinterpret_cast<void*>(&glLoseContextCHROMIUM)}, \
+    {"glMakeImageHandleNonResidentNV", reinterpret_cast<void*>(&glMakeImageHandleNonResidentNV)}, \
+    {"glMakeImageHandleResidentNV", reinterpret_cast<void*>(&glMakeImageHandleResidentNV)}, \
+    {"glMakeTextureHandleNonResidentNV", reinterpret_cast<void*>(&glMakeTextureHandleNonResidentNV)}, \
+    {"glMakeTextureHandleResidentNV", reinterpret_cast<void*>(&glMakeTextureHandleResidentNV)}, \
+    {"glMapBufferOES", reinterpret_cast<void*>(&glMapBufferOES)}, \
+    {"glMapBufferRange", reinterpret_cast<void*>(&glMapBufferRange)}, \
+    {"glMapBufferRangeEXT", reinterpret_cast<void*>(&glMapBufferRangeEXT)}, \
+    {"glMaterialf", reinterpret_cast<void*>(&glMaterialf)}, \
+    {"glMaterialfv", reinterpret_cast<void*>(&glMaterialfv)}, \
+    {"glMaterialx", reinterpret_cast<void*>(&glMaterialx)}, \
+    {"glMaterialxv", reinterpret_cast<void*>(&glMaterialxv)}, \
+    {"glMatrixFrustumEXT", reinterpret_cast<void*>(&glMatrixFrustumEXT)}, \
+    {"glMatrixLoad3x2fNV", reinterpret_cast<void*>(&glMatrixLoad3x2fNV)}, \
+    {"glMatrixLoad3x3fNV", reinterpret_cast<void*>(&glMatrixLoad3x3fNV)}, \
+    {"glMatrixLoadIdentityEXT", reinterpret_cast<void*>(&glMatrixLoadIdentityEXT)}, \
+    {"glMatrixLoadTranspose3x3fNV", reinterpret_cast<void*>(&glMatrixLoadTranspose3x3fNV)}, \
+    {"glMatrixLoadTransposedEXT", reinterpret_cast<void*>(&glMatrixLoadTransposedEXT)}, \
+    {"glMatrixLoadTransposefEXT", reinterpret_cast<void*>(&glMatrixLoadTransposefEXT)}, \
+    {"glMatrixLoaddEXT", reinterpret_cast<void*>(&glMatrixLoaddEXT)}, \
+    {"glMatrixLoadfEXT", reinterpret_cast<void*>(&glMatrixLoadfEXT)}, \
+    {"glMatrixMode", reinterpret_cast<void*>(&glMatrixMode)}, \
+    {"glMatrixMult3x2fNV", reinterpret_cast<void*>(&glMatrixMult3x2fNV)}, \
+    {"glMatrixMult3x3fNV", reinterpret_cast<void*>(&glMatrixMult3x3fNV)}, \
+    {"glMatrixMultTranspose3x3fNV", reinterpret_cast<void*>(&glMatrixMultTranspose3x3fNV)}, \
+    {"glMatrixMultTransposedEXT", reinterpret_cast<void*>(&glMatrixMultTransposedEXT)}, \
+    {"glMatrixMultTransposefEXT", reinterpret_cast<void*>(&glMatrixMultTransposefEXT)}, \
+    {"glMatrixMultdEXT", reinterpret_cast<void*>(&glMatrixMultdEXT)}, \
+    {"glMatrixMultfEXT", reinterpret_cast<void*>(&glMatrixMultfEXT)}, \
+    {"glMatrixOrthoEXT", reinterpret_cast<void*>(&glMatrixOrthoEXT)}, \
+    {"glMatrixPopEXT", reinterpret_cast<void*>(&glMatrixPopEXT)}, \
+    {"glMatrixPushEXT", reinterpret_cast<void*>(&glMatrixPushEXT)}, \
+    {"glMatrixRotatedEXT", reinterpret_cast<void*>(&glMatrixRotatedEXT)}, \
+    {"glMatrixRotatefEXT", reinterpret_cast<void*>(&glMatrixRotatefEXT)}, \
+    {"glMatrixScaledEXT", reinterpret_cast<void*>(&glMatrixScaledEXT)}, \
+    {"glMatrixScalefEXT", reinterpret_cast<void*>(&glMatrixScalefEXT)}, \
+    {"glMatrixTranslatedEXT", reinterpret_cast<void*>(&glMatrixTranslatedEXT)}, \
+    {"glMatrixTranslatefEXT", reinterpret_cast<void*>(&glMatrixTranslatefEXT)}, \
+    {"glMaxActiveShaderCoresARM", reinterpret_cast<void*>(&glMaxActiveShaderCoresARM)}, \
+    {"glMaxShaderCompilerThreadsKHR", reinterpret_cast<void*>(&glMaxShaderCompilerThreadsKHR)}, \
+    {"glMemoryBarrier", reinterpret_cast<void*>(&glMemoryBarrier)}, \
+    {"glMemoryBarrierByRegion", reinterpret_cast<void*>(&glMemoryBarrierByRegion)}, \
+    {"glMemoryObjectParameterivEXT", reinterpret_cast<void*>(&glMemoryObjectParameterivEXT)}, \
+    {"glMinSampleShading", reinterpret_cast<void*>(&glMinSampleShading)}, \
+    {"glMinSampleShadingOES", reinterpret_cast<void*>(&glMinSampleShadingOES)}, \
+    {"glMultMatrixf", reinterpret_cast<void*>(&glMultMatrixf)}, \
+    {"glMultMatrixx", reinterpret_cast<void*>(&glMultMatrixx)}, \
+    {"glMultiDrawArraysANGLE", reinterpret_cast<void*>(&glMultiDrawArraysANGLE)}, \
+    {"glMultiDrawArraysEXT", reinterpret_cast<void*>(&glMultiDrawArraysEXT)}, \
+    {"glMultiDrawArraysIndirectEXT", reinterpret_cast<void*>(&glMultiDrawArraysIndirectEXT)}, \
+    {"glMultiDrawArraysInstancedANGLE", reinterpret_cast<void*>(&glMultiDrawArraysInstancedANGLE)}, \
+    {"glMultiDrawArraysInstancedBaseInstanceANGLE", reinterpret_cast<void*>(&glMultiDrawArraysInstancedBaseInstanceANGLE)}, \
+    {"glMultiDrawElementsANGLE", reinterpret_cast<void*>(&glMultiDrawElementsANGLE)}, \
+    {"glMultiDrawElementsBaseVertexEXT", reinterpret_cast<void*>(&glMultiDrawElementsBaseVertexEXT)}, \
+    {"glMultiDrawElementsEXT", reinterpret_cast<void*>(&glMultiDrawElementsEXT)}, \
+    {"glMultiDrawElementsIndirectEXT", reinterpret_cast<void*>(&glMultiDrawElementsIndirectEXT)}, \
+    {"glMultiDrawElementsInstancedANGLE", reinterpret_cast<void*>(&glMultiDrawElementsInstancedANGLE)}, \
+    {"glMultiDrawElementsInstancedBaseVertexBaseInstanceANGLE", reinterpret_cast<void*>(&glMultiDrawElementsInstancedBaseVertexBaseInstanceANGLE)}, \
+    {"glMultiDrawMeshTasksIndirectCountEXT", reinterpret_cast<void*>(&glMultiDrawMeshTasksIndirectCountEXT)}, \
+    {"glMultiDrawMeshTasksIndirectCountNV", reinterpret_cast<void*>(&glMultiDrawMeshTasksIndirectCountNV)}, \
+    {"glMultiDrawMeshTasksIndirectEXT", reinterpret_cast<void*>(&glMultiDrawMeshTasksIndirectEXT)}, \
+    {"glMultiDrawMeshTasksIndirectNV", reinterpret_cast<void*>(&glMultiDrawMeshTasksIndirectNV)}, \
+    {"glMultiTexCoord4f", reinterpret_cast<void*>(&glMultiTexCoord4f)}, \
+    {"glMultiTexCoord4x", reinterpret_cast<void*>(&glMultiTexCoord4x)}, \
+    {"glNamedBufferAttachMemoryNV", reinterpret_cast<void*>(&glNamedBufferAttachMemoryNV)}, \
+    {"glNamedBufferPageCommitmentMemNV", reinterpret_cast<void*>(&glNamedBufferPageCommitmentMemNV)}, \
+    {"glNamedBufferStorageExternalEXT", reinterpret_cast<void*>(&glNamedBufferStorageExternalEXT)}, \
+    {"glNamedBufferStorageMemEXT", reinterpret_cast<void*>(&glNamedBufferStorageMemEXT)}, \
+    {"glNamedFramebufferSampleLocationsfvNV", reinterpret_cast<void*>(&glNamedFramebufferSampleLocationsfvNV)}, \
+    {"glNamedFramebufferTextureMultiviewOVR", reinterpret_cast<void*>(&glNamedFramebufferTextureMultiviewOVR)}, \
+    {"glNamedRenderbufferStorageMultisampleAdvancedAMD", reinterpret_cast<void*>(&glNamedRenderbufferStorageMultisampleAdvancedAMD)}, \
+    {"glNormal3f", reinterpret_cast<void*>(&glNormal3f)}, \
+    {"glNormal3x", reinterpret_cast<void*>(&glNormal3x)}, \
+    {"glNormalPointer", reinterpret_cast<void*>(&glNormalPointer)}, \
+    {"glObjectLabel", reinterpret_cast<void*>(&glObjectLabel)}, \
+    {"glObjectLabelKHR", reinterpret_cast<void*>(&glObjectLabelKHR)}, \
+    {"glObjectPtrLabel", reinterpret_cast<void*>(&glObjectPtrLabel)}, \
+    {"glObjectPtrLabelKHR", reinterpret_cast<void*>(&glObjectPtrLabelKHR)}, \
+    {"glOrthof", reinterpret_cast<void*>(&glOrthof)}, \
+    {"glOrthox", reinterpret_cast<void*>(&glOrthox)}, \
+    {"glPatchParameteri", reinterpret_cast<void*>(&glPatchParameteri)}, \
+    {"glPatchParameteriEXT", reinterpret_cast<void*>(&glPatchParameteriEXT)}, \
+    {"glPatchParameteriOES", reinterpret_cast<void*>(&glPatchParameteriOES)}, \
+    {"glPathCommandsNV", reinterpret_cast<void*>(&glPathCommandsNV)}, \
+    {"glPathCoordsNV", reinterpret_cast<void*>(&glPathCoordsNV)}, \
+    {"glPathCoverDepthFuncNV", reinterpret_cast<void*>(&glPathCoverDepthFuncNV)}, \
+    {"glPathDashArrayNV", reinterpret_cast<void*>(&glPathDashArrayNV)}, \
+    {"glPathGlyphIndexArrayNV", reinterpret_cast<void*>(&glPathGlyphIndexArrayNV)}, \
+    {"glPathGlyphIndexRangeNV", reinterpret_cast<void*>(&glPathGlyphIndexRangeNV)}, \
+    {"glPathGlyphRangeNV", reinterpret_cast<void*>(&glPathGlyphRangeNV)}, \
+    {"glPathGlyphsNV", reinterpret_cast<void*>(&glPathGlyphsNV)}, \
+    {"glPathMemoryGlyphIndexArrayNV", reinterpret_cast<void*>(&glPathMemoryGlyphIndexArrayNV)}, \
+    {"glPathParameterfNV", reinterpret_cast<void*>(&glPathParameterfNV)}, \
+    {"glPathParameterfvNV", reinterpret_cast<void*>(&glPathParameterfvNV)}, \
+    {"glPathParameteriNV", reinterpret_cast<void*>(&glPathParameteriNV)}, \
+    {"glPathParameterivNV", reinterpret_cast<void*>(&glPathParameterivNV)}, \
+    {"glPathStencilDepthOffsetNV", reinterpret_cast<void*>(&glPathStencilDepthOffsetNV)}, \
+    {"glPathStencilFuncNV", reinterpret_cast<void*>(&glPathStencilFuncNV)}, \
+    {"glPathStringNV", reinterpret_cast<void*>(&glPathStringNV)}, \
+    {"glPathSubCommandsNV", reinterpret_cast<void*>(&glPathSubCommandsNV)}, \
+    {"glPathSubCoordsNV", reinterpret_cast<void*>(&glPathSubCoordsNV)}, \
+    {"glPauseTransformFeedback", reinterpret_cast<void*>(&glPauseTransformFeedback)}, \
+    {"glPixelLocalStorageBarrierANGLE", reinterpret_cast<void*>(&glPixelLocalStorageBarrierANGLE)}, \
+    {"glPixelStorei", reinterpret_cast<void*>(&glPixelStorei)}, \
+    {"glPointAlongPathNV", reinterpret_cast<void*>(&glPointAlongPathNV)}, \
+    {"glPointParameterf", reinterpret_cast<void*>(&glPointParameterf)}, \
+    {"glPointParameterfv", reinterpret_cast<void*>(&glPointParameterfv)}, \
+    {"glPointParameterx", reinterpret_cast<void*>(&glPointParameterx)}, \
+    {"glPointParameterxv", reinterpret_cast<void*>(&glPointParameterxv)}, \
+    {"glPointSize", reinterpret_cast<void*>(&glPointSize)}, \
+    {"glPointSizePointerOES", reinterpret_cast<void*>(&glPointSizePointerOES)}, \
+    {"glPointSizex", reinterpret_cast<void*>(&glPointSizex)}, \
+    {"glPolygonModeANGLE", reinterpret_cast<void*>(&glPolygonModeANGLE)}, \
+    {"glPolygonModeNV", reinterpret_cast<void*>(&glPolygonModeNV)}, \
+    {"glPolygonOffset", reinterpret_cast<void*>(&glPolygonOffset)}, \
+    {"glPolygonOffsetClampEXT", reinterpret_cast<void*>(&glPolygonOffsetClampEXT)}, \
+    {"glPolygonOffsetx", reinterpret_cast<void*>(&glPolygonOffsetx)}, \
+    {"glPopDebugGroup", reinterpret_cast<void*>(&glPopDebugGroup)}, \
+    {"glPopDebugGroupKHR", reinterpret_cast<void*>(&glPopDebugGroupKHR)}, \
+    {"glPopGroupMarkerEXT", reinterpret_cast<void*>(&glPopGroupMarkerEXT)}, \
+    {"glPopMatrix", reinterpret_cast<void*>(&glPopMatrix)}, \
+    {"glPrimitiveBoundingBox", reinterpret_cast<void*>(&glPrimitiveBoundingBox)}, \
+    {"glPrimitiveBoundingBoxEXT", reinterpret_cast<void*>(&glPrimitiveBoundingBoxEXT)}, \
+    {"glPrimitiveBoundingBoxOES", reinterpret_cast<void*>(&glPrimitiveBoundingBoxOES)}, \
+    {"glProgramBinary", reinterpret_cast<void*>(&glProgramBinary)}, \
+    {"glProgramBinaryOES", reinterpret_cast<void*>(&glProgramBinaryOES)}, \
+    {"glProgramParameteri", reinterpret_cast<void*>(&glProgramParameteri)}, \
+    {"glProgramParameteriEXT", reinterpret_cast<void*>(&glProgramParameteriEXT)}, \
+    {"glProgramPathFragmentInputGenNV", reinterpret_cast<void*>(&glProgramPathFragmentInputGenNV)}, \
+    {"glProgramUniform1f", reinterpret_cast<void*>(&glProgramUniform1f)}, \
+    {"glProgramUniform1fEXT", reinterpret_cast<void*>(&glProgramUniform1fEXT)}, \
+    {"glProgramUniform1fv", reinterpret_cast<void*>(&glProgramUniform1fv)}, \
+    {"glProgramUniform1fvEXT", reinterpret_cast<void*>(&glProgramUniform1fvEXT)}, \
+    {"glProgramUniform1i", reinterpret_cast<void*>(&glProgramUniform1i)}, \
+    {"glProgramUniform1i64NV", reinterpret_cast<void*>(&glProgramUniform1i64NV)}, \
+    {"glProgramUniform1i64vNV", reinterpret_cast<void*>(&glProgramUniform1i64vNV)}, \
+    {"glProgramUniform1iEXT", reinterpret_cast<void*>(&glProgramUniform1iEXT)}, \
+    {"glProgramUniform1iv", reinterpret_cast<void*>(&glProgramUniform1iv)}, \
+    {"glProgramUniform1ivEXT", reinterpret_cast<void*>(&glProgramUniform1ivEXT)}, \
+    {"glProgramUniform1ui", reinterpret_cast<void*>(&glProgramUniform1ui)}, \
+    {"glProgramUniform1ui64NV", reinterpret_cast<void*>(&glProgramUniform1ui64NV)}, \
+    {"glProgramUniform1ui64vNV", reinterpret_cast<void*>(&glProgramUniform1ui64vNV)}, \
+    {"glProgramUniform1uiEXT", reinterpret_cast<void*>(&glProgramUniform1uiEXT)}, \
+    {"glProgramUniform1uiv", reinterpret_cast<void*>(&glProgramUniform1uiv)}, \
+    {"glProgramUniform1uivEXT", reinterpret_cast<void*>(&glProgramUniform1uivEXT)}, \
+    {"glProgramUniform2f", reinterpret_cast<void*>(&glProgramUniform2f)}, \
+    {"glProgramUniform2fEXT", reinterpret_cast<void*>(&glProgramUniform2fEXT)}, \
+    {"glProgramUniform2fv", reinterpret_cast<void*>(&glProgramUniform2fv)}, \
+    {"glProgramUniform2fvEXT", reinterpret_cast<void*>(&glProgramUniform2fvEXT)}, \
+    {"glProgramUniform2i", reinterpret_cast<void*>(&glProgramUniform2i)}, \
+    {"glProgramUniform2i64NV", reinterpret_cast<void*>(&glProgramUniform2i64NV)}, \
+    {"glProgramUniform2i64vNV", reinterpret_cast<void*>(&glProgramUniform2i64vNV)}, \
+    {"glProgramUniform2iEXT", reinterpret_cast<void*>(&glProgramUniform2iEXT)}, \
+    {"glProgramUniform2iv", reinterpret_cast<void*>(&glProgramUniform2iv)}, \
+    {"glProgramUniform2ivEXT", reinterpret_cast<void*>(&glProgramUniform2ivEXT)}, \
+    {"glProgramUniform2ui", reinterpret_cast<void*>(&glProgramUniform2ui)}, \
+    {"glProgramUniform2ui64NV", reinterpret_cast<void*>(&glProgramUniform2ui64NV)}, \
+    {"glProgramUniform2ui64vNV", reinterpret_cast<void*>(&glProgramUniform2ui64vNV)}, \
+    {"glProgramUniform2uiEXT", reinterpret_cast<void*>(&glProgramUniform2uiEXT)}, \
+    {"glProgramUniform2uiv", reinterpret_cast<void*>(&glProgramUniform2uiv)}, \
+    {"glProgramUniform2uivEXT", reinterpret_cast<void*>(&glProgramUniform2uivEXT)}, \
+    {"glProgramUniform3f", reinterpret_cast<void*>(&glProgramUniform3f)}, \
+    {"glProgramUniform3fEXT", reinterpret_cast<void*>(&glProgramUniform3fEXT)}, \
+    {"glProgramUniform3fv", reinterpret_cast<void*>(&glProgramUniform3fv)}, \
+    {"glProgramUniform3fvEXT", reinterpret_cast<void*>(&glProgramUniform3fvEXT)}, \
+    {"glProgramUniform3i", reinterpret_cast<void*>(&glProgramUniform3i)}, \
+    {"glProgramUniform3i64NV", reinterpret_cast<void*>(&glProgramUniform3i64NV)}, \
+    {"glProgramUniform3i64vNV", reinterpret_cast<void*>(&glProgramUniform3i64vNV)}, \
+    {"glProgramUniform3iEXT", reinterpret_cast<void*>(&glProgramUniform3iEXT)}, \
+    {"glProgramUniform3iv", reinterpret_cast<void*>(&glProgramUniform3iv)}, \
+    {"glProgramUniform3ivEXT", reinterpret_cast<void*>(&glProgramUniform3ivEXT)}, \
+    {"glProgramUniform3ui", reinterpret_cast<void*>(&glProgramUniform3ui)}, \
+    {"glProgramUniform3ui64NV", reinterpret_cast<void*>(&glProgramUniform3ui64NV)}, \
+    {"glProgramUniform3ui64vNV", reinterpret_cast<void*>(&glProgramUniform3ui64vNV)}, \
+    {"glProgramUniform3uiEXT", reinterpret_cast<void*>(&glProgramUniform3uiEXT)}, \
+    {"glProgramUniform3uiv", reinterpret_cast<void*>(&glProgramUniform3uiv)}, \
+    {"glProgramUniform3uivEXT", reinterpret_cast<void*>(&glProgramUniform3uivEXT)}, \
+    {"glProgramUniform4f", reinterpret_cast<void*>(&glProgramUniform4f)}, \
+    {"glProgramUniform4fEXT", reinterpret_cast<void*>(&glProgramUniform4fEXT)}, \
+    {"glProgramUniform4fv", reinterpret_cast<void*>(&glProgramUniform4fv)}, \
+    {"glProgramUniform4fvEXT", reinterpret_cast<void*>(&glProgramUniform4fvEXT)}, \
+    {"glProgramUniform4i", reinterpret_cast<void*>(&glProgramUniform4i)}, \
+    {"glProgramUniform4i64NV", reinterpret_cast<void*>(&glProgramUniform4i64NV)}, \
+    {"glProgramUniform4i64vNV", reinterpret_cast<void*>(&glProgramUniform4i64vNV)}, \
+    {"glProgramUniform4iEXT", reinterpret_cast<void*>(&glProgramUniform4iEXT)}, \
+    {"glProgramUniform4iv", reinterpret_cast<void*>(&glProgramUniform4iv)}, \
+    {"glProgramUniform4ivEXT", reinterpret_cast<void*>(&glProgramUniform4ivEXT)}, \
+    {"glProgramUniform4ui", reinterpret_cast<void*>(&glProgramUniform4ui)}, \
+    {"glProgramUniform4ui64NV", reinterpret_cast<void*>(&glProgramUniform4ui64NV)}, \
+    {"glProgramUniform4ui64vNV", reinterpret_cast<void*>(&glProgramUniform4ui64vNV)}, \
+    {"glProgramUniform4uiEXT", reinterpret_cast<void*>(&glProgramUniform4uiEXT)}, \
+    {"glProgramUniform4uiv", reinterpret_cast<void*>(&glProgramUniform4uiv)}, \
+    {"glProgramUniform4uivEXT", reinterpret_cast<void*>(&glProgramUniform4uivEXT)}, \
+    {"glProgramUniformHandleui64IMG", reinterpret_cast<void*>(&glProgramUniformHandleui64IMG)}, \
+    {"glProgramUniformHandleui64NV", reinterpret_cast<void*>(&glProgramUniformHandleui64NV)}, \
+    {"glProgramUniformHandleui64vIMG", reinterpret_cast<void*>(&glProgramUniformHandleui64vIMG)}, \
+    {"glProgramUniformHandleui64vNV", reinterpret_cast<void*>(&glProgramUniformHandleui64vNV)}, \
+    {"glProgramUniformMatrix2fv", reinterpret_cast<void*>(&glProgramUniformMatrix2fv)}, \
+    {"glProgramUniformMatrix2fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix2fvEXT)}, \
+    {"glProgramUniformMatrix2x3fv", reinterpret_cast<void*>(&glProgramUniformMatrix2x3fv)}, \
+    {"glProgramUniformMatrix2x3fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix2x3fvEXT)}, \
+    {"glProgramUniformMatrix2x4fv", reinterpret_cast<void*>(&glProgramUniformMatrix2x4fv)}, \
+    {"glProgramUniformMatrix2x4fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix2x4fvEXT)}, \
+    {"glProgramUniformMatrix3fv", reinterpret_cast<void*>(&glProgramUniformMatrix3fv)}, \
+    {"glProgramUniformMatrix3fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix3fvEXT)}, \
+    {"glProgramUniformMatrix3x2fv", reinterpret_cast<void*>(&glProgramUniformMatrix3x2fv)}, \
+    {"glProgramUniformMatrix3x2fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix3x2fvEXT)}, \
+    {"glProgramUniformMatrix3x4fv", reinterpret_cast<void*>(&glProgramUniformMatrix3x4fv)}, \
+    {"glProgramUniformMatrix3x4fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix3x4fvEXT)}, \
+    {"glProgramUniformMatrix4fv", reinterpret_cast<void*>(&glProgramUniformMatrix4fv)}, \
+    {"glProgramUniformMatrix4fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix4fvEXT)}, \
+    {"glProgramUniformMatrix4x2fv", reinterpret_cast<void*>(&glProgramUniformMatrix4x2fv)}, \
+    {"glProgramUniformMatrix4x2fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix4x2fvEXT)}, \
+    {"glProgramUniformMatrix4x3fv", reinterpret_cast<void*>(&glProgramUniformMatrix4x3fv)}, \
+    {"glProgramUniformMatrix4x3fvEXT", reinterpret_cast<void*>(&glProgramUniformMatrix4x3fvEXT)}, \
+    {"glProvokingVertexANGLE", reinterpret_cast<void*>(&glProvokingVertexANGLE)}, \
+    {"glPushDebugGroup", reinterpret_cast<void*>(&glPushDebugGroup)}, \
+    {"glPushDebugGroupKHR", reinterpret_cast<void*>(&glPushDebugGroupKHR)}, \
+    {"glPushGroupMarkerEXT", reinterpret_cast<void*>(&glPushGroupMarkerEXT)}, \
+    {"glPushMatrix", reinterpret_cast<void*>(&glPushMatrix)}, \
+    {"glQueryCounterEXT", reinterpret_cast<void*>(&glQueryCounterEXT)}, \
+    {"glRasterSamplesEXT", reinterpret_cast<void*>(&glRasterSamplesEXT)}, \
+    {"glReadBuffer", reinterpret_cast<void*>(&glReadBuffer)}, \
+    {"glReadBufferIndexedEXT", reinterpret_cast<void*>(&glReadBufferIndexedEXT)}, \
+    {"glReadBufferNV", reinterpret_cast<void*>(&glReadBufferNV)}, \
+    {"glReadPixels", reinterpret_cast<void*>(&glReadPixels)}, \
+    {"glReadPixelsRobustANGLE", reinterpret_cast<void*>(&glReadPixelsRobustANGLE)}, \
+    {"glReadnPixels", reinterpret_cast<void*>(&glReadnPixels)}, \
+    {"glReadnPixelsEXT", reinterpret_cast<void*>(&glReadnPixelsEXT)}, \
+    {"glReadnPixelsKHR", reinterpret_cast<void*>(&glReadnPixelsKHR)}, \
+    {"glReadnPixelsRobustANGLE", reinterpret_cast<void*>(&glReadnPixelsRobustANGLE)}, \
+    {"glReleaseKeyedMutexWin32EXT", reinterpret_cast<void*>(&glReleaseKeyedMutexWin32EXT)}, \
+    {"glReleaseShaderCompiler", reinterpret_cast<void*>(&glReleaseShaderCompiler)}, \
+    {"glReleaseTexturesANGLE", reinterpret_cast<void*>(&glReleaseTexturesANGLE)}, \
+    {"glRenderbufferStorage", reinterpret_cast<void*>(&glRenderbufferStorage)}, \
+    {"glRenderbufferStorageMultisample", reinterpret_cast<void*>(&glRenderbufferStorageMultisample)}, \
+    {"glRenderbufferStorageMultisampleANGLE", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleANGLE)}, \
+    {"glRenderbufferStorageMultisampleAPPLE", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleAPPLE)}, \
+    {"glRenderbufferStorageMultisampleAdvancedAMD", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleAdvancedAMD)}, \
+    {"glRenderbufferStorageMultisampleEXT", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleEXT)}, \
+    {"glRenderbufferStorageMultisampleIMG", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleIMG)}, \
+    {"glRenderbufferStorageMultisampleNV", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleNV)}, \
+    {"glRequestExtensionANGLE", reinterpret_cast<void*>(&glRequestExtensionANGLE)}, \
+    {"glResetMemoryObjectParameterNV", reinterpret_cast<void*>(&glResetMemoryObjectParameterNV)}, \
+    {"glResolveDepthValuesNV", reinterpret_cast<void*>(&glResolveDepthValuesNV)}, \
+    {"glResolveMultisampleFramebufferAPPLE", reinterpret_cast<void*>(&glResolveMultisampleFramebufferAPPLE)}, \
+    {"glResumeTransformFeedback", reinterpret_cast<void*>(&glResumeTransformFeedback)}, \
+    {"glRotatef", reinterpret_cast<void*>(&glRotatef)}, \
+    {"glRotatex", reinterpret_cast<void*>(&glRotatex)}, \
+    {"glSampleCoverage", reinterpret_cast<void*>(&glSampleCoverage)}, \
+    {"glSampleCoveragex", reinterpret_cast<void*>(&glSampleCoveragex)}, \
+    {"glSampleMaski", reinterpret_cast<void*>(&glSampleMaski)}, \
+    {"glSampleMaskiANGLE", reinterpret_cast<void*>(&glSampleMaskiANGLE)}, \
+    {"glSamplerParameterIiv", reinterpret_cast<void*>(&glSamplerParameterIiv)}, \
+    {"glSamplerParameterIivEXT", reinterpret_cast<void*>(&glSamplerParameterIivEXT)}, \
+    {"glSamplerParameterIivOES", reinterpret_cast<void*>(&glSamplerParameterIivOES)}, \
+    {"glSamplerParameterIivRobustANGLE", reinterpret_cast<void*>(&glSamplerParameterIivRobustANGLE)}, \
+    {"glSamplerParameterIuiv", reinterpret_cast<void*>(&glSamplerParameterIuiv)}, \
+    {"glSamplerParameterIuivEXT", reinterpret_cast<void*>(&glSamplerParameterIuivEXT)}, \
+    {"glSamplerParameterIuivOES", reinterpret_cast<void*>(&glSamplerParameterIuivOES)}, \
+    {"glSamplerParameterIuivRobustANGLE", reinterpret_cast<void*>(&glSamplerParameterIuivRobustANGLE)}, \
+    {"glSamplerParameterf", reinterpret_cast<void*>(&glSamplerParameterf)}, \
+    {"glSamplerParameterfv", reinterpret_cast<void*>(&glSamplerParameterfv)}, \
+    {"glSamplerParameterfvRobustANGLE", reinterpret_cast<void*>(&glSamplerParameterfvRobustANGLE)}, \
+    {"glSamplerParameteri", reinterpret_cast<void*>(&glSamplerParameteri)}, \
+    {"glSamplerParameteriv", reinterpret_cast<void*>(&glSamplerParameteriv)}, \
+    {"glSamplerParameterivRobustANGLE", reinterpret_cast<void*>(&glSamplerParameterivRobustANGLE)}, \
+    {"glScalef", reinterpret_cast<void*>(&glScalef)}, \
+    {"glScalex", reinterpret_cast<void*>(&glScalex)}, \
+    {"glScissor", reinterpret_cast<void*>(&glScissor)}, \
+    {"glScissorArrayvNV", reinterpret_cast<void*>(&glScissorArrayvNV)}, \
+    {"glScissorArrayvOES", reinterpret_cast<void*>(&glScissorArrayvOES)}, \
+    {"glScissorExclusiveArrayvNV", reinterpret_cast<void*>(&glScissorExclusiveArrayvNV)}, \
+    {"glScissorExclusiveNV", reinterpret_cast<void*>(&glScissorExclusiveNV)}, \
+    {"glScissorIndexedNV", reinterpret_cast<void*>(&glScissorIndexedNV)}, \
+    {"glScissorIndexedOES", reinterpret_cast<void*>(&glScissorIndexedOES)}, \
+    {"glScissorIndexedvNV", reinterpret_cast<void*>(&glScissorIndexedvNV)}, \
+    {"glScissorIndexedvOES", reinterpret_cast<void*>(&glScissorIndexedvOES)}, \
+    {"glSelectPerfMonitorCountersAMD", reinterpret_cast<void*>(&glSelectPerfMonitorCountersAMD)}, \
+    {"glSemaphoreParameterivNV", reinterpret_cast<void*>(&glSemaphoreParameterivNV)}, \
+    {"glSemaphoreParameterui64vEXT", reinterpret_cast<void*>(&glSemaphoreParameterui64vEXT)}, \
+    {"glSetFenceNV", reinterpret_cast<void*>(&glSetFenceNV)}, \
+    {"glShadeModel", reinterpret_cast<void*>(&glShadeModel)}, \
+    {"glShaderBinary", reinterpret_cast<void*>(&glShaderBinary)}, \
+    {"glShaderSource", reinterpret_cast<void*>(&glShaderSource)}, \
+    {"glShadingRateCombinerOpsEXT", reinterpret_cast<void*>(&glShadingRateCombinerOpsEXT)}, \
+    {"glShadingRateEXT", reinterpret_cast<void*>(&glShadingRateEXT)}, \
+    {"glShadingRateImageBarrierNV", reinterpret_cast<void*>(&glShadingRateImageBarrierNV)}, \
+    {"glShadingRateImagePaletteNV", reinterpret_cast<void*>(&glShadingRateImagePaletteNV)}, \
+    {"glShadingRateQCOM", reinterpret_cast<void*>(&glShadingRateQCOM)}, \
+    {"glShadingRateSampleOrderCustomNV", reinterpret_cast<void*>(&glShadingRateSampleOrderCustomNV)}, \
+    {"glShadingRateSampleOrderNV", reinterpret_cast<void*>(&glShadingRateSampleOrderNV)}, \
+    {"glSignalSemaphoreEXT", reinterpret_cast<void*>(&glSignalSemaphoreEXT)}, \
+    {"glSignalVkFenceNV", reinterpret_cast<void*>(&glSignalVkFenceNV)}, \
+    {"glSignalVkSemaphoreNV", reinterpret_cast<void*>(&glSignalVkSemaphoreNV)}, \
+    {"glStartTilingQCOM", reinterpret_cast<void*>(&glStartTilingQCOM)}, \
+    {"glStencilFillPathInstancedNV", reinterpret_cast<void*>(&glStencilFillPathInstancedNV)}, \
+    {"glStencilFillPathNV", reinterpret_cast<void*>(&glStencilFillPathNV)}, \
+    {"glStencilFunc", reinterpret_cast<void*>(&glStencilFunc)}, \
+    {"glStencilFuncSeparate", reinterpret_cast<void*>(&glStencilFuncSeparate)}, \
+    {"glStencilMask", reinterpret_cast<void*>(&glStencilMask)}, \
+    {"glStencilMaskSeparate", reinterpret_cast<void*>(&glStencilMaskSeparate)}, \
+    {"glStencilOp", reinterpret_cast<void*>(&glStencilOp)}, \
+    {"glStencilOpSeparate", reinterpret_cast<void*>(&glStencilOpSeparate)}, \
+    {"glStencilStrokePathInstancedNV", reinterpret_cast<void*>(&glStencilStrokePathInstancedNV)}, \
+    {"glStencilStrokePathNV", reinterpret_cast<void*>(&glStencilStrokePathNV)}, \
+    {"glStencilThenCoverFillPathInstancedNV", reinterpret_cast<void*>(&glStencilThenCoverFillPathInstancedNV)}, \
+    {"glStencilThenCoverFillPathNV", reinterpret_cast<void*>(&glStencilThenCoverFillPathNV)}, \
+    {"glStencilThenCoverStrokePathInstancedNV", reinterpret_cast<void*>(&glStencilThenCoverStrokePathInstancedNV)}, \
+    {"glStencilThenCoverStrokePathNV", reinterpret_cast<void*>(&glStencilThenCoverStrokePathNV)}, \
+    {"glSubpixelPrecisionBiasNV", reinterpret_cast<void*>(&glSubpixelPrecisionBiasNV)}, \
+    {"glTestFenceNV", reinterpret_cast<void*>(&glTestFenceNV)}, \
+    {"glTexAttachMemoryNV", reinterpret_cast<void*>(&glTexAttachMemoryNV)}, \
+    {"glTexBuffer", reinterpret_cast<void*>(&glTexBuffer)}, \
+    {"glTexBufferEXT", reinterpret_cast<void*>(&glTexBufferEXT)}, \
+    {"glTexBufferOES", reinterpret_cast<void*>(&glTexBufferOES)}, \
+    {"glTexBufferRange", reinterpret_cast<void*>(&glTexBufferRange)}, \
+    {"glTexBufferRangeEXT", reinterpret_cast<void*>(&glTexBufferRangeEXT)}, \
+    {"glTexBufferRangeOES", reinterpret_cast<void*>(&glTexBufferRangeOES)}, \
+    {"glTexCoordPointer", reinterpret_cast<void*>(&glTexCoordPointer)}, \
+    {"glTexEnvf", reinterpret_cast<void*>(&glTexEnvf)}, \
+    {"glTexEnvfv", reinterpret_cast<void*>(&glTexEnvfv)}, \
+    {"glTexEnvi", reinterpret_cast<void*>(&glTexEnvi)}, \
+    {"glTexEnviv", reinterpret_cast<void*>(&glTexEnviv)}, \
+    {"glTexEnvx", reinterpret_cast<void*>(&glTexEnvx)}, \
+    {"glTexEnvxv", reinterpret_cast<void*>(&glTexEnvxv)}, \
+    {"glTexEstimateMotionQCOM", reinterpret_cast<void*>(&glTexEstimateMotionQCOM)}, \
+    {"glTexEstimateMotionRegionsQCOM", reinterpret_cast<void*>(&glTexEstimateMotionRegionsQCOM)}, \
+    {"glTexImage2D", reinterpret_cast<void*>(&glTexImage2D)}, \
+    {"glTexImage2DExternalANGLE", reinterpret_cast<void*>(&glTexImage2DExternalANGLE)}, \
+    {"glTexImage2DRobustANGLE", reinterpret_cast<void*>(&glTexImage2DRobustANGLE)}, \
+    {"glTexImage3D", reinterpret_cast<void*>(&glTexImage3D)}, \
+    {"glTexImage3DOES", reinterpret_cast<void*>(&glTexImage3DOES)}, \
+    {"glTexImage3DRobustANGLE", reinterpret_cast<void*>(&glTexImage3DRobustANGLE)}, \
+    {"glTexPageCommitmentEXT", reinterpret_cast<void*>(&glTexPageCommitmentEXT)}, \
+    {"glTexPageCommitmentMemNV", reinterpret_cast<void*>(&glTexPageCommitmentMemNV)}, \
+    {"glTexParameterIiv", reinterpret_cast<void*>(&glTexParameterIiv)}, \
+    {"glTexParameterIivEXT", reinterpret_cast<void*>(&glTexParameterIivEXT)}, \
+    {"glTexParameterIivOES", reinterpret_cast<void*>(&glTexParameterIivOES)}, \
+    {"glTexParameterIivRobustANGLE", reinterpret_cast<void*>(&glTexParameterIivRobustANGLE)}, \
+    {"glTexParameterIuiv", reinterpret_cast<void*>(&glTexParameterIuiv)}, \
+    {"glTexParameterIuivEXT", reinterpret_cast<void*>(&glTexParameterIuivEXT)}, \
+    {"glTexParameterIuivOES", reinterpret_cast<void*>(&glTexParameterIuivOES)}, \
+    {"glTexParameterIuivRobustANGLE", reinterpret_cast<void*>(&glTexParameterIuivRobustANGLE)}, \
+    {"glTexParameterf", reinterpret_cast<void*>(&glTexParameterf)}, \
+    {"glTexParameterfv", reinterpret_cast<void*>(&glTexParameterfv)}, \
+    {"glTexParameterfvRobustANGLE", reinterpret_cast<void*>(&glTexParameterfvRobustANGLE)}, \
+    {"glTexParameteri", reinterpret_cast<void*>(&glTexParameteri)}, \
+    {"glTexParameteriv", reinterpret_cast<void*>(&glTexParameteriv)}, \
+    {"glTexParameterivRobustANGLE", reinterpret_cast<void*>(&glTexParameterivRobustANGLE)}, \
+    {"glTexParameterx", reinterpret_cast<void*>(&glTexParameterx)}, \
+    {"glTexParameterxv", reinterpret_cast<void*>(&glTexParameterxv)}, \
+    {"glTexStorage1DEXT", reinterpret_cast<void*>(&glTexStorage1DEXT)}, \
+    {"glTexStorage2D", reinterpret_cast<void*>(&glTexStorage2D)}, \
+    {"glTexStorage2DEXT", reinterpret_cast<void*>(&glTexStorage2DEXT)}, \
+    {"glTexStorage2DMultisample", reinterpret_cast<void*>(&glTexStorage2DMultisample)}, \
+    {"glTexStorage2DMultisampleANGLE", reinterpret_cast<void*>(&glTexStorage2DMultisampleANGLE)}, \
+    {"glTexStorage3D", reinterpret_cast<void*>(&glTexStorage3D)}, \
+    {"glTexStorage3DEXT", reinterpret_cast<void*>(&glTexStorage3DEXT)}, \
+    {"glTexStorage3DMultisample", reinterpret_cast<void*>(&glTexStorage3DMultisample)}, \
+    {"glTexStorage3DMultisampleOES", reinterpret_cast<void*>(&glTexStorage3DMultisampleOES)}, \
+    {"glTexStorageAttribs2DEXT", reinterpret_cast<void*>(&glTexStorageAttribs2DEXT)}, \
+    {"glTexStorageAttribs3DEXT", reinterpret_cast<void*>(&glTexStorageAttribs3DEXT)}, \
+    {"glTexStorageMem2DEXT", reinterpret_cast<void*>(&glTexStorageMem2DEXT)}, \
+    {"glTexStorageMem2DMultisampleEXT", reinterpret_cast<void*>(&glTexStorageMem2DMultisampleEXT)}, \
+    {"glTexStorageMem3DEXT", reinterpret_cast<void*>(&glTexStorageMem3DEXT)}, \
+    {"glTexStorageMem3DMultisampleEXT", reinterpret_cast<void*>(&glTexStorageMem3DMultisampleEXT)}, \
+    {"glTexStorageMemFlags2DANGLE", reinterpret_cast<void*>(&glTexStorageMemFlags2DANGLE)}, \
+    {"glTexStorageMemFlags2DMultisampleANGLE", reinterpret_cast<void*>(&glTexStorageMemFlags2DMultisampleANGLE)}, \
+    {"glTexStorageMemFlags3DANGLE", reinterpret_cast<void*>(&glTexStorageMemFlags3DANGLE)}, \
+    {"glTexStorageMemFlags3DMultisampleANGLE", reinterpret_cast<void*>(&glTexStorageMemFlags3DMultisampleANGLE)}, \
+    {"glTexSubImage2D", reinterpret_cast<void*>(&glTexSubImage2D)}, \
+    {"glTexSubImage2DRobustANGLE", reinterpret_cast<void*>(&glTexSubImage2DRobustANGLE)}, \
+    {"glTexSubImage3D", reinterpret_cast<void*>(&glTexSubImage3D)}, \
+    {"glTexSubImage3DOES", reinterpret_cast<void*>(&glTexSubImage3DOES)}, \
+    {"glTexSubImage3DRobustANGLE", reinterpret_cast<void*>(&glTexSubImage3DRobustANGLE)}, \
+    {"glTextureAttachMemoryNV", reinterpret_cast<void*>(&glTextureAttachMemoryNV)}, \
+    {"glTextureBarrierNV", reinterpret_cast<void*>(&glTextureBarrierNV)}, \
+    {"glTextureFoveationParametersQCOM", reinterpret_cast<void*>(&glTextureFoveationParametersQCOM)}, \
+    {"glTexturePageCommitmentMemNV", reinterpret_cast<void*>(&glTexturePageCommitmentMemNV)}, \
+    {"glTextureStorage1DEXT", reinterpret_cast<void*>(&glTextureStorage1DEXT)}, \
+    {"glTextureStorage2DEXT", reinterpret_cast<void*>(&glTextureStorage2DEXT)}, \
+    {"glTextureStorage3DEXT", reinterpret_cast<void*>(&glTextureStorage3DEXT)}, \
+    {"glTextureStorageMem2DEXT", reinterpret_cast<void*>(&glTextureStorageMem2DEXT)}, \
+    {"glTextureStorageMem2DMultisampleEXT", reinterpret_cast<void*>(&glTextureStorageMem2DMultisampleEXT)}, \
+    {"glTextureStorageMem3DEXT", reinterpret_cast<void*>(&glTextureStorageMem3DEXT)}, \
+    {"glTextureStorageMem3DMultisampleEXT", reinterpret_cast<void*>(&glTextureStorageMem3DMultisampleEXT)}, \
+    {"glTextureViewEXT", reinterpret_cast<void*>(&glTextureViewEXT)}, \
+    {"glTextureViewOES", reinterpret_cast<void*>(&glTextureViewOES)}, \
+    {"glTransformFeedbackVaryings", reinterpret_cast<void*>(&glTransformFeedbackVaryings)}, \
+    {"glTransformPathNV", reinterpret_cast<void*>(&glTransformPathNV)}, \
+    {"glTranslatef", reinterpret_cast<void*>(&glTranslatef)}, \
+    {"glTranslatex", reinterpret_cast<void*>(&glTranslatex)}, \
+    {"glUniform1f", reinterpret_cast<void*>(&glUniform1f)}, \
+    {"glUniform1fv", reinterpret_cast<void*>(&glUniform1fv)}, \
+    {"glUniform1i", reinterpret_cast<void*>(&glUniform1i)}, \
+    {"glUniform1i64NV", reinterpret_cast<void*>(&glUniform1i64NV)}, \
+    {"glUniform1i64vNV", reinterpret_cast<void*>(&glUniform1i64vNV)}, \
+    {"glUniform1iv", reinterpret_cast<void*>(&glUniform1iv)}, \
+    {"glUniform1ui", reinterpret_cast<void*>(&glUniform1ui)}, \
+    {"glUniform1ui64NV", reinterpret_cast<void*>(&glUniform1ui64NV)}, \
+    {"glUniform1ui64vNV", reinterpret_cast<void*>(&glUniform1ui64vNV)}, \
+    {"glUniform1uiv", reinterpret_cast<void*>(&glUniform1uiv)}, \
+    {"glUniform2f", reinterpret_cast<void*>(&glUniform2f)}, \
+    {"glUniform2fv", reinterpret_cast<void*>(&glUniform2fv)}, \
+    {"glUniform2i", reinterpret_cast<void*>(&glUniform2i)}, \
+    {"glUniform2i64NV", reinterpret_cast<void*>(&glUniform2i64NV)}, \
+    {"glUniform2i64vNV", reinterpret_cast<void*>(&glUniform2i64vNV)}, \
+    {"glUniform2iv", reinterpret_cast<void*>(&glUniform2iv)}, \
+    {"glUniform2ui", reinterpret_cast<void*>(&glUniform2ui)}, \
+    {"glUniform2ui64NV", reinterpret_cast<void*>(&glUniform2ui64NV)}, \
+    {"glUniform2ui64vNV", reinterpret_cast<void*>(&glUniform2ui64vNV)}, \
+    {"glUniform2uiv", reinterpret_cast<void*>(&glUniform2uiv)}, \
+    {"glUniform3f", reinterpret_cast<void*>(&glUniform3f)}, \
+    {"glUniform3fv", reinterpret_cast<void*>(&glUniform3fv)}, \
+    {"glUniform3i", reinterpret_cast<void*>(&glUniform3i)}, \
+    {"glUniform3i64NV", reinterpret_cast<void*>(&glUniform3i64NV)}, \
+    {"glUniform3i64vNV", reinterpret_cast<void*>(&glUniform3i64vNV)}, \
+    {"glUniform3iv", reinterpret_cast<void*>(&glUniform3iv)}, \
+    {"glUniform3ui", reinterpret_cast<void*>(&glUniform3ui)}, \
+    {"glUniform3ui64NV", reinterpret_cast<void*>(&glUniform3ui64NV)}, \
+    {"glUniform3ui64vNV", reinterpret_cast<void*>(&glUniform3ui64vNV)}, \
+    {"glUniform3uiv", reinterpret_cast<void*>(&glUniform3uiv)}, \
+    {"glUniform4f", reinterpret_cast<void*>(&glUniform4f)}, \
+    {"glUniform4fv", reinterpret_cast<void*>(&glUniform4fv)}, \
+    {"glUniform4i", reinterpret_cast<void*>(&glUniform4i)}, \
+    {"glUniform4i64NV", reinterpret_cast<void*>(&glUniform4i64NV)}, \
+    {"glUniform4i64vNV", reinterpret_cast<void*>(&glUniform4i64vNV)}, \
+    {"glUniform4iv", reinterpret_cast<void*>(&glUniform4iv)}, \
+    {"glUniform4ui", reinterpret_cast<void*>(&glUniform4ui)}, \
+    {"glUniform4ui64NV", reinterpret_cast<void*>(&glUniform4ui64NV)}, \
+    {"glUniform4ui64vNV", reinterpret_cast<void*>(&glUniform4ui64vNV)}, \
+    {"glUniform4uiv", reinterpret_cast<void*>(&glUniform4uiv)}, \
+    {"glUniformBlockBinding", reinterpret_cast<void*>(&glUniformBlockBinding)}, \
+    {"glUniformHandleui64IMG", reinterpret_cast<void*>(&glUniformHandleui64IMG)}, \
+    {"glUniformHandleui64NV", reinterpret_cast<void*>(&glUniformHandleui64NV)}, \
+    {"glUniformHandleui64vIMG", reinterpret_cast<void*>(&glUniformHandleui64vIMG)}, \
+    {"glUniformHandleui64vNV", reinterpret_cast<void*>(&glUniformHandleui64vNV)}, \
+    {"glUniformMatrix2fv", reinterpret_cast<void*>(&glUniformMatrix2fv)}, \
+    {"glUniformMatrix2x3fv", reinterpret_cast<void*>(&glUniformMatrix2x3fv)}, \
+    {"glUniformMatrix2x3fvNV", reinterpret_cast<void*>(&glUniformMatrix2x3fvNV)}, \
+    {"glUniformMatrix2x4fv", reinterpret_cast<void*>(&glUniformMatrix2x4fv)}, \
+    {"glUniformMatrix2x4fvNV", reinterpret_cast<void*>(&glUniformMatrix2x4fvNV)}, \
+    {"glUniformMatrix3fv", reinterpret_cast<void*>(&glUniformMatrix3fv)}, \
+    {"glUniformMatrix3x2fv", reinterpret_cast<void*>(&glUniformMatrix3x2fv)}, \
+    {"glUniformMatrix3x2fvNV", reinterpret_cast<void*>(&glUniformMatrix3x2fvNV)}, \
+    {"glUniformMatrix3x4fv", reinterpret_cast<void*>(&glUniformMatrix3x4fv)}, \
+    {"glUniformMatrix3x4fvNV", reinterpret_cast<void*>(&glUniformMatrix3x4fvNV)}, \
+    {"glUniformMatrix4fv", reinterpret_cast<void*>(&glUniformMatrix4fv)}, \
+    {"glUniformMatrix4x2fv", reinterpret_cast<void*>(&glUniformMatrix4x2fv)}, \
+    {"glUniformMatrix4x2fvNV", reinterpret_cast<void*>(&glUniformMatrix4x2fvNV)}, \
+    {"glUniformMatrix4x3fv", reinterpret_cast<void*>(&glUniformMatrix4x3fv)}, \
+    {"glUniformMatrix4x3fvNV", reinterpret_cast<void*>(&glUniformMatrix4x3fvNV)}, \
+    {"glUnmapBuffer", reinterpret_cast<void*>(&glUnmapBuffer)}, \
+    {"glUnmapBufferOES", reinterpret_cast<void*>(&glUnmapBufferOES)}, \
+    {"glUseProgram", reinterpret_cast<void*>(&glUseProgram)}, \
+    {"glUseProgramStages", reinterpret_cast<void*>(&glUseProgramStages)}, \
+    {"glUseProgramStagesEXT", reinterpret_cast<void*>(&glUseProgramStagesEXT)}, \
+    {"glValidateProgram", reinterpret_cast<void*>(&glValidateProgram)}, \
+    {"glValidateProgramPipeline", reinterpret_cast<void*>(&glValidateProgramPipeline)}, \
+    {"glValidateProgramPipelineEXT", reinterpret_cast<void*>(&glValidateProgramPipelineEXT)}, \
+    {"glVertexAttrib1f", reinterpret_cast<void*>(&glVertexAttrib1f)}, \
+    {"glVertexAttrib1fv", reinterpret_cast<void*>(&glVertexAttrib1fv)}, \
+    {"glVertexAttrib2f", reinterpret_cast<void*>(&glVertexAttrib2f)}, \
+    {"glVertexAttrib2fv", reinterpret_cast<void*>(&glVertexAttrib2fv)}, \
+    {"glVertexAttrib3f", reinterpret_cast<void*>(&glVertexAttrib3f)}, \
+    {"glVertexAttrib3fv", reinterpret_cast<void*>(&glVertexAttrib3fv)}, \
+    {"glVertexAttrib4f", reinterpret_cast<void*>(&glVertexAttrib4f)}, \
+    {"glVertexAttrib4fv", reinterpret_cast<void*>(&glVertexAttrib4fv)}, \
+    {"glVertexAttribBinding", reinterpret_cast<void*>(&glVertexAttribBinding)}, \
+    {"glVertexAttribDivisor", reinterpret_cast<void*>(&glVertexAttribDivisor)}, \
+    {"glVertexAttribDivisorANGLE", reinterpret_cast<void*>(&glVertexAttribDivisorANGLE)}, \
+    {"glVertexAttribDivisorEXT", reinterpret_cast<void*>(&glVertexAttribDivisorEXT)}, \
+    {"glVertexAttribDivisorNV", reinterpret_cast<void*>(&glVertexAttribDivisorNV)}, \
+    {"glVertexAttribFormat", reinterpret_cast<void*>(&glVertexAttribFormat)}, \
+    {"glVertexAttribI4i", reinterpret_cast<void*>(&glVertexAttribI4i)}, \
+    {"glVertexAttribI4iv", reinterpret_cast<void*>(&glVertexAttribI4iv)}, \
+    {"glVertexAttribI4ui", reinterpret_cast<void*>(&glVertexAttribI4ui)}, \
+    {"glVertexAttribI4uiv", reinterpret_cast<void*>(&glVertexAttribI4uiv)}, \
+    {"glVertexAttribIFormat", reinterpret_cast<void*>(&glVertexAttribIFormat)}, \
+    {"glVertexAttribIPointer", reinterpret_cast<void*>(&glVertexAttribIPointer)}, \
+    {"glVertexAttribPointer", reinterpret_cast<void*>(&glVertexAttribPointer)}, \
+    {"glVertexBindingDivisor", reinterpret_cast<void*>(&glVertexBindingDivisor)}, \
+    {"glVertexPointer", reinterpret_cast<void*>(&glVertexPointer)}, \
+    {"glViewport", reinterpret_cast<void*>(&glViewport)}, \
+    {"glViewportArrayvNV", reinterpret_cast<void*>(&glViewportArrayvNV)}, \
+    {"glViewportArrayvOES", reinterpret_cast<void*>(&glViewportArrayvOES)}, \
+    {"glViewportIndexedfNV", reinterpret_cast<void*>(&glViewportIndexedfNV)}, \
+    {"glViewportIndexedfOES", reinterpret_cast<void*>(&glViewportIndexedfOES)}, \
+    {"glViewportIndexedfvNV", reinterpret_cast<void*>(&glViewportIndexedfvNV)}, \
+    {"glViewportIndexedfvOES", reinterpret_cast<void*>(&glViewportIndexedfvOES)}, \
+    {"glViewportPositionWScaleNV", reinterpret_cast<void*>(&glViewportPositionWScaleNV)}, \
+    {"glViewportSwizzleNV", reinterpret_cast<void*>(&glViewportSwizzleNV)}, \
+    {"glWaitSemaphoreEXT", reinterpret_cast<void*>(&glWaitSemaphoreEXT)}, \
+    {"glWaitSync", reinterpret_cast<void*>(&glWaitSync)}, \
+    {"glWaitSyncAPPLE", reinterpret_cast<void*>(&glWaitSyncAPPLE)}, \
+    {"glWaitVkSemaphoreNV", reinterpret_cast<void*>(&glWaitVkSemaphoreNV)}, \
+    {"glWeightPathsNV", reinterpret_cast<void*>(&glWeightPathsNV)}, \
+    {"glWindowRectanglesEXT", reinterpret_cast<void*>(&glWindowRectanglesEXT)}, \
+
