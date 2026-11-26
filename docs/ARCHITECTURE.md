@@ -455,7 +455,10 @@ into interpretation through an execute-fault handler, since arm64 text is
 never mapped executable. A raw system call (`SVC #0`, or the `syscall()`
 import) carries arm64's numbers, which `arm64_abi.cpp` maps onto the shim:
 memory (`mmap` 222, `munmap` 215, `mprotect` 226, through the same wrappers
-as the imports, so an executable mapping becomes guest code; `mremap` 216,
+as the imports, so an executable mapping becomes guest code, but never a
+host image's code: an arm64 caller's `mprotect` or `MAP_FIXED` over an
+executable section of the exe, a DLL or a translation is `EACCES` with one
+log line, as `include/winapk/host_code.h` explains; `mremap` 216,
 which moves a private mapping by copying it), `futex`, the ids, clocks and
 sleeps, files (`openat` relative to a directory descriptor, with arm64's
 `O_DIRECTORY`/`O_NOFOLLOW` values, which the `open`/`openat` imports convert
