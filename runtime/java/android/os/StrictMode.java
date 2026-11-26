@@ -142,4 +142,107 @@ public final class StrictMode {
         return NO_OP_SPAN;
     }
     private StrictMode() {}
+
+    /** AOSP 14 StrictMode.ViolationInfo: one violation as the app reports it to the activity manager
+     *  (IActivityManager.handleApplicationStrictModeViolation names it, so reflection on
+     *  IActivityManager builds it). A minimal faithful stub of AOSP's: the violation, its stack and
+     *  penalty mask and the public counters; parcelled within the process only (the activity manager
+     *  is in-process here), the violation as its class name and message. */
+    public static final class ViolationInfo implements Parcelable {
+        private final android.os.strictmode.Violation mViolation;
+        private final String mViolationClass;
+        private String mStackTrace;
+        private final int mPenaltyMask;
+        public int durationMillis = -1;
+        public int numAnimationsRunning = 0;
+        public String[] tags;
+        public int violationNumThisLoop;
+        public long violationUptimeMillis;
+        public String broadcastIntentAction;
+        public long numInstances = -1;
+
+        ViolationInfo(android.os.strictmode.Violation tr, int penaltyMask) {
+            mViolation = tr;
+            mViolationClass = tr != null ? tr.getClass().getName() : null;
+            mPenaltyMask = penaltyMask;
+            violationUptimeMillis = SystemClock.uptimeMillis();
+        }
+
+        public ViolationInfo(Parcel in) { this(in, false); }
+
+        public ViolationInfo(Parcel in, boolean unsetGatheringBit) {
+            mViolation = null;
+            mViolationClass = in.readString();
+            mStackTrace = in.readString();
+            mPenaltyMask = in.readInt();
+            durationMillis = in.readInt();
+            violationNumThisLoop = in.readInt();
+            numAnimationsRunning = in.readInt();
+            violationUptimeMillis = in.readLong();
+            numInstances = in.readLong();
+            broadcastIntentAction = in.readString();
+            tags = in.createStringArray();
+        }
+
+        public String getStackTrace() {
+            if (mStackTrace == null && mViolation != null) {
+                java.io.StringWriter sw = new java.io.StringWriter();
+                mViolation.printStackTrace(new java.io.PrintWriter(sw));
+                mStackTrace = sw.toString();
+            }
+            return mStackTrace;
+        }
+
+        public Class<? extends android.os.strictmode.Violation> getViolationClass() {
+            return mViolation != null ? mViolation.getClass() : null;
+        }
+
+        public String getViolationDetails() { return mViolation != null ? mViolation.getMessage() : null; }
+
+        boolean penaltyEnabled(int p) { return (mPenaltyMask & p) != 0; }
+
+        void addLocalStack(Throwable t) { }
+
+        @Override public int hashCode() {
+            int result = 17;
+            String stack = getStackTrace();
+            if (stack != null) result = 37 * result + stack.hashCode();
+            if (numAnimationsRunning != 0) result *= 37;
+            if (broadcastIntentAction != null) result = 37 * result + broadcastIntentAction.hashCode();
+            if (tags != null) for (String tag : tags) result = 37 * result + tag.hashCode();
+            return result;
+        }
+
+        @Override public void writeToParcel(Parcel dest, int flags) {
+            dest.writeString(mViolationClass);
+            dest.writeString(getStackTrace());
+            dest.writeInt(mPenaltyMask);
+            dest.writeInt(durationMillis);
+            dest.writeInt(violationNumThisLoop);
+            dest.writeInt(numAnimationsRunning);
+            dest.writeLong(violationUptimeMillis);
+            dest.writeLong(numInstances);
+            dest.writeString(broadcastIntentAction);
+            dest.writeStringArray(tags);
+        }
+
+        public void dump(android.util.Printer pw, String prefix) {
+            pw.println(prefix + "stackTrace: " + getStackTrace());
+            pw.println(prefix + "penalty: " + mPenaltyMask);
+            if (durationMillis != -1) pw.println(prefix + "durationMillis: " + durationMillis);
+            if (numInstances != -1) pw.println(prefix + "numInstances: " + numInstances);
+            if (violationNumThisLoop != 0) pw.println(prefix + "violationNumThisLoop: " + violationNumThisLoop);
+            if (numAnimationsRunning != 0) pw.println(prefix + "numAnimationsRunning: " + numAnimationsRunning);
+            pw.println(prefix + "violationUptimeMillis: " + violationUptimeMillis);
+            if (broadcastIntentAction != null) pw.println(prefix + "broadcastIntentAction: " + broadcastIntentAction);
+            if (tags != null) for (int i = 0; i < tags.length; i++) pw.println(prefix + "tag[" + i + "]: " + tags[i]);
+        }
+
+        @Override public int describeContents() { return 0; }
+
+        public static final Parcelable.Creator<ViolationInfo> CREATOR = new Parcelable.Creator<ViolationInfo>() {
+            @Override public ViolationInfo createFromParcel(Parcel in) { return new ViolationInfo(in); }
+            @Override public ViolationInfo[] newArray(int size) { return new ViolationInfo[size]; }
+        };
+    }
 }

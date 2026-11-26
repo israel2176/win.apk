@@ -187,9 +187,80 @@ public final class SurfaceControl implements Parcelable {
         public long getActualAppFrameTimeNanos() { return mActualAppFrameTimeNanos; }
     }
 
-    /** AOSP SurfaceControl.OnJankDataListener. */
-    public interface OnJankDataListener {
-        void onJankDataAvailable(java.util.List<JankData> jankData);
+    /** AOSP 14 SurfaceControl.OnJankDataListener (@hide in 14): an abstract class, which AOSP's
+     *  FrameTracker (com.android.internal.jank, aosp-views.jar) extends; as an interface here that class
+     *  did not load (IncompatibleClassChangeError), nor did reflection on InteractionJankMonitor. API 36
+     *  made it a public interface taking a List; the AttachedSurfaceControl apps get is AOSP 14's, which
+     *  has no registerOnJankDataListener, so 14's shape is the one that ships. AOSP's holds the native
+     *  listener's pointer; no compositor reports jank here (JankData above). */
+    public abstract static class OnJankDataListener {
+        public OnJankDataListener() { }
+
+        public abstract void onJankDataAvailable(JankData[] jankData);
+    }
+
+    /** AOSP 14 SurfaceControl.OnReparentListener (@hide): AOSP's InlineContentView names it. */
+    public interface OnReparentListener {
+        void onReparent(Transaction transaction, SurfaceControl parent);
+    }
+
+    /** AOSP 14 SurfaceControl.RefreshRateRange (@hide): a display mode's range of refresh rates, which
+     *  AOSP's DisplayInfo and DisplayManager's parcels carry. */
+    public static final class RefreshRateRange implements Parcelable {
+        public static final String TAG = "RefreshRateRange";
+        public static final float FLOAT_TOLERANCE = 0.01f;
+        public float min;
+        public float max;
+
+        public RefreshRateRange() { }
+
+        public RefreshRateRange(float min, float max) {
+            if (min < 0 || max < 0 || min > max + FLOAT_TOLERANCE) {
+                android.util.Log.e(TAG, "Wrong values for min and max when initializing RefreshRateRange : "
+                        + min + " " + max);
+                this.min = this.max = 0;
+                return;
+            }
+            if (min > max) {
+                float t = min;
+                min = max;
+                max = t;
+            }
+            this.min = min;
+            this.max = max;
+        }
+
+        @Override public boolean equals(Object other) {
+            if (other == this) return true;
+            if (!(other instanceof RefreshRateRange)) return false;
+            RefreshRateRange r = (RefreshRateRange) other;
+            return min == r.min && max == r.max;
+        }
+
+        @Override public int hashCode() { return java.util.Objects.hash(min, max); }
+
+        @Override public String toString() { return "(" + min + " " + max + ")"; }
+
+        public void copyFrom(RefreshRateRange other) {
+            if (other != null) {
+                min = other.min;
+                max = other.max;
+            }
+        }
+
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeFloat(min);
+            dest.writeFloat(max);
+        }
+
+        @Override public int describeContents() { return 0; }
+
+        public static final Parcelable.Creator<RefreshRateRange> CREATOR = new Parcelable.Creator<RefreshRateRange>() {
+            @Override public RefreshRateRange createFromParcel(android.os.Parcel in) {
+                return new RefreshRateRange(in.readFloat(), in.readFloat());
+            }
+            @Override public RefreshRateRange[] newArray(int size) { return new RefreshRateRange[size]; }
+        };
     }
 
     /** AOSP SurfaceControl.OnJankDataListenerRegistration: the handle returned

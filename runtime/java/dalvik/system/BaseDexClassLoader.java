@@ -411,4 +411,11 @@ public class BaseDexClassLoader extends URLClassLoader {
         }
         return urls;
     }
+
+    /** AOSP 14 BaseDexClassLoader.Reporter (@hide): told of every class loader made with its dex files,
+     *  for the package manager's dex use records; AOSP's DexLoadReporter implements it. No dex file is
+     *  loaded here (an app's code is converted to JVM classes at install), so none is ever reported. */
+    public interface Reporter {
+        void report(java.util.Map<String, String> contextsMap);
+    }
 }
