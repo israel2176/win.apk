@@ -820,8 +820,7 @@ class WindowsPath implements Path {
             while (--otherCount >= 0) {
                 String thisElement = this.elementAsString(otherCount);
                 String otherElement = other.elementAsString(otherCount);
-                // FIXME: should compare in uppercase
-                if (!thisElement.equalsIgnoreCase(otherElement))
+                if (!equalsUpper(thisElement, otherElement))
                     return false;
             }
             return true;
@@ -857,8 +856,7 @@ class WindowsPath implements Path {
         if (other.root.length() > 0) {
             if (otherCount < thisCount)
                 return false;
-            // FIXME: should compare in uppercase
-            if (!this.root.equalsIgnoreCase(other.root))
+            if (!equalsUpper(this.root, other.root))
                 return false;
         }
 
@@ -867,8 +865,20 @@ class WindowsPath implements Path {
         while (--otherCount >= 0) {
             String thisElement = this.elementAsString(off + otherCount);
             String otherElement = other.elementAsString(otherCount);
-            // FIXME: should compare in uppercase
-            if (!thisElement.equalsIgnoreCase(otherElement))
+            if (!equalsUpper(thisElement, otherElement))
+                return false;
+        }
+        return true;
+    }
+
+    private static boolean equalsUpper(String s1, String s2) {
+        int n = s1.length();
+        if (n != s2.length())
+            return false;
+        for (int i = 0; i < n; i++) {
+            char c1 = s1.charAt(i);
+            char c2 = s2.charAt(i);
+            if (c1 != c2 && Character.toUpperCase(c1) != Character.toUpperCase(c2))
                 return false;
         }
         return true;
