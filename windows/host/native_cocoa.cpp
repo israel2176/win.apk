@@ -41,7 +41,6 @@
 #include "frame_times.h"
 #include "host_url.h"
 #include "machine_load.h"
-#include "gl/gl_surface.h"
 #include "hwui_host.h"
 #include "native_window.h"
 #include "win32_window.h"
@@ -766,7 +765,7 @@ void JNICALL Cocoa_updateTranslationOverlay(JNIEnv*, jclass, jstring) {}
 void JNICALL Cocoa_hideTranslationOverlay(JNIEnv*, jclass) {}
 
 // A RENDERMODE_WHEN_DIRTY GLSurfaceView with nothing to draw withholds the
-// tick: the pbuffer still holds the last frame, so the readback is skipped.
+// tick: the frame shown stays, and the GL view's is not presented again.
 // (Upstream may ask for a draw anyway for its self-capture; there is none.)
 thread_local bool t_tick_withheld = false;
 jboolean JNICALL Cocoa_beginWithheldTick(JNIEnv*, jclass, jboolean) {
@@ -888,7 +887,7 @@ jlong JNICALL Cocoa_getPlaceholderWindow(JNIEnv*, jclass) {
 
 // Every view with a renderer (MetalSurfaceCallbacks) is driven each tick:
 // the canvas views draw the view tree and present it themselves; a GL view
-// draws with ANGLE's context current on its pbuffer (gl_surface.h).
+// (the SurfaceViews' one) reports its size and stands for its surface (gl_tick).
 struct Renderer {
     jobject callbacks = nullptr;  // global ref
     // Which registration this is. The tick writes the size it announced back only to the renderer it
@@ -902,7 +901,6 @@ struct Renderer {
 };
 std::mutex g_renderer_lock;
 std::map<jlong, Renderer> g_renderers;
-std::vector<jlong> g_released_gl_views;  // pbuffers for the render thread to drop
 
 // The surface is the phone size in pixels, at the density the Java side uses
 // for the display metrics (DisplayConfig.seedFromCanvas).
@@ -1118,15 +1116,23 @@ void JNICALL Cocoa_presentSurfaceBitmap(JNIEnv* env, jclass, jint key, jintArray
     if (!guest_live()) compose_and_present(env);
 }
 
-// One GL view's tick: ANGLE's context on its pbuffer, the renderer's
-// lifecycle and frame, then the pixels for the window when it is the content.
+// One GL view's tick: the renderer's lifecycle and frame, then, when the view is the content and
+// nothing draws into its surface, the frame it shows: opaque black at its size, as AOSP's SurfaceView
+// shows its background layer behind an opaque surface no buffer has reached yet.
+//
+// No GL here. The view used to be a pbuffer of ANGLE's on the app's display, made current on this
+// thread and read back each tick, from upstream's days of driving a renderer from the render tick
+// (gone: every renderer runs on its own GL thread). Nothing drew into it, and its Direct3D work ran
+// on the device the app's own GL threads draw with, whose immediate context ANGLE does not lock
+// between contexts that share nothing (gl_surface.cpp). Its only guard, no window surface held at
+// the start of the tick, fails at a resize: Flutter (Impeller) destroys its window surface before
+// making the new one, and a tick in between remade its pbuffer at the new size beside the app's GL
+// threads. City Car crashed in the Direct3D driver from its own GL just after such a resize; SDL's
+// Tensy had crashed in its glDrawArrays when its window rotated and the pbuffer was remade. Before
+// a window surface exists the read-back also ran beside an app's other contexts (Flutter's IO
+// thread uploading images).
 void gl_tick(JNIEnv* env, jlong view, Renderer& r, jobject callbacks, jmethodID changed, jmethodID draw,
              int w, int h) {
-    // Not while a producer of its own holds a window surface (guest_window_surface_held): its frames
-    // are the window's, and this view's pbuffer (made again at each size) and its read-back would
-    // put Direct3D work on the device its thread is drawing with. SDL's Tensy crashed in its
-    // glDrawArrays when its window rotated under it and this view's pbuffer was made again.
-    const bool ready = !guest_window_surface_held() && gl_frame_begin(view, w, h);
     if (r.announced_w != w || r.announced_h != h) {
         r.announced_w = w;
         r.announced_h = h;
@@ -1136,12 +1142,14 @@ void gl_tick(JNIEnv* env, jlong view, Renderer& r, jobject callbacks, jmethodID 
     t_tick_withheld = false;
     env->CallVoidMethod(callbacks, draw);
     check_tick_exception(env);
-    static std::vector<uint32_t> pixels;
-    int fw = 0, fh = 0;
-    if (ready && !t_tick_withheld && view == g_content_view.load() && !guest_live() &&
-        gl_frame_read(&pixels, &fw, &fh)) {
-        composite_gl_frame(env, pixels, fw, fh);
+    // A producer's window surface (guest_window_surface_held) shows its own last frame, as a
+    // compositor keeps a surface's last buffer, even while it draws nothing (guest_live).
+    if (t_tick_withheld || view != g_content_view.load() || guest_live() || guest_window_surface_held()) {
+        return;
     }
+    static std::vector<uint32_t> black;
+    black.assign(static_cast<size_t>(w) * h, 0xff000000u);
+    composite_gl_frame(env, black, w, h);
 }
 
 void pull_guest_layer_z(JNIEnv* env) {
@@ -1274,13 +1282,10 @@ DWORD WINAPI render_thread(void*) {
         g_content_h = h;
         if (g_guest_last_ms.load() != 0) pull_guest_layer_z(env);
         std::vector<std::pair<jlong, jobject>> now;
-        std::vector<jlong> dropped;
         {
             std::lock_guard<std::mutex> hold(g_renderer_lock);
             for (auto& [view, r] : g_renderers) now.emplace_back(view, env->NewLocalRef(r.callbacks));
-            dropped.swap(g_released_gl_views);
         }
-        for (jlong view : dropped) gl_view_release(view);
         for (auto& [view, callbacks] : now) {
             Renderer r;
             {
@@ -1352,7 +1357,6 @@ void JNICALL Cocoa_releaseRenderer(JNIEnv* env, jclass, jlong view) {
     std::lock_guard<std::mutex> hold(g_renderer_lock);
     auto it = g_renderers.find(view);
     if (it == g_renderers.end()) return;
-    if (it->second.gl) g_released_gl_views.push_back(view);
     env->DeleteGlobalRef(it->second.callbacks);
     g_renderers.erase(it);
 }

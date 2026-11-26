@@ -1779,7 +1779,15 @@ public final class MediaCodec {
             if (!mEncInputDone) endEncoderInputLocked();
         }
     }
-    public void detachOutputSurface() { }
+    /** API 35: the codec stops rendering to its output surface until setOutputSurface gives it
+     *  another. AOSP allows it only for a codec configured with CONFIGURE_FLAG_DETACHED_SURFACE,
+     *  which needs FEATURE_DetachedSurface, a feature no codec here lists; media3 asks for the feature
+     *  first. The surface is let go as setOutputSurface(null) would. */
+    public void detachOutputSurface() {
+        if (mSurface != null) ViewHost.get().unregisterVideoSink(mSurface);
+        mSurface = null;
+        mHasSurface = false;
+    }
 
     /**
      * API 23. A Surface that outlives the encoder it feeds. It carries what a

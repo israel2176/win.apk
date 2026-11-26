@@ -271,7 +271,10 @@ public class TelephonyManager {
     public String  getSimSerialNumber() { return null; }
     public String  getLine1Number()     { return null; }
     public String  getNetworkOperator() { return ""; }
-    public String  getNetworkOperatorName() { return "Mac.apk"; }
+    /** No SIM and no cell network: AOSP answers "" (TelephonyManager.getNetworkOperatorName reads
+     *  gsm.operator.alpha, empty without one). Upstream's own name was here, which an app showed
+     *  as the carrier. */
+    public String  getNetworkOperatorName() { return ""; }
     public String  getNetworkCountryIso()   { return macapkHostCountryIso(); }
     public String  getSimOperator()     { return ""; }
     public String  getSimOperatorName() { return ""; }

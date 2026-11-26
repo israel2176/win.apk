@@ -16,9 +16,12 @@
 #include "winapk/arm64_guest.h"
 
 #include "winapk/guest_abi.h"
+#include "winapk/host_code.h"
 #include "winapk/mini_bionic.h"
 
+#include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <set>
@@ -174,9 +177,76 @@ WINAPK_GUEST_ABI int a64_epoll_pwait(int epfd, Arm64EpollEvent* events, int max,
 // host function, so such ranges are registered here, and dropped again when
 // unmapped or made non-executable. (An x86_64 caller's code runs natively and
 // needs none of this, which is why it is only for arm64 imports.)
+//
+// Never the host's own code (host_code.h): a library that hooks libc on
+// Android mprotects libc's text writable and executable, and here that text is
+// the shim's x86_64 code in winapk-runtime.exe (or a Windows DLL, or a
+// translation's .aot.dll). Registered, the next call into any host function on
+// the page would be interpreted as arm64; written, the host's code is gone.
+// mprotect and MAP_FIXED over it fail with EACCES instead (asking for
+// PROT_READ | PROT_EXEC, what it already is, succeeds and changes nothing),
+// and track_exec, which raw calls and mremap reach too, never registers it. An
+// image's data pages are not code and stay open (the trampoline above is in
+// the exe's .rdata).
 
-constexpr int kProtExec = 4;
+constexpr int kProtRead = 1, kProtWrite = 2, kProtExec = 4;
+constexpr int kMapFixed = 0x10;
+constexpr int kEacces = 13;
 constexpr uint64_t kPage = 4096;
+
+// The first address of [lo, hi) that is a host image's code (host_code.h), or 0.
+uint64_t host_code_in(uint64_t lo, uint64_t hi) {
+    for (uint64_t p = lo; p < hi;) {
+        MEMORY_BASIC_INFORMATION mbi;
+        if (!VirtualQuery(reinterpret_cast<void*>(p), &mbi, sizeof mbi)) break;
+        const uint64_t region_end = reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize;
+        if (mbi.State != MEM_FREE && mbi.Type == MEM_IMAGE) {
+            const auto* base = static_cast<const uint8_t*>(mbi.AllocationBase);
+            // The headers' region, as far as it may be read (a guest may have protected it: then nothing of
+            // the image is known, and pe_code_in counts it as code).
+            MEMORY_BASIC_INFORMATION head;
+            size_t n = 0;
+            if (VirtualQuery(base, &head, sizeof head) && head.State == MEM_COMMIT &&
+                !(head.Protect & (PAGE_NOACCESS | PAGE_GUARD)) && head.Protect != PAGE_EXECUTE) {
+                n = head.RegionSize;
+            }
+            const uint64_t b = reinterpret_cast<uint64_t>(base);
+            const uint64_t end = region_end < hi ? region_end : hi;
+            uint64_t at;
+            if (pe_code_in(base, n, p - b, end - b, &at)) return b + at;
+        }
+        p = region_end;
+    }
+    return 0;
+}
+
+// Refuses an arm64 caller's change to host code: EACCES, and one line in the log per process. `what`
+// finishes "a guest library's ...".
+int refuse_host_code(const char* what, uint64_t at) {
+    static std::atomic<bool> said{false};
+    if (!said.exchange(true)) {
+        char path[MAX_PATH] = "?";
+        MEMORY_BASIC_INFORMATION mbi{};
+        VirtualQuery(reinterpret_cast<void*>(at), &mbi, sizeof mbi);
+        GetModuleFileNameA(static_cast<HMODULE>(mbi.AllocationBase), path, sizeof path);
+        const char* name = std::strrchr(path, '\\');
+        name = name ? name + 1 : path;
+        std::fprintf(stderr,
+                     "[win.apk] arm64: a guest library's %s host code, at %s+0x%llx: refused "
+                     "(EACCES). On Android this is how a library patches or hooks libc's code; here libc is "
+                     "Win.apk's x86_64 code, which arm64 code can neither patch nor run as its own\n",
+                     what, name,
+                     static_cast<unsigned long long>(at - reinterpret_cast<uint64_t>(mbi.AllocationBase)));
+        std::fflush(stderr);
+    }
+    *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = kEacces;
+    return -1;
+}
+
+uint64_t page_down(const void* addr) { return reinterpret_cast<uint64_t>(addr) & ~(kPage - 1); }
+uint64_t page_up(const void* addr, size_t len) {
+    return (reinterpret_cast<uint64_t>(addr) + len + kPage - 1) & ~(kPage - 1);
+}
 
 // Only ranges registered here are ever dropped: an app that makes a page of
 // a loaded library's own code writable for a moment must not unregister the
@@ -186,12 +256,12 @@ std::set<uint64_t> g_exec_ranges;  // starts of the ranges track_exec registered
 
 void track_exec(void* addr, size_t len, int prot) {
     if (!addr || !len) return;
-    const uint64_t lo = reinterpret_cast<uint64_t>(addr) & ~(kPage - 1);
-    const uint64_t hi = (reinterpret_cast<uint64_t>(addr) + len + kPage - 1) & ~(kPage - 1);
+    const uint64_t lo = page_down(addr);
+    const uint64_t hi = page_up(addr, len);
     void* start = reinterpret_cast<void*>(lo);
     std::lock_guard<std::mutex> hold(g_exec_lock);
     if (prot & kProtExec) {
-        if (is_guest_code(start)) return;
+        if (is_guest_code(start) || host_code_in(lo, hi)) return;
         register_code(start, hi - lo);
         g_exec_ranges.insert(lo);
     } else if (g_exec_ranges.erase(lo)) {
@@ -205,6 +275,12 @@ using Munmap = int(WINAPK_GUEST_ABI*)(void*, size_t);
 
 WINAPK_GUEST_ABI void* a64_mmap(void* addr, size_t len, int prot, int flags, int fd, int64_t off) {
     static const auto fn = shim<Mmap>("mmap");
+    if ((flags & kMapFixed) && addr && len) {
+        if (const uint64_t at = host_code_in(page_down(addr), page_up(addr, len))) {
+            refuse_host_code("mmap(MAP_FIXED) would map over", at);
+            return reinterpret_cast<void*>(-1);
+        }
+    }
     void* p = fn(addr, len, prot, flags, fd, off);
     if (p != reinterpret_cast<void*>(-1) && (prot & kProtExec)) track_exec(p, len, prot);
     return p;
@@ -212,6 +288,17 @@ WINAPK_GUEST_ABI void* a64_mmap(void* addr, size_t len, int prot, int flags, int
 
 WINAPK_GUEST_ABI int a64_mprotect(void* addr, size_t len, int prot) {
     static const auto fn = shim<Mprotect>("mprotect");
+    if (addr && len && !(reinterpret_cast<uint64_t>(addr) & (kPage - 1))) {  // a misaligned one is EINVAL
+        if (const uint64_t at = host_code_in(page_down(addr), page_up(addr, len))) {
+            if (prot == (kProtRead | kProtExec)) return 0;  // what host code is already
+            const bool w = prot & kProtWrite, x = prot & kProtExec;
+            return refuse_host_code(w && x ? "mprotect would make writable and executable"
+                                    : w    ? "mprotect would make writable"
+                                    : x    ? "mprotect would make executable"
+                                           : "mprotect would make non-executable",
+                                    at);
+        }
+    }
     const int r = fn(addr, len, prot);
     if (r == 0) track_exec(addr, len, prot);
     return r;
