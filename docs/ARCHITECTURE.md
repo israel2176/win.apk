@@ -799,7 +799,14 @@ the user installed run as apps, as upstream runs them on the Mac:
   (`Local\WinApk-system`, then the pipe name); it exits when no app has been
   open for a minute. It starts an app for another's request as the launcher
   would, `winapk-runtime --apk <library file>`, headless; a second
-  `android:process` of a package gets its own single-instance key. When you
+  `android:process` of a package gets its own single-instance key, so there
+  is one process per (package, process name): a start that finds the key
+  held exits (`kExitAlreadyRunning`) and the broker waits for the running
+  copy to attach. A process it started exits when the broker does. One that
+  crashes again within two minutes of its last crash is a bad process, as
+  ActivityManager's AppErrors marks it: the broker does not start it again
+  for anyone until the user opens the app or the package is updated
+  (`ProcessCrashes`). When you
   open an app the broker is running headless that way (Play services binds
   the Play Store's services, for one), the new start stops the headless
   process and takes its place with a window; its clients bind again, as

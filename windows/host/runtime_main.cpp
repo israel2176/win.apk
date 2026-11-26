@@ -93,6 +93,7 @@
 
 #include "winapk/aot_files.h"
 #include "winapk/aot_stamp.h"
+#include "winapk/app_exit.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/mini_bionic.h"
 
@@ -2618,6 +2619,8 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "[win.apk] %s is already running; not starting a second copy\n",
                      utf8(b.app_dir.filename().wstring()).c_str());
         if (b.options.install_only) return 3;
+        // The broker's start: the copy that holds the lock attaches to it instead (SystemServer).
+        if (env_var(L"MACAPK_SERVICE_HOST") == L"1") return static_cast<int>(winapk::kExitAlreadyRunning);
         if (env_var(L"WINAPK_HEADLESS").empty()) activate_running(instance);
         winapk::host::signal_launcher_ready();  // the running copy is what the user sees
         return 0;

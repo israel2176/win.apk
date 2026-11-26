@@ -87,6 +87,12 @@ decoder for it`.
 ייתכן שהאפליקציה צריכה את שירותי Play המקוריים של Google: ראו [שירותי
 Google](google-services.md). רכישות מתוך אפליקציה ו-Play Integrity לא עובדים.
 
+**שירותי Play או אפליקציה אחרת של Google מפסיקים לעלות.** תהליך שמתווך המערכת
+מפעיל וקורס פעמיים בתוך שתי דקות לא מופעל שוב עד שפותחים את האפליקציה או
+שהיא מתעדכנת, כמו ש-Android מפסיק להפעיל אותו מחדש: ב-`logs\system.log` כתוב
+`process <name> ... has crashed too many times`, והיומן של אותו תהליך
+ב-`logs\services\` מראה את הקריסה. צרפו את שניהם לדיווח.
+
 **‏Gmail או חנות Play אומרות "המכשיר הזה אינו מאושר על ידי Play Protect".**
 ‏Win.apk אינו מכשיר מאושר ולא מתחזה לכזה ([אישור Play Protect](google-services.md#אישור-play-protect)).
 
