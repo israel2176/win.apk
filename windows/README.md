@@ -2902,6 +2902,13 @@ every such change is listed here:
 - `runtime/java/android/graphics/drawable/RippleDrawable.java`: the pressed
   fill fades in over 225 ms and out over 150 ms (AOSP's ripple durations)
   instead of appearing and vanishing whole, a hard box under every tap.
+- `runtime/java_base_patch/java/io/FileReader.java`: in winapk-runtime
+  (`winapk.android.root` set) `/proc/self/maps` is no longer the one-line
+  stand-in upstream serves for a Mac, which has no `/proc`: it opens the real
+  file the path mapper writes (the process's `app_process64` and `linker64`,
+  then the guest libraries; `windows/src/bionic/paths.cpp`), which app
+  packers choose their loader's build by. The `/proc/self/smaps` stand-in
+  carries the host's page size, 4 kB on x86_64 (16 kB stays Apple Silicon's).
 - `runtime/java_base_patch/java/lang/Thread.java`: the current thread's
   `getStackTrace()` starts with `dalvik.system.VMStack.getThreadStackTrace`,
   as on Android, so code that reads its caller at a fixed index finds it (a
