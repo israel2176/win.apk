@@ -756,7 +756,10 @@ nothing is started in the apps: no agent, no pipe.
   shared storage (`Android\data` and `Android\obb`) go too, as uninstalling
   does on a phone. Your own files in your Windows folders are never touched.
 - **Settings > Troubleshooting > Clear library** uninstalls every app of the
-  library and removes its shortcuts (app data is kept).
+  library and removes its shortcuts (app data is kept). An app whose files are
+  in use (it is still running and could not be closed) is left whole, and the
+  library names it; close it and clear again. Removing one app works the same
+  way: it is removed whole or not at all.
 - Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
   Start menu shortcuts, the `.apk` association and the app files' thumbnails, and keeps
   `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,

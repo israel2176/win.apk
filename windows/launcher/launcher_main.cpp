@@ -362,6 +362,12 @@ const wchar_t* tr(const wchar_t* en) {
         {L"All {0} apps and their shortcuts will be removed. App data is kept.",
          L"כל {0} האפליקציות וקיצורי הדרך שלהן יוסרו. נתוני האפליקציות נשמרים."},
         {L"The library was cleared.", L"הספרייה נוקתה."},
+        {L"The library was cleared, except {0}. Close it, then try again.",
+         L"הספרייה נוקתה, מלבד {0}. יש לסגור את האפליקציה ולנסות שוב."},
+        {L"The library was cleared, except {0} apps: {1}. Close them, then try again.",
+         L"הספרייה נוקתה, מלבד {0} אפליקציות: {1}. יש לסגור אותן ולנסות שוב."},
+        {L"{0} could not be removed: a file of it is in use. Close it, then try again.",
+         L"לא ניתן היה להסיר את {0}: אחד מהקבצים שלה בשימוש. יש לסגור אותה ולנסות שוב."},
         {L"Every app's install and run logs, to attach to a bug report. Each app's own is on its details page.",
          L"יומני ההתקנה וההפעלה של כל האפליקציות, לצירוף לדיווח על תקלה. היומן של כל אפליקציה נמצא גם בפרטי האפליקציה."},
         {L"Log", L"יומן"},
@@ -1786,6 +1792,7 @@ fs::path keep_installed_apks(const std::wstring& name, const fs::path& bundle) {
 bool recover_interrupted_installs() {
     bool recovered = false;
     std::error_code ec;
+    winapk::launcher::drop_all_taken_out(library_dir());  // a removal's files it could not delete then
     std::set<std::wstring> set_aside;
     std::vector<fs::path> files;
     for (const auto& e : fs::directory_iterator(library_dir(), ec)) {
@@ -4792,17 +4799,24 @@ bool confirm_remove(const App& a, bool* with_data) {
     return true;
 }
 
-// Removes the app (asking first when `ask`); `with_data` also deletes what it saved.
+// Removes the app (asking first when `ask`); `with_data` also deletes what it saved. False when it could not be
+// removed, and then nothing of it was: it is still running, or a file of it is in use.
 bool remove_app(const App& app, bool ask, bool with_data = false) {
     if (ask && !confirm_remove(app, &with_data)) return false;
     const App copy = app;  // `app` may point into g_apps, which refresh() replaces
-    std::error_code ec;
     if (app_running(copy.name)) {
         if (!appops::stop_runtime_of(copy.apk)) {
             info(fmt(L"Close {0} first, then remove it.", {copy.label}), kError);
             return false;
         }
         expect_run_end(copy.name);  // started from here: its exit is the removal, not a failure
+    }
+    // Its files in the library first, the one step that can fail (a file in use): the app is then left whole,
+    // rather than without its name, permissions and shortcuts but still on disk.
+    if (!winapk::launcher::take_out(library_dir(), copy.name)) {
+        info(fmt(L"{0} could not be removed: a file of it is in use. Close it, then try again.", {copy.label}),
+             kError);
+        return false;
     }
     // Its permissions go with it, unless another copy in the library is the same package.
     const std::vector<std::string> pkg = package_of(copy.name);
@@ -4817,8 +4831,8 @@ bool remove_app(const App& app, bool ask, bool with_data = false) {
         if (!other && with_data) remove_app_data(pkg[0]);
     }
     remove_app_shortcuts(copy);
-    for (const fs::path& p : winapk::launcher::app_entries(library_dir(), copy.name, false)) fs::remove_all(p, ec);
     remove_app_files(copy.name);
+    winapk::launcher::drop_taken_out(library_dir(), copy.name);  // what is left is deleted at the next start
     write_registry();
     // The package stays when another copy in the library is it; the registry then names that copy.
     if (!pkg.empty() && !other) tell_broker(winapk::package_events::kRemoved, pkg[0], registered, with_data);
@@ -7408,9 +7422,27 @@ std::vector<Section> settings_sections() {
                                                       tr(L"Clear library"))) {
                                              return;
                                          }
-                                         for (const App& a : own) remove_app(a, false);
+                                         std::vector<std::wstring> kept;  // still running, or a file in use
+                                         for (const App& a : own) {
+                                             if (!remove_app(a, false)) kept.push_back(a.label);
+                                         }
                                          refresh();
-                                         info(tr(L"The library was cleared."), kInfo);
+                                         if (kept.empty()) {
+                                             info(tr(L"The library was cleared."), kInfo);
+                                         } else if (kept.size() == 1) {
+                                             info(fmt(L"The library was cleared, except {0}. Close it, then try "
+                                                      L"again.",
+                                                      {kept[0]}),
+                                                  kError);
+                                         } else {
+                                             std::wstring names;
+                                             for (const std::wstring& k : kept)
+                                                 names += (names.empty() ? L"" : L", ") + k;
+                                             info(fmt(L"The library was cleared, except {0} apps: {1}. Close them, "
+                                                      L"then try again.",
+                                                      {std::to_wstring(kept.size()), names}),
+                                                  kError);
+                                         }
                                      },
                                      true));
     }
@@ -11209,7 +11241,8 @@ int helper_main(int argc, wchar_t** argv) {
         if (!helper_consent(app, fmt(L"Remove {0}?", {app->label}), fmt(L"{0} asks to remove it.", {who}),
                             tr(L"Remove")))
             return helper_fail(3, "consent", "declined");
-        remove_app(*app, false);
+        if (!remove_app(*app, false))
+            return helper_fail(5, "uninstall", "the app is running or a file of it is in use");
         notify_library();
         helper_say("{\"ok\":true,\"package\":" + json_string(wide_to_utf8(package)) + ",\"dataRemoved\":\"false\"}");
         return 0;

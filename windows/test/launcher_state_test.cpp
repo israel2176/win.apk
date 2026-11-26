@@ -20,7 +20,7 @@
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
 // The library's files (launcher/library_files.h, std::filesystem only), on real files: a bundle kept as hard
 // links to its installed APKs, that step done again over a cut-off one, an update's files set aside, then
-// dropped or put back, never written.
+// dropped or put back, never written; a removal that takes the app's entries out first, or leaves them all.
 // A batch's APK files (launcher/installs.h): AppInstall --set's lines read, and the files of one app made one
 // install with its base kept as the app's .apk, a split named as a device names it, other apps' files apart.
 // Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
@@ -1014,6 +1014,28 @@ void test_library_files() {
     check("one APK: <name>.apk and no .splits", kept == library / "Single.apk" &&
                                                     !fs::exists(library / "Single.splits", ec) &&
                                                     !fs::exists(library / "Single.apkm", ec));
+
+    // A removal: the app's entries taken out first, then deleted; the installed copy is not the library's to delete.
+    check("taken out", take_out(library, L"App") && app_entries(library, L"App", false).empty() &&
+                           fs::exists(library / "App.apk.removed", ec) &&
+                           fs::exists(library / "App.splits.removed", ec));
+    check("taken out: another app stays", app_entries(library, L"Single", false).size() == 1);
+    check("taken out: deleted", drop_taken_out(library, L"App") && !fs::exists(library / "App.apk.removed", ec) &&
+                                    !fs::exists(library / "App.splits.removed", ec));
+    check("taken out: the installed copy's file stays", read(copy / "base.apk") == "base v1");
+    // A removal that cannot take one entry out (here a name too long for the file system once renamed; on Windows a
+    // file the running app holds) leaves every entry as it was.
+    const std::wstring long_name(243, L'x');
+    write(library / (long_name + L".apk"), "apk");
+    write(library / (long_name + L".apks"), "bundle");
+    check("not taken out: refused", !take_out(library, long_name));
+    check("not taken out: the app is whole", app_entries(library, long_name, false).size() == 2 &&
+                                                 app_entries_with(library, long_name, kRemovedSuffix).empty());
+    // A leftover of a removal, deleted at a start.
+    write(library / "Gone.apk.removed", "left");
+    drop_all_taken_out(library);
+    check("a removal's leftover goes at a start", !fs::exists(library / "Gone.apk.removed", ec) &&
+                                                      fs::exists(library / "Single.apk", ec));
     fs::remove_all(root, ec);
 }
 
