@@ -2502,6 +2502,10 @@ every such change is listed here:
   `ChromeTabbedActivity` in `split_chrome.apk`, and was rejected with "no
   launchable activity".
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/Manifest.java`, `Boot.java`: another package's manifest, parsed for a
+  package query, logs only its summary line, not each activity and provider (`Manifest.runningPackage`, set
+  by Boot). Play services' components alone are hundreds of lines and pushed a reported run's failure past
+  what a GitHub issue holds (#213). Not Windows-specific.
 - `runtime/java/android/app/HandoffActivityData.java`,
   `HandoffActivityDataRequestInfo.java` (new, API 37 type-only placeholders)
   and `com/macapk/loader/ActivityHost.java`: an activity overriding a newer-API
