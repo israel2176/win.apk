@@ -14,14 +14,19 @@
 // re-parented onto this class; the patch is in
 // docs/fwgap-new-platform-classes_2026-09-26.md.)
 //
-// Omitted on purpose: AOSP's @hide static newInstance(boolean, String). It is
-// hidden API, only the ActivityManager calls it, and it would need the
-// re-parented foreground subclass to compile.
+// AOSP's @hide static newInstance(boolean, String) is here too: AOSP's
+// ContextImpl.startServiceCommon throws what it returns when a start is refused.
 package android.app;
 
 public abstract class ServiceStartNotAllowedException extends IllegalStateException {
     ServiceStartNotAllowedException(String message) {
         super(message);
+    }
+
+    /** {@hide} AOSP: the foreground or the background exception for a refused start. */
+    public static ServiceStartNotAllowedException newInstance(boolean foreground, String message) {
+        if (foreground) return new ForegroundServiceStartNotAllowedException(message);
+        return new BackgroundServiceStartNotAllowedException(message);
     }
 
     /**

@@ -298,6 +298,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `Camera2StillTest` (`test/java/`) | A camera2 still on the virtual camera against the built jars, in `winapk-runtime --java-test` (the JPEG is AOSP's `Bitmap.compress`): JPEG sizes in the stream map, a `TEMPLATE_STILL_CAPTURE` into an `ImageReader(JPEG)` giving a one-plane Image that `javax.imageio` decodes at the reader's size, EXIF orientation and thumbnail, one timestamp across Image and result, callback order, `maxImages`, a still beside a repeating YUV reader, a recorder-only session failing to configure |
 | `CameraOrientationTest` (`test/java/`) | The camera's orientation as apps compute with it, on a plain JVM (`MACAPK_LOG_LEVEL=7`): Scanovate's cheque-scanner angle `(orientation - rotation*90) mod 360` is 0 in a landscape and a portrait window, so are camera1's documented formula and CameraX's `rotationDegrees` at every rotation, back and front; AOSP's `degToTransform`, `getRotationTransform` and GLConsumer's matrix; the virtual camera as a fixed-focus camera without a torch (`setParameters` refusing "auto" and "torch", `autoFocus` answering true, camera2's AF OFF only, minimum focus distance 0, `setTorchMode` throwing); no accelerometer, gyroscope or other sensor in `SensorManager` or the features |
 | `winapk-video-test <test/video dir>` | The Media Foundation video backend without a JVM: the YUV converter, a decoder MFT, the source reader and the player on `test/video/color.mp4` (1 s of H.264 + AAC); decoder checks are skipped where no H.264 MFT exists. Then what recording and `MediaExtractor` stand on: the demuxer on that file (tracks, csd, samples into the decoders), the H.264 and AAC encoders (codec config first, key frames, times; decoded back), and the MP4 writer (its file read back by the demuxer and the source reader). It prints the encoder MFTs the machine has and skips what needs a missing one. First, needing no Media Foundation codec (it runs under Wine): `test/video/color.webm` (VP9 + Opus) through the WebM demuxer and `Decoder` / `AudioDecoder`, Media Foundation's VP9 when installed, else libvpx, and libopus |
+| `winapk-ndk-media-test <test/video dir>` | libmediandk as an app's native code calls it (`host/ndk_media_codec.cpp`, System V, no JVM): `AMediaExtractor` on `color.webm` and `color.mp4` (tracks, codec data, every sample, seeking; through a descriptor's range and an `AMediaDataSource` too), `AMediaCodec` decoding their VP9, H.264, Opus and AAC (the output format first, 25 red-over-blue I420 pictures in order, the tone as PCM, end of stream; codec data in band; the asynchronous callbacks; a surface), and the names `MediaCodecList` gives. The MP4 checks are skipped where no H.264 MFT exists |
 | `winapk-soft-codecs-test <test/video dir>` | The built-in software decoders, the picture conversions and the WebM reader alone (`host/soft_codecs.h`, `host/yuv_convert.cpp`, `host/webm_demux.h`). It builds without the Windows build too: `test/soft_codecs/CMakeLists.txt` (Linux, `-DWINAPK_SANITIZE=ON` for ASan/UBSan; or a MinGW cross build for Wine). Its files, remade by `test/video/make_soft_codec_files.sh`: VP8, VP9 (profiles 0, 1, 2 and at 63x47), AV1 (8-bit, and 10-bit tagged BT.2020/PQ), each 1 s of 64x48 red over blue in 200 ms clusters, a mono Opus tone and a 5.1 Opus file with a tone per channel. Checks: tracks, formats and the Colour element; 25 pictures at 40 ms steps, held in the decoder's own planes at the stream's depth and sampling, the right way up and coloured; their I420 and P010 forms (stride, slice height, crop); pictures alive after their decoder, picture memory reused; flush and resume at a key frame; seeking by Cues; the colour from the bitstream; the matrices, ranges, 10/12-bit dither, 4:4:4 averaging and banded conversion of a large picture; Opus' pre-skip, seek pre-roll after a flush, Android's marked csd-0 and the 5.1 channels in Android's order; corrupt units refused and the decoder still good after them, cut files read up to the cut, noise behind an EBML header refused, an MP4 not taken for a WebM |
 | `winapk-thunk-test` | Native-method thunks with mixed, stack-overflowing and narrow arguments; the variadic entry stub's `va_list`; the tagged zero stub |
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
@@ -1209,7 +1210,7 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   GDI, and the runtime stops (`error: AOSP graphics`) when the DLL has no
   compositor. A Direct3D 11 device that fails falls back to WARP.
 - What the host has as pixels is two host layers at the display's size:
-  under the windows (a GL view read back, a SurfaceView's `lockCanvas`, an
+  under the windows (an EGL window surface read back, a SurfaceView's `lockCanvas`, an
   app's native window below its view, a video frame) and over them
   (`setZOrderOnTop`, a native window on top). `PixelCopy` of a window reads
   its layer back (`Readback::copySurfaceInto`); `Bitmap.copy(HARDWARE)` is a
@@ -1226,12 +1227,19 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   ANGLE keys as the DLL's, and the render thread crashed in `libGLESv2` as an
   EGL14 thread made its surface) all answer that one display, as Android's
   libEGL has one default display per process, and an app's `eglTerminate` of
-  it does not reach ANGLE while the framework draws on it. Nothing crosses between the two
-  displays: the app's frames reach the compositor as the host layer's pixels.
+  it does not reach ANGLE while another of its APIs holds it. Nothing crosses between the two
+  displays: the app's frames reach the compositor as the host layer's pixels, read back on the
+  app's GL thread at its swap. The host draws nothing on the app's display: the render tick's GL
+  view (the SurfaceViews' native window) is no GL, a black frame until a producer draws. It was a
+  pbuffer of the host's on that display, which a resize remade beside the app's GL threads
+  whenever it came between Flutter's destroying its window surface and making the new one; City
+  Car crashed in the Direct3D driver from its own GL just after such a resize. Two of an app's own contexts that share nothing, on two threads,
+  still meet on one device; on a phone the driver keeps them apart.
   A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
   makes an EGL window surface on the view's holder (the host's window surface
   on the SurfaceView, read back at each swap), as does an app's own copy of
-  it, on EGL10 or EGL14; `test/glthread/` checks both, and a resize.
+  it, on EGL10 or EGL14; `test/glthread/` checks both, and a resize, with a loader thread
+  uploading textures on a shared context beside the app's own GL thread.
 - The snapshot (Ctrl+Shift+F12) and the headless frame file
   (`WINAPK_HEADLESS_FRAME`) read the composed frame back on the render thread.
 - Shader caches: ANGLE's programs (`EGL_ANDROID_blob_cache`) and Skia's
@@ -3954,6 +3962,57 @@ every such change is listed here:
   and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
   is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
   `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
+- What AOSP's app layer and views call on Win.apk's classes and did not find (`NoSuchMethodError`,
+  `NoClassDefFoundError`; israel2176/win.apk#173, the API gap survey; the build's
+  `aosp-views.links.txt` and `aosp-app.links.txt` list what is left):
+  `android/content/IntentSender.java`: `getTarget()` (the PendingIntent's `IIntentSender`, made by
+  `android/app/PendingIntent.java`'s `Target`) and `getWhitelistToken()`, which
+  `Activity.startIntentSenderForResult` and `ContextImpl.startIntentSender` hand to
+  `IActivityTaskManager.startActivityIntentSender` (`windows/java/aosp_app/.../ActivityTaskService.java`:
+  PendingIntentRecord.sendInner's start, the fill-in merged and the caller's flags applied; `MediaStore`'s
+  consent screens give `RESULT_CANCELED`); `PendingIntent(IIntentSender)` and the activity result sender
+  `IActivityManager.getIntentSenderWithFeature` makes (`Activity.createPendingResult`), `getActivitiesAsUser`
+  (`TaskStackBuilder`), the send's code passed through; `com/macapk/loader/app/IntentSenders.java` (new): the
+  app layer's door to them. `android/content/ContentResolver.java`: `getResourceId` and
+  `OpenResourceIdResult` (`ImageView.setImageURI` with an `android.resource://` uri).
+  `android/content/ContentProvider.java`: the user id helpers (`getUserIdFromUri`, `getUserIdFromAuthority`,
+  `maybeAddUserId`, `uriHasUserId`) of `ContextImpl`'s uri permissions and `InputContentInfo`.
+  `android/app/ActivityManager.java`: `getLauncherLargeIconSizeInner(Context)` (`Activity.setTaskDescription`
+  with a bitmap) and `getTaskService()`. `android/content/ClipData.java`: `prepareToLeaveProcess` and
+  `prepareToEnterProcess` (`View.startDragAndDrop`, a drop: nothing to do, a drag stays in the process).
+  `android/content/Context.java`, `ContextWrapper.java`: `startActivitiesAsUser` (`TaskStackBuilder
+  .startActivities`), `startActivityForResult(String, ...)`, `canStartActivityForResult`,
+  `isAutofillCompatibilityEnabled`. `android/os/BaseBundle.java`: `setDefusable(boolean)` (every
+  `ActivityOptions(Bundle)`) and `isDefinitelyEmpty`. `android/util/DebugUtils.java`: `buildShortClassTag`
+  (`Fragment.toString`). `android/content/pm/ComponentInfo.java`: `getComponentName`;
+  `ActivityInfo.java`: `supportsPictureInPicture`, `getMaxAspectRatio`. `android/app/
+  ServiceStartNotAllowedException.java`: `newInstance`. `android/transition/Transition.java`:
+  `isValidTarget`, `pause`, `resume`, `setNameOverrides`; `Visibility.java`: `setSuppressLayout` (activity
+  scene transitions). `windows/scripts/aosp_app_take.sh`: `IIntentSender` and `IIntentReceiver`, which the
+  framework now compiles against.
+  `android/widget/VideoView.java`: Win.apk's again (`build_aosp_views.sh`'s `KEEP`): AOSP's implements
+  `SubtitleController.Anchor` and builds the subtitle renderers over `MediaPlayer` members Win.apk's has not,
+  so it did not load, and every `VideoView` ended the app.
+  Members of later Android levels an app targeting them calls (PresentedSdk): `windows/java/aosp_views/
+  .../Api36.java` (new, added to AOSP's classes by `AospAddMethods.java` as `Api35` is):
+  `AccessibilityNodeInfo`'s tri-state checked, expanded state, required field, supplemental description and
+  labels list, `BackEvent.getFrameTimeMillis` (androidx.activity reads it from every Back), `View`'s
+  supplemental description, `Display`'s HDR ratio, suggested rate and ARR, `AutofillId`, `EditorInfo`,
+  `InputMethodSubtype`, `ContentCaptureSession.flush`; `windows/java/aosp_app/.../Api36.java` (new,
+  `build_aosp_app.sh` now runs `AospAddMethods.java` too): `ActivityOptions.setAllowPassThroughOnTouchOutside`
+  (androidx.browser calls it on 36: Jerboa died opening a link), the permission calls with a device id,
+  `Service.onTimeout`, `PictureInPictureUiState.isTransitioningToPip`.
+  And: `android/content/Context.java` hands out `TelecomManager`, `CarrierConfigManager`,
+  `NetworkStatsManager`, `CrossProfileApps`, `EuiccManager`, `VpnManager` and `BugreportManager`, which
+  AOSP's `SystemServiceRegistry` registers for every app (their classes were here, no case reached them:
+  null where a phone never gives it). `android/app/job/JobService.java`: AOSP's final `onBind` (an app's job
+  service inherited `Service`'s abstract one). `android/telephony/TelephonyManager.java`:
+  `getNetworkOperatorName()` is `""` without a SIM (it was upstream's name). `android/media/session/
+  MediaController.java`: transport controls, `dispatchMediaButtonEvent` and `sendCommand` reach the session's
+  `Callback` on its handler (they were dropped). `android/media/MediaCodec.java`: `detachOutputSurface` lets
+  the surface go. `windows/test/aospapp/AospAppLifecycleTest.java` calls `setTaskDescription` with a
+  bitmap, `TaskStackBuilder.getPendingIntent`, `ImageView.setImageURI` with a resource uri,
+  `startIntentSender` and loads `VideoView` (each of the first three threw `NoSuchMethodError` before).
 
 ## License
 

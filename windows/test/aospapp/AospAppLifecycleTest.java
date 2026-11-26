@@ -124,6 +124,14 @@ public class AospAppLifecycleTest {
      *  onBindSlice. */
     static final String SLICES = PKG + ".slices";
     static final List<String> slices = java.util.Collections.synchronizedList(new ArrayList<>());
+
+    /** What AOSP's app layer calls into Win.apk's classes that once did not link
+     *  (docs/research/api-gaps.md): each call made, then what it gave. */
+    static final List<String> gaps = java.util.Collections.synchronizedList(new ArrayList<>());
+    static final String SENDER = PKG + ".SENDER";
+    static final java.util.Set<String> GAPS_EXPECTED = java.util.Set.of(
+            "VideoView loads", "task description with a bitmap", "stack pending intent", "image uri",
+            "intent sender sent", "intent sender broadcast");
     static volatile String slicePinned;
 
     public static class Slices extends android.app.slice.SliceProvider {
@@ -268,9 +276,43 @@ public class AospAppLifecycleTest {
                     }
                     @Override public void onServiceDisconnected(android.content.ComponentName n) {}
                 }, BIND_AUTO_CREATE);
+                probeGaps();
                 // Through a trampoline that forwards First's request to Second
                 // (FLAG_ACTIVITY_FORWARD_RESULT) and finishes in its onCreate.
                 startActivityForResult(new Intent(this, Trampoline.class), 42);
+            }
+        }
+
+        /** The calls of gaps' list, none of which starts an activity (the callbacks' order above
+         *  stays): each NoSuchMethodError or NoClassDefFoundError before. */
+        void probeGaps() {
+            gap("VideoView loads", () -> Class.forName("android.widget.VideoView"));
+            gap("task description with a bitmap", () -> setTaskDescription(new android.app.ActivityManager.TaskDescription(
+                    "t", android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888))));
+            gap("stack pending intent", () -> {
+                if (android.app.TaskStackBuilder.create(this).addNextIntent(new Intent(this, First.class))
+                        .getPendingIntent(0, android.app.PendingIntent.FLAG_IMMUTABLE) == null) {
+                    throw new IllegalStateException("no PendingIntent");
+                }
+            });
+            gap("image uri", () -> new android.widget.ImageView(this).setImageURI(
+                    android.net.Uri.parse("android.resource://" + PKG + "/0")));
+            registerReceiver(new android.content.BroadcastReceiver() {
+                @Override public void onReceive(android.content.Context c, Intent i) { gaps.add("intent sender broadcast"); }
+            }, new android.content.IntentFilter(SENDER), RECEIVER_NOT_EXPORTED);
+            gap("intent sender sent", () -> startIntentSender(android.app.PendingIntent.getBroadcast(this, 0,
+                    new Intent(SENDER).setPackage(PKG), android.app.PendingIntent.FLAG_IMMUTABLE).getIntentSender(),
+                    null, 0, 0, 0));
+        }
+
+        interface Call { void run() throws Exception; }
+
+        static void gap(String what, Call c) {
+            try {
+                c.run();
+                gaps.add(what);
+            } catch (Throwable t) {
+                gaps.add(what + " threw " + t);
             }
         }
 
@@ -580,6 +622,11 @@ public class AospAppLifecycleTest {
         if (!new java.util.HashSet<>(sticky).equals(java.util.Set.of("live initial=false", "replay initial=true"))) {
             System.out.println("FAILED: the sticky broadcast's receivers gave " + sticky
                     + ", Android gives [live initial=false, replay initial=true]");
+            System.exit(1);
+        }
+        if (!new java.util.HashSet<>(gaps).equals(GAPS_EXPECTED)) {
+            System.out.println("FAILED: the calls AOSP's app layer makes into Win.apk's classes gave " + gaps
+                    + ", Android gives " + GAPS_EXPECTED);
             System.exit(1);
         }
         if (!"kept".equals(windowManager)) {

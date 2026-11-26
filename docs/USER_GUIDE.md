@@ -182,8 +182,8 @@ no shortcut, and the Store item is its one way in.
   GitHub lists for it; one that does not match is deleted and not installed,
   and the page says why, with **Try again**.
 - **Updates**: the daily update check (Settings > Updates, **Check for updates
-  automatically**) also looks for a newer release of the store app, and
-  installs it the same way, once the Store is not open.
+  automatically**) and **Check** there also look for a newer release of the
+  store app, and install it the same way, once the Store is not open.
 - **Installing an app** from the Store asks nothing more: choosing it in the
   Store is the answer, as a phone's own store installs what you pick in it
   (the Play Store does the same). The Store shows the install and says when
@@ -398,7 +398,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
 | Troubleshooting | **Clear library** | Uninstalls every app of the library and removes its shortcuts (app data is kept; Google's apps stay with Google services) |
-| Updates | **Check** | Asks GitHub for the newest release at once. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
+| Updates | **Check** | Asks GitHub for the newest release at once, of Win.apk and of the [Store](#the-store)'s app. The row shows this copy's version and the last check's result: up to date, a newer version, or could not check. See [Updates](#updates) |
 | Updates | **Check for updates automatically** | On (the default): about once a day, while the library is open, Win.apk checks for a newer release in the background and says so in the InfoBar. The same check updates the [Store](#the-store)'s app |
 | Updates | **Update** | Shown when a newer version is out, with **What's new in** that version below it. Downloads the installer, then runs it and closes Win.apk |
 | About | | The version, **Project page** (github.com/israel2176/win.apk) and **Credits and licenses**, which opens `THIRD_PARTY_NOTICES.txt` beside the program (Mac.apk, which Win.apk is built on, and every project the package ships, with their licences; `LICENSE.txt` is Win.apk's own, the GNU AGPL v3.0) |
@@ -615,7 +615,7 @@ setup step by step, and what does not work.
 Win.apk's releases are published on GitHub
 ([github.com/israel2176/win.apk/releases](https://github.com/israel2176/win.apk/releases)).
 **Settings > Updates** shows the version you have and what the last check
-found; **Check** checks at once. With **Check for updates automatically**
+found; **Check** checks at once (the Store's app too). With **Check for updates automatically**
 on (the default), the library checks about once a day when it opens and every
 hour while it stays open, once a day has passed since the last check. The
 check downloads only GitHub's list of releases and sends nothing about you or

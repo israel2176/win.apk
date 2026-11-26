@@ -14,13 +14,11 @@
 // to AOSP's own "no session" answers (null / RATING_NONE / 0 / empty), so a
 // disconnected controller is still exactly as safe to call as before.
 //
-// Transport commands (play/pause/seekTo/...) and a registered Callback are
-// still one-directional: no lock-screen/notification/Bluetooth transport
-// exists to originate a play/pause/seek that would need routing INTO a
-// session's Callback, so TransportControls stays accept-and-drop. But
-// Callback delivery the OTHER way -- OUT of the session, e.g. onMetadataChanged
-// when the session app itself updates its now-playing info -- is real and
-// wired below, because that data already lives in the in-process session.
+// Transport commands (play/pause/seekTo/...) from a controller reach the
+// in-process session's Callback on its Handler, as AOSP's session record routes
+// them (an app's own UI drives its player through its controller). Callback
+// delivery the other way -- OUT of the session, e.g. onMetadataChanged when the
+// session app updates its now-playing info -- is wired below too.
 package android.media.session;
 
 import android.content.Context;
@@ -73,36 +71,79 @@ public final class MediaController {
         if (mSession != null) mSession.removeControllerCallback(callback);
     }
 
-    public boolean dispatchMediaButtonEvent(android.view.KeyEvent keyEvent) { return false; }
-    public void sendCommand(String command, android.os.Bundle args, android.os.ResultReceiver cb) {}
+    /** AOSP: a media key for the session, which its Callback.onMediaButtonEvent gets as an
+     *  ACTION_MEDIA_BUTTON intent (MediaSession.Callback's default then turns it into
+     *  onPlay/onPause...). True when there is a session to take it. */
+    public boolean dispatchMediaButtonEvent(android.view.KeyEvent keyEvent) {
+        if (keyEvent == null) throw new IllegalArgumentException("KeyEvent may not be null");
+        if (!android.view.KeyEvent.isMediaSessionKey(keyEvent.getKeyCode())) return false;
+        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_MEDIA_BUTTON)
+                .putExtra(android.content.Intent.EXTRA_KEY_EVENT, keyEvent);
+        return toSession(cb -> cb.onMediaButtonEvent(intent));
+    }
+    public void sendCommand(String command, android.os.Bundle args, android.os.ResultReceiver cb) {
+        if (android.text.TextUtils.isEmpty(command)) throw new IllegalArgumentException("command cannot be null or empty");
+        toSession(c -> c.onCommand(command, args, cb));
+    }
     public void setVolumeTo(int value, int flags) {}
     public void adjustVolume(int direction, int flags) {}
 
+    /** What AOSP's session record does with a controller's command: the owning session's Callback
+     *  gets it on that callback's Handler (MediaSession.setCallback). Only a session of this process
+     *  has an owner here (see MediaSession.Token); without one, or without a callback, the command
+     *  goes nowhere, as to a session that has none. */
+    private boolean toSession(java.util.function.Consumer<MediaSession.Callback> command) {
+        MediaSession s = mSession;
+        MediaSession.Callback cb = s != null ? s.getCallback() : null;
+        if (cb == null) return false;
+        android.os.Handler h = s.getCallbackHandler();
+        if (h == null || h.getLooper().isCurrentThread()) command.accept(cb);
+        else h.post(() -> command.accept(cb));
+        return true;
+    }
+
     // AOSP MediaController.TransportControls -- issues transport commands to the
-    // session. No remote session is bound, so the commands are accepted and
-    // dropped (the same observable behavior as a session with no callback).
+    // session: each reaches the session's Callback (toSession), as on a device.
     public final class TransportControls {
         TransportControls() {}
-        public void prepare() {}
-        public void prepareFromMediaId(String mediaId, android.os.Bundle extras) {}
-        public void prepareFromSearch(String query, android.os.Bundle extras) {}
-        public void prepareFromUri(android.net.Uri uri, android.os.Bundle extras) {}
-        public void play() {}
-        public void playFromMediaId(String mediaId, android.os.Bundle extras) {}
-        public void playFromSearch(String query, android.os.Bundle extras) {}
-        public void playFromUri(android.net.Uri uri, android.os.Bundle extras) {}
-        public void skipToQueueItem(long id) {}
-        public void pause() {}
-        public void stop() {}
-        public void seekTo(long pos) {}
-        public void fastForward() {}
-        public void rewind() {}
-        public void skipToNext() {}
-        public void skipToPrevious() {}
-        public void setRating(android.media.Rating rating) {}
-        public void setPlaybackSpeed(float speed) {}
-        public void sendCustomAction(PlaybackState.CustomAction customAction, android.os.Bundle args) {}
-        public void sendCustomAction(String action, android.os.Bundle args) {}
+        public void prepare() { toSession(MediaSession.Callback::onPrepare); }
+        public void prepareFromMediaId(String mediaId, android.os.Bundle extras) {
+            toSession(c -> c.onPrepareFromMediaId(mediaId, extras));
+        }
+        public void prepareFromSearch(String query, android.os.Bundle extras) {
+            toSession(c -> c.onPrepareFromSearch(query, extras));
+        }
+        public void prepareFromUri(android.net.Uri uri, android.os.Bundle extras) {
+            toSession(c -> c.onPrepareFromUri(uri, extras));
+        }
+        public void play() { toSession(MediaSession.Callback::onPlay); }
+        public void playFromMediaId(String mediaId, android.os.Bundle extras) {
+            toSession(c -> c.onPlayFromMediaId(mediaId, extras));
+        }
+        public void playFromSearch(String query, android.os.Bundle extras) {
+            toSession(c -> c.onPlayFromSearch(query, extras));
+        }
+        public void playFromUri(android.net.Uri uri, android.os.Bundle extras) {
+            toSession(c -> c.onPlayFromUri(uri, extras));
+        }
+        public void skipToQueueItem(long id) { toSession(c -> c.onSkipToQueueItem(id)); }
+        public void pause() { toSession(MediaSession.Callback::onPause); }
+        public void stop() { toSession(MediaSession.Callback::onStop); }
+        public void seekTo(long pos) { toSession(c -> c.onSeekTo(pos)); }
+        public void fastForward() { toSession(MediaSession.Callback::onFastForward); }
+        public void rewind() { toSession(MediaSession.Callback::onRewind); }
+        public void skipToNext() { toSession(MediaSession.Callback::onSkipToNext); }
+        public void skipToPrevious() { toSession(MediaSession.Callback::onSkipToPrevious); }
+        public void setRating(android.media.Rating rating) { toSession(c -> c.onSetRating(rating)); }
+        public void setPlaybackSpeed(float speed) { toSession(c -> c.onSetPlaybackSpeed(speed)); }
+        public void sendCustomAction(PlaybackState.CustomAction customAction, android.os.Bundle args) {
+            if (customAction == null) throw new IllegalArgumentException("CustomAction cannot be null.");
+            sendCustomAction(customAction.getAction(), args);
+        }
+        public void sendCustomAction(String action, android.os.Bundle args) {
+            if (android.text.TextUtils.isEmpty(action)) throw new IllegalArgumentException("CustomAction cannot be null.");
+            toSession(c -> c.onCustomAction(action, args));
+        }
     }
 
     // AOSP MediaController.Callback -- delivers session changes to the controller.
