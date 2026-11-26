@@ -227,7 +227,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `EGL14`, `EGL15`, `EGLExt`, `MacApkEGL10` | 52 | `native_methods.cpp`, `egl14_bridges.inc`, `angle_glue.cpp` | `host/gl/gl_bridges.cpp` (upstream's `egl14_bridges.inc`) on ANGLE | done for Java and guest `libEGL` (window surfaces are pbuffers, see "OpenGL") | - |
 | `ClipboardManager` | 7 | `clipboard_bridge.mm` | `host/native_clipboard.cpp`: text, CF_HTML, URL, the concealed and history-exclusion formats for sensitive clips | done | - |
 | `DocumentPickerHandler` | 2 | `document_picker.mm` | `host/native_picker.cpp`: `IFileOpenDialog`/`IFileSaveDialog`, folder mode, MIME filters | done | - |
-| `HostIcu` | 2 | `icu_host_bridge.cpp` | `host/native_icu.cpp` on Windows' `icu.dll` (1903 and later) | done | - |
+| `HostIcu` | 2 | `icu_host_bridge.cpp` | none: removed with Win.apk's own `android.icu` (AOSP's ICU4J, in `aosp-graphics.jar`, needs no host natives) | gone | - |
 | `HostWallpaper` | 2 | `wallpaper_bridge.mm` | `host/native_wallpaper.cpp`: the desktop wallpaper and its placement style, through WIC | done | - |
 | `AudioInputBridge` | 10 | `audio_input.mm` | `host/native_audio_input.cpp`: WASAPI capture resampled to the app's format; the privacy switch is the permission | done | - |
 | `LocationBridge` | 12 | `location_bridge.mm` | `host/native_location.cpp`: `Windows.Devices.Geolocation` through its ABI; Windows' privacy settings (the consent store) are the host authorization | done | - |
@@ -265,7 +265,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
 | `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
-| `media_ndk.cpp` | 701 | NDK `AMediaCodec` | port with `NativeMedia`; `host/native_media.cpp` has the `AMEDIAFORMAT_KEY_*` strings | keys only |
+| `media_ndk.cpp` | 701 | NDK `AMediaCodec` | `host/ndk_media_codec.cpp`: decoders, extractor and data source on `video_decode.h`, with no JVM; `host/native_media.cpp` has `AMediaFormat` and the keys | decoders done; no encoder or muxer |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
 | `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: Win.apk's own instead, from the 1.0.1 spec and AOSP's behaviour (players pulled by the mixer, file and http players, decoding to a queue, recorders), on `audio_engine.h`, `audio_pcm.h` and `audio_capture.h` | done |
 | `bionic_shim.cpp`: libjnigraphics | - | `AndroidBitmap_*` | `src/jnigraphics.cpp`: upstream's section, extracted at build time | done |
@@ -1099,6 +1099,12 @@ Done:
   linker and run the guest's `JNI_OnLoad`, and natives bound by name resolve
   through a replaced `NativeLibrary.findEntry0` plus the `NativeMethodBind`
   thunk. No per-symbol exports are needed.
+- `System.load` of an ELF however it is called: a replaced
+  `NativeLibraries.load` (and `unload`) opens it through the linker, so a
+  reflective call, which the rewriter's Pattern N cannot see, works as on
+  Android (issue #211: an obfuscated layer called a native its library would
+  have registered, and the log showed no library loaded at all, as when such
+  a load fails on the JDK's own path).
 - `NativeLinker.nativeLinkOnly` (dependencies without `JNI_OnLoad`).
 - System functions the shim lacks are bound to stubs that report their name
   on the first call, so libraries load and the sweep can rank the gaps.

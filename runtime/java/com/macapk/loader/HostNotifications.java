@@ -11,17 +11,24 @@
 // expanded form has them, else the content text; the sub text as the smaller
 // line), the large icon, a progress bar -- and keeps the posted ones by key, so
 // a click can send the notification's contentIntent, as tapping it on a
-// device does.
+// device does. Its actions are the host notification's buttons, at most three
+// as in the shade, an action with a free-form RemoteInput with a text field:
+// a click sends the action's intent, the typed text added as RemoteInput's
+// results, as the shade's inline reply does.
 package com.macapk.loader;
 
 import android.app.Notification;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.RemoteInput;
+import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public final class HostNotifications {
@@ -34,7 +41,8 @@ public final class HostNotifications {
     // notification interrupts (a banner with a sound) or only joins the list.
     private static native boolean nativeInit();
     private static native boolean nativePost(String key, String title, String text, String subText,
-            byte[] largeIconPng, int progressMax, int progress, boolean indeterminate, boolean popup);
+            byte[] largeIconPng, int progressMax, int progress, boolean indeterminate, boolean popup,
+            String[] actionTitles, String[] replyLabels);
     private static native void nativeCancel(String key);
     private static native void nativeCancelAll();
 
@@ -111,12 +119,61 @@ public final class HostNotifications {
         // a re-post with FLAG_ONLY_ALERT_ONCE (a progress bar moving) does not.
         boolean popup = importance >= NotificationManager.IMPORTANCE_DEFAULT
                 && !(update && (n.flags & Notification.FLAG_ONLY_ALERT_ONCE) != 0);
+        List<Notification.Action> shown = shownActions(n);
+        String[] titles = new String[shown.size()];
+        String[] replies = new String[shown.size()];
+        for (int i = 0; i < titles.length; i++) {
+            Notification.Action a = shown.get(i);
+            titles[i] = a.title.toString();
+            RemoteInput input = freeFormInput(a);
+            if (input != null) replies[i] = input.getLabel() == null ? "" : input.getLabel().toString();
+        }
         try {
             nativePost(key, title == null ? null : title.toString(), text == null ? null : text.toString(),
-                    sub == null ? null : sub.toString(), largeIconPng(n), max, progress, indeterminate, popup);
+                    sub == null ? null : sub.toString(), largeIconPng(n), max, progress, indeterminate, popup,
+                    titles, replies);
         } catch (Throwable t) {
             NativeLog.w(TAG, "notify " + key + " failed: " + t);
         }
+    }
+
+    /** The actions the shade shows as buttons: the notification's own (not the
+     *  contextual ones a system service suggests, which AOSP lays out apart),
+     *  those with a title and an intent, at most three. */
+    static List<Notification.Action> shownActions(Notification n) {
+        List<Notification.Action> out = new ArrayList<>();
+        if (n.actions == null) return out;
+        for (Notification.Action a : n.actions) {
+            if (a == null || a.isContextual() || empty(a.title) || a.actionIntent == null) continue;
+            out.add(a);
+            if (out.size() == 3) break;
+        }
+        return out;
+    }
+
+    /** The action's first RemoteInput that takes typed text: the field the
+     *  shade opens when the action is tapped. */
+    static RemoteInput freeFormInput(Notification.Action a) {
+        RemoteInput[] inputs = a.getRemoteInputs();
+        if (inputs == null) return null;
+        for (RemoteInput r : inputs) {
+            if (r != null && r.getAllowFreeFormInput()) return r;
+        }
+        return null;
+    }
+
+    /** The fill-in intent an action is sent with: the reply under the
+     *  RemoteInput's result key, as RemoteInput.addResultsToIntent puts it,
+     *  so the app's RemoteInput.getResultsFromIntent finds it. Null when
+     *  there is nothing to add. */
+    static Intent replyIntent(Notification.Action a, String reply) {
+        RemoteInput input = freeFormInput(a);
+        if (input == null || reply == null) return null;
+        Intent fill = new Intent();
+        Bundle results = new Bundle();
+        results.putCharSequence(input.getResultKey(), reply);
+        RemoteInput.addResultsToIntent(a.getRemoteInputs(), fill, results);
+        return fill;
     }
 
     public static void cancel(String tag, int id) {
@@ -158,6 +215,37 @@ public final class HostNotifications {
                 pi.send();
             } catch (Throwable t) {
                 NativeLog.w(TAG, "contentIntent of " + key + ": " + t);
+            }
+        };
+        Looper main = Looper.getMainLooper();
+        if (main != null) new Handler(main).post(tap);
+        else tap.run();
+    }
+
+    /** The host: the user clicked action `index` of the notification `key`
+     *  (its index among shownActions), `reply` the text typed into its field
+     *  (null without one). What tapping an action does on a device: its intent
+     *  is sent, with the reply; the notification stays, for the app to update
+     *  or cancel. */
+    public static void onAction(final String key, final int index, final String reply) {
+        final Notification n;
+        synchronized (sPosted) {
+            n = sPosted.get(key);
+        }
+        if (n == null) return;
+        List<Notification.Action> shown = shownActions(n);
+        if (index < 0 || index >= shown.size()) return;
+        final Notification.Action a = shown.get(index);
+        Runnable tap = () -> {
+            try {
+                Intent fill = replyIntent(a, reply);
+                if (fill != null) {
+                    a.actionIntent.send(com.macapk.loader.app.Apps.current(), 0, fill);
+                } else {
+                    a.actionIntent.send();
+                }
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "action " + index + " of " + key + ": " + t);
             }
         };
         Looper main = Looper.getMainLooper();

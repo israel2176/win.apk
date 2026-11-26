@@ -14,6 +14,7 @@
 
 #include <jvmti.h>
 
+#include "winapk/binder_wire.h"
 #include "winapk/debug_protocol.h"
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
@@ -502,8 +503,8 @@ std::string answer(JNIEnv* env, const std::string& question) {
     return out;
 }
 
-// One connection at a time, one question each. Only this user's processes can open the pipe (the default
-// security of a pipe made by the user), and none from another machine; a client that connects and says
+// One connection at a time, one question each. Only the current user and SYSTEM can open the pipe (explicit
+// owner+SYSTEM DACL, no inheritance), and none from another machine; a client that connects and says
 // nothing holds the agent, and nothing else.
 DWORD WINAPI serve(void*) {
     JNIEnv* env = nullptr;
@@ -515,7 +516,8 @@ DWORD WINAPI serve(void*) {
         for (;;) {
             HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
                                            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                                           PIPE_UNLIMITED_INSTANCES, 1 << 16, 4096, 0, nullptr);
+                                           PIPE_UNLIMITED_INSTANCES, 1 << 16, 4096, 0,
+                                           winapk::binder::owner_pipe_security());
             if (pipe != INVALID_HANDLE_VALUE) return pipe;
             Sleep(1000);
         }

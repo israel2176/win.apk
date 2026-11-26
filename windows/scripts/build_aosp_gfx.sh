@@ -16,7 +16,10 @@
 #   <out>/bin/aosp-hwui.dll                 the graphics DLL: AOSP 14's HWUI (its render thread and GL
 #                                           pipeline), Skia, minikin, HarfBuzz, FreeType, ICU, built
 #                                           from source by windows/hwui_build/build.sh
-#   <out>/bin/aosp/icu/icudt72l.dat         its ICU data (ICU 72's), without the trees it cannot open
+#   <out>/bin/aosp/icu/icudt72l.dat         its ICU data (ICU 72's), without the charset converters
+#   <out>/bin/aosp/icu/*.res                the time zone rules and names' tables (zoneinfo64,
+#                                           metaZones, timezoneTypes, windowsZones) of a newer tzdata,
+#                                           which a device's tz module gives and Android's ICU data lacks
 #   <out>/bin/aosp/fonts/                   Android's fonts.xml and the fonts it names, but Noto CJK
 #                                           (Windows' own CJK fonts stand in, HostCjkFonts)
 #   <out>/bin/aosp/hyphen-data/             the hyphenation patterns
@@ -196,15 +199,41 @@ if [[ -z "$STRIP" ]] || ! "$STRIP" -o "$DLL" "$HWUI/aosp-hwui.dll"; then
     echo "[aosp-gfx]   no LLVM strip: the native runtime staged with its symbol table" >&2
     cp -f "$HWUI/aosp-hwui.dll" "$DLL"
 fi
-# ICU's data without the trees no code in the DLL can open (its ICU is linked in, so what it can
-# open is fixed): it has no time zone names, units, spelled-out numbers or transliterators (no
-# "icudt72l-zone", "-unit", "-rbnf" or "-translit" in it), no charset converters (ucnv_open and
-# "cnvalias" are not linked), no StringPrep or spoof checks (usprep, uspoof). Kept: the break
-# iterators, collation, the locale, language, region and currency names, the root bundles (the
-# time zone rules among them) and the Unicode properties. 25.8 MB -> 16.4 MB.
+# ICU's data, read by the DLL's ICU4C and by AOSP's ICU4J in this jar (android.icu: the apps' ICU,
+# whose data path android.icu.platform.AndroidDataFiles gives), without the charset converters
+# (".cnv" and "cnvalias": neither reads them; Java's charsets are the JDK's). ICU4J needs the rest: the
+# time zone names, units, spelled-out numbers (the Hebrew calendar's dates are written with them) and
+# transliterators the DLL alone did not. 25.8 MB -> about 22 MB (16.4 MB when the DLL was the only reader).
 "$JAVA" "$(native_path "$HERE/TrimIcuData.java")" "$(native_path "$HWUI/icudt72l.dat")" \
     "$(native_path "$OUT/bin/aosp/icu/icudt72l.dat")" \
-    zone/ unit/ rbnf/ translit/ '*.cnv' cnvalias.icu '*.spp' '*.cfu'
+    '*.cnv' cnvalias.icu
+# The time zones' tables: Android's ICU data has none (a device's com.android.tzdata module gives them,
+# updated apart from the OS), so without them every zone is GMT to ICU4J. These are ICU's own build of
+# them for a newer tzdata (unicode-org/icu-data, tzdata/icunew/<version>/44/le: format 44 is what ICU 72
+# reads), loose beside the .dat in the folder ICU4J searches first, as a device's module is. Pinned by
+# commit and SHA-256; kept in the deps dir.
+TZ_VERSION=2026f
+TZ_COMMIT=6eac2f4d349d9f4a0825103bb41845d8e5ab7add
+TZ_FILES=(
+    "zoneinfo64.res d9382726ee8a499514310e63a9e97f1dbdd7fc2db328e1a785dde05f2afbb7e6"
+    "metaZones.res cc9d283bb2797813a17c00d80c2a86d27bc80da5e1cd24da846e8b4af6dbd860"
+    "timezoneTypes.res 5e77ce5afb7374a36cbe3be197d0a6deaa919e6f672c2a372f7a9d91b7f8534f"
+    "windowsZones.res 377691d021bbdd7012806d8188412d13e587a76b64ecc7b79fec4dc36a419deb"
+)
+mkdir -p "$DEPS/icu-tzdata-$TZ_VERSION"
+for entry in "${TZ_FILES[@]}"; do
+    read -r name sum <<< "$entry"
+    cached="$DEPS/icu-tzdata-$TZ_VERSION/$name"
+    if [[ ! -f "$cached" ]] || [[ "$(sha256sum "$cached" | cut -d' ' -f1)" != "$sum" ]]; then
+        curl -fsSL --retry 3 -o "$cached.part" \
+            "https://raw.githubusercontent.com/unicode-org/icu-data/$TZ_COMMIT/tzdata/icunew/$TZ_VERSION/44/le/$name"
+        got=$(sha256sum "$cached.part" | cut -d' ' -f1)
+        [[ "$got" == "$sum" ]] || { echo "[aosp-gfx] $name: SHA-256 $got, want $sum" >&2; rm -f "$cached.part"; exit 1; }
+        mv -f "$cached.part" "$cached"
+    fi
+    cp -f "$cached" "$OUT/bin/aosp/icu/$name"
+done
+echo "[aosp-gfx] ICU's time zone tables: tzdata $TZ_VERSION"
 rm -rf "$OUT/bin/aosp/fonts" "$OUT/bin/aosp/hyphen-data"
 # Only the fonts fonts.xml names: SystemFonts opens nothing else, and a device has nothing else in
 # /system/fonts either. The dist carries more, for Robolectric's older SDKs: NotoSansCJK's six other
