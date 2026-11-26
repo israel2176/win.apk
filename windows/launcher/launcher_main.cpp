@@ -149,6 +149,7 @@ constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the l
 constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms device-id's id, or empty)
 constexpr UINT kSetupFetched = WM_APP + 22;   // lParam: new SetupFetch (apkeep's download of one of Google's apps)
 constexpr UINT kInstallSets = WM_APP + 23;    // lParam: new std::vector<InstallSet> (a batch's files as installs)
+constexpr UINT kQuitIfIdle = WM_APP + 24;     // maybe_quit found nothing left: end, if that is still so
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
@@ -160,6 +161,7 @@ enum Cmd { kCmdOpen = 200, kCmdStop, kCmdInfo, kCmdRemove };
 
 HINSTANCE g_inst;
 HWND g_main;
+bool g_quitting = false;  // the library's window is being destroyed: the process is ending (maybe_quit)
 HFONT g_edit_font, g_mono_font;
 HBRUSH g_edit_brush, g_code_brush;
 float g_dpi = 96;
@@ -7134,6 +7136,7 @@ bool run_installer() {
     }
     save_window_size();
     g_page.build = nullptr;  // the Update button's page_click must not rebuild a page of a window that is gone
+    g_quitting = true;       // the windows' WM_DESTROY below must not start a second end (maybe_quit)
     if (g_log_wnd) DestroyWindow(g_log_wnd);
     if (g_debug_wnd) DestroyWindow(g_debug_wnd);
     if (g_install_wnd) DestroyWindow(g_install_wnd);
@@ -9666,6 +9669,7 @@ enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3, kSplashReport = 4 };
 constexpr UINT kFitSplash = WM_APP + 21;
 
 void maybe_quit();
+bool work_keeps_process();
 std::set<DWORD> windowed_processes();
 
 Splash* splash_of(HWND hwnd) { return reinterpret_cast<Splash*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)); }
@@ -10811,14 +10815,21 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             }
             // Work still under way (an install, a splash, an app's window) keeps the process; the library only
             // hides. Otherwise the process ends, and what it started in the background with it (end_background_work).
-            if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || g_debug_wnd || any_runs() ||
-                !windowed_processes().empty()) {
+            if (work_keeps_process() || !windowed_processes().empty()) {
                 ShowWindow(hwnd, SW_HIDE);
                 maybe_quit();
                 return 0;
             }
+            g_quitting = true;  // before DestroyWindow ends the owned windows, whose WM_DESTROY asks maybe_quit
             break;
+        case kQuitIfIdle:  // posted by maybe_quit: nothing has come up since
+            if (!g_quitting && !IsWindowVisible(hwnd) && !work_keeps_process() && windowed_processes().empty()) {
+                g_quitting = true;
+                DestroyWindow(hwnd);  // WM_DESTROY posts the quit
+            }
+            return 0;
         case WM_DESTROY:
+            g_quitting = true;
             RevokeDragDrop(hwnd);
             if (g_drop_target) g_drop_target->Release();
             PostQuitMessage(0);
@@ -12771,19 +12782,27 @@ void end_background_work() {
     CloseHandle(snap);
 }
 
-// When the library is not shown, the process lives only for what it is doing: an install window,
-// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened,
-// and an app's window it did not start (looked at again every few seconds), so that the broker such an
-// app uses is not ended under it (end_background_work).
+// What keeps the process when the library is not shown, besides an app's window it did not start
+// (windowed_processes): an install window, a splash, an app it started (to report how it ended), the log
+// or Threads window, a maintenance window it opened (until kMaintenanceEnded).
+bool work_keeps_process() {
+    return g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending() ||
+           g_maintenance;
+}
+
+// When the library is not shown, the process lives only for what it is doing (work_keeps_process), and for
+// an app's window it did not start (looked at again every few seconds), so that the broker such an app uses is
+// not ended under it (end_background_work). It is called from windows' WM_DESTROY, some of them owned by the
+// library: destroying the library there would destroy its owned windows again from inside their own
+// destruction. So the end is posted, and the library's window ends from its own message, once.
 void maybe_quit() {
-    if (!g_main || IsWindowVisible(g_main)) return;
-    if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
-    if (g_maintenance) return;  // a maintenance window it opened: waits for its end (kMaintenanceEnded)
+    if (g_quitting || !g_main || IsWindowVisible(g_main)) return;
+    if (work_keeps_process()) return;
     if (!windowed_processes().empty()) {
         SetTimer(g_main, kQuitTimer, 3000, nullptr);
         return;
     }
-    DestroyWindow(g_main);
+    PostMessageW(g_main, kQuitIfIdle, 0, 0);
 }
 
 // Every GDI+ object the launcher keeps, released while GDI+ still runs: a static's destructor that ran after
