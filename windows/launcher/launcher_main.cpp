@@ -1236,12 +1236,20 @@ void remove_app_shortcuts(const App& app) {
 // Shortcuts written by an older launcher lack the AppUserModelID, without which
 // an app's notifications show no name or icon: once (the ShortcutVersion
 // setting), every app's shortcuts are written again. Bump the version when
-// what a shortcut holds changes. 2: Google's apps lost theirs.
+// what a shortcut holds changes. 2: Google's apps lost theirs. They are also
+// written again when Start > Win.apk Apps is gone while the library has an app
+// that has one there: an uninstall removes the folder and keeps the library,
+// so a reinstall puts the apps back in Start, as a phone's launcher lists
+// every installed app (the uninstaller also deletes ShortcutVersion).
 constexpr DWORD kShortcutVersion = 2;
 
 void refresh_app_shortcuts() {
-    if (setting(L"ShortcutVersion", 0) >= kShortcutVersion) return;
     std::error_code ec;
+    bool missing = false;
+    if (!fs::exists(start_menu_apps(), ec)) {
+        for (const App& app : library()) missing = missing || !system_app(app.name);
+    }
+    if (setting(L"ShortcutVersion", 0) >= kShortcutVersion && !missing) return;
     for (const App& app : library()) {
         const fs::path desktop = known_folder(FOLDERID_Desktop) / (file_name_safe(app.label) + L".lnk");
         make_app_shortcuts(app, fs::exists(desktop, ec));
@@ -6106,6 +6114,50 @@ void maintenance_ended() {
     if (g_maintenance) CloseHandle(g_maintenance);
     g_maintenance = nullptr;
     maybe_quit();
+}
+
+// Whether `lnk` is a shortcut this launcher made for an app: its target is `exe` and its arguments `--run <apk>`
+// (run_args). A shortcut to anything else, or to the library itself, is not.
+bool app_shortcut_of(const fs::path& lnk, const fs::path& exe) {
+    IShellLinkW* link = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link)))) return false;
+    bool ours = false;
+    IPersistFile* file = nullptr;
+    if (SUCCEEDED(link->QueryInterface(IID_PPV_ARGS(&file)))) {
+        wchar_t target[MAX_PATH * 4] = {}, args[MAX_PATH * 4] = {};
+        if (SUCCEEDED(file->Load(lnk.c_str(), STGM_READ)) &&
+            SUCCEEDED(link->GetPath(target, MAX_PATH * 4, nullptr, SLGP_RAWPATH)) &&
+            SUCCEEDED(link->GetArguments(args, MAX_PATH * 4))) {
+            ours = CompareStringOrdinal(target, -1, exe.c_str(), -1, TRUE) == CSTR_EQUAL &&
+                   wcsncmp(args, L"--run ", 6) == 0;
+        }
+        file->Release();
+    }
+    link->Release();
+    return ours;
+}
+
+// `Win.apk.exe remove-shortcuts`, the uninstaller's step (winapk.iss [UninstallRun], before the files go): the
+// shortcuts this launcher made for the apps, on the desktop and in Start > Win.apk Apps, which would otherwise
+// start a Win.apk.exe that is gone. Found by what they run (app_shortcut_of), not by the library's names, so a
+// shortcut of an app renamed since, or of a library app removed by hand, goes too; the user's own shortcuts stay.
+// The library and the apps' data are kept, as the uninstall keeps them.
+int remove_shortcuts_main() {
+    const fs::path exe = exe_path();
+    std::error_code ec;
+    for (const fs::path& dir : {known_folder(FOLDERID_Desktop), start_menu_apps()}) {
+        std::vector<fs::path> gone;
+        for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+            std::wstring ext = it->path().extension().wstring();
+            for (wchar_t& c : ext) c = static_cast<wchar_t>(towlower(c));
+            if (ext == L".lnk" && app_shortcut_of(it->path(), exe)) gone.push_back(it->path());
+        }
+        for (const fs::path& p : gone) fs::remove(p, ec);
+        ec.clear();
+    }
+    fs::remove(start_menu_apps(), ec);  // when empty
+    SHChangeNotify(SHCNE_UPDATEDIR, SHCNF_PATHW, known_folder(FOLDERID_Desktop).c_str(), nullptr);
+    return 0;
 }
 
 // `Win.apk.exe maintenance`, which the scheduled task of earlier builds ran: that task should not be there, so
@@ -13024,6 +13076,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     // Earlier builds' scheduled task for background updates, should it run before the launcher removed it.
     if (argc >= 2 && wcscmp(argv[1], L"maintenance") == 0) {
         const int code = maintenance_main();
+        LocalFree(argv);
+        OleUninitialize();
+        return code;
+    }
+
+    // The uninstaller's: the apps' shortcuts go with the program they start.
+    if (argc >= 2 && wcscmp(argv[1], L"remove-shortcuts") == 0) {
+        const int code = remove_shortcuts_main();
         LocalFree(argv);
         OleUninitialize();
         return code;

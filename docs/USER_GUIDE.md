@@ -767,10 +767,13 @@ nothing is started in the apps: no agent, no pipe.
   in use (it is still running and could not be closed) is left whole, and the
   library names it; close it and clear again. Removing one app works the same
   way: it is removed whole or not at all.
-- Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
-  Start menu shortcuts, the `.apk` association and the app files' thumbnails, and keeps
-  `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
-  the Store and the Google account.
+- Uninstalling Win.apk (Windows Settings > Apps) removes the program, its
+  Start menu shortcuts, the apps' shortcuts (in Start and on the desktop), the
+  app files' thumbnails, and the `.apk`, `.apkm`, `.xapk` and `.apks`
+  associations that still open Win.apk (one another program took since is
+  left to it). It keeps `%LOCALAPPDATA%\Win.apk`: installing Win.apk again
+  brings the apps back, with their shortcuts in Start. Delete that folder to
+  remove the apps, their data, the Store and the Google account.
 
 ## Where things are
 
