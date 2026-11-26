@@ -89,4 +89,21 @@ inline std::wstring launcher_image_for(const std::wstring& runtime_image) {
     return runtime_image.substr(0, root + 1) + L"Win.apk.exe";
 }
 
+// Explicit DACL granting access only to the current user and SYSTEM; no handle inheritance.
+inline SECURITY_ATTRIBUTES* owner_pipe_security() {
+    static SECURITY_ATTRIBUTES sa = [] {
+        SECURITY_ATTRIBUTES a{};
+        a.nLength = sizeof a;
+        a.bInheritHandle = FALSE;
+        const std::wstring sid = process_sid(GetCurrentProcess());
+        if (sid.empty()) return a;
+        const std::wstring sddl = L"D:P(A;;GA;;;" + sid + L")(A;;GA;;;SY)";
+        PSECURITY_DESCRIPTOR sd = nullptr;
+        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr))
+            a.lpSecurityDescriptor = sd;
+        return a;
+    }();
+    return sa.lpSecurityDescriptor ? &sa : nullptr;
+}
+
 }  // namespace winapk::binder

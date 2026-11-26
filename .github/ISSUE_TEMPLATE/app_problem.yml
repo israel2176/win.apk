@@ -7,6 +7,6 @@ body:
     id: what-happens
     attributes:
       label: What happens
-      description: Which app, and what goes wrong. A log or screenshot can be dragged in here too. It is fine to write in Hebrew (אפשר לכתוב בעברית).
+      description: Which app, and what goes wrong. Drag the log file (run-<app>.log) in here, don't paste its text; GitHub cuts text past 65,536 characters and the failure is at the log's end. A screenshot can be dragged in too. It is fine to write in Hebrew (אפשר לכתוב בעברית).
     validations:
       required: true

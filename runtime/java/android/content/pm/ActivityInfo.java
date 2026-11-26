@@ -146,6 +146,20 @@ public class ActivityInfo extends ComponentInfo implements android.os.Parcelable
     //     logical parent of this activity."
     //   targetActivity -- "If this is an activity alias, this is the real
     //     activity class to run for it. Otherwise, this is null."
+    /** {@hide} AOSP ActivityInfo.FLAG_SUPPORTS_PICTURE_IN_PICTURE: the manifest's
+     *  android:supportsPictureInPicture. */
+    public static final int FLAG_SUPPORTS_PICTURE_IN_PICTURE = 0x400000;
+
+    /** {@hide} AOSP supportsPictureInPicture(): what AOSP's Activity asks before a
+     *  picture-in-picture request. */
+    public boolean supportsPictureInPicture() {
+        return (flags & FLAG_SUPPORTS_PICTURE_IN_PICTURE) != 0;
+    }
+
+    /** {@hide} AOSP getMaxAspectRatio(): the manifest's android:maxAspectRatio, 0 when it sets
+     *  none (AOSP's mMaxAspectRatio default). Win.apk's manifest reader does not keep it. */
+    public float getMaxAspectRatio() { return 0f; }
+
     public int    theme = 0;
     public int    launchMode = LAUNCH_MULTIPLE;
     public int    documentLaunchMode = DOCUMENT_LAUNCH_NONE;

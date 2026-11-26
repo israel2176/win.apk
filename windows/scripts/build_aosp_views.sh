@@ -21,7 +21,9 @@
 # Kept Win.apk's (not taken from android-all), as the graphics work and the host need them: Surface,
 # SurfaceControl, SurfaceView, TextureView, SurfaceHolder (the host's GL and video surfaces);
 # MotionEvent, KeyEvent, KeyCharacterMap, VelocityTracker, InputDevice, InputQueue (the host's input,
-# Java here, natives on Android); ThreadedRenderer (aosp-graphics.jar's). android.animation,
+# Java here, natives on Android); ThreadedRenderer (aosp-graphics.jar's); VideoView (a SurfaceView
+# over Win.apk's MediaPlayer: AOSP's implements android.media's SubtitleController.Anchor and builds
+# the subtitle renderers, which Win.apk's MediaPlayer has no part of, so it did not load at all). android.animation,
 # android.transition and android.app stay Win.apk's.
 #
 # At build time AospViewsRewrite.java (beside this script) gives the natives of the taken classes
@@ -85,7 +87,7 @@ TAKE='^(android/view/.*|android/widget/.*|com/android/internal/(view|widget|poli
 # Win.apk's own, kept (see the header). A nested class goes with its outer one.
 # ThreadedRenderer is aosp-graphics.jar's (its outer class only: its nested classes, which
 # ViewRootImpl implements, are android-all's, taken here).
-KEEP='^android/view/((Surface|SurfaceControl|SurfaceView|SurfaceHolder|TextureView|MotionEvent|KeyEvent|KeyCharacterMap|VelocityTracker|InputDevice|InputQueue|IGraphicsStats|IGraphicsStatsCallback|NativeVectorDrawableAnimator)([$].*)?|ThreadedRenderer)\.class$'
+KEEP='^(android/view/((Surface|SurfaceControl|SurfaceView|SurfaceHolder|TextureView|MotionEvent|KeyEvent|KeyCharacterMap|VelocityTracker|InputDevice|InputQueue|IGraphicsStats|IGraphicsStatsCallback|NativeVectorDrawableAnimator)([$].*)?|ThreadedRenderer)|android/widget/VideoView([$].*)?)\.class$'
 # And a few classes outside those packages whose AOSP version the views need and Win.apk's lacks
 # members of, where no Win.apk class needs one AOSP's lacks (checked with LinkScan): StateSet
 # (View's drawable states, StateSet.get and the VIEW_STATE_* sets),
@@ -155,8 +157,10 @@ echo "[aosp-views] the rewrite (AospViewsRewrite.java)"
 # Android 15's members of the views AOSP 14 lacks, which apps built for the runtime's SDK level (35)
 # call: each public static method of Api35 becomes a method of its first parameter's class
 # (AospAddMethods.java, as build_aosp_gfx.sh does for the graphics).
-echo "[aosp-views] API 35 methods added to AOSP's classes"
-"$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$CLASSES")" com/winapk/aospviews/Api35
+# And Android 16's (36), for apps that target it (Api36).
+echo "[aosp-views] API 35 and 36 methods added to AOSP's classes"
+"$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$CLASSES")" com/winapk/aospviews/Api35 \
+    com/winapk/aospviews/Api36
 
 rm -f "$OUT/lib/aosp-views.jar"
 ( cd "$CLASSES" && "$JAR" --create --file "$OUT/lib/aosp-views.jar" . )
