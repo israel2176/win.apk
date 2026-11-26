@@ -71,8 +71,9 @@ Win.apk; they are slower than the codec packs, so a 1080p VP9 or AV1 video can
 stutter on a slow PC (the log says `decoding with libvpx VP9` or `dav1d AV1`).
 A video played by `MediaPlayer` or `VideoView` still needs the codec packs for
 VP9 and AV1, and does not play from a WebM file. A stream whose audio is Vorbis
-or FLAC plays silent in an ExoPlayer app; video from an app's native code
-(`AMediaCodec`) is not there yet.
+or FLAC plays silent in an ExoPlayer app. An app's native code (`AMediaCodec`)
+gets the same decoders but no encoder: a native recorder or converter finds
+none and says the format is not supported.
 
 **A phone photo (HEIC) or an AVIF picture does not show.** Windows decodes
 them: HEIC/HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video
@@ -197,7 +198,9 @@ What makes a report useful:
   saves the app's own picture and the window as shown, side by side, in the
   logs folder (`snapshot-...-frame.png`, `snapshot-...-window.png`), and writes
   the numbers between the two into the log;
-- **the whole log**, not a part of it.
+- **the whole log**, not a part of it, as the file itself: drag `run-<app>.log`
+  into the form. Pasted into the text, a log is cut where GitHub's limit of
+  65,536 characters falls, and the failure is usually at its end.
 
 You can write in English or in Hebrew. Security problems go to
 [SECURITY.md](../SECURITY.md), not to a public issue.

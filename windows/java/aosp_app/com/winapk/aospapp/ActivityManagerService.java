@@ -21,6 +21,57 @@ public final class ActivityManagerService {
 
     ActivityManagerService(AospApp app) { this.app = app; }
 
+    /** ActivityManager.INTENT_SENDER_* (hidden). */
+    private static final int INTENT_SENDER_BROADCAST = 1, INTENT_SENDER_ACTIVITY = 2,
+            INTENT_SENDER_ACTIVITY_RESULT = 3, INTENT_SENDER_SERVICE = 4, INTENT_SENDER_FOREGROUND_SERVICE = 5;
+
+    /** ActivityManagerService.getIntentSenderWithFeature: the PendingIntent's sender a call to
+     *  AOSP's own classes asks for. Activity.createPendingResult's INTENT_SENDER_ACTIVITY_RESULT is
+     *  a PendingIntent that, sent, gives its code and intent to the activity's onActivityResult as
+     *  ActivityTaskManagerService.sendActivityResult does; the other kinds are PendingIntent's own
+     *  (Win.apk's PendingIntent makes them itself, without this call). */
+    public android.content.IIntentSender getIntentSenderWithFeature(int type, String packageName, String featureId,
+            android.os.IBinder token, String resultWho, int requestCode, android.content.Intent[] intents,
+            String[] resolvedTypes, int flags, Bundle options, int userId) {
+        android.content.Context c = com.macapk.loader.app.Apps.current();
+        android.content.Intent first = intents != null && intents.length > 0 ? intents[intents.length - 1] : null;
+        android.app.PendingIntent pi;
+        switch (type) {
+            case INTENT_SENDER_ACTIVITY_RESULT: {
+                if (token == null) return null;
+                AospHostResult result = new AospHostResult(app.tasks, token, resultWho, requestCode);
+                pi = com.macapk.loader.app.IntentSenders.activityResult(c, requestCode, first, flags,
+                        (code, data) -> result.deliver(code, data));
+                break;
+            }
+            case INTENT_SENDER_ACTIVITY:
+                pi = intents != null && intents.length > 1
+                        ? android.app.PendingIntent.getActivities(c, requestCode, intents, flags, options)
+                        : android.app.PendingIntent.getActivity(c, requestCode, first, flags, options);
+                break;
+            case INTENT_SENDER_BROADCAST:
+                pi = android.app.PendingIntent.getBroadcast(c, requestCode, first, flags);
+                break;
+            case INTENT_SENDER_SERVICE:
+                pi = android.app.PendingIntent.getService(c, requestCode, first, flags);
+                break;
+            case INTENT_SENDER_FOREGROUND_SERVICE:
+                pi = android.app.PendingIntent.getForegroundService(c, requestCode, first, flags);
+                break;
+            default:
+                return null;
+        }
+        return pi != null ? com.macapk.loader.app.IntentSenders.target(pi) : null;
+    }
+
+    /** The same without a feature id (IActivityManager.getIntentSender). */
+    public android.content.IIntentSender getIntentSender(int type, String packageName, android.os.IBinder token,
+            String resultWho, int requestCode, android.content.Intent[] intents, String[] resolvedTypes, int flags,
+            Bundle options, int userId) {
+        return getIntentSenderWithFeature(type, packageName, null, token, resultWho, requestCode, intents,
+                resolvedTypes, flags, options, userId);
+    }
+
     public void attachApplication(IApplicationThread thread, long startSeq) {
         try {
             thread.bindApplication(app.info.processName, app.info, null, null,
