@@ -331,6 +331,13 @@ and `System.load`s the result. On Windows (`host/guest_libs.cpp`,
    address is guest code it puts a thunk built from the method's signature in
    its place. The guest's `RegisterNatives` slot wraps function pointers the
    same way.
+5. `System.load` of an ELF that reaches the JDK itself, a call the rewriter
+   never routed to a stub (by reflection, as protection layers with encrypted
+   strings make it, or from a class of a dex loader): HotSpot's
+   `NativeLibraries.load` is replaced too, and for an ELF it opens the file
+   through the guest linker, runs its `JNI_OnLoad` (once per library, whichever
+   way it was loaded) and gives HotSpot the guest library as the handle, bound
+   to the caller's class loader as on Android. Any other file is the JDK's.
 
 An app that calls `findLibrary` itself (through `BaseDexClassLoader`, as
 Gecko's loader and `GameActivity` do) gets Android's answer, not the stub:

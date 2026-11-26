@@ -1099,6 +1099,12 @@ Done:
   linker and run the guest's `JNI_OnLoad`, and natives bound by name resolve
   through a replaced `NativeLibrary.findEntry0` plus the `NativeMethodBind`
   thunk. No per-symbol exports are needed.
+- `System.load` of an ELF however it is called: a replaced
+  `NativeLibraries.load` (and `unload`) opens it through the linker, so a
+  reflective call, which the rewriter's Pattern N cannot see, works as on
+  Android (issue #211: an obfuscated layer called a native its library would
+  have registered, and the log showed no library loaded at all, as when such
+  a load fails on the JDK's own path).
 - `NativeLinker.nativeLinkOnly` (dependencies without `JNI_OnLoad`).
 - System functions the shim lacks are bound to stubs that report their name
   on the first call, so libraries load and the sweep can rank the gaps.
