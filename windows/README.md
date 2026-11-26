@@ -680,8 +680,8 @@ before these changes.
     own package by default): `AutoGrowArray`, `SpanSet`, `AndroidBidi`,
     `PackedIntVector`, `GradientColor`'s factory... (`View$AttachInfo`, a
     nested class of Win.apk's own, never). `AndroidBidi` calls
-    `android.icu.text.Bidi`, which the framework has not: a stand-in on
-    `java.text.Bidi` (`windows/java/aosp_gfx/android/icu/text/Bidi.java`).
+    `android.icu.text.Bidi`: AOSP's own, in the same jar with the rest of
+    AOSP's ICU4J (a stand-in on `java.text.Bidi` until then).
   - Vectors: `AospVector` builds AOSP's own `VectorDrawable` from the element
     (the platform's compiled files through `Resources.macapkDrawableXml`):
     `VGroup`, `VFullPath`, `VClipPath`, `PathParser.PathData` and the native
@@ -1424,7 +1424,7 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 
 | Part | Today | Budget |
 |---|---:|---:|
-| AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 60.5 MB | 70 MB |
+| AOSP graphics files (`bin\aosp\`, the DLL, the jar), with ICU | 60.5 MB, about 70 MB with AOSP's ICU4J and its data | 78 MB |
 | AOSP app layer (`lib\aosp-app.jar`; 1.6 MB before the platform classes apps extend, `PLATFORM_TAKE`) | 2.1 MB | 3 MB |
 | Java runtime (`jre\`) | 127.3 MB | 140 MB |
 | The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
@@ -1665,7 +1665,7 @@ What the first pass (89 apps, 2026-11) left open: the NDK's `AMediaCodec`,
 end: WhatsApp's `DeepLinkActivity.onCreate`; X's `Item$$serializer.deserialize`; two oversize
 `<clinit>`s, one of boxed `Long`s in Instagram, that `ClinitPrecompute` does not model); and, on the
 Java side, `android.app.appsearch`, `android.icu`'s date-interval and list
-formatters, `ActivityGroup` / `TabActivity`, and a real PDF engine behind
+formatters (AOSP's ICU4J since, which has them), `ActivityGroup` / `TabActivity`, and a real PDF engine behind
 `PdfRenderer`.
 
 ### What the framework has but does not do
@@ -1870,7 +1870,8 @@ every such change is listed here:
   `Canvas.sGlobal*` trace (`MACAPK_TRACE_COMPOSE_FALLBACK`). An upstream sync
   must not bring them back (windows/README.md, "Milestone 2").
 
-- `runtime/java/com/macapk/icu/HostIcu.java`, `IcuFallback.java` (new): with
+- `runtime/java/com/macapk/icu/HostIcu.java`, `IcuFallback.java` (new, since deleted with Win.apk's own
+  `android.icu`, below): with
   no host ICU (no `icu.dll`: Windows 10 before 1903, Wine; or no bridge
   registered, a plain JVM) the natives' `UnsupportedOperationException` or
   `UnsatisfiedLinkError` no longer reaches the app: each call answers from
@@ -3726,7 +3727,8 @@ every such change is listed here:
   between two runs of the same build too (a GL game, PPSSPP, Jerboa's
   spinner); a build that compares every frame with `getPixels` found no
   difference.
-- `runtime/java/android/icu/util/Calendar.java`, `GregorianCalendar.java` (new):
+- `runtime/java/android/icu/util/Calendar.java`, `GregorianCalendar.java` (new; since deleted, AOSP's ICU4J
+  answers, below):
   the rest of the public `android.icu.util.Calendar`: `WeekData`,
   `getWeekData`/`setWeekData`/`getWeekDataForRegion` (CLDR's week data as
   Android 14's ICU answers it for every region), `isWeekend`, the ICU-only
@@ -3944,6 +3946,21 @@ every such change is listed here:
   and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
   is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
   `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
+- `runtime/java/android/icu/` (deleted, 52 files), `runtime/java/com/macapk/icu/` (deleted: `HostIcu`,
+  `IcuFallback`) and `windows/host/native_icu.cpp` (deleted): apps' `android.icu` is AOSP's own ICU4J, taken
+  whole into `lib/aosp-graphics.jar` (`aosp_gfx_take.sh`: `android/icu`, `com/android/icu`), on ICU 72's data,
+  the file the graphics DLL reads (`bin/aosp/icu/icudt72l.dat`, now with the time zone names, units,
+  spelled-out numbers and transliterators ICU4J reads: `build_aosp_gfx.sh` drops only the charset
+  converters). `windows/java/aosp_gfx/android/icu/platform/AndroidDataFiles.java` names that folder
+  (`android.icu.impl.ICUBinary.dataPath`, else the host's `icu.data.path`, else beside the jar);
+  `windows/java/aosp_gfx/android/icu/text/Bidi.java`, the stand-in on `java.text.Bidi`, is gone. Win.apk's
+  own was a facade over the JDK: no Hebrew, Islamic or other calendar, no `UCharacter.UnicodeBlock`,
+  `Normalizer`, `DateIntervalFormat`, `MessagePattern`... (israel2176/win.apk#173), and it needed Windows'
+  `icu.dll` for units. `android/text/format/DateFormat.java`: `getBestDateTimePattern` is AOSP's, ICU's
+  `DateTimePatternGenerator.getBestPattern`. `windows/test/java/android/icu/AospIcuTest.java` (CI: "Run the
+  ICU test") checks the Hebrew calendar and its Hebrew dates, plurals, measures, relative times, collation,
+  time zone names, transliteration and Bidi on the stage's data; `test/aospapp/run.sh` and
+  `test/accessibility/run.sh` name ICU 72's folder beside Robolectric's ICU 68 data.
 
 ## License
 

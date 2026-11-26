@@ -128,7 +128,6 @@ Google](google-services.md). רכישות מתוך אפליקציה ו-Play Inte
 | ‏`Win.apk.InputTimeout: ANR:` | האפליקציה לא טיפלה בקלט שניתן לה במשך חמש שניות; הספרייה שאלה **האפליקציה Wiz לא מגיבה**, והשורה הבאה אומרת מה נענה (`Close app` או `Wait`) |
 | ‏`[win.apk] crash:` ו-`crash dump:` | הקוד המקורי קרס. נכתב קובץ Minidump ליד היומן (`crash-<app>-<time>.dmp`): כדאי לצרף גם אותו |
 | ‏`[win.apk] guest called abort(); abort message: <text>` | הקוד המקורי של האפליקציה סגר אותה בכוונה, והטקסט אומר למה (מה שאנדרואיד מציג כ-"Abort message" בדוח קריסה): `terminating due to uncaught exception of type ...` היא שגיאת C++ שאף אחד לא תפס. אחריה תופיע שורת `crash dump:` |
-| ‏`[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | ב-Windows הזה אין `icu.dll` (Windows 10 לפני גרסה 1903, או Wine). האפליקציות ממשיכות לעבוד: מספרים עדיין נכתבים לפי השפה, אבל יחידות נכתבות בסמלים הבינלאומיים שלהן ("5 km", "3 h") ולא במילים של השפה, וחלק מפרטי האזור כלליים |
 | ‏`[win.apk] arm64 AOT: off for this app` | אפליקציית ARM קרסה פעמיים עם התרגום, ולכן היא רצה על ה-JIT |
 | ‏`[E] launcher: could not start ...` או `could not copy ...` | הספרייה עצמה נכשלה לפני שסביבת ההרצה של Win.apk רצה, עם הסיבה של Windows: לא ניתן היה להפעיל את סביבת ההרצה (אנטי־וירוס חסם אותה, או התקנה פגומה: התקן את Win.apk מחדש), או שלא ניתן היה להעתיק את קובץ האפליקציה לספרייה (דיסק מלא, קובץ שתוכנה אחרת מחזיקה) |
 | ‏`[win.apk] audio:` | יציאת הקול: `no output device` (הקול מתנגן בשקט ו־Win.apk מחפש התקן שוב כל כמה שניות), וכשההתקן נעלם או כבר אינו ברירת המחדל, פתיחת ברירת המחדל החדשה |

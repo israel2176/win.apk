@@ -196,15 +196,14 @@ if [[ -z "$STRIP" ]] || ! "$STRIP" -o "$DLL" "$HWUI/aosp-hwui.dll"; then
     echo "[aosp-gfx]   no LLVM strip: the native runtime staged with its symbol table" >&2
     cp -f "$HWUI/aosp-hwui.dll" "$DLL"
 fi
-# ICU's data without the trees no code in the DLL can open (its ICU is linked in, so what it can
-# open is fixed): it has no time zone names, units, spelled-out numbers or transliterators (no
-# "icudt72l-zone", "-unit", "-rbnf" or "-translit" in it), no charset converters (ucnv_open and
-# "cnvalias" are not linked), no StringPrep or spoof checks (usprep, uspoof). Kept: the break
-# iterators, collation, the locale, language, region and currency names, the root bundles (the
-# time zone rules among them) and the Unicode properties. 25.8 MB -> 16.4 MB.
+# ICU's data, read by the DLL's ICU4C and by AOSP's ICU4J in this jar (android.icu: the apps' ICU,
+# whose data path android.icu.platform.AndroidDataFiles gives), without the charset converters
+# (".cnv" and "cnvalias": neither reads them; Java's charsets are the JDK's). ICU4J needs the rest: the
+# time zone names, units, spelled-out numbers (the Hebrew calendar's dates are written with them) and
+# transliterators the DLL alone did not. 25.8 MB -> about 22 MB (16.4 MB when the DLL was the only reader).
 "$JAVA" "$(native_path "$HERE/TrimIcuData.java")" "$(native_path "$HWUI/icudt72l.dat")" \
     "$(native_path "$OUT/bin/aosp/icu/icudt72l.dat")" \
-    zone/ unit/ rbnf/ translit/ '*.cnv' cnvalias.icu '*.spp' '*.cfu'
+    '*.cnv' cnvalias.icu
 rm -rf "$OUT/bin/aosp/fonts" "$OUT/bin/aosp/hyphen-data"
 # Only the fonts fonts.xml names: SystemFonts opens nothing else, and a device has nothing else in
 # /system/fonts either. The dist carries more, for Robolectric's older SDKs: NotoSansCJK's six other
