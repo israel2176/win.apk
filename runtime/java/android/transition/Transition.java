@@ -438,6 +438,43 @@ public abstract class Transition implements Cloneable {
     // NOT in captureHierarchy -- so unlike the three excludes above, a
     // name-excluded view does not prune its own subtree. Kept separate for
     // exactly that reason.
+    /** {@hide} AOSP Transition.isValidTarget: whether `target` is one this transition acts on, by its
+     *  excludes, then its targets (none named: every view). AOSP's ActivityTransitionCoordinator
+     *  picks a shared element's transition targets with it. */
+    public boolean isValidTarget(View target) {
+        if (target == null) return false;
+        if (isTargetExcluded(target) || isNameExcluded(target)) return false;
+        boolean noNames = mTargetNames == null || mTargetNames.isEmpty();
+        if (mTargetIds.isEmpty() && mTargets.isEmpty() && mTargetTypes.isEmpty() && noNames) return true;
+        if (mTargetIds.contains(target.getId()) || mTargets.contains(target)) return true;
+        if (!noNames && mTargetNames.contains(target.getTransitionName())) return true;
+        for (Class<?> type : mTargetTypes) if (type.isInstance(target)) return true;
+        return false;
+    }
+
+    /** {@hide} AOSP Transition.pause(View): the running animators pause (an activity transition
+     *  that is held while the other activity starts). */
+    public void pause(View sceneRoot) {
+        for (Animator a : new ArrayList<Animator>(mCurrentAnimators)) a.pause();
+    }
+
+    /** {@hide} AOSP Transition.resume(View): the paused animators go on. */
+    public void resume(View sceneRoot) {
+        for (Animator a : new ArrayList<Animator>(mCurrentAnimators)) a.resume();
+    }
+
+    /** {@hide} AOSP Transition.setNameOverrides: the shared element names of the other activity
+     *  that stand for this one's (AOSP's FragmentTransition and ActivityTransitionCoordinator).
+     *  Win.apk's transitions match names as they are; the map is kept for getNameOverrides. */
+    public void setNameOverrides(android.util.ArrayMap<String, String> overrides) {
+        mNameOverrides = overrides;
+    }
+
+    /** {@hide} AOSP Transition.getNameOverrides. */
+    public android.util.ArrayMap<String, String> getNameOverrides() { return mNameOverrides; }
+
+    private android.util.ArrayMap<String, String> mNameOverrides;
+
     private boolean isNameExcluded(View view) {
         return mTargetNameExcludes != null && view != null && view.getTransitionName() != null
                 && mTargetNameExcludes.contains(view.getTransitionName());

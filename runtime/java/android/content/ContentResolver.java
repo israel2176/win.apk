@@ -121,7 +121,56 @@ public class ContentResolver {
 
     public ContentResolver() {}
     // Some Context subclasses construct ContentResolver with a Context.
-    public ContentResolver(Context context) {}
+    public ContentResolver(Context context) { mContext = context; }
+
+    /** The context this resolver was made for (AOSP's mContext), or null for one made with the
+     *  no-argument constructor: getResourceId then reads the process's application. */
+    private Context mContext;
+
+    /** AOSP's @hide ContentResolver.OpenResourceIdResult: what getResourceId resolves an
+     *  android.resource:// URI to. */
+    public class OpenResourceIdResult {
+        public android.content.res.Resources r;
+        public int id;
+    }
+
+    /** AOSP's @hide getResourceId (android14 ContentResolver.java:1953): an android.resource URI's
+     *  package resources and resource id, from `android.resource://<package>/<id>` or
+     *  `android.resource://<package>/<type>/<name>`. AOSP's ImageView.getDrawableFromUri resolves
+     *  such a URI through it. */
+    public OpenResourceIdResult getResourceId(Uri uri) throws java.io.FileNotFoundException {
+        String authority = uri.getAuthority();
+        android.content.res.Resources r;
+        if (android.text.TextUtils.isEmpty(authority)) {
+            throw new java.io.FileNotFoundException("No authority: " + uri);
+        }
+        Context context = mContext != null ? mContext : com.macapk.loader.app.Apps.current();
+        try {
+            r = context.getPackageManager().getResourcesForApplication(authority);
+        } catch (android.content.pm.PackageManager.NameNotFoundException ex) {
+            throw new java.io.FileNotFoundException("No package found for authority: " + uri);
+        }
+        java.util.List<String> path = uri.getPathSegments();
+        if (path == null) throw new java.io.FileNotFoundException("No path: " + uri);
+        int len = path.size();
+        int id;
+        if (len == 1) {
+            try {
+                id = Integer.parseInt(path.get(0));
+            } catch (NumberFormatException e) {
+                throw new java.io.FileNotFoundException("Single path segment is not a resource ID: " + uri);
+            }
+        } else if (len == 2) {
+            id = r.getIdentifier(path.get(1), path.get(0), authority);
+        } else {
+            throw new java.io.FileNotFoundException("More than two path segments: " + uri);
+        }
+        if (id == 0) throw new java.io.FileNotFoundException("No resource found for: " + uri);
+        OpenResourceIdResult res = new OpenResourceIdResult();
+        res.r = r;
+        res.id = id;
+        return res;
+    }
 
     // ---- Provider-backed CRUD dispatch (v1.0.472, fw-content-pm bucket) ----
     //

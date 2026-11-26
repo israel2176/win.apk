@@ -1700,7 +1700,10 @@ public final class Boot {
         // never reached its menu). Register the vendored bcprov provider so we
         // provide what Android provides. Reflective (no compile-time dep on the
         // jar); added at the END (Security.addProvider = lowest preference) so
-        // SunJCE/Conscrypt keep priority and BC only fills the gaps. Generic
+        // SunJCE/Conscrypt keep priority and BC only fills the gaps, but for the
+        // PBE names Android answers from BC, which the JDK's own preference
+        // sends to BC (android.security.MacApkProviderPreference, set by the
+        // Windows host before any Java runs). Generic
         // (any app using BC-named crypto benefits); NOT keyed on a package.
         //
         // Construction (the expensive part -- 101 eager $Mappings class loads,

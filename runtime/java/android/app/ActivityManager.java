@@ -100,6 +100,33 @@ public class ActivityManager {
      *  resource if it existed. This class has no Context, so (like
      *  the rest of the framework's Context-less fallbacks) we read
      *  the global default Resources.getSystem(). */
+    /** {@hide} AOSP's static form, which AOSP's Activity.setTaskDescription scales a bitmap icon
+     *  to: the same size as getLauncherLargeIconSize, from the context's resources. */
+    public static int getLauncherLargeIconSizeInner(android.content.Context context) {
+        android.content.res.Resources res = context.getResources();
+        android.util.DisplayMetrics dm = res.getDisplayMetrics();
+        int size = Math.round(android.util.TypedValue.applyDimension(
+                android.util.TypedValue.COMPLEX_UNIT_DIP, 48f, dm));
+        if (res.getConfiguration().smallestScreenWidthDp < 600) return size;
+        // AOSP: on a tablet, the icon of the next density bucket up.
+        int density = dm.densityDpi;
+        switch (density) {
+            case android.util.DisplayMetrics.DENSITY_LOW: return (size * android.util.DisplayMetrics.DENSITY_MEDIUM) / android.util.DisplayMetrics.DENSITY_LOW;
+            case android.util.DisplayMetrics.DENSITY_MEDIUM: return (size * android.util.DisplayMetrics.DENSITY_HIGH) / android.util.DisplayMetrics.DENSITY_MEDIUM;
+            case android.util.DisplayMetrics.DENSITY_TV: return (size * android.util.DisplayMetrics.DENSITY_XHIGH) / android.util.DisplayMetrics.DENSITY_HIGH;
+            case android.util.DisplayMetrics.DENSITY_HIGH: return (size * android.util.DisplayMetrics.DENSITY_XHIGH) / android.util.DisplayMetrics.DENSITY_HIGH;
+            case android.util.DisplayMetrics.DENSITY_XHIGH: return (size * android.util.DisplayMetrics.DENSITY_XXHIGH) / android.util.DisplayMetrics.DENSITY_XHIGH;
+            case android.util.DisplayMetrics.DENSITY_XXHIGH: return (size * android.util.DisplayMetrics.DENSITY_XHIGH * 2) / android.util.DisplayMetrics.DENSITY_XXHIGH;
+            default: return (int) ((size * 1.5f) + .5f);
+        }
+    }
+
+    /** {@hide} AOSP ActivityManager.getTaskService(): the activity task manager, which AOSP's
+     *  TaskDescription asks for a task's saved icon. */
+    public static IActivityTaskManager getTaskService() {
+        return ActivityTaskManager.getService();
+    }
+
     public int getLauncherLargeIconSize() {
         android.content.res.Resources res = android.content.res.Resources.getSystem();
         android.util.DisplayMetrics dm = res.getDisplayMetrics();

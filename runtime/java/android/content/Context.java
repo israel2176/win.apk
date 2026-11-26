@@ -1544,6 +1544,33 @@ public abstract class Context {
             case VIBRATOR_MANAGER_SERVICE:
                 result = new android.os.VibratorManager();
                 break;
+            // AOSP's SystemServiceRegistry registers each of these for every app, whatever the
+            // device has: a device without telephony still hands out a TelecomManager, whose calls
+            // then answer for a device without FEATURE_TELECOM (registerPhoneAccount throws
+            // UnsupportedOperationException, as AOSP documents). Their classes were here and no case
+            // reached them, so an app got null where a phone never gives it: Jitsi's call
+            // integration took a NullPointerException instead of the refusal it handles.
+            case TELECOM_SERVICE:
+                result = new android.telecom.TelecomManager();
+                break;
+            case CARRIER_CONFIG_SERVICE:
+                result = new android.telephony.CarrierConfigManager();
+                break;
+            case NETWORK_STATS_SERVICE:
+                result = new android.app.usage.NetworkStatsManager();
+                break;
+            case CROSS_PROFILE_APPS_SERVICE:
+                result = new android.content.pm.CrossProfileApps(this);
+                break;
+            case EUICC_SERVICE:
+                result = new android.telephony.euicc.EuiccManager();
+                break;
+            case VPN_MANAGEMENT_SERVICE:
+                result = new android.net.VpnManager();
+                break;
+            case BUGREPORT_SERVICE:
+                result = new android.os.BugreportManager();
+                break;
             case PERFORMANCE_HINT_SERVICE:
                 result = new android.os.PerformanceHintManager();
                 break;
@@ -2142,6 +2169,29 @@ public abstract class Context {
                                ServiceConnection conn) {
         return applicationForStarts().bindService(intent, flags, executor, conn);
     }
+    /** {@hide} AOSP startActivitiesAsUser, which AOSP's TaskStackBuilder.startActivities calls:
+     *  there is one user (see bindServiceAsUser), so it is startActivities, and the result is
+     *  ActivityManager.START_SUCCESS (a start that does not resolve throws, as startActivities
+     *  does). AOSP's ContextImpl answers it itself. */
+    public int startActivitiesAsUser(Intent[] intents, android.os.Bundle options, android.os.UserHandle userHandle) {
+        startActivities(intents, options);
+        return 0;
+    }
+
+    /** {@hide} AOSP Context.startActivityForResult(String who, ...): only an Activity starts for a
+     *  result; any other context throws, as AOSP's does (View.startActivityForResult asks it). */
+    public void startActivityForResult(String who, Intent intent, int requestCode, android.os.Bundle options) {
+        throw new RuntimeException("This method is only implemented for Activity-based Contexts. "
+                + "Check canStartActivityForResult() before calling.");
+    }
+
+    /** {@hide} AOSP Context.canStartActivityForResult: false but for an Activity. */
+    public boolean canStartActivityForResult() { return false; }
+
+    /** {@hide} AOSP Context.isAutofillCompatibilityEnabled: autofill's compatibility mode (for apps
+     *  an autofill service lists), never on here, as on a device with no such service. */
+    public boolean isAutofillCompatibilityEnabled() { return false; }
+
     /** AOSP startActivityAsUser(Intent, UserHandle), a system API. There is one
      *  user (see bindServiceAsUser), so it is startActivity. */
     public void startActivityAsUser(Intent intent, android.os.UserHandle user) {
