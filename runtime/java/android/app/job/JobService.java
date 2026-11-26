@@ -53,6 +53,19 @@ public abstract class JobService extends Service {
      *  done and onStopJob will NOT be invoked. */
     public abstract boolean onStartJob(JobParameters params);
 
+    /** AOSP's final onBind: the job service's binder, which the scheduler binds. Without it an
+     *  app's JobService (WorkManager's SystemJobService) inherited Service's abstract onBind, so a
+     *  bind would end in AbstractMethodError. Win.apk's scheduler calls onStartJob in the process
+     *  (ActiveServices.jobBind) and binds nothing, so the binder is a plain one. */
+    public final android.os.IBinder onBind(android.content.Intent intent) {
+        synchronized (this) {
+            if (mBinder == null) mBinder = new android.os.Binder();
+            return mBinder;
+        }
+    }
+
+    private android.os.IBinder mBinder;
+
     /** AOSP: called when the job must stop before it called jobFinished --
      *  a constraint lapsed, it was cancelled, or it timed out.
      *  JobParameters.getStopReason() says which. Return true to ask for a

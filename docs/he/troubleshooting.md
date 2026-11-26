@@ -70,7 +70,8 @@ taken by the main thread` מ-`Win.apk.InputTimeout`. אם זה קורה בכל �
 כתוב `decoding with libvpx VP9` או `dav1d AV1`). וידאו שמתנגן דרך
 `MediaPlayer` או `VideoView` עדיין צריך את חבילות ה-Codec בשביל VP9 ו-AV1,
 ולא מתנגן מקובץ WebM. שידור שהשמע שלו Vorbis או FLAC מתנגן בלי קול
-באפליקציות ExoPlayer; וידאו מהקוד המקורי של אפליקציה (`AMediaCodec`) עוד לא
+באפליקציות ExoPlayer. הקוד המקורי של אפליקציה (`AMediaCodec`) מקבל את אותם
+מפענחים, אבל בלי מקודד: מקליט או ממיר מקורי לא ימצא מקודד ויגיד שהפורמט לא
 נתמך.
 
 **תמונה מטלפון (HEIC) או תמונת AVIF לא מוצגת.** ‏Windows הוא שמפענח אותן:
@@ -130,6 +131,7 @@ Google](google-services.md). רכישות מתוך אפליקציה ו-Play Inte
 | ‏`[win.apk] guest called abort(); abort message: <text>` | הקוד המקורי של האפליקציה סגר אותה בכוונה, והטקסט אומר למה (מה שאנדרואיד מציג כ-"Abort message" בדוח קריסה): `terminating due to uncaught exception of type ...` היא שגיאת C++ שאף אחד לא תפס. אחריה תופיע שורת `crash dump:` |
 | ‏`[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | ב-Windows הזה אין `icu.dll` (Windows 10 לפני גרסה 1903, או Wine). האפליקציות ממשיכות לעבוד: מספרים עדיין נכתבים לפי השפה, אבל יחידות נכתבות בסמלים הבינלאומיים שלהן ("5 km", "3 h") ולא במילים של השפה, וחלק מפרטי האזור כלליים |
 | ‏`[win.apk] arm64 AOT: off for this app` | אפליקציית ARM קרסה פעמיים עם התרגום, ולכן היא רצה על ה-JIT |
+| ‏`[win.apk] arm64: a guest library's mprotect would make ... host code` | ספריית ARM ניסתה לשנות או ליירט את הקוד של Win.apk עצמו, כפי שספריות עושות ל-libc בטלפון; Win.apk מסרב (הספרייה מקבלת `EACCES`). רוב הספריות ממשיכות בלי היירוט; אם האפליקציה נעצרת מיד אחרי זה, דווחו עם היומן |
 | ‏`[E] launcher: could not start ...` או `could not copy ...` | הספרייה עצמה נכשלה לפני שסביבת ההרצה של Win.apk רצה, עם הסיבה של Windows: לא ניתן היה להפעיל את סביבת ההרצה (אנטי־וירוס חסם אותה, או התקנה פגומה: התקן את Win.apk מחדש), או שלא ניתן היה להעתיק את קובץ האפליקציה לספרייה (דיסק מלא, קובץ שתוכנה אחרת מחזיקה) |
 | ‏`[win.apk] audio:` | יציאת הקול: `no output device` (הקול מתנגן בשקט ו־Win.apk מחפש התקן שוב כל כמה שניות), וכשההתקן נעלם או כבר אינו ברירת המחדל, פתיחת ברירת המחדל החדשה |
 | ‏`[win.apk] microphone: cannot open` | האפליקציה ביקשה את המיקרופון ו־Windows לא נתן אותו, עם השלב שנכשל. `IAudioClient` אומר בדרך כלל שהגישה למיקרופון כבויה לאפליקציות שולחן עבודה בהגדרות Windows > פרטיות ואבטחה > מיקרופון |
