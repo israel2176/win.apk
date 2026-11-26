@@ -383,7 +383,7 @@ if(WINAPK_JNI_INCLUDE)
                  host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
-                 host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
+                 host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp host/ndk_media_codec.cpp
                  host/native_activity.cpp
                  ${WINAPK_SOFT_CODEC_SOURCES}
                  ${WINAPK_GL_UPSTREAM})
@@ -443,6 +443,17 @@ if(WINAPK_JNI_INCLUDE)
   target_include_directories(winapk-video-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
   target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
+
+  # libmediandk's AMediaExtractor, AMediaCodec and AMediaDataSource as an app's native code
+  # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.
+  add_executable(winapk-ndk-media-test test/ndk_media_test.cpp host/native_media.cpp host/ndk_media_codec.cpp
+                 host/video_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-ndk-media-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_include_directories(winapk-ndk-media-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-ndk-media-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid
+                        shlwapi)
+  target_link_options(winapk-ndk-media-test PRIVATE -static)
 
   # The built-in software decoders and the WebM demuxer without Media
   # Foundation (test/soft_codecs_test.cpp), on test/video's WebM files.
