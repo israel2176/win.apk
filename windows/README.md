@@ -3805,6 +3805,11 @@ every such change is listed here:
   field that still reads 0 (an R8-shrunk class whose `<clinit>` was stripped) is looked up by name; every
   other one keeps the value its dex gave it (the converter's `ConstantValue`), the value ART has the app
   read. Upstream looked up every field, a `getIdentifier` each: ~22k on a large app's first activity.
+- `runtime/java/com/macapk/loader/Manifest.java` (`parseApk`), `MacApkPackageManager.java`
+  (`registryManifest`), `android/content/pm/PackageManager.java` (`getPackageArchiveInfo`): an APK's
+  manifest is parsed once per version of the file (its path, size and modification time), as Android's
+  package manager parses a package once and answers every query from that. An app walking the installed
+  packages re-read each one's manifest per call (Play services' 1 MB of binary XML dozens of times a run).
 
 ## License
 

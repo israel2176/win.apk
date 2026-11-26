@@ -678,7 +678,7 @@ public abstract class PackageManager {
         if (!apk.isFile()) return null;
         com.macapk.loader.Manifest m;
         try {
-            m = com.macapk.loader.Manifest.parse(apk, archiveFilePath);
+            m = com.macapk.loader.Manifest.parseApk(archiveFilePath);
         } catch (Throwable t) {
             // AOSP: "If the package could not be parsed, returns null."
             return null;
