@@ -1188,6 +1188,10 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   lock between contexts that share nothing, so the app's GL thread and the
   render thread on one display crashed ANGLE. Nothing crosses between the two
   displays: the app's frames reach the compositor as the host layer's pixels.
+  A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
+  makes an EGL window surface on the view's holder (the host's window surface
+  on the SurfaceView, read back at each swap), as does an app's own copy of
+  it, on EGL10 or EGL14; `test/glthread/` checks both, and a resize.
 - The snapshot (Ctrl+Shift+F12) and the headless frame file
   (`WINAPK_HEADLESS_FRAME`) read the composed frame back on the render thread.
 - Shader caches: ANGLE's programs (`EGL_ANDROID_blob_cache`) and Skia's
@@ -2713,7 +2717,7 @@ every such change is listed here:
   VFS (`SQLiteDatabase` hands it Android database paths) and `MediaPlayer`'s file
   source (`HostVideo`) all map an Android path to the host file first.
 - `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`: an app's
-  own GL thread with a real context (not a GLSurfaceView fork) that calls
+  own GL thread with a real context that calls
   `eglCreateWindowSurface` on a SurfaceView or its holder gets a window
   surface on the SurfaceView: `nativeCreateSurfaceViewWindow` makes a pbuffer
   over the native window, and `nativeSwapSurfaceViewWindow` presents it as
@@ -3801,6 +3805,27 @@ every such change is listed here:
   activity finished; `Boot`'s `moveToBack` and `taskEmpty` note it). `HostUrlIntake.shouldClaim` is gone with
   the old rule: an open that happens claims the redirect schemes. Upstream's rule refused every link with AOSP's
   input, which noted no real input (`AospInput` now does, for the frame heartbeat).
+- `runtime/java/android/opengl/GLSurfaceView.java` (deleted), `android/view/SurfaceView.java`,
+  `javax/microedition/khronos/egl/MacApkEGL10.java`, `com/google/android/gles_jni/GLImpl.java` (new),
+  `com/macapk/loader/view/ViewHost.java`, `WinApkViewHost.java`, `TouchDispatcher.java`: GL renderers run
+  on their own GL thread, as on Android. `GLSurfaceView` is AOSP 14's (`aosp_gfx_take.sh`, in
+  `lib/aosp-graphics.jar`): its GLThread makes an EGL10 context and a window surface on the view's holder
+  (`MacApkEGL10.viewWindow`, the host's window surface on the SurfaceView, `windows/host/gl/egl10_window.cpp`)
+  and calls `onSurfaceCreated`, `onSurfaceChanged` and `onDrawFrame` there, again at every resize. Upstream's
+  own `GLSurfaceView` drove the renderer from the host's render thread, and upstream's `SurfaceView` looked
+  for any other renderer by reflection (a field whose value had an `onDrawFrame`) and drove it the same way,
+  while `MacApkEGL10` refused an app's own GLThread (a copy of GLSurfaceView's) its context so that it died:
+  the Mac could give such a thread no window. A renderer the reflection could not find (an obfuscated
+  app's, or one a helper object holds: Waze's map, `com.waze.map.opengl.x` on its SurfaceView) then never
+  drew, and the log filled with `macapkDrawFrame skip #N: no renderer resolved yet`. Gone with it: the
+  reflected drive, the fork thread detection, the single-owner rule, the refusal survivors, the fork
+  event-queue drain and the GL size helpers only upstream's `GLSurfaceView` called (and their `ViewHost`
+  members); `MacApkEGL10`'s legacy contract is now only what a JVM without the EGL14 natives answers.
+  `EGLContext.getGL()` is a `GLImpl` (each GL10/GL11 method forwarded to the `GLES10`/`GLES11`/`GLES20`
+  binding of the same name), as AOSP's `EGLContextImpl` hands out. `windows/host/gl/gl_bridges.cpp`: EGL14's
+  `eglCreateWindowSurface` on a SurfaceView, its holder or its Surface makes the same window surface (upstream
+  put it on the Mac's native-EGL layer and answered `EGL_NO_SURFACE` here), swapped and destroyed through
+  `surface_view_window_*`. `windows/test/glthread/` checks all three in a window (CI, "GL threads").
 
 ## License
 

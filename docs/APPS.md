@@ -30,7 +30,7 @@ keeping a copy.
 
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
-| OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
+| OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX, an app's own GL thread on EGL10 or EGL14, each drawing on its own thread as on Android) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
 | `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
 | Vulkan | ❌ | | Not implemented | |
 | Pictures (`BitmapFactory`, `ImageDecoder`) | ✅ | PNG, JPEG, WebP, GIF, BMP and ICO by Android's own decoders; HEIF/HEIC (a phone's photos) and AVIF through Windows | HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video Extension (Microsoft Store); without them such a picture does not open, as on a phone that cannot read it | `windows/java/aosp_gfx/` (`HostImageDecode`), `native_image.cpp` |
