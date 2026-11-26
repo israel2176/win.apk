@@ -39,8 +39,21 @@ JavaVM* g_guest_vm = nullptr;
 // The stub module of each app library System.load()'ed, and its guest library.
 std::unordered_map<jlong, winapk::GuestLibrary*> g_by_module;
 
+// Handles System.load() gave the JVM for an ELF it was handed itself (see
+// load_library): the GuestLibrary, not a module, with how many of the JVM's
+// libraries hold it (two paths can name one ELF, which the linker opens once).
+std::unordered_map<jlong, int> g_direct;
+// Each library whose JNI_OnLoad has run, with the version it returned: a second
+// module for the same ELF (a stub and a System.load of the file itself) does
+// not run it again, as a second load of an open library is a no-op on Android.
+std::unordered_map<winapk::GuestLibrary*, jint> g_onload_done;
+
 using FindEntry = jlong(JNICALL*)(JNIEnv*, jclass, jlong, jstring);
 FindEntry g_jdk_find_entry = nullptr;
+using LoadLibraryNative = jboolean(JNICALL*)(JNIEnv*, jclass, jobject, jstring, jboolean, jboolean);
+LoadLibraryNative g_jdk_load = nullptr;
+using UnloadLibraryNative = void(JNICALL*)(JNIEnv*, jclass, jstring, jboolean, jlong);
+UnloadLibraryNative g_jdk_unload = nullptr;
 
 std::string utf8(const std::wstring& w) {
     const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), -1, nullptr, 0, nullptr, nullptr);
@@ -106,6 +119,39 @@ void on_guest_unload(const winapk::ElfImage* image, void*) {
     for (auto it = g_by_module.begin(); it != g_by_module.end();) {
         it = winapk::GuestLinker::image_of(it->second) == image ? g_by_module.erase(it) : std::next(it);
     }
+    for (auto it = g_onload_done.begin(); it != g_onload_done.end();) {
+        it = winapk::GuestLinker::image_of(it->first) == image ? g_onload_done.erase(it) : std::next(it);
+    }
+}
+
+// System.loadLibrary's second half on Android: the library's own JNI_OnLoad,
+// found with dlsym on its handle, called with the JavaVM; JNI_VERSION_1_6 when
+// it has none. Once per library: a later module for the same ELF gets the
+// version the first call returned.
+jint run_jni_onload(winapk::GuestLibrary* lib, const std::string& so) {
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        auto it = g_onload_done.find(lib);
+        if (it != g_onload_done.end()) return it->second;
+    }
+    using OnLoad = jint(WINAPK_GUEST_ABI*)(JavaVM*, void*);
+    std::string error;
+    auto on_load = reinterpret_cast<OnLoad>(g_linker->lookup(lib, "JNI_OnLoad", nullptr, &error));
+    jint version = JNI_VERSION_1_6;
+    if (on_load) {
+        // Its FindClass calls get ART's semantics (guest_jni.cpp, guest_find_class).
+        winapk::guest_jni_enter_onload();
+        version = reinterpret_cast<OnLoad>(winapk::arm64::host_callable(reinterpret_cast<void*>(on_load)))(
+            g_guest_vm, nullptr);
+        winapk::guest_jni_leave_onload();
+        // JNI_OnLoad's address lets a guest crash address in a log be mapped
+        // back to the library (its st_value gives the load bias).
+        std::fprintf(stderr, "[win.apk] %s: JNI_OnLoad (at %p) returned 0x%x\n", so.c_str(),
+                     reinterpret_cast<void*>(on_load), static_cast<unsigned>(version));
+    }
+    std::lock_guard<std::mutex> hold(g_lock);
+    g_onload_done.emplace(lib, version);
+    return version;
 }
 
 // ---- the app library behind a stub module -----------------------------------
@@ -160,6 +206,124 @@ jlong JNICALL find_entry(JNIEnv* env, jclass cls, jlong handle, jstring name) {
     void* p = g_linker->lookup(lib, n, nullptr, &error);
     env->ReleaseStringUTFChars(name, n);
     return reinterpret_cast<jlong>(p);
+}
+
+std::wstring java_wstring(JNIEnv* env, jstring s) {
+    std::wstring w;
+    if (!s) return w;
+    const jchar* chars = env->GetStringChars(s, nullptr);
+    if (!chars) return w;
+    w.assign(reinterpret_cast<const wchar_t*>(chars), static_cast<size_t>(env->GetStringLength(s)));
+    env->ReleaseStringChars(s, chars);
+    return w;
+}
+
+bool is_elf_file(const std::wstring& path) {
+    FILE* f = _wfopen(path.c_str(), L"rb");
+    if (!f) return false;
+    unsigned char magic[4] = {};
+    const bool elf = std::fread(magic, 1, sizeof(magic), f) == sizeof(magic) && magic[0] == 0x7f &&
+                     magic[1] == 'E' && magic[2] == 'L' && magic[3] == 'F';
+    std::fclose(f);
+    return elf;
+}
+
+void throw_unsatisfied_link(JNIEnv* env, const std::string& message) {
+    if (jclass c = env->FindClass("java/lang/UnsatisfiedLinkError")) env->ThrowNew(c, message.c_str());
+}
+
+// jdk.internal.loader.NativeLibraries.load(NativeLibraryImpl impl, String name,
+// boolean isBuiltin, boolean throwExceptionIfFail), where every System.load
+// and System.loadLibrary of the JDK ends. On Android, System.load takes the
+// path of an ELF however it is called; here an ELF reaches this point when app
+// code calls System.load or Runtime.load by reflection (obfuscated code can,
+// with the names in encrypted strings) or from a class of a dex loader: calls
+// the rewriter's Pattern N, which gives the others a stub, never sees. The
+// ELF is then opened through the guest linker, as dlopen does, its JNI_OnLoad
+// runs, and the JVM is handed the GuestLibrary as the library's handle, which
+// find_entry and unload_library know. The library binds to the class loader
+// the JDK chose, the caller's, as on Android. Anything else is the JDK's.
+jboolean JNICALL load_library(JNIEnv* env, jclass cls, jobject impl, jstring name, jboolean builtin,
+                              jboolean throw_if_fail) {
+    const std::wstring path = builtin ? std::wstring() : java_wstring(env, name);
+    if (path.empty() || !g_linker || !is_elf_file(path)) {
+        return g_jdk_load(env, cls, impl, name, builtin, throw_if_fail);
+    }
+    const std::string so = utf8(path);
+    std::string error;
+    winapk::GuestLibrary* lib = g_linker->open(so, winapk::GuestLinker::kRtldNow, &error);
+    if (!lib) {
+        std::fprintf(stderr, "[win.apk] cannot load %s: %s\n", so.c_str(), error.c_str());
+        if (throw_if_fail) throw_unsatisfied_link(env, "dlopen failed: " + error);
+        return JNI_FALSE;
+    }
+    const jint version = run_jni_onload(lib, so);
+    if (env->ExceptionCheck()) {
+        g_linker->close(lib, nullptr);
+        return JNI_FALSE;
+    }
+    // ART takes only these from JNI_OnLoad (java_vm_ext.cc, IsBadJniVersion).
+    if (version != JNI_VERSION_1_2 && version != JNI_VERSION_1_4 && version != JNI_VERSION_1_6) {
+        g_linker->close(lib, nullptr);
+        if (throw_if_fail) {
+            throw_unsatisfied_link(env, "Bad JNI version returned from JNI_OnLoad in \"" + so +
+                                            "\": " + std::to_string(version));
+        }
+        return JNI_FALSE;
+    }
+    jclass impl_cls = env->GetObjectClass(impl);
+    const jfieldID handle_field = impl_cls ? env->GetFieldID(impl_cls, "handle", "J") : nullptr;
+    const jfieldID version_field = impl_cls ? env->GetFieldID(impl_cls, "jniVersion", "I") : nullptr;
+    if (!handle_field || !version_field) {
+        g_linker->close(lib, nullptr);
+        return JNI_FALSE;
+    }
+    const jlong handle = reinterpret_cast<jlong>(lib);
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        g_by_module[handle] = lib;
+        ++g_direct[handle];
+    }
+    std::fprintf(stderr, "[win.apk] System.load of the ELF %s: loaded by the guest linker\n", so.c_str());
+    env->SetIntField(impl, version_field, version);
+    env->SetLongField(impl, handle_field, handle);
+    return JNI_TRUE;
+}
+
+// jdk.internal.loader.NativeLibraries.unload(String name, boolean isBuiltin,
+// long handle): the class loader a library was bound to is gone. For a handle
+// load_library gave, the library's JNI_OnUnload and dlclose, as ART does when
+// it unloads a class loader's libraries; the JDK's for a module.
+void JNICALL unload_library(JNIEnv* env, jclass cls, jstring name, jboolean builtin, jlong handle) {
+    winapk::GuestLibrary* lib = nullptr;
+    bool last = false;
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        auto it = g_direct.find(handle);
+        if (it != g_direct.end()) {
+            lib = reinterpret_cast<winapk::GuestLibrary*>(handle);
+            last = --it->second == 0;
+            if (last) {
+                g_direct.erase(it);
+                g_by_module.erase(handle);
+            }
+        }
+    }
+    if (!lib) {
+        g_jdk_unload(env, cls, name, builtin, handle);
+        return;
+    }
+    using OnUnload = void(WINAPK_GUEST_ABI*)(JavaVM*, void*);
+    std::string error;
+    if (!last) {
+        g_linker->close(lib, nullptr);
+        return;
+    }
+    if (auto on_unload = reinterpret_cast<OnUnload>(g_linker->lookup(lib, "JNI_OnUnload", nullptr, &error))) {
+        reinterpret_cast<OnUnload>(winapk::arm64::host_callable(reinterpret_cast<void*>(on_unload)))(g_guest_vm,
+                                                                                                     nullptr);
+    }
+    g_linker->close(lib, nullptr);
 }
 
 // com.macapk.loader.NativeLinker.nativeLinkOnly(String path): null when mapped,
@@ -262,6 +426,27 @@ bool guest_libs_init(JNIEnv* env, jvmtiEnv* jvmti) {
         std::fprintf(stderr, "[win.apk] cannot hook NativeLibrary.findEntry0; app natives bound by name will not resolve\n");
         return false;
     }
+    // System.load of an ELF however it is called (load_library). Without it
+    // only the call sites the rewriter routes load one.
+    g_jdk_load = java_dll ? reinterpret_cast<LoadLibraryNative>(
+                                GetProcAddress(java_dll, "Java_jdk_internal_loader_NativeLibraries_load"))
+                          : nullptr;
+    g_jdk_unload = java_dll ? reinterpret_cast<UnloadLibraryNative>(
+                                  GetProcAddress(java_dll, "Java_jdk_internal_loader_NativeLibraries_unload"))
+                            : nullptr;
+    jclass libs = env->FindClass("jdk/internal/loader/NativeLibraries");
+    const JNINativeMethod load_methods[] = {
+        {const_cast<char*>("load"),
+         const_cast<char*>("(Ljdk/internal/loader/NativeLibraries$NativeLibraryImpl;Ljava/lang/String;ZZ)Z"),
+         reinterpret_cast<void*>(&load_library)},
+        {const_cast<char*>("unload"), const_cast<char*>("(Ljava/lang/String;ZJ)V"),
+         reinterpret_cast<void*>(&unload_library)},
+    };
+    if (!g_jdk_load || !g_jdk_unload || !libs || env->RegisterNatives(libs, load_methods, 2) != JNI_OK) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        std::fprintf(stderr, "[win.apk] cannot hook NativeLibraries.load; System.load of an ELF works only where "
+                             "the rewriter routes it\n");
+    }
     return true;
 }
 
@@ -308,20 +493,5 @@ extern "C" jint winapk_guest_library_loaded(JavaVM*, void* module, const wchar_t
         std::lock_guard<std::mutex> hold(g_lock);
         g_by_module[reinterpret_cast<jlong>(module)] = lib;
     }
-    // System.loadLibrary's second half on Android: the library's own
-    // JNI_OnLoad, found with dlsym on its handle, called with the JavaVM.
-    using OnLoad = jint(WINAPK_GUEST_ABI*)(JavaVM*, void*);
-    std::string error;
-    auto on_load = reinterpret_cast<OnLoad>(g_linker->lookup(lib, "JNI_OnLoad", nullptr, &error));
-    if (!on_load) return JNI_VERSION_1_6;
-    // Its FindClass calls get ART's semantics (guest_jni.cpp, guest_find_class).
-    winapk::guest_jni_enter_onload();
-    const jint version =
-        reinterpret_cast<OnLoad>(winapk::arm64::host_callable(reinterpret_cast<void*>(on_load)))(g_guest_vm, nullptr);
-    winapk::guest_jni_leave_onload();
-    // JNI_OnLoad's address lets a guest crash address in a log be mapped
-    // back to the library (its st_value gives the load bias).
-    std::fprintf(stderr, "[win.apk] %s: JNI_OnLoad (at %p) returned 0x%x\n", utf8(source_of(stub_path)).c_str(),
-                 reinterpret_cast<void*>(on_load), static_cast<unsigned>(version));
-    return version;
+    return run_jni_onload(lib, utf8(source_of(stub_path)));
 }

@@ -21,6 +21,12 @@
 //     dlsym on the guest library (Android's lookup), and the NativeMethodBind
 //     hook (jni_bind.h) then puts a thunk built from the method's signature in
 //     place of the guest address. Every other module gets the JDK's own answer.
+//   * System.load of an ELF itself (a reflective call, or one from a class of
+//     a dex loader, which get no stub): jdk.internal.loader.NativeLibraries.load
+//     is replaced too, and opens the ELF through the GuestLinker, runs its
+//     JNI_OnLoad and hands HotSpot the GuestLibrary as the library's handle,
+//     which findEntry0 and NativeLibraries.unload then know. A library's
+//     JNI_OnLoad runs once, however many modules stand for it.
 //   * NativeLinker.nativeLinkOnly maps a dependency without its JNI_OnLoad,
 //     as the dynamic linker does on Android.
 //   * A system function the shim does not have yet is bound to a stub that
