@@ -3951,7 +3951,9 @@ every such change is listed here:
   whole into `lib/aosp-graphics.jar` (`aosp_gfx_take.sh`: `android/icu`, `com/android/icu`), on ICU 72's data,
   the file the graphics DLL reads (`bin/aosp/icu/icudt72l.dat`, now with the time zone names, units,
   spelled-out numbers and transliterators ICU4J reads: `build_aosp_gfx.sh` drops only the charset
-  converters). `windows/java/aosp_gfx/android/icu/platform/AndroidDataFiles.java` names that folder
+  converters), and beside it the time zones' tables a device's tz module gives (`zoneinfo64`, `metaZones`,
+  `timezoneTypes`, `windowsZones` of tzdata 2026f, ICU's own build, pinned by SHA-256): without them every
+  zone was GMT. `windows/java/aosp_gfx/android/icu/platform/AndroidDataFiles.java` names that folder
   (`android.icu.impl.ICUBinary.dataPath`, else the host's `icu.data.path`, else beside the jar);
   `windows/java/aosp_gfx/android/icu/text/Bidi.java`, the stand-in on `java.text.Bidi`, is gone. Win.apk's
   own was a facade over the JDK: no Hebrew, Islamic or other calendar, no `UCharacter.UnicodeBlock`,
