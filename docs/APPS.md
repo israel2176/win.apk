@@ -148,6 +148,7 @@ what to look for in the app or in its log.
 | In-app purchases, a Play Integrity error, a blank Google map | Not available | Use an open-source build without Play services, where there is one |
 | `not implemented on Windows yet` in the log | A C library function the app's native code needs | [Report it](troubleshooting.md#reporting-a-problem) with the log; adding one is usually small |
 | `native not implemented` in the log | A piece of the Android host that is still missing | Report it with the log |
+| Right at the start, `ClassNotFoundException` for the app's own classes, after a library named like `libnesec`, `libexec`, `libjiagu` or `libshell` loads | The app is wrapped by a packer that decrypts its code with ART's internals, which Win.apk (Java on HotSpot) does not have | None in Win.apk; a build of the app without the packer, if its maker offers one |
 | `[win.apk] cannot load <library>` in the log | A native library the loader could not load: packed, encrypted, or for another CPU | Report it with the log and the APK's `lib/` folders |
 | The app opens sideways, or narrow | Apps open in landscape; an app that fixes portrait opens portrait | The app's details page, **Window > Orientation**; or Settings > Apps > Default orientation for all apps |
 | **Wiz has stopped** or **Wiz keeps stopping** | The app crashed: an error it did not handle. When its log's `FATAL EXCEPTION` is a `NoSuchMethodError` or `NoClassDefFoundError` naming an `android.` class, Win.apk's framework lacks something the app or Android's own code calls | [Report it](troubleshooting.md#reporting-a-problem) with the log (**Report a problem** under the message) |
@@ -171,6 +172,7 @@ automated run; nobody has used it), *Does not start*, *Does not install*.
 
 | App | Version | Source | Status | Notes | Tested | Issue |
 |---|---|---|---|---|---|---|
+| Dreamehome | 2.6.7.0 (`com.dreame.smartlife`) | APKPure | Does not start | Wrapped by NetEase's packer: its native loader runs (its `JNI_OnLoad` is found and it takes its x86_64 build), then it asks for ART's own method structures (`Executable.artMethod`), which HotSpot does not have, never decrypts the app's code and the app ends at a `ClassNotFoundException`. Checked under Wine | 2026-11-26 | [#182](https://github.com/israel2176/win.apk/issues/182) |
 | Markor | 163 (`net.gsantner.markor`) | F-Droid | Boots | Draws its first-run pages (the notebook's files); idle afterwards (0% of a processor) | 2026-11-10 | |
 | Fossify Calendar | 24 (`org.fossify.calendar`) | F-Droid | Boots | Draws the month view with its header in one row; idle afterwards (1% of a processor). The header was laid out wrong until [#119](https://github.com/israel2176/win.apk/issues/119) was fixed | 2026-11-10 | |
 | KeePassDX | 45500 (`com.kunzisoft.keepass.libre`) | F-Droid | Boots | Presents its first frame. Its window is hidden from screenshots, as the app asks, so the screen was not seen. On a first run its tutorial overlay pulses until it is tapped, which redraws the window on every frame (20% of a processor), as on a phone | 2026-11-10 | |

@@ -360,6 +360,9 @@ bool ElfImage::read_dynamic(std::string* error) {
     auto str = [&](uint64_t off) -> std::string {
         return off < strsz_ ? std::string(strtab + off, strnlen(strtab + off, strsz_ - off)) : std::string();
     };
+    // dlsym reads these at every call; a table outside the image is no table.
+    if (hash_ && !in_image(hash_, 8)) hash_ = 0;
+    if (gnu_hash_ && !in_image(gnu_hash_, 16)) gnu_hash_ = 0;
     for (uint64_t off : needed_offsets) needed_.push_back(str(off));
     if (soname_offset != UINT64_MAX) soname_ = str(soname_offset);
 
@@ -389,11 +392,7 @@ bool ElfImage::read_dynamic(std::string* error) {
         const Sym& s = syms[i];
         const uint8_t bind = st_bind(s.st_info);
         if (s.st_shndx == kShnUndef || (bind != kStbGlobal && bind != kStbWeak)) continue;
-        if (st_type(s.st_info) == kSttTls) {
-            tls_exports_.emplace(str(s.st_name), s.st_value);
-            continue;
-        }
-        exports_.emplace(str(s.st_name), bias_ + s.st_value);
+        if (st_type(s.st_info) == kSttTls) tls_exports_.emplace(str(s.st_name), s.st_value);
     }
     return true;
 }
@@ -802,9 +801,65 @@ void ElfImage::run_finalizers() {
     initialized_ = false;
 }
 
+// bionic's soinfo::find_symbol_by_name: gnu_lookup when the library has
+// DT_GNU_HASH, else elf_lookup on DT_HASH, each reading the tables in memory
+// now. A packed library (NetEase's libsecexe, Dreamehome's libnesec.so) ships
+// its .dynstr and its symbols' values encrypted and decrypts them in its
+// init_array; a copy of the names taken when the file was mapped never has
+// "JNI_OnLoad", so its natives were never registered. Symbol versions are not
+// checked, as before.
 void* ElfImage::dlsym(const char* name) const {
-    auto it = exports_.find(name);
-    return it == exports_.end() ? nullptr : reinterpret_cast<void*>(it->second);
+    if (!name || !symtab_ || !strtab_) return nullptr;
+    const Sym* syms = at<const Sym>(symtab_);
+    const char* strtab = at<const char>(strtab_);
+    auto exported = [&](uint32_t i) -> void* {
+        const Sym& s = syms[i];
+        if (s.st_shndx == kShnUndef || st_type(s.st_info) == kSttTls) return nullptr;
+        const uint8_t bind = st_bind(s.st_info);
+        if (bind != kStbGlobal && bind != kStbWeak) return nullptr;
+        if (s.st_name >= strsz_ || std::strcmp(strtab + s.st_name, name) != 0) return nullptr;
+        return reinterpret_cast<void*>(bias_ + s.st_value);
+    };
+    if (gnu_hash_) {
+        uint32_t h = 5381;
+        for (const unsigned char* c = reinterpret_cast<const unsigned char*>(name); *c; ++c) h = h * 33 + *c;
+        const uint32_t* gh = at<const uint32_t>(gnu_hash_);
+        const uint32_t nbuckets = gh[0], symoffset = gh[1], bloom_words = gh[2], shift = gh[3];
+        if (nbuckets == 0 || bloom_words == 0) return nullptr;
+        const uint64_t* bloom = reinterpret_cast<const uint64_t*>(gh + 4);
+        const uint64_t word = bloom[(h / 64) % bloom_words];
+        if (!((word >> (h % 64)) & (word >> ((h >> shift) % 64)) & 1)) return nullptr;
+        const uint32_t* buckets = reinterpret_cast<const uint32_t*>(bloom + bloom_words);
+        const uint32_t* chain = buckets + nbuckets;
+        uint32_t i = buckets[h % nbuckets];
+        if (i < symoffset) return nullptr;
+        for (;; ++i) {
+            const uint32_t ch = chain[i - symoffset];
+            if (((ch ^ h) >> 1) == 0) {
+                if (void* p = exported(i)) return p;
+            }
+            if (ch & 1) return nullptr;
+        }
+    }
+    if (hash_) {
+        uint32_t h = 0;
+        for (const unsigned char* c = reinterpret_cast<const unsigned char*>(name); *c; ++c) {
+            h = (h << 4) + *c;
+            const uint32_t g = h & 0xf0000000u;
+            h ^= g;
+            h ^= g >> 24;
+        }
+        const uint32_t* table = at<const uint32_t>(hash_);
+        const uint32_t nbucket = table[0], nchain = table[1];
+        if (nbucket == 0) return nullptr;
+        const uint32_t* bucket = table + 2;
+        const uint32_t* chain = bucket + nbucket;
+        for (uint32_t i = bucket[h % nbucket], hops = 0; i != 0 && i < nchain && hops < nchain;
+             i = chain[i], ++hops) {
+            if (void* p = exported(i)) return p;
+        }
+    }
+    return nullptr;
 }
 
 bool ElfImage::tls_symbol(const char* name, uint64_t* offset) const {

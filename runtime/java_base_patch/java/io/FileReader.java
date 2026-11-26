@@ -17,7 +17,8 @@
  * ExceptionInInitializerError -> System.exit(10), which blocked the logged-in
  * feed. This overlay makes that read succeed with the HOST page size (Apple
  * Silicon = 16 kB, what the guest's native memory is actually laid out on). Only
- * these two exact /proc/self paths are rewritten; every other file open is
+ * these two exact /proc/self paths are rewritten (in Win.apk only smaps: its
+ * /proc/self/maps is a real file), every other file open is
  * untouched, so ordinary Java file I/O is unchanged. Native /proc readers keep
  * using the full live census through the Bionic shim.
  *
@@ -62,11 +63,14 @@ public class FileReader extends InputStreamReader {
     // probe scans. One synthetic mapping is enough: the probe reads the first
     // KernelPageSize it finds. Pure ASCII, so the byte[] is built without going
     // through a Charset.
+    // The page size is the host's: Apple Silicon's 16 kB, an x86_64 host's 4 kB
+    // (Win.apk), what the guest's native memory is laid out on.
+    private static final String PAGE_KB = "aarch64".equals(System.getProperty("os.arch")) ? "16" : " 4";
     private static final byte[] PROC_BODY = macapkAscii(
           "0000000000000000-0000000000010000 r--p 00000000 00:00 0 \n"
         + "Size:                 64 kB\n"
-        + "KernelPageSize:       16 kB\n"   // Apple Silicon host page size
-        + "MMUPageSize:          16 kB\n"
+        + "KernelPageSize:       " + PAGE_KB + " kB\n"
+        + "MMUPageSize:          " + PAGE_KB + " kB\n"
         + "Rss:                   0 kB\n"
         + "Pss:                   0 kB\n"
         + "VmFlags: rd mr mw me \n");
@@ -80,7 +84,13 @@ public class FileReader extends InputStreamReader {
     private static boolean macapkIsProc(String name) {
         // Constant-first equals: a null name is NOT a /proc path, so it falls
         // through to FileInputStream and throws the JDK's own NullPointerException.
-        return "/proc/self/smaps".equals(name) || "/proc/self/maps".equals(name);
+        if ("/proc/self/smaps".equals(name)) return true;
+        // Win.apk (winapk-runtime sets winapk.android.root): /proc/self/maps is a
+        // real file, the process's program, linker and guest libraries, written at
+        // each open as the kernel makes it (windows/src/bionic/paths.cpp). App
+        // packers choose their loader's build by it; this one-line body named no
+        // linker64 and sent them to a 32-bit build.
+        return "/proc/self/maps".equals(name) && System.getProperty("winapk.android.root") == null;
     }
 
     // Any OTHER /proc path (2026-10-30): the runtime installs this hook
