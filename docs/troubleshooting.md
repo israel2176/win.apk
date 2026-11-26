@@ -71,8 +71,9 @@ Win.apk; they are slower than the codec packs, so a 1080p VP9 or AV1 video can
 stutter on a slow PC (the log says `decoding with libvpx VP9` or `dav1d AV1`).
 A video played by `MediaPlayer` or `VideoView` still needs the codec packs for
 VP9 and AV1, and does not play from a WebM file. A stream whose audio is Vorbis
-or FLAC plays silent in an ExoPlayer app; video from an app's native code
-(`AMediaCodec`) is not there yet.
+or FLAC plays silent in an ExoPlayer app. An app's native code (`AMediaCodec`)
+gets the same decoders but no encoder: a native recorder or converter finds
+none and says the format is not supported.
 
 **A phone photo (HEIC) or an AVIF picture does not show.** Windows decodes
 them: HEIC/HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video
@@ -153,7 +154,6 @@ before it is `run-<app>.1.log`). The most useful lines:
 | `Win.apk.InputTimeout: ANR:` | The app did not take the input it was given for five seconds; the launcher asked **Wiz isn't responding**, and the next line says the answer (`Close app` or `Wait`) |
 | `[win.apk] crash:` and `crash dump:` | The app's native code crashed. A minidump was written next to the log (`crash-<app>-<time>.dmp`): attach it too |
 | `[win.apk] guest called abort(); abort message: <text>` | The app's native code ended the app on purpose, and the text says why (what Android shows as "Abort message" in a crash report): `terminating due to uncaught exception of type ...` is a C++ error nothing caught. A `crash dump:` line follows |
-| `[win.apk] android.icu: Windows' ICU (icu.dll) is not available; ...` | This Windows has no `icu.dll` (Windows 10 before version 1903, or Wine). Apps keep working: numbers are still written the language's way, but units are written with their international symbols ("5 km", "3 h") rather than in the language's own words, and some locale details are generic |
 | `[win.apk] arm64 AOT: off for this app` | An ARM-only app crashed twice with its translation, so it runs on the JIT ([details](arm-apps.md#if-an-arm-app-crashes)) |
 | `[win.apk] arm64: a guest library's mprotect would make ... host code` | An ARM library tried to patch or hook Win.apk's own code, as libraries do to libc on a phone; Win.apk refuses it (the library is told `EACCES`). Most libraries carry on without their hook; if the app stops right after, report it with the log |
 | `[win.apk] AOSP graphics:` | `on` is Android's own graphics and text, the only drawing code Win.apk has. `[win.apk] error: AOSP graphics: ... is missing` or `does not load`, then `cannot start`, means this copy of Win.apk lacks those files or could not load them, and nothing starts: reinstall Win.apk |
@@ -197,7 +197,9 @@ What makes a report useful:
   saves the app's own picture and the window as shown, side by side, in the
   logs folder (`snapshot-...-frame.png`, `snapshot-...-window.png`), and writes
   the numbers between the two into the log;
-- **the whole log**, not a part of it.
+- **the whole log**, not a part of it, as the file itself: drag `run-<app>.log`
+  into the form. Pasted into the text, a log is cut where GitHub's limit of
+  65,536 characters falls, and the failure is usually at its end.
 
 You can write in English or in Hebrew. Security problems go to
 [SECURITY.md](../SECURITY.md), not to a public issue.

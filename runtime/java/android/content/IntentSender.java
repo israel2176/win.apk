@@ -83,6 +83,15 @@ public class IntentSender implements Parcelable {
      *  startActivityIntentSender). */
     public android.app.PendingIntent macapkTarget() { return target; }
 
+    /** {@hide} AOSP IntentSender.getTarget(): the IIntentSender behind this sender, which AOSP's
+     *  Activity.startIntentSenderForResult and ContextImpl.startIntentSender hand to
+     *  IActivityTaskManager.startActivityIntentSender; null for a target-less one. */
+    public IIntentSender getTarget() { return target != null ? target.macapkTarget() : null; }
+
+    /** {@hide} AOSP IntentSender.getWhitelistToken(): the token that lets a background start
+     *  through; there are no background start limits here, so none. */
+    public android.os.IBinder getWhitelistToken() { return null; }
+
     /** AOSP :317 -- `return getCreatorPackage();` verbatim. */
     public String getTargetPackage() { return getCreatorPackage(); }
 

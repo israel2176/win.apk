@@ -10,11 +10,16 @@
 # on the view's holder, as on a device (windows/test/glthread). SurfaceTexture is left out (Win.apk
 # keeps its own: camera, video and TextureView frames), and BLASTBufferQueue (Win.apk's: a BLAST
 # layer's buffers are the window manager compositor's layer, not libgui's queue, which the DLL lacks).
+# ICU4J is AOSP's too (android.icu, with com.android.icu, Android's own additions to it), as apps see
+# it on a device: every calendar (Hebrew, Islamic, Chinese...), the number, date, plural, measure and
+# relative-time formatters, collation, normalization, transliteration, break iterators and the Bidi the
+# text layout runs, on the ICU 72 data this jar's DLL reads (bin/aosp/icu, android.icu.platform
+# .AndroidDataFiles in windows/java/aosp_gfx names it); Win.apk's own small android.icu over the JDK is gone.
 # .uau files are Robolectric's annotations, not classes.
 #
 #   aosp_gfx_take <android-all's entry list>    prints the class files to take, one per line
 
 aosp_gfx_take() {
-    grep -E '^(android/graphics/.*|android/opengl/GLSurfaceView([$].*)?|android/text/(Layout|StaticLayout|BoringLayout|DynamicLayout|MeasuredParagraph|PrecomputedText|TextLine|Hyphenator|FontConfig)([$].*)?|android/util/PathParser([$].*)?|com/android/internal/graphics/drawable/AnimationScaleListDrawable([$].*)?)\.class$' \
+    grep -E '^(android/graphics/.*|android/icu/.*|com/android/icu/.*|android/opengl/GLSurfaceView([$].*)?|android/text/(Layout|StaticLayout|BoringLayout|DynamicLayout|MeasuredParagraph|PrecomputedText|TextLine|Hyphenator|FontConfig)([$].*)?|android/util/PathParser([$].*)?|com/android/internal/graphics/drawable/AnimationScaleListDrawable([$].*)?)\.class$' \
         "$1" | grep -vE '^android/graphics/(SurfaceTexture|BLASTBufferQueue)([$.])'
 }
