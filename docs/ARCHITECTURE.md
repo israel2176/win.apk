@@ -455,7 +455,10 @@ into interpretation through an execute-fault handler, since arm64 text is
 never mapped executable. A raw system call (`SVC #0`, or the `syscall()`
 import) carries arm64's numbers, which `arm64_abi.cpp` maps onto the shim:
 memory (`mmap` 222, `munmap` 215, `mprotect` 226, through the same wrappers
-as the imports, so an executable mapping becomes guest code; `mremap` 216,
+as the imports, so an executable mapping becomes guest code, but never a
+host image's code: an arm64 caller's `mprotect` or `MAP_FIXED` over an
+executable section of the exe, a DLL or a translation is `EACCES` with one
+log line, as `include/winapk/host_code.h` explains; `mremap` 216,
 which moves a private mapping by copying it), `futex`, the ids, clocks and
 sleeps, files (`openat` relative to a directory descriptor, with arm64's
 `O_DIRECTORY`/`O_NOFOLLOW` values, which the `open`/`openat` imports convert
@@ -511,8 +514,13 @@ checked against its SHA-256.
   a size and a format; a window surface on it is a pbuffer that grows with
   the window, and `eglSwapBuffers` reads it back and presents it.
 
-Each GL view renders into its own pbuffer; after a frame the pixels are read
-back and become a layer under the app's windows (below). Vulkan is not
+All of an app's GL, from Java or native code, is on one ANGLE display of the
+app's own (`host/gl/gl_surface.cpp`), drawn by the app's own threads; the host
+draws nothing on it, because ANGLE takes no lock between contexts that share
+nothing on one Direct3D 11 device. A window surface's frame is read back at
+the app's swap, on its thread, and becomes a layer under the app's windows
+(below); until a SurfaceView's producer has drawn, the render tick shows black
+in its place, as AOSP's SurfaceView shows its background layer. Vulkan is not
 implemented.
 
 ### The view tree's frames
@@ -542,7 +550,7 @@ magnifier's popup, a drag shadow) is a layer as well, which Win.apk's
 `SurfaceControl` keeps in SurfaceFlinger's tree (parent, position, z, shown, as
 Transactions set them) and `Compositor` draws over its window. A
 window drawn in software (`hardwareAccelerated="false"`) posts its bitmap to
-its layer. What the host has as pixels (a GL view read back, a SurfaceView's
+its layer. What the host has as pixels (an EGL window surface read back, a SurfaceView's
 `lockCanvas`, an app's native window, a video frame) is a host layer under the
 windows, seen through the hole a SurfaceView punches, or over them for
 `setZOrderOnTop`. `PixelCopy` reads a window's layer back; a `HARDWARE` bitmap

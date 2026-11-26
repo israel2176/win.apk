@@ -151,6 +151,11 @@ WINAPK_GUEST_ABI int64_t host_many_args(int64_t a, int64_t b, int64_t c, int64_t
            static_cast<int64_t>(x * 100 + y * 1000);
 }
 
+// Host code an arm64 library tries to protect (arm64_bridge_guest.c, arm64_host_code): a function in this
+// exe's .text and a string in its .rdata, like the one gai_strerror returns.
+__attribute__((noinline)) int host_code_probe(int x) { return 3 * x + 1; }
+const char kHostString[] = "a string in the host's .rdata, as gai_strerror returns";
+
 void run_bridge(winapk::GuestLinker& linker, const char* file) {
     std::printf("%s\n", file);
     std::string error;
@@ -264,6 +269,23 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
               raw2 == 65535, std::to_string(raw2));
         check("set_tid_address: the word is cleared when the thread ends", call0("arm64_set_tid_address") == 3,
               std::to_string(call0("arm64_set_tid_address")));
+    }
+
+    // Host code is not the guest's (arm64_abi.cpp, host_code.h): mprotect and MAP_FIXED over a host function's
+    // page are EACCES (PROT_READ | PROT_EXEC, what it is, succeeds), by import and by SVC; the function is never
+    // guest code and still runs; a page of the exe's .rdata may become executable and back.
+    {
+        const uint64_t args[2] = {reinterpret_cast<uint64_t>(&host_code_probe),
+                                  reinterpret_cast<uint64_t>(kHostString)};
+        const void* f = fn("arm64_host_code");
+        const int bits = f ? static_cast<int>(winapk::arm64::call(f, args, 2)) : -1;
+        check("host code: mprotect RWX, PROT_READ and SVC 226 refused with EACCES, PROT_READ | PROT_EXEC a no-op, "
+              "MAP_FIXED refused; a .rdata page made executable and back",
+              bits == 63, std::to_string(bits));
+        volatile int x = 4;
+        check("host code: never registered as guest code, and still runs",
+              !winapk::arm64::is_guest_code(reinterpret_cast<const void*>(&host_code_probe)) &&
+                  !winapk::arm64::is_guest_code(kHostString) && host_code_probe(x) == 13);
     }
 
     const int exits_before = call0("arm64_exit_count");

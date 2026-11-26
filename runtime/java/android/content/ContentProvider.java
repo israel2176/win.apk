@@ -759,6 +759,57 @@ public abstract class ContentProvider implements ContentInterface, ComponentCall
         return auth.substring(end + 1);
     }
 
+    /** {@hide} AOSP ContentProvider.getUserIdFromAuthority: the user id an authority carries as
+     *  "userId@authority", else defaultUserId; USER_NULL for an id that does not parse. AOSP's
+     *  ContextImpl (uri permissions) and its ApplicationContentResolver read it. */
+    public static int getUserIdFromAuthority(String auth, int defaultUserId) {
+        if (auth == null) return defaultUserId;
+        int end = auth.lastIndexOf('@');
+        if (end == -1) return defaultUserId;
+        try {
+            return Integer.parseInt(auth.substring(0, end));
+        } catch (NumberFormatException e) {
+            android.util.Log.w("ContentProvider", "Error parsing userId.", e);
+            return android.os.UserHandle.USER_NULL;
+        }
+    }
+
+    /** {@hide} AOSP: getUserIdFromAuthority(auth, UserHandle.USER_CURRENT). */
+    public static int getUserIdFromAuthority(String auth) {
+        return getUserIdFromAuthority(auth, -2 /* UserHandle.USER_CURRENT */);
+    }
+
+    /** {@hide} AOSP ContentProvider.getUserIdFromUri(uri, defaultUserId). */
+    public static int getUserIdFromUri(Uri uri, int defaultUserId) {
+        if (uri == null) return defaultUserId;
+        return getUserIdFromAuthority(uri.getAuthority(), defaultUserId);
+    }
+
+    /** {@hide} AOSP: getUserIdFromUri(uri, UserHandle.USER_CURRENT). */
+    public static int getUserIdFromUri(Uri uri) {
+        return getUserIdFromUri(uri, -2 /* UserHandle.USER_CURRENT */);
+    }
+
+    /** {@hide} AOSP ContentProvider.uriHasUserId. */
+    public static boolean uriHasUserId(Uri uri) {
+        if (uri == null) return false;
+        return !android.text.TextUtils.isEmpty(uri.getUserInfo());
+    }
+
+    /** {@hide} AOSP ContentProvider.maybeAddUserId: a content uri gets "userId@" in front of its
+     *  authority unless it has one or the user is USER_CURRENT. AOSP's InputContentInfo calls it. */
+    public static Uri maybeAddUserId(Uri uri, int userId) {
+        if (uri == null) return null;
+        if (userId != -2 /* UserHandle.USER_CURRENT */ && ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            if (!uriHasUserId(uri)) {
+                Uri.Builder builder = uri.buildUpon();
+                builder.encodedAuthority("" + userId + "@" + uri.getEncodedAuthority());
+                return builder.build();
+            }
+        }
+        return uri;
+    }
+
     /** {@hide} AOSP ContentProvider.getUriWithoutUserId: the uri with its authority's "userId@" taken
      *  off. */
     public static Uri getUriWithoutUserId(Uri uri) {

@@ -151,6 +151,11 @@ add_dependencies(winapk-aot-cache-test winapk-aot-test-dll)
 add_executable(winapk-aot-stamp-test test/aot_stamp_test.cpp)
 target_include_directories(winapk-aot-stamp-test PRIVATE include)
 
+# Which pages of a loaded PE image are host code, which an arm64 library may not mprotect
+# (include/winapk/host_code.h). No file and no Windows call in it. test/host_code_test.cpp.
+add_executable(winapk-host-code-test test/host_code_test.cpp)
+target_include_directories(winapk-host-code-test PRIVATE include)
+
 # The App Link sign-in window's one decision (host/applink_match.h): is a
 # navigation the sign-in's return to the app? No window. test/applink_match_test.cpp.
 add_executable(winapk-applink-test test/applink_match_test.cpp)
