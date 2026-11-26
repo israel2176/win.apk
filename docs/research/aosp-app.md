@@ -232,6 +232,11 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   `ResumeActivityItem`), and destroys the finishing one when the one under it
   is idle; the last one destroyed ends the task.
 - `PackageService` (`IPackageManager`): the uid's package, the app's info.
+- `SliceService` (`ISliceManager`, "slice"): what AOSP's `SliceManager` asks,
+  answered as a phone with no slice host: pins (the first reaches the
+  provider's `onSlicePinned`), grants, `hasSliceAccess` false. The
+  `android.app.slice` package is AOSP's, taken with the other platform classes
+  apps extend that Win.apk had none of (`aosp_app_take.sh`, `PLATFORM_TAKE`).
 - `Compat`: below. (`ApplicationStatics`, the four statics added to AOSP's
   `Application`, went at A4: the framework asks `com.macapk.loader.app.Apps`.)
 

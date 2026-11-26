@@ -1154,6 +1154,8 @@ public abstract class Context {
     public static final String ROLE_SERVICE                  = "role";
     /** @SystemApi AOSP Context.ROLLBACK_SERVICE. */
     public static final String ROLLBACK_SERVICE              = "rollback";
+    /** AOSP Context.SLICE_SERVICE. */
+    public static final String SLICE_SERVICE                 = "slice";
     public static final String STATUS_BAR_SERVICE            = "statusbar";
     public static final String STORAGE_STATS_SERVICE         = "storagestats";
     public static final String SYSTEM_HEALTH_SERVICE         = "systemhealth";
@@ -1597,6 +1599,21 @@ public abstract class Context {
                 // "Android is missing rollback service" when this is null.
                 result = new android.content.rollback.RollbackManager(this);
                 break;
+            case SLICE_SERVICE:
+                // AOSP's SliceManager (lib/aosp-app.jar) over the in-process slice service an app's
+                // process registers (com.winapk.aospapp.SliceService): pins and grants as a phone keeps
+                // them, with no slice host. A process without it (no app layer) has none to hand out.
+                if (android.os.ServiceManager.getService(SLICE_SERVICE) != null) {
+                    try {
+                        result = new android.app.slice.SliceManager(this,
+                                new android.os.Handler(android.os.Looper.getMainLooper()));
+                    } catch (android.os.ServiceManager.ServiceNotFoundException e) {
+                        result = null;
+                    }
+                } else {
+                    result = null;
+                }
+                break;
             case CREDENTIAL_SERVICE:
                 // No credential providers on a de-Googled device; the manager
                 // exists and its get/create calls report "no credential" via
@@ -1711,6 +1728,8 @@ public abstract class Context {
                 return ACCESSIBILITY_SERVICE;
             case "android.credentials.CredentialManager":
                 return CREDENTIAL_SERVICE;
+            case "android.app.slice.SliceManager":
+                return SLICE_SERVICE;
             // v1.0.463 (subsystem-04): explicit mappings for managers whose
             // canonical service name does NOT derive from the simple-name via
             // the strip-Manager + lowercase-first heuristic (snake_case names,

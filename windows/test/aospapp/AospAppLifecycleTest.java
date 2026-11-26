@@ -118,6 +118,27 @@ public class AospAppLifecycleTest {
         @Override public int update(android.net.Uri uri, android.content.ContentValues v, String s, String[] a) { return 0; }
     }
 
+    /** A slice provider (android.app.slice.SliceProvider, AOSP's, as Google Play services declares
+     *  several): installed by ActivityThread.installProvider before Application.onCreate like any
+     *  provider, then reached through the slice manager: a pin reaches onSlicePinned, a bind
+     *  onBindSlice. */
+    static final String SLICES = PKG + ".slices";
+    static final List<String> slices = java.util.Collections.synchronizedList(new ArrayList<>());
+    static volatile String slicePinned;
+
+    public static class Slices extends android.app.slice.SliceProvider {
+        @Override public boolean onCreate() { slices.add("Slices.onCreate"); return true; }
+        @Override public android.app.slice.Slice onBindSlice(android.net.Uri uri,
+                java.util.Set<android.app.slice.SliceSpec> specs) {
+            return new android.app.slice.Slice.Builder(uri, specs.iterator().next())
+                    .addText("hi", null, java.util.List.of()).build();
+        }
+        @Override public void onSlicePinned(android.net.Uri uri) { slicePinned = uri.getPath(); }
+    }
+
+    static final List<String> SLICES_EXPECTED = List.of("Slices.onCreate", "App.onCreate", "manager true",
+            "pinned [content://" + SLICES + "/s]", "bound /s hi", "full access false");
+
     static final List<String> SVC_EXPECTED = List.of(
             "Started.onCreate", "Started.onStartCommand 1 go", "Started.onDestroy",
             "Bound.onCreate", "Bound.onBind", "connected to Bound", "Bound.onUnbind", "Bound.onDestroy");
@@ -132,6 +153,7 @@ public class AospAppLifecycleTest {
             super.onCreate();
             note("App.onCreate");
             prov.add("App.onCreate");
+            slices.add("App.onCreate");
             // A context's window manager is its own for the context's life (ContextImpl's service
             // cache): ToastPresenter keeps it only in a WeakReference and removes its toast with it.
             Object wm = getSystemService(WINDOW_SERVICE);
@@ -201,6 +223,19 @@ public class AospAppLifecycleTest {
                 try (android.database.Cursor c = getContentResolver().query(
                         android.net.Uri.parse("content://" + AUTHORITY + "/x"), null, null, null, null)) {
                     prov.add(c != null && c.moveToFirst() ? "query " + c.getString(0) : "query nothing");
+                }
+                android.app.slice.SliceManager sm = getSystemService(android.app.slice.SliceManager.class);
+                slices.add("manager " + (sm != null));
+                if (sm != null) {
+                    android.net.Uri su = android.net.Uri.parse("content://" + SLICES + "/s");
+                    java.util.Set<android.app.slice.SliceSpec> specs =
+                            java.util.Set.of(new android.app.slice.SliceSpec("test", 1));
+                    sm.pinSlice(su, specs);
+                    slices.add("pinned " + sm.getPinnedSlices());
+                    android.app.slice.Slice bound = sm.bindSlice(su, specs);
+                    slices.add(bound == null ? "bound nothing" : "bound " + bound.getUri().getPath() + " "
+                            + bound.getItems().get(0).getText());
+                    slices.add("full access " + sm.hasSliceAccess());
                 }
                 startService(new Intent(this, Started.class).putExtra("s", "go"));
                 sendOrderedBroadcast(new Intent(STATIC).setPackage(PKG).putExtra("v", "m"), null,
@@ -445,6 +480,8 @@ public class AospAppLifecycleTest {
             + "    </receiver>\n"
             + "    <provider android:name=\"AospAppLifecycleTest$Provider\" android:authorities=\"" + AUTHORITY
             + "\" android:exported=\"false\"/>\n"
+            + "    <provider android:name=\"AospAppLifecycleTest$Slices\" android:authorities=\"" + SLICES
+            + "\" android:exported=\"true\"/>\n"
             + "  </application>\n"
             + "</manifest>\n";
 
@@ -528,6 +565,11 @@ public class AospAppLifecycleTest {
         if (!prov.equals(List.of("Provider.onCreate", "App.onCreate", "query hello x"))) {
             System.out.println("FAILED: the provider gave " + prov + ", Android gives [Provider.onCreate, App.onCreate,"
                     + " query hello x]");
+            System.exit(1);
+        }
+        if (!slices.equals(SLICES_EXPECTED) || !"/s".equals(slicePinned)) {
+            System.out.println("FAILED: the slice provider gave " + slices + ", onSlicePinned " + slicePinned
+                    + ", Android gives " + SLICES_EXPECTED + ", onSlicePinned /s");
             System.exit(1);
         }
         if (!rcv.equals(List.of("Static m ordered=true", "Dyn 7", "result 8"))) {

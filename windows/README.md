@@ -1419,6 +1419,7 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 | Part | Today | Budget |
 |---|---:|---:|
 | AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 60.5 MB | 70 MB |
+| AOSP app layer (`lib\aosp-app.jar`; 1.6 MB before the platform classes apps extend, `PLATFORM_TAKE`) | 2.1 MB | 3 MB |
 | Java runtime (`jre\`) | 127.3 MB | 140 MB |
 | The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
 | Win.apk itself (the rest, `bin\tools\` included) | 105.2 MB, about 81 MB without the API-36 table and the shadowed classes, about 74 MB without Java2D's graphics | 92 MB |
@@ -3906,6 +3907,29 @@ every such change is listed here:
   (`SurfaceControlViewHost`'s). `android/view/SurfaceView.java`: AOSP's `onSetSurfacePositionAndScale`
   (`InlineContentView` overrides it). `windows/test/aospapp/MagnifierTest.java` checks the tree and
   `Magnifier.show`.
+- Platform classes apps extend (Google Play services crashed at every start, 26.34.36): R8 puts into an app
+  built for an older minSdk a stand-in for each platform class the app extends that its minSdk lacks, a class
+  whose static initializer throws `NoClassDefFoundError`; on a device the boot class path's class wins over
+  it, and `AppClassLoader` asks the framework first for `android.*` as ART does, so the stand-in was loaded
+  only because Win.apk had no such class. Play services declares slice providers
+  (`FastPairSliceProvider`...), so installing them threw `NoClassDefFoundError` from
+  `android.app.slice.SliceProvider.<clinit>`. `runtime/java/android/app/slice/` (deleted): the package is
+  AOSP 14's, taken whole into `lib/aosp-app.jar` (`aosp_app_take.sh`'s `PLATFORM_TAKE`, with
+  `android.app.appsearch`, `android.net.wifi.aware` and `.rtt`, and `MediaRoute2ProviderService` with its
+  AIDL: the other platform classes Play services, the Play Store and the Services Framework carry stand-ins
+  for). `android/content/Context.java`: `SLICE_SERVICE`, AOSP's `SliceManager` over the in-process
+  `ISliceManager` an app's process registers (`windows/java/aosp_app/.../SliceService.java`: pins and grants
+  as a phone with no slice host keeps them; a first pin reaches the provider's `onSlicePinned`).
+  `android/content/ContentProvider.java`: AOSP's `getUriWithoutUserId` and `validateIncomingUri` (the
+  slice provider checks each uri with them; `android/provider/DocumentsProvider.java`'s private copy of the
+  latter is gone). `android/os/Bundle.java`: `setDefusable(Bundle, boolean)` (no effect outside the
+  system server); `android/os/Parcel.java`: `readStringArray()`. `android/net/nsd/NsdManager.java`:
+  `ServiceInfoCallback` and `registerServiceInfoCallback` (it fails, as every request there);
+  `android/net/wifi/WifiManager.java`: `LocalOnlyHotspotCallback`, `LocalOnlyHotspotReservation` (none is
+  made) and `startLocalOnlyHotspot` (`onFailed(ERROR_GENERIC)`: no hotspot here). The app search, Wi-Fi Aware
+  and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
+  is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
+  `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
 
 ## License
 

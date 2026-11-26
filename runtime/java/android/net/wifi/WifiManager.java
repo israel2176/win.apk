@@ -305,6 +305,40 @@ public class WifiManager {
      *  hotspot. An app cannot start one here, and does not see the host's. */
     public boolean isWifiApEnabled() { return false; }
 
+    /** AOSP WifiManager.LocalOnlyHotspotCallback (API 26): Play services extends it (R8 puts a
+     *  stand-in into the app that fails at first use when no platform class is there). */
+    public static class LocalOnlyHotspotCallback {
+        public static final int REQUEST_REGISTERED = 0;
+        public static final int ERROR_NO_CHANNEL = 1;
+        public static final int ERROR_GENERIC = 2;
+        public static final int ERROR_INCOMPATIBLE_MODE = 3;
+        public static final int ERROR_TETHERING_DISALLOWED = 4;
+        public LocalOnlyHotspotCallback() {}
+        public void onStarted(LocalOnlyHotspotReservation reservation) {}
+        public void onStopped() {}
+        public void onFailed(int reason) {}
+    }
+
+    /** AOSP WifiManager.LocalOnlyHotspotReservation: what onStarted hands over. None is made here (no
+     *  hotspot starts), so it has only the members that need no SoftApConfiguration. */
+    public class LocalOnlyHotspotReservation implements AutoCloseable {
+        LocalOnlyHotspotReservation() {}
+        public WifiConfiguration getWifiConfiguration() { return null; }
+        @Override public void close() {}
+    }
+
+    /** AOSP startLocalOnlyHotspot (API 26): an app cannot start a hotspot here (isWifiApEnabled), so
+     *  the request fails as WifiServiceImpl fails one it cannot serve, ERROR_GENERIC, on the given
+     *  handler's looper (the main one without it), after the call has returned. */
+    public void startLocalOnlyHotspot(final LocalOnlyHotspotCallback callback, android.os.Handler handler) {
+        if (callback == null) throw new IllegalArgumentException("callback cannot be null");
+        android.os.Handler h = handler != null ? handler : new android.os.Handler(android.os.Looper.getMainLooper());
+        h.post(() -> callback.onFailed(LocalOnlyHotspotCallback.ERROR_GENERIC));
+    }
+
+    /** AOSP cancelLocalOnlyHotspotRequest: no request was ever granted. */
+    public void cancelLocalOnlyHotspotRequest() {}
+
     /** AOSP isWpa3SaeSupported(): the host's radio report does not say, and the
      *  networks an app could ask to join with it are refused anyway
      *  (addNetwork), so the claim an app can rely on is "no". */

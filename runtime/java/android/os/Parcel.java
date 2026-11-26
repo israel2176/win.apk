@@ -1230,6 +1230,9 @@ public final class Parcel {
         for (int i = 0; i < n; i++) arr[i] = readString();
         return arr;
     }
+    /** {@hide} AOSP readStringArray(): the array createStringArray reads (AOSP's Slice and SliceItem
+     *  read their hints with it). */
+    public String[] readStringArray() { return createStringArray(); }
     public void readStringArray(String[] out) {
         int n = readInt();
         if (out != null && n == out.length) for (int i = 0; i < n; i++) out[i] = readString();
