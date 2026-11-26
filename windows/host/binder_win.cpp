@@ -147,19 +147,7 @@ HANDLE open_peer(DWORD pid) {
 }
 
 // Owner and SYSTEM only; no inheritance.
-SECURITY_ATTRIBUTES* pipe_security() {
-    static SECURITY_ATTRIBUTES sa = [] {
-        SECURITY_ATTRIBUTES a{};
-        a.nLength = sizeof a;
-        a.bInheritHandle = FALSE;
-        const std::wstring sddl = L"D:P(A;;GA;;;" + self_sid() + L")(A;;GA;;;SY)";
-        PSECURITY_DESCRIPTOR sd = nullptr;
-        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr))
-            a.lpSecurityDescriptor = sd;
-        return a;
-    }();
-    return sa.lpSecurityDescriptor ? &sa : nullptr;
-}
+SECURITY_ATTRIBUTES* pipe_security() { return binder::owner_pipe_security(); }
 
 // ---- framing (binder_wire.h has the layout) ----------------------------------------
 

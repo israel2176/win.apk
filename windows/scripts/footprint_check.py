@@ -34,8 +34,10 @@ BUDGETS = [
     # platform classes apps extend that Win.apk had none of (aosp_app_take.sh's PLATFORM_TAKE: app search
     # 0.19 MB, Wi-Fi Aware 0.11, RTT 0.05, slices 0.04).
     ("AOSP app layer", ["lib/aosp-app.jar"], 3),
-    ("AOSP graphics (what everything draws with)",
-     ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
+    # 70 until AOSP's ICU4J (android.icu) joined the jar (about 3 MB) and its data the ICU trees ICU4J reads
+    # (time zone names, units, spelled-out numbers, transliterators: about 6.5 MB), about 70 MB then.
+    ("AOSP graphics (what everything draws with, and ICU)",
+     ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 78),
     ("Java runtime (jre/)", ["jre/"], 140),
     ("ARM translation's compiler (clang/)", ["clang/"], 250),
     # 120 until November 2026; 24 MB less since (the API-36 table and the framework's shadowed classes),

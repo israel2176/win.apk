@@ -187,6 +187,9 @@ target_include_directories(winapk-frame-times-test PRIVATE host)
 add_executable(winapk-machine-load-test test/machine_load_test.cpp)
 target_include_directories(winapk-machine-load-test PRIVATE host)
 
+# The toast an Android notification becomes and the clicks that come back (test/toast_xml_test.cpp).
+add_executable(winapk-toast-xml-test test/toast_xml_test.cpp)
+
 # When an app's presenting eglSwapBuffers returns (host/swap_pacing.h): producers of several
 # speeds on a simulated clock. No window. test/swap_pacing_test.cpp.
 add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
@@ -332,7 +335,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp
                               host/native_wallpaper.cpp host/native_picker.cpp
-                              host/native_gamepad.cpp host/native_icu.cpp
+                              host/native_gamepad.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
@@ -381,9 +384,9 @@ if(WINAPK_JNI_INCLUDE)
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp
                  host/native_window.cpp host/native_asset.cpp
-                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/native_sensor.cpp
+                 host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/ndk_camera.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
-                 host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp
+                 host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp host/ndk_media_codec.cpp
                  host/native_activity.cpp
                  ${WINAPK_SOFT_CODEC_SOURCES}
                  ${WINAPK_GL_UPSTREAM})
@@ -443,6 +446,25 @@ if(WINAPK_JNI_INCLUDE)
   target_include_directories(winapk-video-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
   target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
+
+  # libmediandk's AMediaExtractor, AMediaCodec and AMediaDataSource as an app's native code
+  # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.
+  add_executable(winapk-ndk-media-test test/ndk_media_test.cpp host/native_media.cpp host/ndk_media_codec.cpp
+                 host/video_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
+  target_include_directories(winapk-ndk-media-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_include_directories(winapk-ndk-media-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-ndk-media-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid
+                        shlwapi)
+  target_link_options(winapk-ndk-media-test PRIVATE -static)
+
+  # libcamera2ndk and AImageReader as an app's native code calls them (test/ndk_camera_test.cpp),
+  # on a camera of the test's own: no webcam needed.
+  add_executable(winapk-ndk-camera-test test/ndk_camera_test.cpp host/ndk_camera.cpp)
+  target_include_directories(winapk-ndk-camera-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_libraries(winapk-ndk-camera-test PRIVATE windowscodecs ole32 oleaut32 uuid)
+  target_link_options(winapk-ndk-camera-test PRIVATE -static)
 
   # The built-in software decoders and the WebM demuxer without Media
   # Foundation (test/soft_codecs_test.cpp), on test/video's WebM files.

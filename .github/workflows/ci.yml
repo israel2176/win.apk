@@ -487,10 +487,16 @@ jobs:
         run: ./build/winapk-opensles-test.exe "$(cygpath -w "$PWD/windows/test/audio")"
       - name: Run the video backend test
         run: ./build/winapk-video-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK media test
+        run: ./build/winapk-ndk-media-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK camera test
+        run: ./build/winapk-ndk-camera-test.exe
       - name: Run the software codecs and WebM demuxer test
         run: ./build/winapk-soft-codecs-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the shared-folder mapping test
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
+      - name: Run the notification toast test
+        run: ./build/winapk-toast-xml-test.exe
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
       - name: Run the screen-reader model test (names, patterns, events, text units)
@@ -652,6 +658,14 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
+      - name: Run the notification actions test
+        run: |
+          # Which of a notification's actions become the host's buttons, and the reply's intent.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/notification-actions-test windows/test/java/com/macapk/loader/NotificationActionsTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/notification-actions-test)" \
+            com.macapk.loader.NotificationActionsTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
@@ -702,19 +716,17 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
             -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
           grep -q "ALL PASSED" datetimeview-test.log
-      - name: Run the android.icu fallback test
+      - name: Run the ICU test
         run: |
-          # android.icu with no host ICU (no icu.dll: Windows 10 before 1903,
-          # Wine): a plain JVM registers no HostIcu native, and every call must
-          # answer from Java (IcuFallback) instead of throwing: MeasureFormat as
-          # Hermes' Intl.NumberFormat calls it, LocaleData.
+          # AOSP's ICU4J (android.icu, aosp-graphics.jar) on the ICU data the stage ships, named as the host
+          # names it: the Hebrew and Islamic calendars, plurals, numbers, measures, relative times,
+          # collation, time zone names, transliteration and Bidi.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
-          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/icu-fallback-test \
-            windows/test/java/com/macapk/icu/HostIcuFallbackTest.java
-          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/icu-fallback-test)" com.macapk.icu.HostIcuFallbackTest \
-            | tee icu-fallback-test.log
-          grep -q "ALL PASSED" icu-fallback-test.log
+          cp="$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -encoding UTF-8 -cp "$cp" -d build/icu-test windows/test/java/android/icu/AospIcuTest.java
+          "$JAVA_HOME/bin/java" -Dfile.encoding=UTF-8 -Dicu.data.path="$(cygpath -w stage/bin/aosp/icu/icudt72l.dat)" \
+            -cp "$cp;$(cygpath -w build/icu-test)" android.icu.AospIcuTest | tee icu-test.log
+          grep -q "ALL PASSED" icu-test.log
       - name: Run the HttpURLConnection request properties test
         run: |
           # The request side of the connection an app gets (runtime/net_spi's
