@@ -335,6 +335,7 @@ public final class ActivityHost {
      *  Win+D), from the window's thread: the task goes behind, its resumed activity paused and
      *  stopped, as a device does for a task moved to the back. */
     public static void macapkHostMinimized() {
+        noteTaskBehind(true);
         com.macapk.loader.app.AppHost h = appHost();
         if (h != null) h.hostMinimized();
     }
@@ -342,6 +343,7 @@ public final class ActivityHost {
     /** The window came back: the task comes to the front (restarted, started, resumed), or the
      *  launcher activity starts again on an empty one. */
     public static void macapkTaskToFront() {
+        noteTaskFront();
         com.macapk.loader.app.AppHost h = appHost();
         if (h != null) h.taskToFront();
     }
@@ -369,31 +371,50 @@ public final class ActivityHost {
     static void macapkDeliverCrossApp(Intent intent, String sender) {
         com.macapk.loader.app.AppHost h = appHost();
         if (h == null) return;
+        noteTaskFront();
         try { NativeCocoa.moveTaskToFront(); } catch (Throwable ignored) {}
         h.deliver(intent, sender);
     }
 
-    /** The host-launch POLICY shared by host URL opens and cross-app starts: the
-     *  harness kill switch, and "a human just did something" (the v1.0.822 /
-     *  v1.0.849 recency window). A refusal is the background-activity-launch
-     *  START_ABORTED answer: silent to the caller, logged here. */
+    // Android's rule for an app starting an activity (BackgroundActivityStartController, AOSP 14):
+    // an app whose task is in front starts what it likes, whatever the user last did; an app in
+    // the background may not, except within ACTIVITY_BG_START_GRACE_PERIOD_MS (10 s) of its own
+    // activity finishing or its task going behind, and that grace ends when the user goes home
+    // (stopAppSwitches). Win.apk's task is the window: in front unless the user minimized it (the
+    // home button) or the app sent it behind (moveTaskToBack, its last activity finished).
+    static final long BG_START_GRACE_MS = 10_000L;
+    private static volatile long sBehindSince;      // 0: the task is in front
+    private static volatile boolean sBehindByUser;
+
+    /** The task went behind: by the user (the window minimized) or by the app itself (Boot's
+     *  moveToBack and taskEmpty). */
+    public static void noteTaskBehind(boolean byUser) {
+        if (sBehindSince == 0L) sBehindSince = System.currentTimeMillis();
+        if (byUser) sBehindByUser = true;
+    }
+
+    static void noteTaskFront() {
+        sBehindSince = 0L;
+        sBehindByUser = false;
+    }
+
+    /** Pure: whether a start is allowed in the state above. */
+    static boolean launchAllowed(long behindSince, boolean behindByUser, long now) {
+        if (behindSince == 0L) return true;
+        return !behindByUser && now - behindSince < BG_START_GRACE_MS;
+    }
+
+    /** The host-launch policy shared by host URL opens and cross-app starts. A refusal is the
+     *  background-activity-launch START_ABORTED answer: silent to the caller, logged here. */
     static boolean macapkLaunchAllowed(String what) {
-        if (externalUrlsOff()) {
-            NativeLog.w(TAG, "REFUSED " + what + ": MACAPK_EXTERNAL_URLS=0 (harness run)");
-            return false;
-        }
-        if (!allowHostUrlAtLaunch()) {
-            long last = TouchDispatcher.lastUserInputMillis();
-            long age = (last == 0L) ? Long.MAX_VALUE : (System.currentTimeMillis() - last);
-            if (age > hostUrlGraceMs()) {
-                NativeLog.w(TAG, "REFUSED " + what + ": last real input "
-                        + (last == 0L ? "NEVER" : (age + "ms ago"))
-                        + " (> " + hostUrlGraceMs() + "ms grace) -- a programmatic"
-                        + " launch, not a user click. MACAPK_ALLOW_HOST_URL_AT_LAUNCH=1 to allow.");
-                return false;
-            }
-        }
-        return true;
+        final long behind = sBehindSince;
+        final boolean byUser = sBehindByUser;
+        if (launchAllowed(behind, byUser, System.currentTimeMillis())) return true;
+        NativeLog.w(TAG, "REFUSED " + what + ": the app is in the background ("
+                + (byUser ? "the user minimized its window" : "behind for "
+                        + (System.currentTimeMillis() - behind) + " ms, past the " + BG_START_GRACE_MS + " ms grace")
+                + "), as Android refuses a background activity start");
+        return false;
     }
 
     /** The cover a host window (a prompt, a picker, a settings page standing in for an activity of
@@ -836,46 +857,6 @@ public final class ActivityHost {
         return sb.toString();
     }
 
-    private static Boolean s_allowHostUrlAtLaunch = null;
-    private static boolean allowHostUrlAtLaunch() {
-        if (s_allowHostUrlAtLaunch == null) {
-            s_allowHostUrlAtLaunch = false;
-        }
-        return s_allowHostUrlAtLaunch;
-    }
-
-    // v1.0.849: how recent a real input must be for a host-URL open to count
-    // as user-initiated. The v1.0.822 one-shot guard ("has the user EVER
-    // touched") stopped only the pre-first-touch hijack; one tap then armed
-    // host opens for the app's whole lifetime, so ad SDKs firing ACTION_VIEW
-    // minutes later still threw the user into Safari (owner report 2026-08-01:
-    // "we still have multiple apps opening browser links"; measured: subway
-    // opened an ad tracker mid-campaign after one harness tap). Android's own
-    // rule for background activity starts is a RECENT-user-interaction grace
-    // window, not ever-interacted -- mirror that. A human tapping a real link
-    // reaches this code within milliseconds, so 10s is generous for the
-    // legitimate case and hopeless for a delayed ad fire.
-    private static Long s_hostUrlGraceMs = null;
-    private static long hostUrlGraceMs() {
-        if (s_hostUrlGraceMs == null) {
-            long v = 10_000L;
-            s_hostUrlGraceMs = v;
-        }
-        return s_hostUrlGraceMs;
-    }
-    // v1.0.849: hard kill-switch for unattended harness runs. A CGEvent-
-    // synthesized click (debug/click.swift) is a REAL NSEvent by the time it
-    // reaches TouchDispatcher -- indistinguishable from a human -- so the
-    // recency gate alone cannot protect an automated sweep. The campaign
-    // harness sets MACAPK_EXTERNAL_URLS=0 and no host URL ever opens.
-    private static Boolean s_externalUrlsOff = null;
-    private static boolean externalUrlsOff() {
-        if (s_externalUrlsOff == null) {
-            s_externalUrlsOff = false;
-        }
-        return s_externalUrlsOff;
-    }
-
     static boolean hostUrlDryRun() { return false; }
 
     /** v1.0.849: the ONE policy choke point for handing a URL to the host.
@@ -890,51 +871,14 @@ public final class ActivityHost {
     /** `intent`: the intent being performed, when there is one (a URLSpan tap
      *  has none). A Custom Tab or TWA launch of a web URL opens in the
      *  runtime's own browser tab where the host has one (HostBrowserTab),
-     *  after the same two policy gates; everything else goes to the host. */
+     *  after the same policy; everything else goes to the host. */
     private static boolean openHost(String uri, String action, Intent intent) {
         if (uri == null) return false;
-        // v1.0.822 (revised v1.0.849, see hostUrlGraceMs above): a host-URL
-        // open must be USER-INITIATED. Original motivation stands: Simon
-        // Tatham's Puzzles fired ACTION_VIEW at its Play Store page from
-        // onCreate and every launch threw the user into Safari. Refusing is
-        // the Android-faithful answer: on a device this intent is reached
-        // because a human just tapped something.
-        //
-        // MACAPK_ALLOW_HOST_URL_AT_LAUNCH=1 restores the old always-open
-        // behaviour; MACAPK_EXTERNAL_URLS=0 refuses every open.
-        // A user-initiated browser open takes the shared sign-in redirect schemes
-        // this app claims (HostUrlIntake.claimRedirectSchemes: the redirect must
-        // return to the tab's opener). The decision is HostUrlIntake.shouldClaim,
-        // which is exactly "this open happens and a person made it": a programmatic
-        // open (a launch-time ad / rate-us) must not steal another app's in-flight
-        // sign-in redirect, and a REFUSED open (MACAPK_EXTERNAL_URLS=0) must not
-        // rewrite the machine-global LaunchServices default (the harness-only
-        // MACAPK_URL_REDIRECT_CLAIM_ON_REFUSAL=1 is the one exception, honoured only
-        // in that branch). The claim is made AFTER both refusal checks, just before
-        // the open. debug/urlscheme_gate.sh P5-P8 guard this ordering.
-        final boolean claim = HostUrlIntake.shouldClaim(allowHostUrlAtLaunch(),
-                TouchDispatcher.lastUserInputMillis(), System.currentTimeMillis(),
-                hostUrlGraceMs(), externalUrlsOff(), false);
-        if (externalUrlsOff()) {
-            if (claim) HostUrlIntake.claimRedirectSchemes(uri);   // harness opt-in only
-            NativeLog.w(TAG, "REFUSED " + action + " -> host open(" + uri
-                    + "): MACAPK_EXTERNAL_URLS=0 (harness run)");
-            return false;
-        }
-        if (!allowHostUrlAtLaunch()) {
-            long last = TouchDispatcher.lastUserInputMillis();
-            long age = (last == 0L) ? Long.MAX_VALUE
-                                    : (System.currentTimeMillis() - last);
-            if (age > hostUrlGraceMs()) {
-                NativeLog.w(TAG, "REFUSED " + action + " -> host open(" + uri
-                        + "): last real input "
-                        + (last == 0L ? "NEVER" : (age + "ms ago"))
-                        + " (> " + hostUrlGraceMs() + "ms grace) -- treating as a"
-                        + " programmatic browser hijack, not a user click."
-                        + " MACAPK_ALLOW_HOST_URL_AT_LAUNCH=1 to allow.");
-                return false;
-            }
-        }
+        // Allowed exactly when Android would let the app start the browser's activity
+        // (macapkLaunchAllowed). An open that happens takes the shared sign-in redirect schemes
+        // this app claims (HostUrlIntake.claimRedirectSchemes: the redirect must return to the
+        // tab's opener); a refused one claims nothing.
+        if (!macapkLaunchAllowed(action + " -> host open(" + HostUrlIntake.redact(uri) + ")")) return false;
         // The runtime's own browser tab: not a host open, so neither the dry
         // run below nor a redirect-scheme claim applies (the tab returns the
         // redirect to this app itself).
@@ -943,7 +887,7 @@ public final class ActivityHost {
                     + HostUrlIntake.redact(uri) + ")");
             return true;
         }
-        return openHostNow(uri, action, claim);
+        return openHostNow(uri, action, true);
     }
 
     /** The host open itself, past the policy gates. */
