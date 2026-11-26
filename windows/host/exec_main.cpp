@@ -19,6 +19,8 @@
 // and exit status 1.
 
 #include <windows.h>
+#include <fcntl.h>
+#include <io.h>
 
 #include <cstdint>
 #include <cstdio>
@@ -116,6 +118,11 @@ namespace {
 }  // namespace
 
 int wmain(int argc, wchar_t** argv) {
+    // The program's standard streams carry its bytes as they are: Android has no text mode, and the
+    // CRT's would turn each '\n' it writes into "\r\n" and drop the '\r' of what it reads.
+    _setmode(0, _O_BINARY);
+    _setmode(1, _O_BINARY);
+    _setmode(2, _O_BINARY);
     std::wstring root, package, data_dir;
     std::vector<std::string> env;
     int i = 1;
