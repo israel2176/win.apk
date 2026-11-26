@@ -583,7 +583,11 @@ low-importance channel go to the Action Center without popping up. Clicking
 one brings the app forward and opens what a tap would open on Android, as
 long as the app is running. Apps made for Android 13 or later ask for the
 notification permission first; Windows' own notification settings apply on
-top of that. Action buttons on notifications are not shown.
+top of that. A notification's buttons (up to three, as on a phone) are under
+it: clicking one does what tapping it does on Android, without bringing the
+app forward; a reply button has a text box above the buttons, and what you
+type is sent to the app with it, as a phone's inline reply is. Windows takes
+the notification away when a button is clicked.
 
 ## Google account
 

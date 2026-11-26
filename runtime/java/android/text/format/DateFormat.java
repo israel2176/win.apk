@@ -58,38 +58,20 @@ public class DateFormat {
         return false;
     }
 
-    /** AOSP getBestDateTimePattern: the best localized pattern matching a
-     *  skeleton (e.g. "yMMMd"). java.time can synthesize a locale pattern from
-     *  the skeleton's fields; we map the common case (a skeleton that is itself
-     *  a valid pattern is returned as-is, which is what most callers pass). */
+    /** AOSP getBestDateTimePattern (android14 DateFormat.java:267-275): ICU's best localized pattern for
+     *  a skeleton ("yMMMd", "hma"), DateTimePatternGenerator.getBestPattern, then getCompatibleEnglishPattern
+     *  (:724-735), which turns CLDR 42's U+202F before the AM/PM marker back into a plain space for en and
+     *  en-US. */
     public static String getBestDateTimePattern(java.util.Locale locale, String skeleton) {
         if (skeleton == null) return "";
-        // AOSP (android14 DateFormat.java:267-275): DateTimePatternGenerator
-        // .getInstance(uLocale).getBestPattern(skeleton, ...), then
-        // getCompatibleEnglishPattern (:724-735), which turns CLDR 42's U+202F
-        // before the AM/PM marker back into a plain space for en / en-US. We
-        // used to hand the SKELETON back, so "hma" formatted as "126PM"
-        // (com.best.deskclock's city list, 2026-09-29).
         java.util.Locale loc = locale != null ? locale : java.util.Locale.getDefault();
-        String host = android.icu.text.DateTimePatternGenerator.macapkHostBestPattern(skeleton, loc);
-        if (host != null) {
-            String country = loc.getCountry();
-            if ("en".equals(loc.getLanguage()) && (country == null || country.isEmpty() || "US".equals(country)))
-                host = host.replace('\u202f', ' ');
-            return host;
+        android.icu.util.ULocale uLocale = android.icu.util.ULocale.forLocale(loc);
+        String pattern = android.icu.text.DateTimePatternGenerator.getInstance(uLocale).getBestPattern(skeleton);
+        String country = uLocale.getCountry();
+        if ("en".equals(uLocale.getLanguage()) && (country.isEmpty() || "US".equals(country))) {
+            pattern = pattern.replace('\u202f', ' ');
         }
-        try {
-            // java.time exposes a best-pattern resolver via the locale's
-            // FormatStyle chain is not skeleton-aware; for the common skeletons
-            // the field letters ARE a usable SimpleDateFormat pattern, so we
-            // return the skeleton (AOSP-compatible for "yMd"/"Hm"/"jmm" forms
-            // after normalizing the locale-neutral 'j' hour to the locale's
-            // preferred hour field).
-            boolean h24 = is24HourLocale(locale != null ? locale : java.util.Locale.getDefault());
-            return skeleton.replace('j', h24 ? 'H' : 'h');
-        } catch (Exception e) {
-            return skeleton;
-        }
+        return pattern;
     }
 
     /** AOSP format(CharSequence inFormat, long inTimeInMillis). */

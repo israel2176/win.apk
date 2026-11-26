@@ -310,6 +310,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-host-code-test` | Which pages of a loaded PE image are host code, which an arm64 library may not `mprotect` (`include/winapk/host_code.h`), on made-up headers: a range in an executable section, one reaching into it from either side, its last partial page, a raw size larger than the virtual size, a section reaching its alignment; `.rdata`, `.data` and the headers are not code (Facebook's `force_dlopen` trampoline over `gai_strerror`'s string); headers that are not a PE image's or are cut short count as code |
 | `winapk-frame-times-test` | The frame-time record (`host/frame_times.h`): nearest-rank percentiles over its 50 us buckets, never above the exact max, a frame over 200 ms, the warm-up frames apart, and the `frame times` line logged at exit ([Frame time](#frame-time)) |
 | `winapk-machine-load-test` | The machine's load to the first frame (`host/machine_load.h`): the busy share from two system samples, this process's share of all processors, other processes' CPU time between two samples by image name (a reused pid or a process started since counts whole; this process, the idle process and names under 0.1 s left out), busiest first, and the `startup: machine ... busy` line, with no process list or no time passed |
+| `winapk-toast-xml-test` | The Windows notification an Android one becomes (`host/toast_xml.h`, no Windows call): no actions on a plain one; up to three buttons, a reply action's text field before them, named by its button, the label as placeholder; text escaped; the toast's and each button's click arguments parsed back to the key and the action, foreign ones refused |
 | `winapk-swap-pacing-test` | When an app's presenting `eglSwapBuffers` returns (`host/swap_pacing.h`): a producer faster than the display at its rate (60, or 30 at swap interval 2), interval 0 never paced, a slower one never waits, the schedule keeps its phase and makes up nothing after a pause |
 | `winapk-webview-urls-test` | The app's `file:` URLs on WebView2 (`host/webview_file_urls.h`): `file:///X` (and `file://localhost/X`, `file:/X`) to the file origin `https://winapk-file.example/X` and back (query and fragment kept, host without case, its default port, a share and web URLs left alone, a look-alike host or another port not the origin); a `loadDataWithBaseURL` page's `file:///` references made the origin's where an attribute, a string or `url(` starts, not in its text; a base's request form; origins as a browser writes them (default ports dropped, user info, IPv6); who may read the origin: a `file:` page, the app's data page (`Origin: null`, or its web base), not a web page, a web frame in a `file:` page, nor another origin's CORS request; a `Range` header's one byte range (open end, suffix, cut to the body, 416 past it, the whole body for several ranges or junk) |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
@@ -684,8 +685,8 @@ before these changes.
     own package by default): `AutoGrowArray`, `SpanSet`, `AndroidBidi`,
     `PackedIntVector`, `GradientColor`'s factory... (`View$AttachInfo`, a
     nested class of Win.apk's own, never). `AndroidBidi` calls
-    `android.icu.text.Bidi`, which the framework has not: a stand-in on
-    `java.text.Bidi` (`windows/java/aosp_gfx/android/icu/text/Bidi.java`).
+    `android.icu.text.Bidi`: AOSP's own, in the same jar with the rest of
+    AOSP's ICU4J (a stand-in on `java.text.Bidi` until then).
   - Vectors: `AospVector` builds AOSP's own `VectorDrawable` from the element
     (the platform's compiled files through `Resources.macapkDrawableXml`):
     `VGroup`, `VFullPath`, `VClipPath`, `PathParser.PathData` and the native
@@ -1435,7 +1436,7 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 
 | Part | Today | Budget |
 |---|---:|---:|
-| AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 60.5 MB | 70 MB |
+| AOSP graphics files (`bin\aosp\`, the DLL, the jar), with ICU | 60.5 MB, about 70 MB with AOSP's ICU4J and its data | 78 MB |
 | AOSP app layer (`lib\aosp-app.jar`; 1.6 MB before the platform classes apps extend, `PLATFORM_TAKE`) | 2.1 MB | 3 MB |
 | Java runtime (`jre\`) | 127.3 MB | 140 MB |
 | The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
@@ -1676,7 +1677,7 @@ What the first pass (89 apps, 2026-11) left open: the NDK's `AMediaCodec`,
 end: WhatsApp's `DeepLinkActivity.onCreate`; X's `Item$$serializer.deserialize`; two oversize
 `<clinit>`s, one of boxed `Long`s in Instagram, that `ClinitPrecompute` does not model); and, on the
 Java side, `android.app.appsearch`, `android.icu`'s date-interval and list
-formatters, `ActivityGroup` / `TabActivity`, and a real PDF engine behind
+formatters (AOSP's ICU4J since, which has them), `ActivityGroup` / `TabActivity`, and a real PDF engine behind
 `PdfRenderer`.
 
 ### What the framework has but does not do
@@ -1881,7 +1882,8 @@ every such change is listed here:
   `Canvas.sGlobal*` trace (`MACAPK_TRACE_COMPOSE_FALLBACK`). An upstream sync
   must not bring them back (windows/README.md, "Milestone 2").
 
-- `runtime/java/com/macapk/icu/HostIcu.java`, `IcuFallback.java` (new): with
+- `runtime/java/com/macapk/icu/HostIcu.java`, `IcuFallback.java` (new, since deleted with Win.apk's own
+  `android.icu`, below): with
   no host ICU (no `icu.dll`: Windows 10 before 1903, Wine; or no bridge
   registered, a plain JVM) the natives' `UnsupportedOperationException` or
   `UnsatisfiedLinkError` no longer reaches the app: each call answers from
@@ -3751,7 +3753,8 @@ every such change is listed here:
   between two runs of the same build too (a GL game, PPSSPP, Jerboa's
   spinner); a build that compares every frame with `getPixels` found no
   difference.
-- `runtime/java/android/icu/util/Calendar.java`, `GregorianCalendar.java` (new):
+- `runtime/java/android/icu/util/Calendar.java`, `GregorianCalendar.java` (new; since deleted, AOSP's ICU4J
+  answers, below):
   the rest of the public `android.icu.util.Calendar`: `WeekData`,
   `getWeekData`/`setWeekData`/`getWeekDataForRegion` (CLDR's week data as
   Android 14's ICU answers it for every region), `isWeekend`, the ICU-only
@@ -4020,6 +4023,28 @@ every such change is listed here:
   the surface go. `windows/test/aospapp/AospAppLifecycleTest.java` calls `setTaskDescription` with a
   bitmap, `TaskStackBuilder.getPendingIntent`, `ImageView.setImageURI` with a resource uri,
   `startIntentSender` and loads `VideoView` (each of the first three threw `NoSuchMethodError` before).
+- `runtime/java/android/icu/` (deleted, 52 files), `runtime/java/com/macapk/icu/` (deleted: `HostIcu`,
+  `IcuFallback`) and `windows/host/native_icu.cpp` (deleted): apps' `android.icu` is AOSP's own ICU4J, taken
+  whole into `lib/aosp-graphics.jar` (`aosp_gfx_take.sh`: `android/icu`, `com/android/icu`), on ICU 72's data,
+  the file the graphics DLL reads (`bin/aosp/icu/icudt72l.dat`, now with the time zone names, units,
+  spelled-out numbers and transliterators ICU4J reads: `build_aosp_gfx.sh` drops only the charset
+  converters), and beside it the time zones' tables a device's tz module gives (`zoneinfo64`, `metaZones`,
+  `timezoneTypes`, `windowsZones` of tzdata 2026f, ICU's own build, pinned by SHA-256): without them every
+  zone was GMT. `windows/java/aosp_gfx/android/icu/platform/AndroidDataFiles.java` names that folder
+  (`android.icu.impl.ICUBinary.dataPath`, else the host's `icu.data.path`, else beside the jar);
+  `windows/java/aosp_gfx/android/icu/text/Bidi.java`, the stand-in on `java.text.Bidi`, is gone. Win.apk's
+  own was a facade over the JDK: no Hebrew, Islamic or other calendar, no `UCharacter.UnicodeBlock`,
+  `Normalizer`, `DateIntervalFormat`, `MessagePattern`... (israel2176/win.apk#173), and it needed Windows'
+  `icu.dll` for units. `android/text/format/DateFormat.java`: `getBestDateTimePattern` is AOSP's, ICU's
+  `DateTimePatternGenerator.getBestPattern`. `windows/test/java/android/icu/AospIcuTest.java` (CI: "Run the
+  ICU test") checks the Hebrew calendar and its Hebrew dates, plurals, measures, relative times, collation,
+  time zone names, transliteration and Bidi on the stage's data; `test/aospapp/run.sh` and
+  `test/accessibility/run.sh` name ICU 72's folder beside Robolectric's ICU 68 data.
+
+- `runtime/java/com/macapk/loader/HostNotifications.java`: a notification's actions are passed to the host
+  as its buttons (`shownActions`: the shade's three, not contextual ones; a free-form `RemoteInput` as a text
+  field), and `onAction` sends the clicked action's intent, the typed reply added as `RemoteInput` results
+  (`replyIntent`; `windows/test/java/com/macapk/loader/NotificationActionsTest.java`).
 
 ## License
 

@@ -188,6 +188,9 @@ target_include_directories(winapk-frame-times-test PRIVATE host)
 add_executable(winapk-machine-load-test test/machine_load_test.cpp)
 target_include_directories(winapk-machine-load-test PRIVATE host)
 
+# The toast an Android notification becomes and the clicks that come back (test/toast_xml_test.cpp).
+add_executable(winapk-toast-xml-test test/toast_xml_test.cpp)
+
 # When an app's presenting eglSwapBuffers returns (host/swap_pacing.h): producers of several
 # speeds on a simulated clock. No window. test/swap_pacing_test.cpp.
 add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
@@ -333,7 +336,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp
                               host/native_wallpaper.cpp host/native_picker.cpp
-                              host/native_gamepad.cpp host/native_icu.cpp
+                              host/native_gamepad.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
