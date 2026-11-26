@@ -1,16 +1,12 @@
-// native_media.cpp -- libmediandk for an app's native code: AMediaFormat, the
-// AMEDIAFORMAT_KEY_* variables, and an AMediaCodec and AMediaExtractor that say
-// there is no codec.
+// native_media.cpp -- libmediandk for an app's native code: AMediaFormat and the
+// AMEDIAFORMAT_KEY_* variables. AMediaCodec, AMediaExtractor and AMediaDataSource
+// are ndk_media_codec.cpp's, on the decoders and the demuxer Java's MediaCodec and
+// MediaExtractor use.
 //
-// AMediaFormat is a map of typed values and is whole. The codecs behind
-// AMediaCodec are not ported to native callers (Java's MediaCodec has them,
-// native_media_codec.cpp): every AMediaCodec_create* answers null, which is
-// what a device answers for a type it has no codec for, and callers fall back
-// to their own software decoder or report the format unsupported. An
-// AMediaExtractor can be made and refuses every source. Ten of the 56 most
-// installed apps with native code import these; all of it went to the loader's
-// missing-function stub, where AMediaFormat_new was null and setInt32 on it
-// "worked".
+// AMediaFormat is a map of typed values and is whole. Ten of the 56 most
+// installed apps with native code import libmediandk; all of it once went to the
+// loader's missing-function stub, where AMediaFormat_new was null and setInt32 on
+// it "worked".
 //
 // The AMEDIAFORMAT_KEY_* variables are here so that a
 // library that imports them loads with the real key strings, as on a device:
@@ -20,6 +16,7 @@
 // (frameworks/av/media/ndk/NdkMediaFormat.cpp).
 
 #include "native_media.h"
+#include "native_media_format.h"
 
 #include <cinttypes>
 #include <cstdint>
@@ -38,21 +35,10 @@ namespace winapk::host {
 namespace {
 
 // media_status_t (NdkMediaError.h).
-constexpr int kMediaOk = 0, kErrUnsupported = -10002, kErrInvalidObject = -10003, kErrInvalidParameter = -10004;
+constexpr int kMediaOk = 0, kErrInvalidParameter = -10004;
 
 // ---- AMediaFormat ---------------------------------------------------------------------
-struct FormatValue {
-    enum Kind { kInt32, kInt64, kFloat, kDouble, kSize, kString, kBuffer, kRect } kind = kInt32;
-    int64_t i = 0;       // int32, int64, size
-    double d = 0;        // float, double
-    std::string bytes;   // string, buffer
-    int32_t rect[4] = {};
-};
-struct MediaFormat {
-    std::mutex lock;
-    std::map<std::string, FormatValue> values;
-    std::string text;  // what toString last returned: the caller keeps the pointer
-};
+// (MediaFormat and FormatValue are native_media_format.h's: the codec and the extractor make them too.)
 FormatValue* find(MediaFormat* f, const char* name, FormatValue::Kind kind) {
     if (!f || !name) return nullptr;
     auto it = f->values.find(name);
@@ -173,50 +159,6 @@ WINAPK_GUEST_ABI void AMediaFormat_setRect(MediaFormat* f, const char* name, int
     if (FormatValue* v = slot(f, name, FormatValue::kRect)) v->rect[0] = l, v->rect[1] = t, v->rect[2] = r, v->rect[3] = b;
 }
 
-// ---- AMediaCodec, AMediaExtractor: none ---------------------------------------------------
-// No codec of any type or name, said once in the log so that "no video" has a line to find.
-void* no_codec(const char* what, const char* name) {
-    static std::mutex lock;
-    static std::map<std::string, bool> said;
-    std::lock_guard<std::mutex> hold(lock);
-    const std::string key = std::string(what) + (name ? name : "");
-    if (!said[key]) {
-        said[key] = true;
-        std::fprintf(stderr, "[win.apk] %s(\"%s\"): native code asked the NDK for a codec; there is none here "
-                             "(Java's MediaCodec has them), so it gets null as for an unsupported type\n",
-                     what, name ? name : "");
-        std::fflush(stderr);
-    }
-    return nullptr;
-}
-WINAPK_GUEST_ABI void* AMediaCodec_createDecoderByType(const char* mime) {
-    return no_codec("AMediaCodec_createDecoderByType", mime);
-}
-WINAPK_GUEST_ABI void* AMediaCodec_createEncoderByType(const char* mime) {
-    return no_codec("AMediaCodec_createEncoderByType", mime);
-}
-WINAPK_GUEST_ABI void* AMediaCodec_createCodecByName(const char* name) {
-    return no_codec("AMediaCodec_createCodecByName", name);
-}
-// On the null codec a careless caller goes on with: an error, where the stub's 0 was AMEDIA_OK
-// (and "buffer 0 is ready" from the dequeue calls).
-WINAPK_GUEST_ABI int codec_invalid() { return kErrInvalidObject; }
-WINAPK_GUEST_ABI int64_t codec_no_buffer() { return -1; }  // AMEDIACODEC_INFO_TRY_AGAIN_LATER
-WINAPK_GUEST_ABI void* codec_null() { return nullptr; }
-
-struct MediaExtractor {
-    int unused = 0;
-};
-WINAPK_GUEST_ABI MediaExtractor* AMediaExtractor_new() { return new MediaExtractor; }
-WINAPK_GUEST_ABI int AMediaExtractor_delete(MediaExtractor* e) {
-    delete e;
-    return kMediaOk;
-}
-WINAPK_GUEST_ABI int extractor_unsupported() { return kErrUnsupported; }
-WINAPK_GUEST_ABI size_t AMediaExtractor_getTrackCount(MediaExtractor*) { return 0; }
-WINAPK_GUEST_ABI bool AMediaExtractor_advance(MediaExtractor*) { return false; }
-WINAPK_GUEST_ABI int64_t extractor_none() { return -1; }  // no sample: size, time, track index
-
 struct Function {
     const char* name;
     void* fn;
@@ -234,42 +176,6 @@ const Function kFunctions[] = {
     WINAPK_MEDIA(AMediaFormat_getString), WINAPK_MEDIA(AMediaFormat_setString),
     WINAPK_MEDIA(AMediaFormat_getBuffer), WINAPK_MEDIA(AMediaFormat_setBuffer),
     WINAPK_MEDIA(AMediaFormat_getRect), WINAPK_MEDIA(AMediaFormat_setRect),
-    WINAPK_MEDIA(AMediaCodec_createDecoderByType), WINAPK_MEDIA(AMediaCodec_createEncoderByType),
-    WINAPK_MEDIA(AMediaCodec_createCodecByName),
-    WINAPK_MEDIA_AS("AMediaCodec_delete", codec_invalid), WINAPK_MEDIA_AS("AMediaCodec_configure", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_start", codec_invalid), WINAPK_MEDIA_AS("AMediaCodec_stop", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_flush", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_queueInputBuffer", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_queueSecureInputBuffer", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_releaseOutputBuffer", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_releaseOutputBufferAtTime", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_setOutputSurface", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_setParameters", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_setAsyncNotifyCallback", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_signalEndOfInputStream", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_createInputSurface", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_setInputSurface", codec_invalid),
-    WINAPK_MEDIA_AS("AMediaCodec_dequeueInputBuffer", codec_no_buffer),
-    WINAPK_MEDIA_AS("AMediaCodec_dequeueOutputBuffer", codec_no_buffer),
-    WINAPK_MEDIA_AS("AMediaCodec_getInputBuffer", codec_null),
-    WINAPK_MEDIA_AS("AMediaCodec_getOutputBuffer", codec_null),
-    WINAPK_MEDIA_AS("AMediaCodec_getOutputFormat", codec_null),
-    WINAPK_MEDIA_AS("AMediaCodec_getInputFormat", codec_null),
-    WINAPK_MEDIA_AS("AMediaCodec_getBufferFormat", codec_null),
-    WINAPK_MEDIA(AMediaExtractor_new), WINAPK_MEDIA(AMediaExtractor_delete),
-    WINAPK_MEDIA_AS("AMediaExtractor_setDataSource", extractor_unsupported),
-    WINAPK_MEDIA_AS("AMediaExtractor_setDataSourceFd", extractor_unsupported),
-    WINAPK_MEDIA_AS("AMediaExtractor_setDataSourceCustom", extractor_unsupported),
-    WINAPK_MEDIA_AS("AMediaExtractor_selectTrack", extractor_unsupported),
-    WINAPK_MEDIA_AS("AMediaExtractor_unselectTrack", extractor_unsupported),
-    WINAPK_MEDIA_AS("AMediaExtractor_seekTo", extractor_unsupported),
-    WINAPK_MEDIA(AMediaExtractor_getTrackCount), WINAPK_MEDIA(AMediaExtractor_advance),
-    WINAPK_MEDIA_AS("AMediaExtractor_getTrackFormat", codec_null),
-    WINAPK_MEDIA_AS("AMediaExtractor_getFileFormat", codec_null),
-    WINAPK_MEDIA_AS("AMediaExtractor_readSampleData", extractor_none),
-    WINAPK_MEDIA_AS("AMediaExtractor_getSampleSize", extractor_none),
-    WINAPK_MEDIA_AS("AMediaExtractor_getSampleTime", extractor_none),
-    WINAPK_MEDIA_AS("AMediaExtractor_getSampleTrackIndex", extractor_none),
 };
 
 struct FormatKey {
@@ -428,6 +334,7 @@ FormatKey kFormatKeys[] = {
 
 void* native_media_resolve(const char* name) {
     if (std::strncmp(name, "AMedia", 6) == 0) {
+        if (void* fn = ndk_media_codec_resolve(name)) return fn;
         for (const Function& f : kFunctions) {
             if (std::strcmp(name, f.name) == 0) return f.fn;
         }

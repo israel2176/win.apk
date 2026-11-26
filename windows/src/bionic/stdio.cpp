@@ -140,9 +140,107 @@ int open_temp_with(const std::string& content) {
     return fd;
 }
 
+// The app's own APKs, as an app process on Android has them mapped: the
+// framework maps base.apk and its splits (resources.arsc, the dex, a library
+// stored uncompressed), so every app's /proc/self/maps names them, by their
+// /data/app/... path. Native code finds its APK there to check the signing
+// block: HebDate's libo.so takes the line of a ".apk" whose path holds the
+// package, reads its signature, and with no such line starts a thread that
+// jumps to a bad address on purpose ("arm64 guest stopped: unimplemented or
+// undefined instruction" at libo.so+0x119b3). Mapped read-only for real, once,
+// at the first read of the file, so the lines name memory that holds the
+// file, as on the device.
+struct CodeMapping {
+    uint64_t start = 0, size = 0;
+    uint32_t inode = 0;
+    std::string path;  // the Android path
+};
+std::mutex g_code_lock;
+std::wstring g_base_apk;  // set_app_code
+bool g_code_mapped = false;
+std::vector<CodeMapping> g_code;
+
+bool map_read_only(const std::wstring& file, CodeMapping* m) {
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    LARGE_INTEGER size{};
+    HANDLE section = GetFileSizeEx(h, &size) && size.QuadPart > 0
+                         ? CreateFileMappingW(h, nullptr, PAGE_READONLY, 0, 0, nullptr)
+                         : nullptr;
+    CloseHandle(h);
+    if (!section) return false;
+    void* view = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 0);
+    CloseHandle(section);  // the view keeps the section
+    if (!view) return false;
+    m->start = reinterpret_cast<uint64_t>(view);
+    m->size = static_cast<uint64_t>(size.QuadPart);
+    return true;
+}
+
+// base.apk, then its splits (split_*.apk beside it), each mapped; the caller holds g_code_lock.
+void map_app_code() {
+    if (g_code_mapped || g_base_apk.empty()) return;
+    g_code_mapped = true;
+    const size_t slash = g_base_apk.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return;
+    const std::wstring dir = g_base_apk.substr(0, slash + 1);
+    std::vector<std::wstring> files{g_base_apk};
+    std::vector<std::wstring> splits;
+    WIN32_FIND_DATAW fd;
+    HANDLE find = FindFirstFileW((dir + L"split_*.apk").c_str(), &fd);
+    if (find != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) splits.push_back(dir + fd.cFileName);
+        } while (FindNextFileW(find, &fd));
+        FindClose(find);
+    }
+    std::sort(splits.begin(), splits.end());
+    files.insert(files.end(), splits.begin(), splits.end());
+    for (const std::wstring& file : files) {
+        CodeMapping m;
+        m.path = android_path_of(file);
+        if (m.path.empty() || !map_read_only(file, &m)) continue;
+        uint32_t inode = 2166136261u;  // a stable stand-in, as GuestLinker::proc_maps gives the libraries
+        for (const unsigned char c : m.path) inode = (inode ^ c) * 16777619u;
+        m.inode = (inode & 0x7fffffffu) | 1u;
+        g_code.push_back(std::move(m));
+    }
+}
+
+// The guest libraries' lines (GuestLinker::proc_maps) and the APKs', in address order, as the kernel lists them.
 std::string proc_maps_text() {
     GuestLinker* linker = GuestLinker::process();
-    return linker ? linker->proc_maps() : std::string();
+    std::string libs = linker ? linker->proc_maps() : std::string();
+    std::vector<std::pair<uint64_t, std::string>> lines;
+    for (size_t at = 0; at < libs.size();) {
+        size_t end = libs.find('\n', at);
+        if (end == std::string::npos) end = libs.size() - 1;
+        lines.emplace_back(std::strtoull(libs.c_str() + at, nullptr, 16), libs.substr(at, end + 1 - at));
+        at = end + 1;
+    }
+    {
+        std::lock_guard<std::mutex> hold(g_code_lock);
+        map_app_code();
+        char line[128];
+        for (const CodeMapping& m : g_code) {
+            const uint64_t end = (m.start + m.size + 0xfff) & ~uint64_t{0xfff};
+            const int n = std::snprintf(line, sizeof line, "%llx-%llx r--p 00000000 fd:01 %u",
+                                        static_cast<unsigned long long>(m.start),
+                                        static_cast<unsigned long long>(end), m.inode);
+            if (n <= 0) continue;
+            std::string text(line, static_cast<size_t>(n));
+            text.append(n < 73 ? static_cast<size_t>(73 - n) : 1, ' ');
+            text += m.path;
+            text += '\n';
+            lines.emplace_back(m.start, std::move(text));
+        }
+    }
+    std::stable_sort(lines.begin(), lines.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    std::string out;
+    for (const auto& l : lines) out += l.second;
+    return out;
 }
 
 bool is_random_device(const char* path) {
@@ -2438,6 +2536,15 @@ ShimTable stdio_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 }  // namespace winapk::bionic
 
 namespace winapk {
+
+void set_app_code(const char* base_apk) {
+    if (!base_apk || !*base_apk) return;
+    const int len = static_cast<int>(std::strlen(base_apk));
+    std::wstring w(static_cast<size_t>(MultiByteToWideChar(CP_UTF8, 0, base_apk, len, nullptr, 0)), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, base_apk, len, &w[0], static_cast<int>(w.size()));
+    std::lock_guard<std::mutex> hold(bionic::g_code_lock);
+    if (!bionic::g_code_mapped) bionic::g_base_apk = std::move(w);  // once mapped, the lines stay
+}
 
 void* fts_open_with_stat(char* const* argv, int options, void* compar, FtsStatFill fill) {
     return bionic::fts_open_impl(argv, options, reinterpret_cast<bionic::GuestFtsCompar>(compar), fill);

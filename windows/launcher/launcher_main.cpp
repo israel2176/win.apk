@@ -4292,8 +4292,8 @@ void error_with_log(const std::wstring& main, const std::wstring& content, const
 
 // ---------------------------------------------------------------------------
 // Report a problem: GitHub's "An app does not work" form (.github/ISSUE_TEMPLATE/app_problem.yml) opened in the
-// browser with what the launcher knows filled in by the fields' ids, and the logs folder with the app's log (and its
-// newest crash dump) selected to drag in. Nothing is uploaded by itself: a log can hold the user's name and paths,
+// browser with what the launcher knows filled in (its one field, by the field's id), and the logs folder with the
+// app's log (and its newest crash dump) selected to drag in. Nothing is uploaded by itself: a log can hold the user's name and paths,
 // so what goes in the report is the user's choice. The log stays out of the URL too, which GitHub cuts at about 8 KB.
 
 constexpr wchar_t kIssuesUrl[] = L"https://github.com/israel2176/win.apk/issues";
@@ -4412,16 +4412,16 @@ void report_problem(HWND parent, const std::wstring& name, const std::wstring& l
     p.default_id = IDOK;
     if (run_dialog(p, parent) != IDOK) return;
 
-    // The form's own title pattern: "<App name> <version>: <what goes wrong>".
+    // The title: "<App name> <version>: <what goes wrong>".
     const std::wstring app_line = label + (app_version.empty() ? L"" : L" " + app_version) +
                                   (package.empty() ? L"" : L" (" + package + L")");
     std::wstring url = std::wstring(kIssuesUrl) + L"/new?template=app_problem.yml";
     url += L"&title=" + url_escape(label + (app_version.empty() ? L"" : L" " + app_version) + L": " + what);
-    url += L"&winapk-version=" + url_escape(version());
-    url += L"&windows-version=" + url_escape(windows_version());
-    if (const std::wstring gpu = gpu_name(); !gpu.empty()) url += L"&gpu=" + url_escape(gpu);
-    url += L"&app=" + url_escape(app_line);
-    if (!what.empty()) url += L"&what-happens=" + url_escape(what);
+    // The form has one field; the versions go under the user's sentence in it.
+    std::wstring body = what + (what.empty() ? L"" : L"\n\n") + L"App: " + app_line + L"\nWin.apk: " + version() +
+                        L"\nWindows: " + windows_version();
+    if (const std::wstring gpu = gpu_name(); !gpu.empty()) body += L"\nGraphics: " + gpu;
+    url += L"&what-happens=" + url_escape(body);
     ShellExecuteW(nullptr, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 
     std::vector<fs::path> files;
@@ -6982,7 +6982,7 @@ bool store_app_running() {
     return app_is_running(name);
 }
 
-// Reads the newest release: the Store item with no store app, Try again, or the daily update check.
+// Reads the newest release: the Store item with no store app, Try again, the daily update check or its Check.
 void store_app_check() {
     if (!g_store_setup.begin_check()) return;  // one is under way
     std::error_code ec;
@@ -7387,7 +7387,10 @@ std::vector<Section> update_sections() {
     Section sec{tr(L"Updates"), {}, L""};
     sec.rows.push_back(button_row(fmt(L"Version {0}", {version()}), status,
                                   g_update.asking() ? tr(L"Checking…") : tr(L"Check"),
-                                  [] { start_update_check(true, true); }));
+                                  [] {
+                                      start_update_check(true, true);
+                                      if (store_app()) store_app_check();  // the Store's app too, as the daily check
+                                  }));
     Row autoc;
     autoc.kind = Row::kToggle;
     autoc.title = tr(L"Check for updates automatically");

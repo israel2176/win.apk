@@ -50,6 +50,12 @@ public final class Manifest {
     }
     private static final String TAG = "Mac.apk.Manifest";
 
+    /** The package this process runs, once Boot has read its manifest (Boot sets it). Another package's
+     *  manifest, parsed for a package query (getPackageInfo, queryIntent*), logs only its summary line:
+     *  Play services' components alone are hundreds of lines, and they filled a reported log past what an
+     *  issue holds before the run's failure was reached (#213). */
+    static volatile String runningPackage;
+
     /** MACAPK_MANIFEST_FEATURE_SPLITS (default ON): the components a FEATURE
      *  split declares (`<manifest android:isFeatureSplit="true" split="...">`)
      *  belong to the package, as AOSP ParsingPackageUtils.parseSplitApplication
@@ -2115,7 +2121,9 @@ public final class Manifest {
                   + " activities=" + activities.size()
                   + " receivers=" + receivers.size()
                   + " queries-package=" + queriesPackages.size());
-        for (ActivityEntry a : activities.values()) {
+        final String running = runningPackage;
+        final boolean components = running == null || running.equals(pkg);
+        for (ActivityEntry a : components ? activities.values() : java.util.List.<ActivityEntry>of()) {
             if (a.parentActivityName != null || a.targetActivity != null
                     || !a.metaData.isEmpty()) {
                 NativeLog.i(TAG, "  activity: " + a.name
@@ -2127,7 +2135,7 @@ public final class Manifest {
                           + " filters=" + a.filters.size());
             }
         }
-        for (ProviderEntry p : providers) {
+        for (ProviderEntry p : components ? providers : java.util.List.<ProviderEntry>of()) {
             NativeLog.i(TAG, "  provider: " + p.name
                       + " initOrder=" + p.initOrder
                       + " authorities=" + p.authorities);

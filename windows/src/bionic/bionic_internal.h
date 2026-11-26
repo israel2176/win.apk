@@ -159,6 +159,10 @@ bool is_android_path(const char* guest_path);
 // inverse for one listed name, in place.
 std::wstring host_names(const char* android_names, size_t len);
 void android_name(wchar_t* host_name);
+// The Android path (UTF-8) of a host file under the android root, as the app is
+// shown it ("<root>\\data\\app\\...\\base.apk" -> "/data/app/.../base.apk"); empty
+// for a file outside it.
+std::string android_path_of(const std::wstring& host_file);
 
 // cpuinfo.cpp: when `guest_path` is /proc/cpuinfo or /sys/devices/system/cpu/{possible,
 // present,online}, writes this machine's text to `host`, the file host_path() mapped it to,

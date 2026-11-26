@@ -16,12 +16,13 @@
       download: 'Download for Windows',
       meta_default: 'Windows 10 and 11, 64-bit',
       meta_req: 'Windows 10 and 11, 64-bit', meta_pre: 'preview',
+      star: 'Star us on GitHub', star_short: 'Star us',
       free: 'Free and open source.', other_versions: 'Other versions',
       alt_library: 'The Win.apk library with installed Android apps',
       f1_t: 'Double-click to install', f1_d: 'APK files and app bundles install like any Windows program.',
       f2_t: 'A window of its own', f2_d: 'Each app is in the Start menu and on the taskbar, with Windows notifications.',
       f3_t: 'In Hebrew too', f3_d: 'The whole program, installer included, reads right to left.',
-      apps_title: 'Israeli apps', apps_sub: 'Real screenshots from Win.apk.',
+      apps_title: 'Apps', apps_sub: 'Real screenshots from Win.apk.',
       cap_waze: 'Waze', cap_moovit: 'Moovit', cap_maccabi: 'Maccabi', cap_hapoalim: 'Bank Hapoalim',
       alt_waze: 'Waze in its own window on Windows, asking in Hebrew for the precise location',
       alt_moovit: 'Moovit\'s home screen in Hebrew, in its own window on Windows',
@@ -33,8 +34,7 @@
       s2: 'Run it. If SmartScreen warns: More info, then Run anyway.',
       s3: 'Open an APK, or pick an app in the Store.',
       l_releases: 'Releases', l_docs: 'Getting started', l_faq: 'FAQ', l_compat: 'Compatibility list',
-      l_report: 'Report a problem', l_license: 'License (AGPL-3.0)',
-      marks: 'Android is a trademark of Google LLC. App names and screenshots belong to their owners.'
+      l_report: 'Report a problem', l_license: 'License (AGPL-3.0)'
     },
     he: {
       title: 'Win.apk: אפליקציות אנדרואיד ב-Windows',
@@ -46,12 +46,13 @@
       download: 'הורדה ל-Windows',
       meta_default: 'Windows 10 ו-11, ‏64 ביט',
       meta_req: 'Windows 10 ו-11, ‏64 ביט', meta_pre: 'גרסת תצוגה',
+      star: 'פרגנו בכוכב ב-GitHub', star_short: 'פרגנו בכוכב',
       free: 'חינם וקוד פתוח.', other_versions: 'גרסאות נוספות',
       alt_library: 'הספרייה של Win.apk עם אפליקציות אנדרואיד מותקנות',
       f1_t: 'לחיצה כפולה ומתקינים', f1_d: 'קובצי APK וחבילות אפליקציה מותקנים כמו כל תוכנה.',
       f2_t: 'חלון משלה', f2_d: 'כל אפליקציה בתפריט התחל ובשורת המשימות, עם התראות של Windows.',
       f3_t: 'גם בעברית', f3_d: 'כל התוכנה, כולל ההתקנה, מימין לשמאל.',
-      apps_title: 'אפליקציות ישראליות', apps_sub: 'צילומי מסך אמיתיים מתוך Win.apk.',
+      apps_title: 'אפליקציות', apps_sub: 'צילומי מסך אמיתיים מתוך Win.apk.',
       cap_waze: 'וייז', cap_moovit: 'מוביט', cap_maccabi: 'מכבי', cap_hapoalim: 'בנק הפועלים',
       alt_waze: 'וייז בחלון משלו ב-Windows, מבקש בעברית גישה למיקום המדויק',
       alt_moovit: 'מסך הבית של מוביט בעברית, בחלון משלו ב-Windows',
@@ -63,8 +64,7 @@
       s2: 'מריצים אותו. אם SmartScreen מזהיר: "מידע נוסף", ואז "הפעל בכל זאת".',
       s3: 'פותחים קובץ APK, או בוחרים אפליקציה בחנות.',
       l_releases: 'גרסאות', l_docs: 'מדריך התחלה', l_faq: 'שאלות נפוצות', l_compat: 'רשימת התאימות',
-      l_report: 'דיווח על בעיה', l_license: 'רישיון (AGPL-3.0)',
-      marks: 'Android הוא סימן מסחרי של Google LLC. שמות האפליקציות וצילומי המסך שייכים לבעליהם.'
+      l_report: 'דיווח על בעיה', l_license: 'רישיון (AGPL-3.0)'
     }
   };
   // A link to a document goes to its Hebrew page where one exists.

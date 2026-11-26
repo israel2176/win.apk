@@ -16,9 +16,11 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstdio>
+#include <cstring>
 #include <iterator>
 #include <set>
 #include <string>
+#include <utility>
 
 #include <windows.h>
 
@@ -297,6 +299,77 @@ void cpu_files() {
     }
 }
 
+// The app's APKs in /proc/self/maps (stdio.cpp, set_app_code): base.apk and its
+// splits, by their /data/app/... paths, over memory that holds each file, as a
+// device maps them. HebDate's libo.so reads the file, takes the line of a ".apk"
+// whose path holds the package, and checks that file's signing block; with no
+// such line it jumps to a bad address on purpose.
+void app_code_maps() {
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring scratch = std::wstring(temp) + L"winapk-maps-test-" + std::to_wstring(GetCurrentProcessId());
+    const std::wstring code = scratch + L"\\data\\app\\~~n0nce==\\com.example.app-k3y==";
+    for (const std::wstring& d : {scratch, scratch + L"\\data", scratch + L"\\data\\app",
+                                  scratch + L"\\data\\app\\~~n0nce==", code}) {
+        CreateDirectoryW(d.c_str(), nullptr);
+    }
+    const std::string base_bytes = "PK\x03\x04 the base", split_bytes = "PK\x03\x04 a split";
+    for (const auto& [name, bytes] : {std::pair<const wchar_t*, std::string>{L"\\base.apk", base_bytes},
+                                      {L"\\split_config.arm64_v8a.apk", split_bytes}}) {
+        if (FILE* f = _wfopen((code + name).c_str(), L"wb")) {
+            std::fwrite(bytes.data(), 1, bytes.size(), f);
+            std::fclose(f);
+        }
+    }
+    char utf8[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, scratch.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+    winapk::set_android_root(utf8);
+    WideCharToMultiByte(CP_UTF8, 0, (code + L"\\base.apk").c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+    winapk::set_app_code(utf8);
+
+    const auto g_open = shim<int (WINAPK_GUEST_ABI*)(const char*, int, unsigned)>("open");
+    const auto g_read = shim<int64_t (WINAPK_GUEST_ABI*)(int, void*, size_t)>("read");
+    const auto g_close = shim<int (WINAPK_GUEST_ABI*)(int)>("close");
+    std::string maps;
+    for (int pass = 0; pass < 2; ++pass) {  // the second read lists the same mappings
+        std::string text;
+        const int fd = g_open("/proc/self/maps", 0, 0);
+        char buf[512];
+        for (int64_t n; fd >= 0 && (n = g_read(fd, buf, sizeof buf)) > 0;) text.append(buf, static_cast<size_t>(n));
+        if (fd >= 0) g_close(fd);
+        if (pass == 1 && text != maps) {
+            ++g_failed;
+            std::fprintf(stderr, "FAIL /proc/self/maps changed between two reads\n");
+        }
+        maps = text;
+    }
+    for (const auto& [path, bytes] :
+         {std::pair<const char*, std::string>{"/data/app/~~n0nce==/com.example.app-k3y==/base.apk", base_bytes},
+          {"/data/app/~~n0nce==/com.example.app-k3y==/split_config.arm64_v8a.apk", split_bytes}}) {
+        // The line as the kernel prints it, its path read the way libo.so reads it.
+        const size_t at = maps.find(std::string(path) + "\n");
+        const size_t line = at == std::string::npos ? at : maps.rfind('\n', at) + 1;
+        unsigned long long start = 0, end = 0;
+        char perms[8] = {}, name[512] = {};
+        const bool parsed = line != std::string::npos &&
+                            std::sscanf(maps.c_str() + line, "%llx-%llx %7s %*s %*s %*s %511s", &start, &end, perms,
+                                        name) == 4;
+        if (!parsed || std::string(name) != path || std::string(perms) != "r--p" || end <= start ||
+            (end & 0xfff) != 0 || std::memcmp(reinterpret_cast<const void*>(start), bytes.data(), bytes.size()) != 0) {
+            ++g_failed;
+            std::fprintf(stderr, "FAIL /proc/self/maps has no mapping of %s:\n%s\n", path, maps.c_str());
+        }
+    }
+    // Left in %TEMP% when Windows refuses to delete a file a view still maps.
+    DeleteFileW((code + L"\\split_config.arm64_v8a.apk").c_str());
+    DeleteFileW((code + L"\\base.apk").c_str());
+    RemoveDirectoryW(code.c_str());
+    RemoveDirectoryW((scratch + L"\\data\\app\\~~n0nce==").c_str());
+    RemoveDirectoryW((scratch + L"\\data\\app").c_str());
+    RemoveDirectoryW((scratch + L"\\data").c_str());
+    RemoveDirectoryW(scratch.c_str());
+}
+
 }  // namespace
 
 int main() {
@@ -402,6 +475,7 @@ int main() {
     listing_round_trip();
     own_status();
     cpu_files();
+    app_code_maps();
 
     if (g_failed == 0) std::fprintf(stderr, "paths_test: all checks passed\n");
 
