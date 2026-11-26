@@ -495,6 +495,8 @@ jobs:
         run: ./build/winapk-soft-codecs-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the shared-folder mapping test
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
+      - name: Run the notification toast test
+        run: ./build/winapk-toast-xml-test.exe
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
       - name: Run the screen-reader model test (names, patterns, events, text units)
@@ -656,6 +658,14 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
+      - name: Run the notification actions test
+        run: |
+          # Which of a notification's actions become the host's buttons, and the reply's intent.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/notification-actions-test windows/test/java/com/macapk/loader/NotificationActionsTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/notification-actions-test)" \
+            com.macapk.loader.NotificationActionsTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
