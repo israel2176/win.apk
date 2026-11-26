@@ -62,6 +62,7 @@
 
 #include "applink_match.h"
 #include "host_natives.h"
+#include "host_url.h"
 #include "webview2_host.h"
 #include "win32_window.h"
 
@@ -175,6 +176,12 @@ void java_failed(Tab* t) {
     if (t->notified) return;
     t->notified = true;
     if (t->applink()) {
+        if (!winapk::host::may_open_on_host(t->initial_url)) {
+            std::fprintf(stderr, "[win.apk] applink-signin %d: blocked host URL %s\n", t->id,
+                         wv2::redact(t->initial_url).c_str());
+            std::fflush(stderr);
+            return;
+        }
         // The Java side was told the window opened; the browser is where the
         // URL went before there was one.
         std::fprintf(stderr, "[win.apk] applink-signin %d: no window; %s goes to the system browser\n", t->id,

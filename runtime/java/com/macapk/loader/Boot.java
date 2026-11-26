@@ -1090,6 +1090,7 @@ public final class Boot {
         // on the uncaught reports can carry the "Process: <name>" clause that
         // RuntimeInit.logUncaught prints.
         sPackageName = manifest.packageName;
+        Manifest.runningPackage = manifest.packageName;
         sProcessName = chooseProcessName(manifest, System.getenv("MACAPK_PROCESS_NAME"));
         if (!sProcessName.equals(manifest.packageName)) {
             NativeLog.i(TAG, "process name " + sProcessName + " (package " + manifest.packageName + ")");

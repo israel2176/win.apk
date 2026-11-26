@@ -202,6 +202,37 @@ bool is_android_path(const char* p) {
     return p[0] == '/' && p[1] != '/';
 }
 
+std::string android_path_of(const std::wstring& host_file) {
+    std::wstring root;
+    {
+        std::lock_guard<std::mutex> hold(g_lock);
+        root = g_android_root;
+    }
+    if (root.empty() || host_file.size() <= root.size() + 1 || !is_separator(host_file[root.size()]) ||
+        CompareStringOrdinal(host_file.c_str(), static_cast<int>(root.size()), root.c_str(),
+                             static_cast<int>(root.size()), TRUE) != CSTR_EQUAL) {
+        return {};
+    }
+    // Each name turned back on its own (android_name), '/' between them.
+    std::wstring rest;
+    for (size_t start = root.size() + 1; start <= host_file.size();) {
+        size_t end = start;
+        while (end < host_file.size() && !is_separator(host_file[end])) ++end;
+        std::wstring name = host_file.substr(start, end - start);
+        if (!name.empty()) {
+            android_name(&name[0]);
+            rest += L'/';
+            rest += name;
+        }
+        start = end + 1;
+    }
+    const int n = WideCharToMultiByte(CP_UTF8, 0, rest.c_str(), static_cast<int>(rest.size()), nullptr, 0, nullptr,
+                                      nullptr);
+    std::string out(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, rest.c_str(), static_cast<int>(rest.size()), &out[0], n, nullptr, nullptr);
+    return out;
+}
+
 namespace {
 
 // /proc/<this pid>/status, as the kernel makes it at each open: Boot writes its
