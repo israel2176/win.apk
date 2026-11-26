@@ -15,6 +15,13 @@ import android.view.View;
 import android.view.ViewGroup;
 
 public abstract class Visibility extends Transition {
+    /** {@hide} AOSP Visibility.setSuppressLayout: whether a disappearing view's parent suppresses
+     *  layout while it fades (AOSP's ActivityTransitionCoordinator turns it off for the activity
+     *  transition's views). Win.apk's Visibility does not suppress layout, so it is kept only. */
+    public void setSuppressLayout(boolean suppress) { mSuppressLayout = suppress; }
+
+    private boolean mSuppressLayout = true;
+
 
     public static final int MODE_IN = 0x1;
     public static final int MODE_OUT = 0x2;

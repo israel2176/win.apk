@@ -167,6 +167,12 @@ fi
 echo "[aosp-app] the rewrite (AospAppRewrite.java)"
 "$JAVA" -cp "$ASM" "$(native_path "$HERE/AospAppRewrite.java")" "$(native_path "$CLASSES")"
 
+# Android 15's and 16's members of the app layer AOSP 14 lacks, which apps built for the runtime's SDK
+# level call: each public static method of Api36 becomes a method of its first parameter's class
+# (AospAddMethods.java, as build_aosp_views.sh does for the views).
+echo "[aosp-app] API 35 and 36 methods added to AOSP's classes"
+"$JAVA" "$(native_path "$HERE/AospAddMethods.java")" "$(native_path "$CLASSES")" com/winapk/aospapp/Api36
+
 rm -f "$OUT/lib/aosp-app.jar"
 ( cd "$CLASSES" && "$JAR" --create --file "$OUT/lib/aosp-app.jar" . )
 echo "[aosp-app] $OUT/lib/aosp-app.jar: $(find "$CLASSES" -name '*.class' | wc -l) classes"

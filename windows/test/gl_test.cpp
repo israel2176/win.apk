@@ -2,9 +2,10 @@
 //
 //   winapk-gl-test     (ANGLE's DLLs next to the executable)
 //
-// Initializes the framework context (gl_surface.h) on whatever backend this
-// machine has, draws a clear and a scissored clear into a view's pbuffer and
-// reads the frame back the way the window gets it. Then checks the extension
+// Opens the app's display (gl_surface.h) on whatever backend this machine has,
+// makes a context of its own current on a pbuffer, as an app's GL thread does,
+// draws a clear and a scissored clear and reads the frame back the way a
+// window surface's swap does (gl_read_current). Then checks the extension
 // list an app's native code is told (guest_gl_extensions.h) against this
 // ANGLE: every extension in it is one ANGLE reports and every one of its
 // functions resolves; ANGLE's and Chromium's own extensions pass when they do.
@@ -233,14 +234,31 @@ void check_two_gl_threads() {
     check("  ... and every frame B's green", b_wrong == 0, b_wrong.load());
 }
 
+// A context on the app's display, current on a w x h pbuffer of it on this thread.
+bool make_current(int w, int h) {
+    const EGLDisplay d = static_cast<EGLDisplay>(winapk::host::gl_shared_display());
+    if (!d) return false;
+    const EGLint config_attribs[] = {EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+                                     EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                                     EGL_NONE};
+    EGLConfig config = nullptr;
+    EGLint n = 0;
+    if (!eglChooseConfig(d, config_attribs, &config, 1, &n) || n < 1) return false;
+    const EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE};
+    const EGLContext ctx = eglCreateContext(d, config, EGL_NO_CONTEXT, ctx_attribs);
+    const EGLint pb_attribs[] = {EGL_WIDTH, w, EGL_HEIGHT, h, EGL_NONE};
+    const EGLSurface s = ctx == EGL_NO_CONTEXT ? EGL_NO_SURFACE : eglCreatePbufferSurface(d, config, pb_attribs);
+    return s != EGL_NO_SURFACE && eglMakeCurrent(d, s, s, ctx);
+}
+
 }  // namespace
 
 int main() {
     // Unbuffered: a crash in ANGLE must not take the lines before it along.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("ANGLE through the runtime's GL\n");
-    const bool ready = winapk::host::gl_frame_begin(1, 64, 32);
-    check("context current on a 64x32 pbuffer", ready);
+    const bool ready = make_current(64, 32);
+    check("context current on a 64x32 pbuffer of the app's display", ready);
     if (!ready) {
         std::printf("\nFAILED: 1 failure(s)\n");
         return 1;
@@ -253,10 +271,9 @@ int main() {
     glClear(GL_COLOR_BUFFER_BIT);
     glDisable(GL_SCISSOR_TEST);
     std::vector<uint32_t> px;
-    int w = 0, h = 0;
-    const bool read = winapk::host::gl_frame_read(&px, &w, &h);
-    check("frame read back at the pbuffer's size", read && w == 64 && h == 32);
-    if (read) {
+    winapk::host::gl_read_current(&px, 64, 32);
+    check("frame read back at the pbuffer's size", px.size() == static_cast<size_t>(64) * 32);
+    if (px.size() == static_cast<size_t>(64) * 32) {
         check("top row is red (0xFFFF0000), rows flipped to top-down", px[0] == 0xffff0000u, px[0]);
         check("bottom row is blue (0xFF0000FF)", px[static_cast<size_t>(31) * 64] == 0xff0000ffu, px[31 * 64]);
     }

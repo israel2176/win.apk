@@ -16,6 +16,25 @@ public class DebugUtils {
     /** AOSP has an implicit public default constructor here. */
     public DebugUtils() {}
 
+    /** {@hide} AOSP DebugUtils.buildShortClassTag: "SimpleName{hash" (the anonymous-class case
+     *  takes the name after the package). AOSP's android.app.Fragment, FragmentManager and
+     *  LoaderManager build their toString with it. */
+    public static void buildShortClassTag(Object cls, StringBuilder out) {
+        if (cls == null) {
+            out.append("null");
+        } else {
+            String simpleName = cls.getClass().getSimpleName();
+            if (simpleName == null || simpleName.isEmpty()) {
+                simpleName = cls.getClass().getName();
+                int end = simpleName.lastIndexOf('.');
+                if (end > 0) simpleName = simpleName.substring(end + 1);
+            }
+            out.append(simpleName);
+            out.append('{');
+            out.append(Integer.toHexString(System.identityHashCode(cls)));
+        }
+    }
+
     public static boolean isObjectSelected(Object object) {
         boolean match = false;
         String s = System.getenv("ANDROID_OBJECT_FILTER");
