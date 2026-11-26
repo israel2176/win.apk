@@ -2250,7 +2250,8 @@ every such change is listed here:
   died at start on the missing method). Not Windows-specific.
 - `runtime/java/com/macapk/loader/Boot.java` (`writeJavaProcMirror`,
   `writeProcCmdline`): the `/proc` mirror also writes
-  `<android root>/proc/<pid>/cmdline`, the process name and a NUL, which
+  `<android root>/proc/<pid>/cmdline`, the process name (the manifest's, `Boot.processName`: AOSP's
+  `ActivityThread.currentProcessName()` is null until `bindApplication`) and a NUL, which
   `/proc/self/cmdline` and `/proc/<pid>/cmdline` name (`paths.cpp`;
   `java.io.FileReader`'s `/proc` hook, `Cocoa_remapProcPath`), and drops the
   directories of pids that no longer run (Breezy Weather reads the file in
