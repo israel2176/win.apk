@@ -139,8 +139,10 @@ and name the launcher shows), plus an overlay for `java.base`.
 upstream Mac.apk's `runtime/src/main.cpp`. It finds the runtime files, installs and
 converts the app, creates the HotSpot JVM in-process with upstream's options
 (SerialGC, a 16 MB thread stack, upstream's `java.base` changes, bytecode
-verification off) and class-data sharing (below), binds the host natives, and
-calls `Boot.run`. One file per
+verification off) and class-data sharing (below), opens every package of the Java
+runtime's modules to the apps' reflection, as ART has no modules (`open_platform_packages`:
+Gson's `setAccessible` on `java.lang.ref.Reference.referent` works as on a phone), binds the
+host natives, and calls `Boot.run`. One file per
 Java class: `native_cocoa.cpp` (the screen, the render tick, input delivery,
 presenting frames), `win32_window.cpp` (the window itself),
 `native_audio.cpp`, `native_webview.cpp`, `native_camera.cpp`,

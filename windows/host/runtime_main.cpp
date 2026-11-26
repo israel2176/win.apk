@@ -251,6 +251,64 @@ using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
 // own exceptions and the unhandled-exception filter never sees it.
 void JNICALL jvm_abort_hook() { winapk::host::crash_report_fatal("the JVM's fatal error handler"); }
 
+// ART has no modules: an app's reflection reaches every class of the core library and its private
+// members (setAccessible), the hidden-API lists aside, and libraries count on it (Gson reads
+// java.lang.ref.Reference's fields, others java.util.concurrent's, java.sql's...). HotSpot refuses
+// such reflection into a package its module does not open, so every package of every module of the
+// boot layer is opened to the unnamed modules, the app's classes' and the framework's: what one
+// --add-opens=<module>/<package>=ALL-UNNAMED per package would do, without a list to keep in step
+// with the Java runtime. jdk.internal.module.Modules.addOpensToAllUnnamed is the call the launcher
+// makes for a jar manifest's Add-Opens; JNI reaches it across the module boundary. Before any of
+// the framework's or the app's code runs, and leaving the class-data sharing archive as it is.
+void open_platform_packages(JNIEnv* env) {
+    auto fail = [&](const char* what) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        std::fprintf(stderr, "[win.apk] cannot open the Java runtime's packages to apps: %s\n", what);
+    };
+    jclass layer_cls = env->FindClass("java/lang/ModuleLayer");
+    jclass module_cls = env->FindClass("java/lang/Module");
+    jclass set_cls = env->FindClass("java/util/Set");
+    jclass modules_cls = env->FindClass("jdk/internal/module/Modules");
+    if (!layer_cls || !module_cls || !set_cls || !modules_cls) return fail("a class is missing");
+    jmethodID boot = env->GetStaticMethodID(layer_cls, "boot", "()Ljava/lang/ModuleLayer;");
+    jmethodID layer_modules = env->GetMethodID(layer_cls, "modules", "()Ljava/util/Set;");
+    jmethodID packages = env->GetMethodID(module_cls, "getPackages", "()Ljava/util/Set;");
+    jmethodID to_array = env->GetMethodID(set_cls, "toArray", "()[Ljava/lang/Object;");
+    jmethodID open = env->GetStaticMethodID(modules_cls, "addOpensToAllUnnamed",
+                                            "(Ljava/lang/Module;Ljava/lang/String;)V");
+    if (!boot || !layer_modules || !packages || !to_array || !open) return fail("a method is missing");
+    jobject layer = env->CallStaticObjectMethod(layer_cls, boot);
+    jobject mods = layer ? env->CallObjectMethod(layer, layer_modules) : nullptr;
+    auto mod_array = mods ? static_cast<jobjectArray>(env->CallObjectMethod(mods, to_array)) : nullptr;
+    if (!mod_array || env->ExceptionCheck()) return fail("no boot layer");
+    int opened = 0;
+    const jsize n_mods = env->GetArrayLength(mod_array);
+    for (jsize m = 0; m < n_mods; ++m) {
+        jobject mod = env->GetObjectArrayElement(mod_array, m);
+        jobject pkgs = env->CallObjectMethod(mod, packages);
+        auto pkg_array = pkgs ? static_cast<jobjectArray>(env->CallObjectMethod(pkgs, to_array)) : nullptr;
+        if (pkg_array) {
+            const jsize n_pkgs = env->GetArrayLength(pkg_array);
+            for (jsize i = 0; i < n_pkgs; ++i) {
+                jobject pn = env->GetObjectArrayElement(pkg_array, i);
+                env->CallStaticVoidMethod(modules_cls, open, mod, pn);
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                else ++opened;
+                env->DeleteLocalRef(pn);
+            }
+            env->DeleteLocalRef(pkg_array);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (pkgs) env->DeleteLocalRef(pkgs);
+        env->DeleteLocalRef(mod);
+    }
+    env->DeleteLocalRef(mod_array);
+    env->DeleteLocalRef(mods);
+    env->DeleteLocalRef(layer);
+    std::fprintf(stderr, "[win.apk] %d packages of %d Java runtime modules opened to apps' reflection\n", opened,
+                 static_cast<int>(n_mods));
+}
+
 // `exit_hook`, when given, is HotSpot's "exit" hook: System.exit ends there rather than in the CRT's exit.
 bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env,
                void(JNICALL* exit_hook)(jint) = nullptr) {
@@ -276,6 +334,7 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
     }
     winapk::host::rearm_crash_report();  // HotSpot installed its own unhandled-exception filter
     winapk::host::cds_vm_created(*vm, *env);
+    open_platform_packages(*env);
     return true;
 }
 
