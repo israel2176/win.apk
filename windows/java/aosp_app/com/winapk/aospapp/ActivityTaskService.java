@@ -107,5 +107,46 @@ public final class ActivityTaskService {
         return ActivityManager.START_SUCCESS;
     }
 
+    /** ActivityTaskManagerService.startActivityIntentSender (Activity.startIntentSenderForResult,
+     *  ContextImpl.startIntentSender): the PendingIntent behind the sender is sent as
+     *  PendingIntentRecord.sendInner sends it. One activity is started for the caller's result, with
+     *  the fill-in merged and the caller's flags applied; any other kind runs as its send() does.
+     *  START_CANCELED for a cancelled sender (AOSP's Activity throws SendIntentException for it).
+     *  MediaStore's create*Request consent screens, which the system shows on a device and Win.apk
+     *  has none of, are the user declining: RESULT_CANCELED to the caller. */
+    public int startActivityIntentSender(IApplicationThread caller, android.content.IIntentSender target,
+            IBinder allowlistToken, Intent fillInIntent, String resolvedType, IBinder resultTo, String resultWho,
+            int requestCode, int flagsMask, int flagsValues, Bundle options) {
+        android.app.PendingIntent pi = com.macapk.loader.app.IntentSenders.of(target);
+        if (pi == null) {
+            if (target == null) throw new IllegalArgumentException("Bad PendingIntent object");
+            // Another process's sender: its own process sends it (no result comes back).
+            try {
+                target.send(0, fillInIntent, resolvedType, allowlistToken, null, null, options);
+            } catch (android.os.RemoteException e) {
+                return START_CANCELED;
+            }
+            return ActivityManager.START_SUCCESS;
+        }
+        if (com.macapk.loader.app.IntentSenders.canceled(pi)) return START_CANCELED;
+        Intent intent = com.macapk.loader.app.IntentSenders.activityIntent(pi, fillInIntent, flagsMask, flagsValues);
+        if (intent == null) {
+            return com.macapk.loader.app.IntentSenders.sendCanceled(pi, 0, fillInIntent)
+                    ? START_CANCELED : ActivityManager.START_SUCCESS;
+        }
+        if (com.macapk.loader.app.IntentSenders.isMediaConsentRequest(intent)) {
+            if (resultTo != null && requestCode >= 0) {
+                new AospHostResult(app.tasks, resultTo, resultWho, requestCode)
+                        .deliver(android.app.Activity.RESULT_CANCELED, null);
+            }
+            return ActivityManager.START_SUCCESS;
+        }
+        return startActivity(caller, pi.getCreatorPackage(), null, intent, resolvedType, resultTo, resultWho,
+                requestCode, 0, null, options);
+    }
+
+    /** ActivityManager.START_CANCELED (hidden). */
+    private static final int START_CANCELED = -96;
+
     public IActivityClientController getActivityClientController() { return app.clientController; }
 }
