@@ -2432,7 +2432,11 @@ every such change is listed here:
   31) throw `SecurityException` when missing, scan results need the location
   permission unless the scan is `neverForLocation` (`PackageInfo` now carries
   that flag). `android.hardware.bluetooth_le` is declared when the host
-  scans. A host without these natives (the Mac) keeps the old answers: the
+  scans, by `hasSystemFeature` and `getSystemAvailableFeatures` alike (no
+  longer by upstream's `BluetoothBridge`, which is never available here). A
+  scannable advertisement is reported once its scan response has come, the two
+  joined in one `ScanRecord`, as AOSP's `LeScanningReassembler` does
+  (`host/bluetooth_util.h` `ScanReassembler`). A host without these natives (the Mac) keeps the old answers: the
   sockets' "no Bluetooth radio", a GATT client that reports the failure, a
   scan that fails.
 - `runtime/java/com/macapk/loader/ActivityHost.java` and
