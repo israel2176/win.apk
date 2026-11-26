@@ -3015,12 +3015,6 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
-- `runtime/java/com/macapk/loader/Boot.java`, `NativeCocoa.java`: `setAppApks`, the app's installed APKs
-  (base, then splits) handed to the host, which maps each read-only and lists it in `/proc/self/maps` under
-  its `/data/app/...` path (`windows/src/bionic/stdio.cpp`, `paths.cpp` `android_path_of_host`), as ART
-  leaves an app's APKs mapped. lionscribe.hebdate's `libo.so` looks there for a line naming its package with
-  an `.apk` extension and checks that file; with none it jumped to a broken address on purpose (issue #208).
-  The guest libraries' own lines still name their host files.
 - `runtime/java/android/os/Process.java`: `myTid()` on the main looper's thread is `myPid()`, as Linux
   numbers a process's main thread (clalit's packer loads its native library only when `myPid() ==
   myTid()`, and died on `UnsatisfiedLinkError` without it, issue #208); another thread keeps its Java

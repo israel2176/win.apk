@@ -824,17 +824,6 @@ public final class Boot {
         // (base + split_*.apk siblings; see InstalledSplits). One line, so a
         // log can tell a split install from a plain one without a listing.
         NativeLog.i(TAG, "boot: set="    + InstalledSplits.describe(InstalledSplits.of(apkPath)));
-        // As ART leaves them: the app's APKs mapped, in /proc/self/maps under their /data/app paths.
-        if (HostAppSupport.windowsHost()) {
-            try {
-                java.util.List<File> apks = InstalledSplits.of(apkPath);
-                String[] paths = new String[apks.size()];
-                for (int i = 0; i < paths.length; i++) paths[i] = apks.get(i).getAbsolutePath();
-                NativeCocoa.setAppApks(paths);
-            } catch (Throwable t) {
-                NativeLog.w(TAG, "boot: the APKs were not mapped for /proc/self/maps: " + t);
-            }
-        }
         NativeLog.i(TAG, "boot: jar="    + appJar);
         NativeLog.i(TAG, "boot: dir="    + appDir);
         NativeLog.i(TAG, "boot: manifest="+ manifestPath);
