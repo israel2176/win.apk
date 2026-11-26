@@ -26,6 +26,8 @@
 // Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
 // done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
 // clock went back), and waits while on battery, with no network or while an app starts.
+// The choice settings (launcher/settings.h): a value the Settings page never writes is the default, 0, both for what
+// is drawn and for what the page shows chosen.
 
 #include <cstdio>
 #include <cstdlib>
@@ -40,6 +42,7 @@
 #include "../launcher/installs.h"
 #include "../launcher/library_files.h"
 #include "../launcher/maintenance.h"
+#include "../launcher/settings.h"
 #include "../launcher/store_app.h"
 #include "../launcher/updates.h"
 
@@ -1088,8 +1091,24 @@ void test_install_sets() {
               lone[0].splits[1].second == L"split_2.apk");
 }
 
+void test_settings() {
+    std::printf("choice settings\n");
+    namespace st = winapk::launcher::settings;
+    check("a known theme is itself", st::theme(1) == st::Theme::kLight && st::theme(2) == st::Theme::kDark);
+    check("an unknown theme is as Windows",
+          st::theme(7) == st::Theme::kWindows && st::theme(0xFFFFFFFF) == st::Theme::kWindows);
+    check("dark: chosen, or as Windows on a dark Windows", st::theme_dark(2, false) && st::theme_dark(0, true));
+    check("light: chosen, or as Windows on a light Windows", !st::theme_dark(1, true) && !st::theme_dark(0, false));
+    check("an unknown theme draws as Windows does", st::theme_dark(7, true) && !st::theme_dark(7, false));
+    check("an unknown language is as Windows", st::language(5) == st::Language::kWindows &&
+                                                   st::language_hebrew(5, true) && !st::language_hebrew(5, false));
+    check("English chosen on a Hebrew Windows", !st::language_hebrew(1, true) && st::language_hebrew(2, false));
+    check("a phone size past the list is the first", st::choice(9, 6) == 0 && st::choice(5, 6) == 5);
+}
+
 int main() {
     test_runs();
+    test_settings();
     test_install_sets();
     test_installs();
     test_updates();

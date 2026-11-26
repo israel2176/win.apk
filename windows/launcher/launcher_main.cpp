@@ -114,6 +114,7 @@
 #include "installs.h"
 #include "library_files.h"
 #include "maintenance.h"
+#include "settings.h"
 #include "store_app.h"
 #include "updates.h"
 #include "../host/window_fit.h"
@@ -178,8 +179,8 @@ float g_paint_w = 0;   // the width being painted, to put text and pictures back
 DWORD setting(const wchar_t* name, DWORD fallback);
 
 void pick_language() {
-    const DWORD pref = setting(L"Language", 0);  // 0 as Windows, 1 English, 2 Hebrew
-    g_rtl = pref == 2 || (pref == 0 && PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_HEBREW);
+    g_rtl = winapk::launcher::settings::language_hebrew(setting(L"Language", 0),
+                                                       PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_HEBREW);
 }
 
 // The Hebrew for an English string, keyed by the English itself.
@@ -970,7 +971,7 @@ int effective_orientation(const std::wstring& name) {
 // is sized by. "Auto" is 360x800 dp, turned to the orientation; `name` empty
 // (an install) takes the settings' orientation.
 void runtime_phone_size(const std::wstring& name, int* pw, int* ph) {
-    const DWORD i = setting(L"PhoneSize", 0);
+    const DWORD i = winapk::launcher::settings::choice(setting(L"PhoneSize", 0), std::size(kPhonePresets));
     const bool landscape = (name.empty() ? landscape_default() : effective_orientation(name) == kLandscape);
     int w = 360, h = 800;
     if (i > 0 && i < std::size(kPhonePresets)) {
@@ -2658,8 +2659,7 @@ bool windows_uses_dark() {
 }
 
 void pick_theme() {
-    const DWORD pref = setting(L"Theme", 0);  // 0 as Windows, 1 light, 2 dark
-    const bool dark = pref == 2 || (pref == 0 && windows_uses_dark());
+    const bool dark = winapk::launcher::settings::theme_dark(setting(L"Theme", 0), windows_uses_dark());
     // Windows 11's own neutrals; the accent is the blue of the program's icon,
     // on dark backgrounds the lighter tint Windows uses there, with dark text.
     g_t = dark ? Theme{true,         hex(0x202020), hex(0x272727), hex(0x2D2D2D), hex(0x383838), hex(0x3D3D3D),
@@ -7285,7 +7285,7 @@ std::vector<Section> settings_sections() {
     theme.kind = Row::kChoice;
     theme.title = tr(L"Theme");
     theme.choices = {tr(L"Follow Windows"), tr(L"Light"), tr(L"Dark")};  // the setting's 0, 1, 2
-    theme.choice = static_cast<int>((std::min)(setting(L"Theme", 0), 2ul));
+    theme.choice = static_cast<int>(winapk::launcher::settings::theme(setting(L"Theme", 0)));
     theme.act = [](int i) {
         set_setting(L"Theme", static_cast<DWORD>(i));
         apply_theme();
@@ -7295,8 +7295,9 @@ std::vector<Section> settings_sections() {
     lang.title = tr(L"Language");
     // Listed Hebrew first; the setting keeps its values (0 as Windows, 1 English, 2 Hebrew).
     lang.choices = {tr(L"Follow Windows"), L"עברית", L"English"};
-    const DWORD language = setting(L"Language", 0);
-    lang.choice = language == 2 ? 1 : language == 1 ? 2 : 0;
+    using winapk::launcher::settings::Language;
+    const Language language = winapk::launcher::settings::language(setting(L"Language", 0));
+    lang.choice = language == Language::kHebrew ? 1 : language == Language::kEnglish ? 2 : 0;
     lang.act = [](int i) {
         set_setting(L"Language", static_cast<DWORD>(i == 1 ? 2 : i == 2 ? 1 : 0));
         apply_language();
@@ -7308,8 +7309,8 @@ std::vector<Section> settings_sections() {
     size.title = tr(L"App window size");
     size.detail = tr(L"The size apps open at. An app whose window you resized opens at its saved size.");
     for (const auto& p : kPhonePresets) size.choices.push_back(tr(p.label));
-    size.choice = static_cast<int>(setting(L"PhoneSize", 0));
-    if (size.choice >= static_cast<int>(size.choices.size())) size.choice = 0;
+    size.choice =
+        static_cast<int>(winapk::launcher::settings::choice(setting(L"PhoneSize", 0), std::size(kPhonePresets)));
     size.act = [](int i) { set_setting(L"PhoneSize", static_cast<DWORD>(i)); };
     Row orient;
     orient.kind = Row::kChoice;
