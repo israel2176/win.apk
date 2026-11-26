@@ -1,6 +1,7 @@
 // bluetooth_util.h -- the pure parts of the Bluetooth host (native_bluetooth.cpp):
 // addresses and UUIDs between their Android text forms and Windows' binary
-// ones, the advertisement bytes an LE scan result carries, and the IIDs of
+// ones, the advertisement bytes an LE scan result carries and when it is
+// reported (an advertisement joined with its scan response), and the IIDs of
 // WinRT's parameterized interfaces (IVectorView<T>, TypedEventHandler<S, A>,
 // AsyncOperationCompletedHandler<T>), which no header provides and which are
 // derived from the type signature as the WinRT type system does. No Windows
@@ -12,6 +13,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <list>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -216,5 +219,62 @@ inline std::vector<uint8_t> advertisement_bytes(const std::vector<AdSection>& se
     }
     return out;
 }
+
+// When an LE scan reports an advertiser, as Android's LeScanningReassembler
+// (system/gd/hci/le_scanning_reassembler.cc) decides it: Windows delivers an
+// advertisement and its scan response as two events, Android reports them as
+// one ScanResult whose record is the advertisement's bytes followed by the
+// scan response's. So a scannable advertisement is held until its scan
+// response comes (a new advertisement from the same device replaces it, as
+// legacy advertising is always complete), a scan response with no advertisement
+// held is dropped, and an advertisement no one can scan is reported at once.
+// Apps read fixed offsets of ScanRecord.getBytes() and find the device's name
+// there: a scannable advertisement reported alone is a record a phone never
+// hands out. The result carries the advertisement's event properties
+// (connectable, legacy: AOSP's extended_event_type) and the latest event's
+// signal. Like AOSP, it waits for a scan response however long it takes (the
+// advertiser may refuse SCAN_REQs; AOSP's TODO b/272120114). At most 16
+// advertisers are held, the oldest dropped, AOSP's kMaximumCacheSize.
+//
+// Report needs `uint64_t address`, `std::vector<uint8_t> record`, `bool
+// connectable` and `bool legacy`; native_bluetooth.cpp's ScanEvent.
+template <typename Report>
+class ScanReassembler {
+public:
+    static constexpr size_t kMaximumCacheSize = 16;
+
+    std::optional<Report> process(Report report, bool scannable, bool scan_response) {
+        auto held = find(report.address);
+        if (scan_response) {
+            if (held == cache_.end()) return std::nullopt;
+            Report out = std::move(report);
+            std::vector<uint8_t> record = std::move(held->record);
+            record.insert(record.end(), out.record.begin(), out.record.end());
+            out.record = std::move(record);
+            out.connectable = held->connectable;
+            out.legacy = held->legacy;
+            cache_.erase(held);
+            return out;
+        }
+        if (held != cache_.end()) cache_.erase(held);
+        if (!scannable) return report;
+        if (cache_.size() > kMaximumCacheSize) cache_.pop_back();
+        cache_.push_front(std::move(report));
+        return std::nullopt;
+    }
+
+    void clear() { cache_.clear(); }
+    size_t held() const { return cache_.size(); }
+
+private:
+    typename std::list<Report>::iterator find(uint64_t address) {
+        for (auto it = cache_.begin(); it != cache_.end(); ++it) {
+            if (it->address == address) return it;
+        }
+        return cache_.end();
+    }
+
+    std::list<Report> cache_;
+};
 
 }  // namespace winapk::host::bt
