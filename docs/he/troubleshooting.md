@@ -70,7 +70,8 @@ taken by the main thread` מ-`Win.apk.InputTimeout`. אם זה קורה בכל �
 כתוב `decoding with libvpx VP9` או `dav1d AV1`). וידאו שמתנגן דרך
 `MediaPlayer` או `VideoView` עדיין צריך את חבילות ה-Codec בשביל VP9 ו-AV1,
 ולא מתנגן מקובץ WebM. שידור שהשמע שלו Vorbis או FLAC מתנגן בלי קול
-באפליקציות ExoPlayer; וידאו מהקוד המקורי של אפליקציה (`AMediaCodec`) עוד לא
+באפליקציות ExoPlayer. הקוד המקורי של אפליקציה (`AMediaCodec`) מקבל את אותם
+מפענחים, אבל בלי מקודד: מקליט או ממיר מקורי לא ימצא מקודד ויגיד שהפורמט לא
 נתמך.
 
 **תמונה מטלפון (HEIC) או תמונת AVIF לא מוצגת.** ‏Windows הוא שמפענח אותן:
