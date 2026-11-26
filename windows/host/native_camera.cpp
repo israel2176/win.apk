@@ -35,6 +35,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwchar>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -52,6 +53,7 @@
 #include <mfreadwrite.h>
 #include <strmif.h>
 
+#include "camera_host.h"
 #include "win32_window.h"
 
 namespace winapk::host {
@@ -615,6 +617,12 @@ public:
 
     int64_t delivered() const { return delivered_.load(); }
 
+    // Every frame, as it arrives, on the capture thread (camera_host.h's Stream).
+    void set_listener(std::function<void(const std::shared_ptr<Frame>&)> listener) {
+        std::lock_guard<std::mutex> hold(listener_lock_);
+        listener_ = std::move(listener);
+    }
+
     // ---- frame handoff (ImageReader.acquireLatestImage / Image.close) ----
     bool acquire() {
         std::lock_guard<std::mutex> hold(lock_);
@@ -1063,6 +1071,8 @@ private:
             std::fprintf(stderr, "[camera] first frame %dx%d\n", w, h);
             std::fflush(stderr);
         }
+        std::lock_guard<std::mutex> hold(listener_lock_);
+        if (listener_) listener_(f);
     }
 
     const int device_;
@@ -1076,6 +1086,8 @@ private:
     std::vector<std::shared_ptr<Frame>> pool_;
     int64_t acquired_ = 0;
     std::atomic<int64_t> delivered_{0};
+    std::mutex listener_lock_;
+    std::function<void(const std::shared_ptr<Frame>&)> listener_;
 
     std::mutex run_lock_;  // start/stop
     std::thread thread_;
@@ -2032,6 +2044,113 @@ const HostMethod kMethods[] = {
 };
 
 }  // namespace
+
+// ---- camera_host.h: the same cameras for native code ------------------------------
+
+namespace camera {
+
+namespace {
+
+class SessionStream : public Stream {
+public:
+    explicit SessionStream(std::shared_ptr<Session> s) : s_(std::move(s)) {}
+    ~SessionStream() override {
+        s_->set_listener(nullptr);
+        s_->stop();
+    }
+    bool configure(int width, int height, int fps) override { return s_->configure(width, height, fps); }
+    int width() override { return s_->width(); }
+    int height() override { return s_->height(); }
+    bool start() override { return s_->start(); }
+    void stop() override { s_->stop(); }
+    void set_listener(std::function<void(const Picture&)> listener) override {
+        if (!listener) {
+            s_->set_listener(nullptr);
+            return;
+        }
+        s_->set_listener([listener = std::move(listener)](const std::shared_ptr<Frame>& f) {
+            Picture p;
+            p.nv12 = f->data.data();
+            p.width = f->width;
+            p.height = f->height;
+            p.stride = f->stride;
+            p.timestamp_ns = f->pts;
+            p.hold = f;
+            listener(p);
+        });
+    }
+    void set_continuous_focus(bool on) override { s_->set_focus_mode(on ? kFocusContinuous : kFocusHold); }
+    bool set_torch(bool on) override { return s_->set_torch(on); }
+    int focus_state() override { return s_->focus_state(); }
+
+private:
+    std::shared_ptr<Session> s_;
+};
+
+}  // namespace
+
+bool allowed() { return camera_allowed(); }
+
+// AudioRecord's way of asking (native_audio_input.cpp's record_audio_permitted), for CAMERA.
+bool permitted() {
+    using GetVms = jint(JNICALL*)(JavaVM**, jsize, jsize*);
+    HMODULE jvm = GetModuleHandleW(L"jvm.dll");
+    auto get_vms = jvm ? reinterpret_cast<GetVms>(GetProcAddress(jvm, "JNI_GetCreatedJavaVMs")) : nullptr;
+    JavaVM* vm = nullptr;
+    jsize n = 0;
+    if (!get_vms || get_vms(&vm, 1, &n) != JNI_OK || n < 1 || !vm) return true;
+    JNIEnv* env = nullptr;
+    if (vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("winapk-camera-permission"), nullptr};
+        if (vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) return true;
+    }
+    bool held = true;
+    jclass store = env->FindClass("com/macapk/loader/SpecialAccessStore");
+    jmethodID holds =
+        store ? env->GetStaticMethodID(store, "holds", "(Ljava/lang/String;)Ljava/lang/Boolean;") : nullptr;
+    jstring perm = holds ? env->NewStringUTF("android.permission.CAMERA") : nullptr;
+    jobject answer = perm ? env->CallStaticObjectMethod(store, holds, perm) : nullptr;
+    if (answer && !env->ExceptionCheck()) {
+        jclass boolean = env->FindClass("java/lang/Boolean");
+        jmethodID value = boolean ? env->GetMethodID(boolean, "booleanValue", "()Z") : nullptr;
+        if (value) held = env->CallBooleanMethod(answer, value) != JNI_FALSE;
+        if (boolean) env->DeleteLocalRef(boolean);
+    }
+    if (env->ExceptionCheck()) env->ExceptionClear();
+    if (answer) env->DeleteLocalRef(answer);
+    if (perm) env->DeleteLocalRef(perm);
+    if (store) env->DeleteLocalRef(store);
+    return held;
+}
+
+int count() {
+    if (!camera_allowed()) return 0;
+    refresh_devices(false);
+    std::lock_guard<std::mutex> hold(g_devices_lock);
+    return static_cast<int>(g_devices.size() * kRolesPerDevice);
+}
+
+bool info(int index, Info* out) {
+    Device d;
+    if (!device_at(index, &d)) return false;
+    out->back = index % kRolesPerDevice == 0;
+    out->name = d.name;
+    out->sizes.clear();
+    for (const Format& f : d.formats) out->sizes.push_back({f.width, f.height, f.min_fps, f.max_fps});
+    out->autofocus = (d.controls & kCtlAutofocus) != 0;
+    out->torch = (d.controls & kCtlTorch) != 0;
+    return true;
+}
+
+std::shared_ptr<Stream> open(int index) {
+    if (!camera_allowed()) return nullptr;
+    Device d;
+    if (!device_at(index, &d) || d.formats.empty()) return nullptr;
+    std::fprintf(stderr, "[camera] NDK open(%d) %s: %zu sizes\n", index, d.name.c_str(), d.formats.size());
+    return std::make_shared<SessionStream>(std::make_shared<Session>(index, d.link, d.formats));
+}
+
+}  // namespace camera
 
 HostMethods native_camera_methods() { return {kMethods, sizeof(kMethods) / sizeof(kMethods[0])}; }
 
