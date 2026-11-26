@@ -429,8 +429,8 @@ int run_process(std::wstring cmdline) {
 //
 // <app dir>\.macapk-dex-stamp records what classes.jar was made from:
 //
-//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar), then "+framework"
-//                              when it read the class hierarchy from android-framework.jar
+//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar), then "+framework+aosp"
+//                              when it read the class hierarchy from the AOSP jars and android-framework.jar
 //   apk=<file_id>              the installed base.apk
 //
 // The jar is converted again when either line differs, and when there is no
@@ -644,9 +644,23 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     // (YouTube's ScrollFeedbackProvider.createProvider with android-34 installed: every touch move threw
     // IncompatibleClassChangeError), while a PC with no SDK had no hierarchy at all. The stamp says so
     // ("+framework"), which converts once more the jars made the other way.
+    //
+    // That framework is the AOSP jars first, as the app's JVM puts them (host/aosp_gfx.h), and Win.apk's own
+    // jar after them: the stage drops from android-framework.jar every class AOSP's app, views and resources
+    // replace, so with that jar alone Application$ActivityLifecycleCallbacks, an interface of aosp-app.jar,
+    // was not found and an app's `ActivityLifecycleCallbacks.super.onActivityPreCreated(...)` was written as
+    // a Methodref (IncompatibleClassChangeError "must be InterfaceMethodref constant" when an activity
+    // started). "+aosp" in the stamp converts once more the jars made against android-framework.jar alone.
     const fs::path framework = o.lib / "android-framework.jar";
     const bool with_framework = fs::exists(framework, ec);
-    const DexStamp want{converter_id(o.lib / "macapk-loader.jar") + (with_framework ? "+framework" : ""),
+    std::wstring hierarchy;
+    if (with_framework) {
+        for (const wchar_t* j : {L"aosp-app.jar", L"aosp-views.jar", L"aosp-resources.jar", L"aosp-graphics.jar"}) {
+            if (fs::exists(o.lib / j, ec)) hierarchy += (o.lib / j).wstring() + L";";
+        }
+        hierarchy += framework.wstring();
+    }
+    const DexStamp want{converter_id(o.lib / "macapk-loader.jar") + (with_framework ? "+framework+aosp" : ""),
                         file_id(o.apk)};
     DexStamp have;
     const bool stamped = read_dex_stamp(stamp, &have);
@@ -666,7 +680,7 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     };
     discard();
     std::vector<std::wstring> args;
-    if (with_framework) args = {L"--classpath", framework.wstring()};
+    if (with_framework) args = {L"--classpath", hierarchy};
     args.push_back(o.apk.wstring());
     args.push_back(tmp.wstring());
     const unsigned heap = dex_heap_mb();
