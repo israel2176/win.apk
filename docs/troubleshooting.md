@@ -71,8 +71,9 @@ Win.apk; they are slower than the codec packs, so a 1080p VP9 or AV1 video can
 stutter on a slow PC (the log says `decoding with libvpx VP9` or `dav1d AV1`).
 A video played by `MediaPlayer` or `VideoView` still needs the codec packs for
 VP9 and AV1, and does not play from a WebM file. A stream whose audio is Vorbis
-or FLAC plays silent in an ExoPlayer app; video from an app's native code
-(`AMediaCodec`) is not there yet.
+or FLAC plays silent in an ExoPlayer app. An app's native code (`AMediaCodec`)
+gets the same decoders but no encoder: a native recorder or converter finds
+none and says the format is not supported.
 
 **A phone photo (HEIC) or an AVIF picture does not show.** Windows decodes
 them: HEIC/HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video
