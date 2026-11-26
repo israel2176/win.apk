@@ -3,36 +3,10 @@ description: An app that does not install, does not start, crashes, or misbehave
 title: "<App name>: <what goes wrong>"
 labels: ["app"]
 body:
-  - type: markdown
-    attributes:
-      value: |
-        Thanks for the report. Only "What happens" is required; everything else helps if you have it. It is fine to write in Hebrew (אפשר לכתוב בעברית).
   - type: textarea
     id: what-happens
     attributes:
       label: What happens
-      description: What goes wrong, and how to get there if you know.
+      description: Which app, and what goes wrong. A log or screenshot can be dragged in here too. It is fine to write in Hebrew (אפשר לכתוב בעברית).
     validations:
       required: true
-  - type: input
-    id: app
-    attributes:
-      label: App and version
-      placeholder: Markor 2.12.4 (net.gsantner.markor)
-  - type: textarea
-    id: log
-    attributes:
-      label: Log, screenshot (optional)
-      description: Drag in `%LOCALAPPDATA%\Win.apk\logs\last-run.log` (or `install-<app>.log` if installing failed) and a screenshot (Win+Shift+S, then paste). Look the log over first; it can contain file names.
-  - type: input
-    id: winapk-version
-    attributes:
-      label: Win.apk version
-  - type: input
-    id: windows-version
-    attributes:
-      label: Windows version
-  - type: input
-    id: gpu
-    attributes:
-      label: Graphics
