@@ -414,7 +414,21 @@ public final class Probes {
             "spinner_background", "spinner_dropdown_background", "gallery_thumb", "zoom_plate"};
         for (String name : platform) {
             int id = c.getResources().getIdentifier(name, "drawable", "android");
+            if (id == 0) id = internalDrawable(name);
             out.add(id == 0 ? "  " + name + " no such drawable" : drawableLine(c, name, id, d));
+        }
+    }
+
+    /** The platform's own id for a drawable it names, from com.android.internal.R, or 0. On a device
+     *  getIdentifier finds every name of the platform's table, but Robolectric's port of
+     *  LoadedPackage::FindEntryByName misreads sparse types (tooltip_frame, text_cursor_material and
+     *  the text select handles are "not found"), so the oracle would print `no such drawable` for
+     *  drawables a phone has. The class's ids are the table's, on both sides. */
+    private static int internalDrawable(String name) {
+        try {
+            return Class.forName("com.android.internal.R$drawable").getField(name).getInt(null);
+        } catch (ReflectiveOperationException | LinkageError e) {
+            return 0;
         }
     }
 
