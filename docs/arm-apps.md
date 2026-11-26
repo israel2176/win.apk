@@ -54,7 +54,8 @@ Win.apk compiles it for your processor into a DLL next to the library.
   code in (many apps ship libraries for a feature you may never open) is not
   translated at all, as Android compiles at install only what an app's
   profile names. Once the app has run code in it, the translation starts when
-  the app has been quiet for a minute or is closed.
+  the app has been quiet for a minute or is closed, and runs while Win.apk
+  runs: closing Win.apk (the library and every app) stops it.
 - **Most libraries are translated whole, once.** A library of up to 1 million
   instructions is translated in one go. A larger one (a browser engine, a big
   app's own code) is translated only where the app's code actually ran, once
@@ -65,7 +66,8 @@ Win.apk compiles it for your processor into a DLL next to the library.
 - **It keeps out of your way.** Lowest priority; at most one processor core
   while you use the PC, more only while you are away; none on battery saver or
   while a full-screen program (a game, a presentation) runs; it compiles less
-  at once when memory is short. Stopped by a shutdown, it goes on where it was.
+  at once when memory is short. Stopped by a shutdown or by closing Win.apk,
+  it goes on where it was.
 - **It is shared and cleaned up.** A library two apps share is translated once.
   The shared folder (`%LOCALAPPDATA%\Win.apk\aot-cache`) stays under 2 GB and
   drops what no app used for two months. A translation is made for your

@@ -152,6 +152,7 @@ constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
 constexpr UINT_PTR kMaintenanceTimer = 5;  // shown or hidden: is a maintenance window due? (maintenance.h)
+constexpr UINT_PTR kQuitTimer = 6;  // hidden: an app window it did not start is still open (maybe_quit)
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
 enum Cmd { kCmdOpen = 200, kCmdStop, kCmdInfo, kCmdRemove };
@@ -9575,6 +9576,7 @@ enum { kSplashClose = 1, kSplashLog = 2, kSplashCancel = 3, kSplashReport = 4 };
 constexpr UINT kFitSplash = WM_APP + 21;
 
 void maybe_quit();
+std::set<DWORD> windowed_processes();
 
 Splash* splash_of(HWND hwnd) { return reinterpret_cast<Splash*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA)); }
 
@@ -10295,6 +10297,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == kInfoBarTimer) info(L"", kInfo);
             if (wp == kUpdateTimer) auto_update_check();
             if (wp == kMaintenanceTimer) maintenance_check();
+            if (wp == kQuitTimer) {
+                KillTimer(hwnd, kQuitTimer);
+                maybe_quit();
+            }
             if (wp == kSetupScanTimer) {
                 KillTimer(hwnd, kSetupScanTimer);
                 if (g_view == kGmsSetupView) {
@@ -10702,8 +10708,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             for (const Embedded* e : {&g_store_app, &g_play}) {
                 if (!e->name.empty() && e->up()) stop_run(e->name);
             }
-            // Work still under way (an install, a splash) keeps the process; the library only hides.
-            if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || g_debug_wnd || any_runs()) {
+            // Work still under way (an install, a splash, an app's window) keeps the process; the library only
+            // hides. Otherwise the process ends, and what it started in the background with it (end_background_work).
+            if (g_install_wnd || any_pending() || !g_splashes.empty() || g_log_wnd || g_debug_wnd || any_runs() ||
+                !windowed_processes().empty()) {
                 ShowWindow(hwnd, SW_HIDE);
                 maybe_quit();
                 return 0;
@@ -12598,12 +12606,82 @@ void show_library(int show) {
     auto_update_check();
 }
 
+// Whether `pid` runs a program of this install (its bin\, jre\, clang\...) other than Win.apk.exe
+// itself and the uninstaller: the runtime, and what it started (the framework archive's java, the
+// translation's clang).
+bool ours_to_end(DWORD pid) {
+    HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!p) return false;
+    wchar_t buf[MAX_PATH * 4];
+    DWORD n = MAX_PATH * 4;
+    const bool named = QueryFullProcessImageNameW(p, 0, buf, &n) != 0;
+    CloseHandle(p);
+    if (!named) return false;
+    const fs::path image(std::wstring(buf, n));
+    const std::wstring file = image.filename().wstring();
+    if (_wcsicmp(file.c_str(), exe_path().filename().c_str()) == 0 || _wcsnicmp(file.c_str(), L"unins", 5) == 0)
+        return false;
+    const std::wstring dir = root().wstring() + L"\\";
+    return image.wstring().size() > dir.size() && _wcsnicmp(image.c_str(), dir.c_str(), dir.size()) == 0;
+}
+
+// The processes of this install, in this Windows session, with a window on screen: an app another app
+// started (an app's process starts another's, as a share or a link does), which the launcher has no run
+// of.
+std::set<DWORD> windowed_processes() {
+    std::set<DWORD> pids;
+    EnumWindows(
+        [](HWND w, LPARAM lp) -> BOOL {
+            DWORD pid = 0;
+            if (IsWindowVisible(w) && GetWindow(w, GW_OWNER) == nullptr && GetWindowThreadProcessId(w, &pid) &&
+                pid != GetCurrentProcessId()) {
+                reinterpret_cast<std::set<DWORD>*>(lp)->insert(pid);
+            }
+            return TRUE;
+        },
+        reinterpret_cast<LPARAM>(&pids));
+    for (auto it = pids.begin(); it != pids.end();) it = ours_to_end(*it) ? std::next(it) : pids.erase(it);
+    return pids;
+}
+
+// When Win.apk ends, what it started in the background ends with it: the arm64 translation, the
+// framework archive's dump, the system broker and the Google account's token service. Nothing of
+// Win.apk goes on with nothing on screen, so closing it is how the user stops it all (a phone stops
+// such work with the app's own Force stop). Each of these is cut off safely: a translation or a dump
+// goes on where it was next time, and the broker writes its files whole (a temporary file, then a
+// rename). A process with a window on screen is left alone (windowed_processes).
+void end_background_work() {
+    DWORD session = 0;
+    ProcessIdToSessionId(GetCurrentProcessId(), &session);
+    const std::set<DWORD> windowed = windowed_processes();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return;
+    PROCESSENTRY32W pe{sizeof(pe)};
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
+        DWORD theirs = 0;
+        if (pe.th32ProcessID == GetCurrentProcessId() || windowed.count(pe.th32ProcessID) ||
+            !ProcessIdToSessionId(pe.th32ProcessID, &theirs) || theirs != session || !ours_to_end(pe.th32ProcessID))
+            continue;
+        if (HANDLE p = OpenProcess(PROCESS_TERMINATE, FALSE, pe.th32ProcessID)) {
+            TerminateProcess(p, 1);
+            CloseHandle(p);
+        }
+    }
+    CloseHandle(snap);
+}
+
 // When the library is not shown, the process lives only for what it is doing: an install window,
-// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened.
+// a splash, an app it started (to report how it ended), the log window, a maintenance window it opened,
+// and an app's window it did not start (looked at again every few seconds), so that the broker such an
+// app uses is not ended under it (end_background_work).
 void maybe_quit() {
     if (!g_main || IsWindowVisible(g_main)) return;
     if (g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending()) return;
     if (g_maintenance) return;  // a maintenance window it opened: waits for its end (kMaintenanceEnded)
+    if (!windowed_processes().empty()) {
+        SetTimer(g_main, kQuitTimer, 3000, nullptr);
+        return;
+    }
     DestroyWindow(g_main);
 }
 
@@ -12746,6 +12824,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
         TranslateMessage(&m);
         DispatchMessageW(&m);
     }
+    end_background_work();
     g_icons.clear();
     g_f = Fonts{};
     Gdiplus::GdiplusShutdown(gdiplus);
