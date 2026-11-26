@@ -144,9 +144,11 @@ public class AospAppLifecycleTest {
         @Override public void onSlicePinned(android.net.Uri uri) { slicePinned = uri.getPath(); }
     }
 
+    static volatile boolean mhSaw;
     static final List<String> platform = java.util.Collections.synchronizedList(new ArrayList<>());
     static final List<String> PLATFORM_EXPECTED = List.of("safety center true enabled false",
-            "backup transport null enabled false", "main tid is pid true, another thread's is not true");
+            "backup transport null enabled false", "mH callback saw the launch true",
+            "main tid is pid true, another thread's is not true");
     static final List<String> SLICES_EXPECTED = List.of("Slices.onCreate", "App.onCreate", "manager true",
             "pinned [content://" + SLICES + "/s]", "bound /s hi", "full access false");
 
@@ -165,6 +167,24 @@ public class AospAppLifecycleTest {
             note("App.onCreate");
             prov.add("App.onCreate");
             slices.add("App.onCreate");
+            // ActivityThread's mH and its Handler.mCallback, set by reflection as apps do (AliExpress
+            // initializes its SDKs from it on API 35+): the activity's launch passes through it.
+            try {
+                Object at = Class.forName("android.app.ActivityThread").getDeclaredMethod("currentActivityThread")
+                        .invoke(null);
+                java.lang.reflect.Field mh = Class.forName("android.app.ActivityThread").getDeclaredField("mH");
+                mh.setAccessible(true);
+                android.os.Handler h = (android.os.Handler) mh.get(at);
+                java.lang.reflect.Field cb = android.os.Handler.class.getDeclaredField("mCallback");
+                cb.setAccessible(true);
+                android.os.Handler.Callback previous = (android.os.Handler.Callback) cb.get(h);
+                cb.set(h, (android.os.Handler.Callback) m -> {
+                    mhSaw = true;
+                    return previous != null && previous.handleMessage(m);
+                });
+            } catch (ReflectiveOperationException e) {
+                platform.add("mH callback not set: " + e);
+            }
             // A context's window manager is its own for the context's life (ContextImpl's service
             // cache): ToastPresenter keeps it only in a WeakReference and removes its toast with it.
             Object wm = getSystemService(WINDOW_SERVICE);
@@ -262,6 +282,7 @@ public class AospAppLifecycleTest {
                 Thread t = new Thread(() -> other[0] = android.os.Process.myTid());
                 t.start();
                 try { t.join(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                platform.add("mH callback saw the launch " + mhSaw);
                 platform.add("main tid is pid " + (android.os.Process.myTid() == android.os.Process.myPid())
                         + ", another thread's is not " + (other[0] != android.os.Process.myPid()));
                 startService(new Intent(this, Started.class).putExtra("s", "go"));

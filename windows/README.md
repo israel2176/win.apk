@@ -3027,6 +3027,9 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/java/android/os/Handler.java`: the callback field is AOSP's `mCallback`: apps set it by reflection
+  on `ActivityThread.mH` to see its messages first (AliExpress initializes its SDKs that way from API 35 on;
+  with no field of that name it never did, and its first activity died on `TshellInitializedError`, issue #208).
 - `runtime/java/android/os/Process.java`: `myTid()` on the main looper's thread is `myPid()`, as Linux
   numbers a process's main thread (clalit's packer loads its native library only when `myPid() ==
   myTid()`, and died on `UnsatisfiedLinkError` without it, issue #208); another thread keeps its Java

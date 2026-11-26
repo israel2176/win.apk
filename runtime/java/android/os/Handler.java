@@ -81,7 +81,10 @@ public class Handler {
         });
 
     private final Looper looper;
-    private final Callback callback;
+    /** AOSP's name, mCallback (Handler.java:948): apps set it by reflection on ActivityThread's mH to see
+     *  its messages first (AliExpress initializes its SDKs that way from API 35 on, and with no field of
+     *  that name it never did, issue #208). Final as AOSP's; Field.set after setAccessible writes it. */
+    final Callback mCallback;
     /** AOSP Handler.mAsynchronous (:946), set only by createAsync. Every
      *  message this handler enqueues is flagged asynchronous, which exempts it
      *  from a sync barrier sitting at the head of the queue. It has to be
@@ -165,7 +168,7 @@ public class Handler {
      *  their asynchronous handlers so, -Dwinapk.aosp.views=1); createAsync's body. */
     public Handler(Looper looper, Callback callback, boolean async) {
         this.looper = looper;
-        this.callback = callback;
+        this.mCallback = callback;
         this.mAsynchronous = async;
     }
     /** AOSP's hidden Handler(boolean async) and Handler(Callback, boolean async), on the
@@ -535,7 +538,7 @@ public class Handler {
     public void handleMessage(Message msg) {}
     public void dispatchMessage(Message msg) {
         if (msg.callback != null) { msg.callback.run(); return; }
-        if (callback != null && callback.handleMessage(msg)) return;
+        if (mCallback != null && mCallback.handleMessage(msg)) return;
         handleMessage(msg);
     }
 
