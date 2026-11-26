@@ -260,7 +260,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `main.cpp` (translator CLI) | 9,744 | `.so` to a host library | `host/translator_main.cpp` + `host/guest_stub.cpp` | done |
 | `bionic_shim.cpp` | 66,962 | Android's libc, libdl, liblog, libm, libandroid... on Darwin | `src/mini_bionic.cpp` and `src/bionic/` on the Windows CRT and Win32 (M5) | about 520 functions |
 | `bionic_shim_jni_bare.cpp`, `_jni_cxxwrap.cpp` | 1,119 | variadic JNI calls | `src/jni_variadic.cpp` | done |
-| `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | `src/bionic/signal.cpp`: delivery on vectored exception handling, injection for pthread_kill (M5) | done for x86_64 guests; handlers in arm64 libraries are not called |
+| `bionic_shim_sigchain.cpp`, `_signal.cpp` | 1,913 | signals and chaining with the JVM | `src/bionic/signal.cpp`: delivery on vectored exception handling, injection for pthread_kill into a thread in guest code, a posted signal that ends a shim wait for one that is not (M5) | done for x86_64 guests; handlers in arm64 libraries are not called |
 | `bionic_shim_sensors.cpp` | 540 | NDK sensors | port as is (M5) | not started |
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
 | `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |

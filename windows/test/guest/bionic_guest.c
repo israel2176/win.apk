@@ -1437,6 +1437,96 @@ static void test_signal_delivery(void) {
     sigaction(12, &dfl, 0);
 }
 
+// ---- signals that end a wait -----------------------------------------------------------
+// A thread asleep in the shim takes a signal another thread sends it as a Linux thread takes one
+// in a system call: the wait ends, the handler runs on that thread, and the call fails with EINTR
+// (sem_wait, the futex call without SA_RESTART, nanosleep whatever SA_RESTART says) or waits on
+// (SA_RESTART). Boehm's collector (il2cpp, Mono) stops the world this way: pthread_kill to every
+// thread, many of them blocked, and a wait for each handler's answer.
+typedef struct { unsigned count; int reserved[3]; } sem_t;
+int sem_init(sem_t*, int, unsigned);
+int sem_wait(sem_t*);
+int sem_post(sem_t*);
+int sem_destroy(sem_t*);
+#define SA_RESTART 0x10000000
+
+static sem_t g_wait_sem;
+static volatile int g_wait_kind, g_wait_rc, g_wait_errno, g_wait_hits, g_wait_done, g_wait_handler_tid, g_waiter_tid;
+static volatile unsigned g_wait_word;
+static void on_wait_signal(int sig) {
+    (void)sig;
+    g_wait_handler_tid = gettid();
+    ++g_wait_hits;
+}
+static void* blocked_waiter(void* arg) {
+    (void)arg;
+    g_waiter_tid = gettid();
+    if (g_wait_kind == 0) {
+        g_wait_rc = sem_wait(&g_wait_sem);
+    } else if (g_wait_kind == 1) {
+        g_wait_rc = (int)syscall(202, &g_wait_word, 128, 0, 0);  // FUTEX_WAIT_PRIVATE while the word is 0
+    } else {
+        struct timespec t = {30, 0}, rem;
+        g_wait_rc = nanosleep(&t, &rem);
+    }
+    g_wait_errno = *__errno();
+    g_wait_done = 1;
+    return 0;
+}
+static int wait_for_flag(volatile int* flag, int want, int ms) {
+    for (int i = 0; i < ms && *flag != want; ++i) usleep(1000);
+    return *flag == want;
+}
+// Starts a waiter of `kind`, lets it fall asleep, signals it and reports what came of it.
+static void signal_blocked(int kind, int flags, const char* what) {
+    struct guest_sigaction sa = {flags, 0, (void*)on_wait_signal, 0, 0};
+    sigaction(10, &sa, 0);
+    g_wait_kind = kind;
+    g_wait_rc = 99;
+    g_wait_errno = g_wait_hits = g_wait_done = g_wait_handler_tid = g_waiter_tid = 0;
+    g_wait_word = 0;
+    sem_init(&g_wait_sem, 0, 0);
+    pthread_t w;
+    pthread_create(&w, 0, blocked_waiter, 0);
+    while (!g_waiter_tid) sched_yield();
+    usleep(50000);  // asleep in the wait by now
+    const int rc = pthread_kill(w, 10);
+    const int hit = wait_for_flag(&g_wait_hits, 1, 3000);
+    char detail[128];
+    if (flags & SA_RESTART) {
+        usleep(50000);
+        const int still_waiting = !g_wait_done;
+        sem_post(&g_wait_sem);
+        wait_for_flag(&g_wait_done, 1, 3000);
+        snprintf(detail, sizeof detail, "rc %d, hits %d, waited on %d, then %d", rc, g_wait_hits, still_waiting,
+                 g_wait_rc);
+        check(what, rc == 0 && hit && g_wait_handler_tid == g_waiter_tid && still_waiting && g_wait_rc == 0, detail);
+    } else {
+        wait_for_flag(&g_wait_done, 1, 3000);
+        snprintf(detail, sizeof detail, "rc %d, hits %d, handler on %d, waiter %d, returned %d errno %d", rc,
+                 g_wait_hits, g_wait_handler_tid, g_waiter_tid, g_wait_rc, g_wait_errno);
+        check(what,
+              rc == 0 && hit && g_wait_handler_tid == g_waiter_tid && g_wait_done && g_wait_rc == -1 &&
+                  g_wait_errno == 4,
+              detail);
+    }
+    if (!g_wait_done) {  // let it go, whatever happened
+        sem_post(&g_wait_sem);
+        g_wait_word = 1;
+        syscall(202, &g_wait_word, 129, 1);  // FUTEX_WAKE_PRIVATE
+    }
+    pthread_join(w, 0);
+    sem_destroy(&g_wait_sem);
+}
+static void test_signal_ends_wait(void) {
+    signal_blocked(0, 0, "a thread blocked in sem_wait runs the handler and sem_wait fails with EINTR");
+    signal_blocked(0, SA_RESTART, "with SA_RESTART the handler runs and sem_wait waits on for its post");
+    signal_blocked(1, 0, "a thread blocked in the futex call runs the handler and the call fails with EINTR");
+    signal_blocked(2, SA_RESTART, "a thread in nanosleep runs the handler and the sleep ends with EINTR");
+    struct guest_sigaction dfl = {0, 0, 0, 0, 0};
+    sigaction(10, &dfl, 0);
+}
+
 // ---- *at() calls and Android's CA store ----------------------------------------
 // Dart's dart:io opens every file with openat and lists directories with
 // fdopendir; its TLS loads /system/etc/security/cacerts that way. The runner
@@ -1841,9 +1931,6 @@ int pthread_spin_lock(long*);
 int pthread_spin_trylock(long*);
 int pthread_spin_unlock(long*);
 int pthread_mutex_clocklock(pthread_mutex_t*, int, const struct timespec*);
-typedef struct { unsigned count; int reserved[3]; } sem_t;
-int sem_init(sem_t*, int, unsigned);
-int sem_post(sem_t*);
 int sem_clockwait(sem_t*, int, const struct timespec*);
 const char* nl_langinfo(int);
 struct sysinfo {
@@ -2370,6 +2457,7 @@ EXPORT int bionic_test(const char* dir) {
     test_page_permissions();
     test_signals_and_paths(dir);
     test_signal_delivery();
+    test_signal_ends_wait();
     test_sweep_gaps(dir);
     test_missing_forms(dir);
     test_popular_imports(dir);

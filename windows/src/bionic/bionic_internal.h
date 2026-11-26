@@ -90,6 +90,40 @@ void signal_set_mask_of_current_thread(uint64_t mask);
 // thread one; once per thread, nothing if the guest set its own.
 void signal_altstack_for_current_thread();
 
+// A signal sent to a thread that sleeps in the shim (a futex word, a condition variable, a
+// semaphore, a descriptor's readiness, a sleep) interrupts the sleep, as Linux interrupts the
+// system call: the sender cannot run the handler there (the thread is in Windows' code, where it
+// may hold Windows' locks), so it posts the signal to the thread and wakes the wait; the thread
+// runs the handler when the wait returns, then the call goes on or fails as Linux's would
+// (signal.cpp). While a SignalWaitScope lives, a signal posted to the calling thread wakes the
+// wait with WakeByAddressAll(addr), or by calling `wake` when one is given; scopes nest (a handler
+// that waits), each putting back the one it replaced.
+class SignalWaitScope {
+public:
+    explicit SignalWaitScope(const void* addr, void (*wake)() = nullptr);
+    ~SignalWaitScope();
+    SignalWaitScope(const SignalWaitScope&) = delete;
+    SignalWaitScope& operator=(const SignalWaitScope&) = delete;
+    // A signal is posted already: the caller does not go to sleep.
+    bool posted() const;
+
+private:
+    void* post_;
+    const void* outer_addr_;
+    void (*outer_wake_)();
+};
+// What the signals that interrupted a wait mean for the call (Linux's ERESTARTSYS): none came, or
+// each handler that ran had SA_RESTART and the call goes on (a futex wait, sem_wait, a blocking
+// read), or one had not and the call fails with EINTR. poll, select, epoll_wait and the sleeps
+// fail with EINTR either way; a condition variable's wait returns as a spurious wake.
+enum class WaitEnd { kNone, kRestart, kInterrupted };
+// Runs the handlers of the signals posted to the calling thread (after a wait, outside its
+// SignalWaitScope; also at sched_yield and sigprocmask, where a thread holds nothing of Windows').
+WaitEnd signal_take_posted();
+// An auto-reset event that a signal posted to the calling thread sets: what a sleep that is not a
+// WaitOnAddress (nanosleep's timer) waits on besides its own handle.
+void* signal_wait_event();
+
 // pthread.cpp: the Windows thread id behind a guest pthread_t (0 if null).
 uint32_t thread_id_of(const void* pthread);
 

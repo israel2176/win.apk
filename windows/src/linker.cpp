@@ -533,6 +533,18 @@ std::vector<const ElfImage*> GuestLinker::images() const {
     return out;
 }
 
+std::vector<std::pair<uintptr_t, uintptr_t>> GuestLinker::x86_64_ranges() const {
+    std::lock_guard<std::recursive_mutex> hold(lock_);
+    std::vector<std::pair<uintptr_t, uintptr_t>> out;
+    for (const auto& l : libs_) {
+        const ElfImage* img = l->image.get();
+        if (!img || img->is_arm64()) continue;
+        const auto lo = reinterpret_cast<uintptr_t>(img->base());
+        out.emplace_back(lo, lo + img->mapped_size());
+    }
+    return out;
+}
+
 std::vector<GuestLinker::PhdrView> GuestLinker::phdr_views() const {
     std::lock_guard<std::recursive_mutex> hold(lock_);
     std::vector<PhdrView> out;
