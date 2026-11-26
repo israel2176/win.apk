@@ -25,6 +25,12 @@ public class ComponentInfo extends PackageItemInfo {
 
     public ComponentInfo() {}
 
+    /** {@hide} AOSP ComponentInfo.getComponentName. AOSP's LaunchActivityItem and
+     *  AccessibilityShortcutInfo call it. */
+    public android.content.ComponentName getComponentName() {
+        return new android.content.ComponentName(packageName, name);
+    }
+
     /** AOSP ComponentInfo(ComponentInfo orig) (ComponentInfo.java:110-120,
      *  android14-release), field for field over the subset this tree declares.
      *  Required by ProviderInfo's copy constructor. No null-check on `orig`,

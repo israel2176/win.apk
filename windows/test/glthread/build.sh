@@ -2,7 +2,8 @@
 # Builds the GL thread test: an app's renderers set before their surface exists -- the platform's
 # GLSurfaceView (PlatformActivity, green) and an app's own GLSurfaceView-style GLThread on a plain
 # SurfaceView, EGL10 (ForkActivity, blue) or EGL14 (Fork14Activity, red) -- each logging GLPROBE lines
-# of its callbacks and their threads. Built with the SDK's tools alone, as the surfaces test.
+# of its callbacks and their threads; beside an app's own GLThread a loader thread uploads textures on a
+# shared context. Built with the SDK's tools alone, as the surfaces test.
 #
 #   windows/test/glthread/build.sh <out dir>    # <out>/glthread.apk
 #

@@ -1,14 +1,15 @@
-// gl_surface.h -- the framework's own EGL context on ANGLE, for GLSurfaceView.
+// gl_surface.h -- the app's ANGLE display, and the read-back of a frame.
 //
-// Upstream (angle_glue.cpp) binds one EGL context to a CAMetalLayer and
-// brackets every GL view's frame with AngleBeginFrame/AngleEndFrame. Here the
-// context renders into an offscreen pbuffer per view, and the end of a frame
-// reads the pixels back for the window to show (the Java UI arrives as the
-// overlay layer, composited on top). Render thread only.
+// Every GL client of the app's -- native code's EGL (guest_gl.cpp), MacApkEGL10 and EGL14
+// (gl_bridges.cpp) -- draws on one ANGLE display, the app's own, not the graphics DLL's. The host
+// draws nothing on it: ANGLE has one Direct3D 11 immediate context per display and no lock between
+// contexts that share nothing, so a context of the host's in use beside the app's GL threads
+// corrupts ANGLE's state (gl_surface.cpp, native_cocoa.cpp's gl_tick). The app's frames leave the
+// display as pixels, read back on the app's own thread (gl_read_current).
 //
 // The display is ANGLE on Direct3D 11; without a usable GPU (a server, CI)
 // Direct3D's WARP rasterizer or ANGLE's software Vulkan (SwiftShader) stands
-// in. WINAPK_ANGLE_BACKEND=d3d11|swiftshader picks one.
+// in.
 
 #pragma once
 
@@ -17,25 +18,12 @@
 
 namespace winapk::host {
 
-// Makes the context current on view `view`'s pbuffer, (re)created at w x h.
-// False when ANGLE is missing or could not initialize; GL calls then do
-// nothing.
-bool gl_frame_begin(long long view, int w, int h);
-
-// Reads the frame back as 0xAARRGGBB rows, top row first, w x h of the last
-// begin. False if there is no frame.
-bool gl_frame_read(std::vector<uint32_t>* argb, int* w, int* h);
-
-// Drops a view's pbuffer.
-void gl_view_release(long long view);
-
-// The EGLDisplay the framework uses, initialized; null without ANGLE. An app's
-// native code gets the same one from eglGetDisplay (guest_gl.cpp). Any thread.
+// The app's EGLDisplay, initialized; null without ANGLE. Native code's eglGetDisplay, MacApkEGL10
+// and EGL14.eglGetDisplay(EGL_DEFAULT_DISPLAY) answer it. Any thread.
 void* gl_shared_display();
 
 // Reads the current draw surface's w x h pixels as 0xAARRGGBB rows, top row
-// first (gl_frame_read without the framework's context). Any thread with a
-// current context. This is the synchronous read: glReadPixels stalls the GL
+// first. Any thread with a current context. This is the synchronous read: glReadPixels stalls the GL
 // thread until the GPU has copied the frame to the CPU.
 void gl_read_current(std::vector<uint32_t>* argb, int w, int h);
 

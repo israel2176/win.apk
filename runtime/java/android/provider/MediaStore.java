@@ -944,6 +944,12 @@ public final class MediaStore {
     private static final String ACTION_NO_CONSENT_UI =
             "org.macapk.action.MEDIA_REQUEST_NO_CONSENT_UI";
 
+    /** {@hide} Win.apk: whether `intent` is one of the create*Request consent screens above, which
+     *  the activity task manager answers as the user declining (RESULT_CANCELED). */
+    public static boolean macapkIsConsentRequest(android.content.Intent intent) {
+        return intent != null && ACTION_NO_CONSENT_UI.equals(intent.getAction());
+    }
+
     private static android.app.PendingIntent createMediaRequest(String op,
             java.util.Collection<Uri> uris, boolean value) {
         final android.content.Intent intent = new android.content.Intent(ACTION_NO_CONSENT_UI);

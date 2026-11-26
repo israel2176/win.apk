@@ -170,6 +170,19 @@ public class ClipData implements android.os.Parcelable {
         return "ClipData(items=" + items.size() + ")";
     }
 
+    /** {@hide} AOSP ClipData.prepareToLeaveProcess(boolean): what a clip does before it crosses to
+     *  another process (AOSP's View.startDragAndDrop calls it): its intents and uris are made ready
+     *  for the other side and file:// uris are checked against StrictMode. A drag here stays in this
+     *  process (the app's own windows), so there is nothing to do. */
+    public void prepareToLeaveProcess(boolean leavingPackage) {}
+
+    /** {@hide} AOSP prepareToLeaveProcess(boolean, int intentFlags): as above. */
+    public void prepareToLeaveProcess(boolean leavingPackage, int intentFlags) {}
+
+    /** {@hide} AOSP ClipData.prepareToEnterProcess(AttributionSource): what a clip that came from
+     *  another process does on arrival (AOSP's ViewRootImpl, for a drop). It never left this one. */
+    public void prepareToEnterProcess(AttributionSource source) {}
+
     // ---- Parcelable ----
     //
     // AOSP declares `public class ClipData implements Parcelable`. The

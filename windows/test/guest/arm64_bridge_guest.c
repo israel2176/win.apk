@@ -383,6 +383,30 @@ EXPORT int arm64_raw_syscalls(void) {
     return bits;
 }
 
+// ---- host code is not the guest's -------------------------------------------------
+// On Android a library that hooks libc mprotects libc's text writable and executable. Here libc is the
+// host's x86_64 code (arm64_abi.cpp, host_code.h), which the bridge must neither run as arm64 nor let be
+// overwritten. `code` is a host function, `data` a string in the host's .rdata (Facebook's force_dlopen
+// writes its trampoline over such a string, which must keep working). One bit per check.
+int mprotect(void*, size_t, int);
+void* mmap(void*, size_t, int, int, int, long);
+
+EXPORT int arm64_host_code(void* code, void* data) {
+    int bits = 0;
+    char* page = (char*)((unsigned long)code & ~4095UL);
+    *__errno() = 0;
+    if (mprotect(page, 4096, 7) == -1 && *__errno() == 13) bits |= 1;  // RWX: EACCES
+    *__errno() = 0;
+    if (mprotect(page, 4096, 1) == -1 && *__errno() == 13) bits |= 2;  // PROT_READ: would stop the host
+    if (svc6(226, (long)page, 4096, 7, 0, 0, 0) == -13) bits |= 4;      // the raw call: -EACCES
+    if (mprotect(page, 4096, 5) == 0) bits |= 8;                         // PROT_READ | PROT_EXEC: what it is
+    *__errno() = 0;
+    if (mmap(page, 4096, 7, 0x32, -1, 0) == (void*)-1 && *__errno() == 13) bits |= 16;  // MAP_FIXED over it
+    char* rdata = (char*)((unsigned long)data & ~4095UL);
+    if (mprotect(rdata, 4096, 5) == 0 && mprotect(rdata, 4096, 1) == 0) bits |= 32;
+    return bits;
+}
+
 // The raw table's further calls and the stubs that misreported, each by the kernel's convention as its man
 // page gives it (getcwd(2), getpriority(2), clock_nanosleep(2), rt_sigaction(2), mremap(2), ptrace(2)...).
 struct a64_ksigaction { void* handler; unsigned long flags; void* restorer; unsigned long mask; };

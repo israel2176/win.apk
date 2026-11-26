@@ -38,6 +38,8 @@ public final class PendingIntent implements Parcelable {
     private static final int TYPE_BROADCAST  = 2;
     private static final int TYPE_SERVICE    = 3;
     private static final int TYPE_FOREGROUND_SERVICE = 4;
+    /** AOSP's INTENT_SENDER_ACTIVITY_RESULT: a result for an activity (createPendingResult). */
+    private static final int TYPE_ACTIVITY_RESULT = 5;
 
     private int type = TYPE_ACTIVITY;
     private int requestCode;
@@ -116,6 +118,114 @@ public final class PendingIntent implements Parcelable {
 
     private PendingIntent() {}
 
+    /** {@hide} AOSP's PendingIntent(IIntentSender), which AOSP's Activity.createPendingResult makes
+     *  from what IActivityManager.getIntentSenderWithFeature returned: a sender this process made
+     *  (see macapkTarget) stands for its PendingIntent, as AOSP's token for its record; one from
+     *  another process is sent through its binder. */
+    public PendingIntent(android.content.IIntentSender target) {
+        if (target instanceof Target) {
+            mAlias = ((Target) target).owner;
+        } else if (target != null) {
+            mRemote = target.asBinder();
+        } else {
+            canceled = true;
+        }
+    }
+
+    /** The PendingIntent a PendingIntent(IIntentSender) stands for, or null. */
+    private PendingIntent mAlias;
+
+    /** An activity result's PendingIntent (createPendingResult): what it does when sent, with the
+     *  send's code and the merged intent. */
+    private java.util.function.BiConsumer<Integer, Intent> mResultSink;
+
+    /** {@hide} Win.apk: the PendingIntent of IActivityManager.getIntentSenderWithFeature's
+     *  INTENT_SENDER_ACTIVITY_RESULT (Activity.createPendingResult): sending it hands the code and the
+     *  intent to `sink`, which delivers them to the activity's onActivityResult. */
+    public static PendingIntent macapkActivityResult(Context creator, int requestCode, Intent data, int flags,
+            java.util.function.BiConsumer<Integer, Intent> sink) {
+        PendingIntent p = new PendingIntent();
+        p.type = TYPE_ACTIVITY_RESULT;
+        p.creatorContext = creator;
+        p.requestCode = requestCode;
+        p.intent = data;
+        p.flags = flags;
+        p.mResultSink = sink;
+        return p;
+    }
+
+    /** AOSP's IIntentSender for a PendingIntent of this process (AOSP's PendingIntentRecord is
+     *  system_server's): what IntentSender.getTarget answers, which AOSP's Activity and ContextImpl
+     *  hand to IActivityTaskManager.startActivityIntentSender, and what PendingIntent(IIntentSender)
+     *  turns back into its PendingIntent. Its binder is the one this PendingIntent serves. */
+    private static final class Target implements android.content.IIntentSender {
+        final PendingIntent owner;
+        Target(PendingIntent owner) { this.owner = owner; }
+        @Override public android.os.IBinder asBinder() { return owner.sender(); }
+        @Override public void send(int code, Intent intent, String resolvedType, android.os.IBinder whitelistToken,
+                android.content.IIntentReceiver finishedReceiver, String requiredPermission, Bundle options) {
+            owner.dispatch(null, intent, code);
+        }
+    }
+
+    private Target mTarget;
+
+    /** {@hide} Win.apk: this PendingIntent's IIntentSender (IntentSender.getTarget). */
+    public synchronized android.content.IIntentSender macapkTarget() {
+        PendingIntent o = origin();
+        if (o != this) return o.macapkTarget();
+        if (mTarget == null) mTarget = new Target(this);
+        return mTarget;
+    }
+
+    /** {@hide} Win.apk: the PendingIntent an IIntentSender of this process stands for, else null
+     *  (IActivityTaskManager.startActivityIntentSender's PendingIntentRecord). */
+    public static PendingIntent macapkOf(android.content.IIntentSender target) {
+        return target instanceof Target ? ((Target) target).owner.origin() : null;
+    }
+
+    /** {@hide} Win.apk: PendingIntentRecord.sendInner's activity start for
+     *  startActivityIntentSender: the intent to start, the fill-in merged into the base as send()
+     *  merges it and the caller's flags applied (flagsMask, flagsValues; the immutable bits never
+     *  change); null when this is not a one-activity PendingIntent (its send runs instead). */
+    public Intent macapkActivityIntent(Intent fillIn, int flagsMask, int flagsValues) {
+        PendingIntent o = origin();
+        if (o != this) return o.macapkActivityIntent(fillIn, flagsMask, flagsValues);
+        if (type != TYPE_ACTIVITY || mRemote != null || intent == null) return null;
+        Intent i = new Intent(fillInto(fillIn));
+        final int immutable = Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION;
+        flagsMask &= ~immutable;
+        flagsValues &= flagsMask;
+        i.setFlags((i.getFlags() & ~flagsMask) | flagsValues);
+        if ((flags & FLAG_ONE_SHOT) != 0) canceled = true;
+        return i;
+    }
+
+    /** {@hide} Win.apk: whether this PendingIntent was cancelled (a cancelled sender's start is
+     *  START_CANCELED, which AOSP's Activity turns into SendIntentException). */
+    public boolean macapkCanceled() {
+        PendingIntent o = origin();
+        return o != this ? o.macapkCanceled() : canceled;
+    }
+
+    /** {@hide} Win.apk: PendingIntentRecord.sendInner for a sender that is not one activity (a
+     *  broadcast, a service, several activities, an activity result): it runs as send(code, fill-in)
+     *  does; RES_CANCELED for a cancelled one. */
+    public int macapkSend(int code, Intent fillIn) {
+        PendingIntent o = origin();
+        if (o != this) return o.macapkSend(code, fillIn);
+        if (canceled) return RES_CANCELED;
+        return dispatch(null, fillIn, code);
+    }
+
+    /** {@hide} AOSP getActivitiesAsUser, which AOSP's TaskStackBuilder.getPendingIntent calls: there
+     *  is one user, so it is getActivities. */
+    public static PendingIntent getActivitiesAsUser(Context c, int requestCode, Intent[] intents, int flags,
+            Bundle options, android.os.UserHandle user) {
+        return getActivities(c, requestCode, intents, flags, options);
+    }
+
     private static PendingIntent make(int type, Context c, int requestCode,
                                       Intent intent, Intent[] intents, int flags) {
         // FLAG_NO_CREATE asks "return null if no matching PendingIntent
@@ -185,14 +295,26 @@ public final class PendingIntent implements Parcelable {
     /** The token whose state this one stands for: the creator's original when
      *  this is an in-process copy read back from a Parcel, else itself. */
     private PendingIntent origin() {
+        if (mAlias != null) return mAlias.origin();
         Sender sd = mSender;
         return (sd != null && sd.owner != this) ? sd.owner : this;
     }
 
     private int dispatch(Context dispatchContext, Intent overrideIntent) {
+        return dispatch(dispatchContext, overrideIntent, 0);
+    }
+
+    /** dispatch with the send's code, which only an activity result's PendingIntent keeps (it is
+     *  the result code onActivityResult gets). */
+    private int dispatch(Context dispatchContext, Intent overrideIntent, int code) {
         PendingIntent o = origin();
-        if (o != this) return o.dispatch(dispatchContext, overrideIntent);
+        if (o != this) return o.dispatch(dispatchContext, overrideIntent, code);
         if (canceled) return RES_OK;
+        if (type == TYPE_ACTIVITY_RESULT) {
+            if (mResultSink != null) mResultSink.accept(code, fillInto(overrideIntent));
+            if ((flags & FLAG_ONE_SHOT) != 0) canceled = true;
+            return RES_OK;
+        }
         if (mRemote != null) return sendRemote(overrideIntent);
         Context ctx = dispatchContext != null ? dispatchContext
                     : (creatorContext != null ? creatorContext : com.macapk.loader.app.Apps.current());
@@ -279,38 +401,38 @@ public final class PendingIntent implements Parcelable {
     }
     public void send(int code) throws CanceledException {
         if (canceled) throw new CanceledException();
-        if (dispatch(null, null) < 0) throw new CanceledException();
+        if (dispatch(null, null, code) < 0) throw new CanceledException();
     }
     // sendInner delivers OnFinished for any res other than START_CANCELED
     // (:623-629) and only then does send() see res < 0 and throw, so the
     // callback fires first even for a start that did not resolve.
     public void send(Context c, int code, Intent intent) throws CanceledException {
         if (canceled) throw new CanceledException();
-        int res = dispatch(c, intent);
+        int res = dispatch(c, intent, code);
         fireFinished(c, intent, code, null, null, null, null);
         if (res < 0) throw new CanceledException();
     }
     public void send(Context c, int code, Intent intent, OnFinished onFinished, android.os.Handler handler) throws CanceledException {
         if (canceled) throw new CanceledException();
-        int res = dispatch(c, intent);
+        int res = dispatch(c, intent, code);
         fireFinished(c, intent, code, null, null, onFinished, handler);
         if (res < 0) throw new CanceledException();
     }
     public void send(Context c, int code, Intent intent, OnFinished onFinished, android.os.Handler handler, String requiredPermission) throws CanceledException {
         if (canceled) throw new CanceledException();
-        int res = dispatch(c, intent);
+        int res = dispatch(c, intent, code);
         fireFinished(c, intent, code, null, null, onFinished, handler);
         if (res < 0) throw new CanceledException();
     }
     public void send(Context c, int code, Intent intent, OnFinished onFinished, android.os.Handler handler, String requiredPermission, Bundle options) throws CanceledException {
         if (canceled) throw new CanceledException();
-        int res = dispatch(c, intent);
+        int res = dispatch(c, intent, code);
         fireFinished(c, intent, code, null, null, onFinished, handler);
         if (res < 0) throw new CanceledException();
     }
     public void send(int code, OnFinished onFinished, android.os.Handler handler) throws CanceledException {
         if (canceled) throw new CanceledException();
-        int res = dispatch(null, null);
+        int res = dispatch(null, null, code);
         fireFinished(null, intent, code, null, null, onFinished, handler);
         if (res < 0) throw new CanceledException();
     }
