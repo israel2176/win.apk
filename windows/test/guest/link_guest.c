@@ -202,12 +202,6 @@ EXPORT int link_plain_strlen(void) { return (int)strlen("abc"); }
 #elif defined(WINAPK_LINK_PACKED)
 
 int mprotect(void*, size_t, int);
-long write(int, const void*, size_t);
-
-// Each step of the constructor on stderr, unbuffered: a crash in it on Windows
-// then names the step in the test's log.
-static void packed_step(const char* what, size_t n) { write(2, what, n); }
-#define PACKED_STEP(s) packed_step(s "\n", sizeof(s))
 
 typedef struct {
     long d_tag;
@@ -232,7 +226,6 @@ __attribute__((constructor)) static void packed_init(void) {
     }
     if (!strtab) return;
     g_state = 1;
-    PACKED_STEP("[packed] .dynstr found");
     // Not strlen: by now linker_test.cpp has made libwinapk_link_interpose.so global, whose
     // strlen answers 1000, and a library loaded after it gets that one, as on a device.
     static const char sealed[] = "LINK_PACKED_SECRET";
@@ -242,7 +235,6 @@ __attribute__((constructor)) static void packed_init(void) {
         while (k < n && strtab[i + k] == sealed[k]) ++k;
         if (k != n) continue;
         g_state = 2;
-        PACKED_STEP("[packed] the name found");
         unsigned long page = (unsigned long)(strtab + i) & ~4095ul;
         unsigned long end = (unsigned long)(strtab + i + n + 4095) & ~4095ul;
         if (mprotect((void*)page, end - page, 3) != 0) {  // PROT_READ | PROT_WRITE
@@ -250,14 +242,11 @@ __attribute__((constructor)) static void packed_init(void) {
             return;
         }
         g_state = 3;
-        PACKED_STEP("[packed] writable");
         for (k = 0; k < n; ++k) {
             if (strtab[i + k] >= 'A' && strtab[i + k] <= 'Z') strtab[i + k] = (char)(strtab[i + k] + 32);
         }
-        PACKED_STEP("[packed] name put right");
         mprotect((void*)page, end - page, 1);  // PROT_READ
         g_state = 4;
-        PACKED_STEP("[packed] read-only again");
         return;
     }
 }

@@ -67,9 +67,13 @@ link_lib PLAIN libwinapk_link_plain -L"$STUBS" -lc
 # A packed library: the export's name scrambled in .dynstr (and only there) after
 # linking, to upper case; the hash tables keep the real name's hash.
 # Two of it: one with DT_GNU_HASH (lld's default), one with DT_HASH as the packer
-# has (soname libsecexe.so).
-link_lib PACKED libwinapk_link_packed -L"$STUBS" -lc
-link_lib PACKED libwinapk_link_packed_sysv -Wl,--hash-style=sysv -L"$STUBS" -lc
+# has (soname libsecexe.so). -z separate-code: its constructor makes .dynstr's page
+# writable and then read-only, which must not be a page of its own code (some lld
+# versions put .text in the headers' page; Windows' DEP then stops the constructor
+# at the instruction after its mprotect, Wine does not). The packer's .dynstr is
+# in a data segment.
+link_lib PACKED libwinapk_link_packed -Wl,-z,separate-code -L"$STUBS" -lc
+link_lib PACKED libwinapk_link_packed_sysv -Wl,-z,separate-code -Wl,--hash-style=sysv -L"$STUBS" -lc
 python3 - "$LINK/libwinapk_link_packed.so" "$LINK/libwinapk_link_packed_sysv.so" <<'PY'
 import struct, sys
 for path in sys.argv[1:]:
