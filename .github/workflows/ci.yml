@@ -493,6 +493,8 @@ jobs:
         run: ./build/winapk-video-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the NDK media test
         run: ./build/winapk-ndk-media-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK camera test
+        run: ./build/winapk-ndk-camera-test.exe
       - name: Run the software codecs and WebM demuxer test
         run: ./build/winapk-soft-codecs-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the shared-folder mapping test
