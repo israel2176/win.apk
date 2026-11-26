@@ -241,7 +241,7 @@ table lists every one (`windows/host`, `windows/src`, `runtime/java`,
 | `WINAPK_READY_EVENT=<handle>` | Plumbing | An inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launcher's starting window waits for it) |
 | `WINAPK_START_WINDOW=<hwnd>` | Plumbing | The launcher's starting window for the app, as a decimal number: the app's window opens on that window's monitor, at its top and centred on it |
 | `WINAPK_EMBED_PARENT=<hwnd>` | Plumbing | A window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (the Store and Google Play inside the library window) |
-| `WINAPK_PLAY_INSTALLER=0`/`1` | Plumbing | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of an app the user installed with no installer of record, `0` reports none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
+| `WINAPK_PLAY_INSTALLER=0`/`1` | Plumbing | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of every installed app, whichever store installed it, `0` reports the installer of record, else none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
 | `MACAPK_BROKER=1` or `0` | Plumbing | Set by the runtime from Settings > Google account > "Use Google services" (`GoogleServices`): the system broker and the real Google apps; also the broker's own and the processes it starts |
 | `MACAPK_BROKER_MAINTENANCE=1` | Plumbing | Set by `winapk-runtime --system --maintenance` (the background updates' window, which the launcher opens every 4 hours while it runs, `launcher/maintenance.h`): the broker boots the Play Store too, runs the jobs that are due and stops 180 seconds after the last |
 | `MACAPK_BROKER_LOGDIR`, `MACAPK_BROKER_RUNTIME`, `MACAPK_BROKER_ROOT`, `MACAPK_BROKER_APKS`, `MACAPK_BROKER_READY_FILE` | Plumbing | The broker's log folder (set by `winapk-runtime --system`), and upstream's development launch of a broker (its runtime, android root, package list and ready file; `BinderTransportTest` sets `MACAPK_BROKER_ROOT`) |
@@ -2122,12 +2122,18 @@ every such change is listed here:
   beside `installed_apps.json`, not in a `Library\Application Support` folder
   under the user profile. On the Mac nothing changes. `InstallerOfRecord.reported` (new) is what
   `MacApkPackageManager.getInstallerPackageName` and `getInstallSourceInfo`
-  answer: the record when there is one, else Google Play for an app the user
-  installed (the running app, or a registry app the caller may see) while
-  `WINAPK_PLAY_INSTALLER` is not `0` (some apps, banking apps among them,
-  stop at "reinstall from the store" without a store as installer),
-  as `adb install -i com.android.vending` leaves it; not for Play, Play
-  services and GSF themselves, nor when no Play Store package is reported.
+  answer: Google Play for an installed app (the running app, or a registry
+  app the caller may see) while `WINAPK_PLAY_INSTALLER` is not `0`, whichever
+  store installed it (some apps, banking apps among them, stop at "reinstall
+  from the store" without a store as installer, and Play's integrity
+  protection, pairip, closes an app whose installer is not Play: issue #208,
+  an app Win.apk's Store installed), as `adb install -i com.android.vending`
+  leaves it; not for Play, Play services and GSF themselves, nor when no Play
+  Store package is reported; then the record, else none. A phone names the
+  store that installed the app; here Play is named over the record while the
+  setting is on. The record is kept: `setApplicationCategoryHint`
+  (`android/content/pm/PackageManager.java`) still
+  allows the store that really installed the app.
   A Play answer has Play's Android 14 shape: installing and initiating Play
   (with Play's certificate), no originating package, Play the update owner,
   `PACKAGE_SOURCE_STORE`; `PackageManager.relinquishUpdateOwnership` then

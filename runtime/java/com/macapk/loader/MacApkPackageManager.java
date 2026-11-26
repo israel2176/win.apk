@@ -4270,11 +4270,12 @@ public final class MacApkPackageManager extends PackageManager {
      * :21249-21328). Answering the one question two ways is what v1.0.938 removed: before it this
      * said "com.android.vending" while getInstallSourceInfo said null.
      *
-     * What it is: the real record when an app installed the package through PackageInstaller;
-     * otherwise, for an app the user installed, Google Play while Settings > Apps > "Report Google
-     * Play as the installer" is on (the default: some apps, banking apps among them, refuse
-     * to run without a store as installer), as `adb install -i com.android.vending` leaves it; null
-     * when it is off, as for an adb install. Play is reported only while getPackageInfo finds
+     * What it is: for every installed app, whichever store installed it, Google Play while
+     * Settings > Apps > "Report Google Play as the installer" is on (the default: some apps,
+     * banking apps among them, refuse to run without a store as installer, and Play's integrity
+     * protection closes one whose installer is not Play), as `adb install -i com.android.vending`
+     * leaves it; when it is off, the real record when an app installed the package through
+     * PackageInstaller, else null, as for an adb install. Play is reported only while getPackageInfo finds
      * com.android.vending (PlayServices.vendingPresent), so no app is told a missing store
      * installed it.
      *
