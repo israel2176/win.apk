@@ -211,7 +211,7 @@ job's summary has a row per app.
 
 `Win.apk.exe` has the user-facing command line (`<file>`, `--run`) and the
 helper verbs `install`, `uninstall`, `runtime-permission`, `special-access`
-and `app-details`, documented at the top of `launcher/launcher_main.cpp` and
+and `app-details`, and the uninstaller's `remove-shortcuts`, documented at the top of `launcher/launcher_main.cpp` and
 in the [user guide](../docs/USER_GUIDE.md#command-line).
 
 The runtime and the app data may live in folders with names in any language:

@@ -939,10 +939,15 @@ the change refused from anyone but the launcher.
 
 ## An install, step by step
 
-1. The launcher names the app (`install_name`: the package when the file name
-   starts with one, as `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else
-   the file name up to its version; a package already in the library keeps
-   that app's name, so the install updates it), copies the file into
+1. The launcher reads the file first (`winapk-runtime --verify-apk`, one file
+   at a time: its package and versionCode) and names the app
+   (`install_name`: the package when the file name starts with one, as
+   `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else the file name up to
+   its version; then `launcher/installs.h` `place_install`: a package already
+   in the library keeps that app's name, so the install updates it, a file of
+   another package never takes the name of an app it is not, and a lower
+   versionCode than the installed app's installs only after the user's yes),
+   copies the file into
    `library\<name>.<ext>` (an update renames the app's files aside as
    `<file>.previous`, whatever their extension, deletes them once the new one
    is installed, and puts them back if the install fails or is cancelled; an

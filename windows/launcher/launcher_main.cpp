@@ -12,7 +12,9 @@
 //
 // An APK dropped on the window, chosen through Install app, double-clicked in
 // Explorer (the launcher registers itself for .apk files) or passed on the
-// command line is installed, one at a time, in a small install window:
+// command line is first read (winapk-runtime --verify-apk: its package and versionCode, which say which app it
+// is and whether it is older than the installed one: installs.h place_install), then installed, one at a time, in
+// a small install window:
 //
 //   1. copied into %LOCALAPPDATA%\Win.apk\library, so the app stays when the
 //      download is deleted;
@@ -57,6 +59,7 @@
 //   Win.apk.exe uninstall --package <name> --source android [--requestor-label <app>] --json
 //   Win.apk.exe runtime-permission | special-access | app-details ... --source android --json
 //   Win.apk.exe app-not-responding --source android --json
+//   Win.apk.exe remove-shortcuts     the uninstaller's: the apps' shortcuts (remove_shortcuts_main)
 //
 // The last two are the install helper, upstream's macapk-installhelper: an app
 // that installs apps (the Store, through PackageInstaller) hands its APK to
