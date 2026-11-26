@@ -1890,6 +1890,10 @@ every such change is listed here:
   `android/icu/text/MeasureFormat.java` and `android/icu/util/LocaleData.java`:
   comments only.
 
+- `runtime/java/android/os/BinderProxy.java`: `unlinkToDeath` answers as AOSP's
+  `android_os_BinderProxy_unlinkToDeath`: true once the far process is dead (`DEAD_OBJECT`) or the link is
+  removed, and `NoSuchElementException` only for a recipient never linked to a live binder (upstream threw on
+  every dead binder, which crashed `LoadedApk`'s `doConnected` when a service's process died and came back).
 - `runtime/java/android/os/MacApkBinderTransport.java`: tries `nativeInit()`
   before looking for upstream's `libmacapk-binder.dylib`, since the Windows
   host binds the transport's natives itself (`windows/host/binder_win.cpp`);

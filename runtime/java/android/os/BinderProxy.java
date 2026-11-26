@@ -94,10 +94,15 @@ public final class BinderProxy implements IBinder {
         }
     }
 
+    // AOSP's android_os_BinderProxy_unlinkToDeath: a dead binder (DEAD_OBJECT) answers true, as does a link it
+    // removes; only a recipient never linked to a live binder throws "Death link does not exist". LoadedApk's
+    // doConnected unlinks the old connection's monitor after the far process died, and must not crash.
     @Override public boolean unlinkToDeath(DeathRecipient recipient, int flags) {
+        if (recipient == null) throw new NullPointerException();
         synchronized (mRecipients) {
-            if (mDead) throw new java.util.NoSuchElementException("death link does not exist");
-            return mRecipients.remove(recipient);
+            if (mRecipients.remove(recipient)) return true;
+            if (mDead || MacApkBinderTransport.isDead(mPort)) return true;
+            throw new java.util.NoSuchElementException("Death link does not exist");
         }
     }
 
