@@ -2169,7 +2169,11 @@ every such change is listed here:
   app code (not by `System.loadLibrary` or the framework) answers as Android
   does, `/data/app/.../lib/<isa>/lib<name>.so`, where upstream answers the
   translated library; `loadNativeOnDemand` loads that name through the same
-  stub. Only where Pattern N is on.
+  stub. Only where Pattern N is on. `preloadDependencies` walks a library's
+  `DT_NEEDED` closure once (`preloaded`), as bionic's `dlopen` loads each
+  library once: a React Native app's dozens of libraries over `libc++_shared`,
+  `libglog` and `libfolly` repeated the walk exponentially, and Roborock had
+  drawn nothing after ten minutes.
 - `runtime/java/dalvik/system/NativeLibraryPath.java` (new), `DexPathList.java`,
   `BaseDexClassLoader.java`, `DexClassLoader.java`, `InMemoryDexClassLoader.java`
   and `AppClassLoader.libraryOnSearchPath`: a dex loader's `librarySearchPath`
