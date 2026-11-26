@@ -129,14 +129,10 @@ page's Permissions rows, which stop a running app on revoke), single instance
   CMake's `WINAPK_VERSION` (the release workflow passes its tag; `ci.yml` the newest
   release tag + `-dev.<run>`, which the update check counts as that release) writes
   `winapk_version.h`. The update check compares it with the newest release's tag.
-- Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout|device-id`
+- Settings > Google account asks `winapk-runtime --gms accounts|signin-window|signout`
   (`run_gms`, stdout captured, stderr in `logs\gms.log`); exit codes 0 done,
-  1 error, 2 cancelled. `device-id` (`DEVICE_ID<tab>id<tab>gsf|checkin`: the
-  Services Framework's `android_id` from its `gservices.db`, else the layer's
-  own checkin) is asked on a thread once per opening of Settings
-  (`ask_device_id`, `kGmsDeviceId`) for the **Device ID for Google** row:
-  Google's registration of an uncertified device, never a faked certification.
-  A page row may carry one text link under its detail (`Row::link`).
+  1 error, 2 cancelled. No device registration row: the maintainer does not
+  want one in Settings. A page row may carry one text link under its detail (`Row::link`).
 - Every user-visible string goes through `tr(L"English")` or
   `fmt(L"... {0} ...", {args})`; add the Hebrew to the table in `tr()`.
 - Hebrew = RTL: windows get `WS_EX_LAYOUTRTL`, `buffered_paint` mirrors the

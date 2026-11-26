@@ -3739,8 +3739,8 @@ every such change is listed here:
   `main`, read from a copy with its WAL through the runtime's SQLite, as
   `InstallerOfRecord` reads Play's ledger) as a signed decimal, or, with no
   GSF database, the layer's own checkin rendered as `GservicesProvider`
-  hands it to apps; no line when there is none. Settings > Google account's
-  **Device ID for Google** row asks it. Nothing changes on the Mac but the
+  hands it to apps; no line when there is none. Nothing in the launcher asks
+  it (Settings has no registration row). Nothing changes on the Mac but the
   new verb.
 - `runtime/java/com/macapk/loader/CameraBridge.java`,
   `android/hardware/Camera.java`, `camera2/CameraBackend.java`,

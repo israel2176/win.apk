@@ -211,26 +211,6 @@ Play Protect certified"**. That is true: Google certifies phones and tablets
 whose makers had them tested, and Win.apk is not one of them. Win.apk does not
 fake a certification, and will not.
 
-Google has its own way on for devices like this (custom ROMs and Waydroid
-use it): you register the device's ID with your Google account, and Google
-apps then let that account sign in on it.
-
-1. Turn on **Settings > Google account > Use Google services (experimental)**, set them up,
-   and open the Play Store once so Google services check in with Google.
-2. Under **Settings > Google account**, the row **Device ID for Google** shows
-   a long number (it may start with a minus sign). Press **Copy**.
-3. Press **Register this device**. Google's page opens in your browser; sign
-   in there with the same Google account, paste the number and press
-   **Register**.
-4. Wait: Google says it can take a few minutes, sometimes longer. Then close
-   the Google app and open it again.
-
-The number is the Google Services Framework's own ID (its `android_id`). Win.apk
-reads it from the Services Framework's data each time Settings opens; with no
-Services Framework it shows the ID Win.apk's own Google layer was given. No
-number, no row. Once the Services Framework's data is cleared or it is
-installed again, it gets a new ID, which has to be registered again.
-
 ### How it works and what it means for privacy
 
 - Each app runs in its own process. A small background process, the system
