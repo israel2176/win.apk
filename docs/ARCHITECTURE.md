@@ -952,11 +952,31 @@ the change refused from anyone but the launcher.
    removes the install's record so that the install runs whatever the file's
    date, and starts `winapk-runtime --apk <that file> --install-only`, logging
    to `logs\install-<name>.log`. The install window reads that log for its
-   status line.
+   status line. Several `.apk` files opened at once (dropped or chosen
+   together) are first asked which app each is a part of
+   (`winapk-runtime --apk-set-to`, AppInstall `--set`), and those of one
+   package become one install, as `adb install-multiple` makes them one
+   session: the base is copied in as `library\<name>.apk` and the others as
+   `library\<name>.splits\split_<split name>.apk`, the layout step 2 installs a
+   kept bundle from (`install_files`, `launcher/installs.h`
+   `group_install_sets`). Files Explorer opens one by one ("Open" on several)
+   arrive one by one, and each is its own install.
 2. `com.winapk.tools.AppInstall` (in a child JVM) unpacks the app into the
    device layout under `android\data\app\~~<nonce>\<package>-<nonce>\`:
    `base.apk` (a hard link for a plain APK), `split_<name>.apk` chosen as
-   upstream chooses them, and the native libraries of the first ABI in
+   upstream chooses them. Before the installed copy is touched, the APKs are
+   checked as one session the way PackageInstallerSession checks one
+   (`validateApkInstallLocked`, AOSP 14): one base, each split once, every APK
+   of the base's package and version code, and a base that declares
+   `android:isSplitRequired` with its splits (those of every type its
+   `android:requiredSplitTypes` lists). A set that fails exits 3 with
+   Android's error (`INSTALL_FAILED_INVALID_APK: Full install must include a
+   base package`, `INSTALL_FAILED_MISSING_SPLIT: Missing split for <package>`,
+   `Inconsistent package`/`version`, `Split <name> was defined multiple
+   times`) and the app's install from before stays as it was; the install
+   window says why in a sentence. Each APK is then named by its manifest, as
+   the device names a staged APK: `base.apk`, `split_<split name>.apk`. Then
+   the native libraries of the first ABI in
    `x86_64,arm64-v8a` the app has, under `lib\<isa>\`. Libraries a later ABI
    has and that one lacks (an arm64-only SDK in an x86_64 build) go to
    `lib\arm64\` with the arm64 libraries they need (`DT_NEEDED`, followed):

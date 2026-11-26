@@ -14,6 +14,8 @@
 //
 //   winapk-runtime --apk <file.apk> [--data <dir>] [--jdk <dir>] [--lib <dir>] [--install-only]
 //   winapk-runtime --apk <app> --package-to <file>   (the launcher's install helper: the package name)
+//   winapk-runtime --apk-set-to <file> <app.apk>...   (the launcher: which of a batch's APKs are one app's parts,
+//                  com.winapk.tools.AppInstall --set)
 //   winapk-runtime --verify-apk <app>   (the launcher's Google services setup: package and signer, below)
 //   winapk-runtime --java-main --jdk <dir> --cp <jar> [--max-heap-mb <n>] [--jvm-option <opt>]... <class> [args...]
 //                  (internal: run_java)
@@ -109,6 +111,8 @@ struct Options {
     bool install_only = false;
     bool default_data = false;  // no --data: the user's own library, not a test's scratch folder
     fs::path package_to;  // --package-to: write the app's package name there and stop
+    fs::path apk_set_to;  // --apk-set-to: each of apk_set's package and split name there, and stop
+    std::vector<std::wstring> apk_set;
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
@@ -299,6 +303,12 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         else if (a == L"--lib") ok = value(&o->lib);
         else if (a == L"--install-only") o->install_only = true;
         else if (a == L"--package-to") ok = value(&o->package_to);
+        else if (a == L"--apk-set-to") {
+            // The files are the rest of the line, as --gms's arguments are.
+            if (!value(&o->apk_set_to)) return false;
+            for (int j = i + 1; j < argc; ++j) o->apk_set.emplace_back(argv[j]);
+            break;
+        }
         else if (a == L"--system") o->system = true;
         else if (a == L"--maintenance") o->maintenance = true;
         else if (a == L"--cds-prepare") o->cds_prepare = true;
@@ -323,13 +333,13 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
         } else ok = false;
         if (!ok) return false;
     }
-    return !o->apk.empty() || o->gms || o->system || o->cds_prepare || o->java_test;
+    return !o->apk.empty() || !o->apk_set.empty() || o->gms || o->system || o->cds_prepare || o->java_test;
 }
 
 // Fills in whatever the command line left out, and checks it exists.
 bool resolve_paths(Options* o) {
     std::error_code ec;
-    if (!o->gms && !o->system && !o->cds_prepare && !o->java_test) {
+    if (!o->gms && !o->system && !o->cds_prepare && !o->java_test && o->apk_set_to.empty()) {
         o->apk = fs::absolute(o->apk, ec);
         if (!fs::is_regular_file(o->apk, ec)) {
             std::fprintf(stderr, "[win.apk] no such APK: %s\n", utf8(o->apk.wstring()).c_str());
@@ -2424,7 +2434,8 @@ int wmain(int argc, wchar_t** argv) {
     // --cds-prepare's key, the install's icon (AppMeta), --gms, --verify-apk and --system. The framework
     // has no other graphics, so a file missing or a DLL that does not load stops all of them here, with
     // the line aosp_gfx_prepare logged; only --package-to (AppInstall, no framework) goes on.
-    if (!winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir()) && b.options.package_to.empty()) {
+    if (!winapk::host::aosp_gfx_prepare(b.options.lib, exe_dir()) && b.options.package_to.empty() &&
+        b.options.apk_set_to.empty()) {
         std::fprintf(stderr, "[win.apk] cannot start: AOSP's graphics are not usable (the error above)\n");
         return 1;
     }
@@ -2443,6 +2454,11 @@ int wmain(int argc, wchar_t** argv) {
     if (!b.options.package_to.empty()) {
         return run_java(b.options, b.options.lib / "winapk-tools.jar", L"com.winapk.tools.AppInstall",
                         {L"--package", b.options.apk.wstring(), b.options.package_to.wstring()});
+    }
+    if (!b.options.apk_set_to.empty()) {
+        std::vector<std::wstring> args{L"--set", b.options.apk_set_to.wstring()};
+        args.insert(args.end(), b.options.apk_set.begin(), b.options.apk_set.end());
+        return run_java(b.options, b.options.lib / "winapk-tools.jar", L"com.winapk.tools.AppInstall", args);
     }
 
     // F-Droid and other stores install through PackageInstaller, which hands
