@@ -3887,6 +3887,15 @@ public class SurfaceView extends View implements MetalSurfaceCallbacks {
      *  get is a visible effect, which is already true of every other
      *  SurfaceControl operation in this tree. Referenced by YouTube. */
     private SurfaceControl mSurfaceControl;
+
+    /** AOSP onSetSurfacePositionAndScale (hidden; InlineContentView overrides it and calls it): the
+     *  surface's place and scale over the view, in the transaction. AOSP's body. */
+    protected void onSetSurfacePositionAndScale(SurfaceControl.Transaction transaction, SurfaceControl surface,
+            int positionLeft, int positionTop, float postScaleX, float postScaleY) {
+        transaction.setPosition(surface, positionLeft, positionTop);
+        transaction.setMatrix(surface, postScaleX, 0f, 0f, postScaleY);
+    }
+
     public SurfaceControl getSurfaceControl() {
         if (mSurfaceControl == null) {
             mSurfaceControl = new SurfaceControl.Builder()

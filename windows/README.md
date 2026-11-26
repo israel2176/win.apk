@@ -1103,7 +1103,9 @@ resources and views shadow: `<build>/java/android-framework.jar`) runs AOSP's
 `ActivityThread` through an
 application and two activities' whole lifecycle in Android's order (the
 graphics bound by the host's own redirect, `host/aosp_gfx_redirect.cpp`, built
-into the test's library); CI runs it on Ubuntu (informational). Win.apk's own
+into the test's library), then `MagnifierTest` (a window's child layers placed
+by Transactions in the compositor's scene, and `Magnifier.show` over an
+`EditText`); CI runs it on Ubuntu (informational). Win.apk's own
 `Activity`, `Application`, `ActivityThread`, `Instrumentation`, `LoadedApk`
 and framework `Fragment` classes are deleted: `build_java.sh` compiles the
 framework against android-all's (`scripts/aosp_app_take.sh`, the one list both
@@ -1164,7 +1166,12 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   is a layer in the DLL (`aosp_views/HwuiLayers`): HWUI draws it into a
   pbuffer of its size, and the DLL's compositor draws the layers in
   `Compositor`'s order, with the dim behind dialogs, into the host window's
-  ANGLE surface on the render thread (`host/hwui_host.cpp`; where the phone
+  ANGLE surface on the render thread. A buffer layer an app builds as a child
+  of a window's `SurfaceControl` (the text `Magnifier`'s popup, drawn by a
+  `ThreadedRenderer.SimpleRenderer` through Win.apk's `BLASTBufferQueue`; a
+  drag shadow) is a layer too, composed over its window at the place, z and
+  visibility its Transactions give it; no crop, alpha, scale or color layer is
+  composed (`host/hwui_host.cpp`; where the phone
   goes in the window is `win32_window.cpp`'s `window_gpu_layout`). Nothing
   is composed before a window or a host layer has drawn, as WindowManager
   shows a window only once it has drawn: a splash that holds its first draw
@@ -1708,7 +1715,7 @@ start; those throw alike on both sides, and only a difference counts.
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
-| AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM); its verdict, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
+| AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM, then `MagnifierTest`: a window's child layers and `Magnifier.show`); its verdicts, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
@@ -3801,6 +3808,28 @@ every such change is listed here:
   activity finished; `Boot`'s `moveToBack` and `taskEmpty` note it). `HostUrlIntake.shouldClaim` is gone with
   the old rule: an open that happens claims the redirect schemes. Upstream's rule refused every link with AOSP's
   input, which noted no real input (`AospInput` now does, for the frame heartbeat).
+- Child layers (the text magnifier): `runtime/java/android/view/SurfaceControl.java` keeps SurfaceFlinger's
+  layer tree: the `Builder` takes AOSP's `Builder(SurfaceSession)` (it had an untyped `Builder(Object)`, so
+  AOSP's `Magnifier`, `View`'s drag shadow, `ViewRootImpl.getBoundsLayer` and `WindowlessWindowManager` threw
+  `NoSuchMethodError`: dragging a text handle killed the app), AOSP's flags (`HIDDEN` by default, container,
+  effect and BLAST layers), the parent and the owner view; a layer (shared by its handles: `copyFrom`, AOSP's
+  copy constructor) has a parent, position, z and visibility, which `Transaction`'s `setPosition`, `setLayer`,
+  `show`, `hide`, `setVisibility`, `reparent`, `remove` and `setBufferSize` now record and `apply` sets
+  (`merge` moves them, `clear` drops them; the other setters still record nothing), and a buffer layer built
+  with a parent is given a layer by the window manager's compositor (`MacapkLayerTree`, which `Compositor`
+  sets), released with its last handle. Also AOSP's `getLayerId`, `isSameSurface`, `getLocalOwnerView`,
+  `getCallsite`, `setUnreleasedWarningCallSite`, `addOnReparentListener`/`removeOnReparentListener`,
+  `dumpDebug`, the static `addJankDataListener`/`removeJankDataListener` and
+  `Transaction.sendSurfaceFlushJankData` (no jank data, as before), `JankData`'s `frameVsyncId`/`jankType` and
+  `JankData(long, int)`, and `RefreshRateRange` (`DisplayInfo`'s). `Transaction.remove` and `clear` were
+  `aosp_views/Compat`'s no-ops. New: `android/view/SurfaceSession.java` (to compile against: AOSP's ships in
+  `aosp-views.jar` and this one is dropped from the stage) and `android/graphics/BLASTBufferQueue.java`
+  (Win.apk's, left out of `aosp-graphics.jar` by `aosp_gfx_take.sh`: a BLAST layer's buffers are its layer in
+  the DLL, which HWUI finds through the Surface `createSurface` copies from the control; a transaction merged
+  with the next frame applies at once). `dalvik/system/CloseGuard.java`: `openWithCallSite`
+  (`SurfaceControlViewHost`'s). `android/view/SurfaceView.java`: AOSP's `onSetSurfacePositionAndScale`
+  (`InlineContentView` overrides it). `windows/test/aospapp/MagnifierTest.java` checks the tree and
+  `Magnifier.show`.
 
 ## License
 

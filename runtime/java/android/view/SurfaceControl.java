@@ -10,12 +10,14 @@ import java.io.Closeable;
 /**
  * AOSP-faithful (minimal) android.view.SurfaceControl. Real Android uses this as
  * a SurfaceFlinger layer handle plus a batched Transaction for compositor-side
- * geometry/visibility. Mac.apk has no SurfaceFlinger (each Window is a Cocoa
- * NSWindow / Metal layer composited by macOS), so SurfaceControl is a faithful
- * handle whose Transaction setters chain and record but apply() is a no-op. This
- * keeps the public API surface (Builder + Transaction) intact so libraries that
- * construct transactions for shared-element transitions / SurfaceView z-ordering
- * link and run without a SurfaceFlinger. Mirrors
+ * geometry/visibility. Win.apk's SurfaceFlinger is the in-process window manager's
+ * compositor (com.winapk.aospviews.Compositor, layers in the graphics DLL): a window's
+ * control is laid out by the window manager, and a layer built as a child of another
+ * (SurfaceControl.Builder.setParent: the text Magnifier's popup, a drag shadow) is kept
+ * here as SurfaceFlinger keeps it -- its parent, position, z-order and visibility, set
+ * by Transactions -- and composed over its window: a buffer layer with a parent gets a
+ * layer of its own when built (MacapkLayerTree). The other Transaction setters chain and
+ * record nothing (no crop, alpha, matrix or color layers are composed). Mirrors
  * frameworks/base/core/java/android/view/SurfaceControl.java.
  */
 public final class SurfaceControl implements Parcelable {
@@ -28,10 +30,78 @@ public final class SurfaceControl implements Parcelable {
      *  (Win.apk's windows/hwui_build compositor), so HWUI is given none. */
     public final long mNativeObject = 0;
 
+    // ---- the layer tree (what SurfaceFlinger keeps of each layer) ------------------------
+
+    /** AOSP's Builder flags this class reads. */
+    public static final int HIDDEN = 0x4;
+    public static final int FX_SURFACE_NORMAL = 0x0;
+    public static final int FX_SURFACE_EFFECT = 0x20000;
+    public static final int FX_SURFACE_BLAST = 0x40000;
+    public static final int FX_SURFACE_CONTAINER = 0x80000;
+    public static final int FX_SURFACE_MASK = 0xF0000;
+
+    /** The layer itself, shared by every handle to it (copyFrom, the copy constructor): its
+     *  parent, its position in the parent, its z among the parent's children, whether it is
+     *  shown, whether it holds buffers (a container or effect layer does not). Guarded by
+     *  sTreeLock: transactions apply on any thread (a Magnifier's on HWUI's render thread). */
+    private static final class Layer {
+        final int id = sLayerIds.incrementAndGet();
+        SurfaceControl parent;
+        float x, y;
+        int z;
+        boolean shown;
+        boolean buffer = true;
+        /** The handles that name it and are not released; the last release ends the layer. */
+        int handles = 1;
+        java.lang.ref.WeakReference<View> owner;
+        java.util.ArrayList<OnReparentListener> reparentListeners;
+    }
+    private static final java.util.concurrent.atomic.AtomicInteger sLayerIds =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private static final Object sTreeLock = new Object();
+    private Layer mLayer = new Layer();
+    private String mCallsite;
+
+    /** Win.apk framework-internal: the compositor that composes the layers built as children
+     *  (com.winapk.aospviews.Compositor, which sets itself with macapkSetLayerTree). */
+    public interface MacapkLayerTree {
+        /** A buffer layer with a parent was built: it gets a layer to draw into (its layer
+         *  post, macapkSetLayerPost), hidden until a transaction shows it if the builder said so. */
+        void layerBuilt(SurfaceControl sc);
+        /** A transaction moved, showed, hid, resized, reparented or removed a child layer. */
+        void treeChanged();
+        /** The last handle to a child buffer layer was released: its layer goes. */
+        void layerReleased(SurfaceControl sc);
+    }
+    private static volatile MacapkLayerTree sTree;
+    public static void macapkSetLayerTree(MacapkLayerTree tree) { sTree = tree; }
+
+    /** Win.apk framework-internal, for the compositor: the layer's parent (a handle to it),
+     *  null for a window's own layer or one reparented to none. */
+    public SurfaceControl macapkParent() {
+        synchronized (sTreeLock) { return mLayer.parent; }
+    }
+
+    /** Win.apk framework-internal, for the compositor: {x, y, z, shown (1/0), id} of the layer,
+     *  its position in its parent rounded to pixels. */
+    public int[] macapkPlacement() {
+        synchronized (sTreeLock) {
+            Layer l = mLayer;
+            return new int[] {Math.round(l.x), Math.round(l.y), l.z, l.shown ? 1 : 0, l.id};
+        }
+    }
+
     SurfaceControl(String name, int width, int height) {
         mName = name;
         mWidth = width;
         mHeight = height;
+    }
+
+    /** AOSP SurfaceControl(SurfaceControl other, String callsite): a second handle to the same
+     *  layer. */
+    public SurfaceControl(SurfaceControl other, String callsite) {
+        mValid = false;
+        copyFrom(other, callsite);
     }
 
     /** AOSP's public SurfaceControl(): an empty handle, not valid until copyFrom or
@@ -45,11 +115,17 @@ public final class SurfaceControl implements Parcelable {
     /** AOSP copyFrom(SurfaceControl other, String callsite): this handle now names the
      *  same layer as `other` (the in-process window session's relayout answer). */
     public void copyFrom(SurfaceControl other, String callsite) {
+        if (mValid) releaseHandle();
         mName = other.mName;
         mWidth = other.mWidth;
         mHeight = other.mHeight;
         mValid = other.mValid;
         mLayerPost = other.mLayerPost;
+        mCallsite = callsite;
+        synchronized (sTreeLock) {
+            mLayer = other.mLayer;
+            if (mValid) mLayer.handles++;
+        }
     }
 
     /** Win.apk framework-internal: where a Surface copied from this layer hands each frame it
@@ -77,11 +153,95 @@ public final class SurfaceControl implements Parcelable {
         return 0;
     }
 
-    public void release() { mValid = false; }
+    /** AOSP release(): this handle no longer names the layer; a layer built as a child of
+     *  another goes with its last handle (the compositor's MacapkLayerTree.layerReleased; on
+     *  Android SurfaceFlinger keeps it while its parent does, which shows only a layer no
+     *  handle can change any more). */
+    public void release() {
+        if (!mValid) return;
+        mValid = false;
+        releaseHandle();
+    }
+
+    private void releaseHandle() {
+        boolean last;
+        synchronized (sTreeLock) {
+            last = --mLayer.handles == 0 && mLayer.buffer;
+        }
+        MacapkLayerTree tree = sTree;
+        if (last && tree != null && mLayerPost != null) tree.layerReleased(this);
+    }
+
     public boolean isValid() { return mValid; }
     public String getName() { return mName; }
     public int getWidth() { return mWidth; }
     public int getHeight() { return mHeight; }
+
+    /** AOSP getLayerId(): the layer's id in the compositor (SurfaceFlinger's sequence there),
+     *  -1 for a handle that names none. */
+    public int getLayerId() {
+        if (!mValid) return -1;
+        synchronized (sTreeLock) { return mLayer.id; }
+    }
+
+    /** AOSP isSameSurface(SurfaceControl): whether both handles name one layer. */
+    public boolean isSameSurface(SurfaceControl other) {
+        synchronized (sTreeLock) { return other.mLayer == mLayer; }
+    }
+
+    /** AOSP getLocalOwnerView(): the view the builder named as the layer's owner, if alive. */
+    public View getLocalOwnerView() {
+        synchronized (sTreeLock) {
+            return mLayer.owner != null ? mLayer.owner.get() : null;
+        }
+    }
+
+    /** AOSP getCallsite() (package-private there): who made this handle, for the leak report. */
+    String getCallsite() { return mCallsite; }
+
+    /** AOSP setUnreleasedWarningCallSite(String): names the caller its CloseGuard reports when
+     *  the handle is collected unreleased; no CloseGuard is armed here, the name is kept. */
+    public void setUnreleasedWarningCallSite(String callsite) {
+        if (!isValid()) return;
+        mCallsite = callsite;
+    }
+
+    /** AOSP OnReparentListener: told when a transaction that reparents the layer is applied. */
+    public interface OnReparentListener {
+        void onReparent(Transaction transaction, SurfaceControl parent);
+    }
+
+    /** AOSP addOnReparentListener(OnReparentListener). */
+    public boolean addOnReparentListener(OnReparentListener listener) {
+        synchronized (sTreeLock) {
+            if (mLayer.reparentListeners == null) mLayer.reparentListeners = new java.util.ArrayList<>(1);
+            return mLayer.reparentListeners.add(listener);
+        }
+    }
+
+    /** AOSP removeOnReparentListener(OnReparentListener). */
+    public boolean removeOnReparentListener(OnReparentListener listener) {
+        synchronized (sTreeLock) {
+            return mLayer.reparentListeners != null && mLayer.reparentListeners.remove(listener);
+        }
+    }
+
+    /** AOSP dumpDebug(ProtoOutputStream, long): SurfaceControlProto's hash code, name and layer id. */
+    public void dumpDebug(android.util.proto.ProtoOutputStream proto, long fieldId) {
+        long token = proto.start(fieldId);
+        proto.write(0x10500000001L, System.identityHashCode(this));
+        proto.write(0x10900000002L, mName);
+        proto.write(0x10500000003L, getLayerId());
+        proto.end(token);
+    }
+
+    /** AOSP addJankDataListener(OnJankDataListener, SurfaceControl): SurfaceFlinger's frame
+     *  timeline reports jank to it. There is no frame timeline here (see JankData): it is never
+     *  called, as on a device whose compositor reports none. */
+    public static void addJankDataListener(OnJankDataListener listener, SurfaceControl surface) {}
+
+    /** AOSP removeJankDataListener(OnJankDataListener). */
+    public static void removeJankDataListener(OnJankDataListener listener) {}
 
     @Override public int describeContents() { return 0; }
     @Override public void writeToParcel(Parcel dest, int flags) {
@@ -108,6 +268,8 @@ public final class SurfaceControl implements Parcelable {
         if (in == null) {
             throw new IllegalArgumentException("source must not be null");
         }
+        if (mValid) releaseHandle();
+        synchronized (sTreeLock) { mLayer = new Layer(); }
         mName = in.readString();
         mWidth = in.readInt();
         mHeight = in.readInt();
@@ -172,6 +334,9 @@ public final class SurfaceControl implements Parcelable {
         private final int mJankType;
         private final long mScheduledAppFrameTimeNanos;
         private final long mActualAppFrameTimeNanos;
+        /** AOSP 14's fields (FrameTracker reads them): the same values as the getters. */
+        public final long frameVsyncId;
+        public final int jankType;
 
         /** @hide -- only the framework produces JankData. */
         JankData(long vsyncId, int jankType, long scheduledAppFrameTimeNanos,
@@ -180,6 +345,13 @@ public final class SurfaceControl implements Parcelable {
             mJankType = jankType;
             mScheduledAppFrameTimeNanos = scheduledAppFrameTimeNanos;
             mActualAppFrameTimeNanos = actualAppFrameTimeNanos;
+            frameVsyncId = vsyncId;
+            this.jankType = jankType;
+        }
+
+        /** AOSP 14's JankData(long frameVsyncId, int jankType). */
+        public JankData(long frameVsyncId, int jankType) {
+            this(frameVsyncId, jankType, 0, 0);
         }
         public long getVsyncId() { return mVsyncId; }
         public int getJankType() { return mJankType; }
@@ -204,6 +376,64 @@ public final class SurfaceControl implements Parcelable {
         public void removeAfter(long afterVsync) {}
     }
 
+    /** AOSP SurfaceControl.RefreshRateRange: a range of refresh rates, in Hz (DisplayInfo's
+     *  app-requested range, the display mode's). AOSP's class. */
+    public static final class RefreshRateRange implements Parcelable {
+        public static final String TAG = "RefreshRateRange";
+        public static final float FLOAT_TOLERANCE = 0.01f;
+        public float min;
+        public float max;
+
+        public RefreshRateRange() {}
+
+        public RefreshRateRange(float min, float max) {
+            if (min < 0 || max < 0 || min > max + FLOAT_TOLERANCE) {
+                android.util.Log.e(TAG, "Wrong values for min and max when initializing RefreshRateRange : "
+                        + min + " " + max);
+                this.min = this.max = 0;
+                return;
+            }
+            if (min > max) {
+                float t = min;
+                min = max;
+                max = t;
+            }
+            this.min = min;
+            this.max = max;
+        }
+
+        @Override public boolean equals(Object other) {
+            if (other == this) return true;
+            if (!(other instanceof RefreshRateRange)) return false;
+            RefreshRateRange r = (RefreshRateRange) other;
+            return min == r.min && max == r.max;
+        }
+
+        @Override public int hashCode() { return java.util.Objects.hash(min, max); }
+
+        @Override public String toString() { return "(" + min + " " + max + ")"; }
+
+        public void copyFrom(RefreshRateRange other) {
+            min = other.min;
+            max = other.max;
+        }
+
+        @Override public void writeToParcel(Parcel dest, int flags) {
+            dest.writeFloat(min);
+            dest.writeFloat(max);
+        }
+
+        @Override public int describeContents() { return 0; }
+
+        public static final Parcelable.Creator<RefreshRateRange> CREATOR =
+                new Parcelable.Creator<RefreshRateRange>() {
+            @Override public RefreshRateRange createFromParcel(Parcel in) {
+                return new RefreshRateRange(in.readFloat(), in.readFloat());
+            }
+            @Override public RefreshRateRange[] newArray(int size) { return new RefreshRateRange[size]; }
+        };
+    }
+
     // AOSP-conformance (framework_lint vs android-30 stub jar): AOSP does not
     // mark this final. Final-when-AOSP-is-not is the dangerous direction -- an
     // app compiled against real Android that subclasses this fails to resolve
@@ -212,52 +442,147 @@ public final class SurfaceControl implements Parcelable {
         private String mName = "SurfaceControl";
         private int mWidth;
         private int mHeight;
+        /** AOSP's default: HIDDEN, until setHidden(false) or a transaction shows the layer. */
+        private int mFlags = HIDDEN;
+        private SurfaceControl mParent;
+        private View mLocalOwnerView;
+        private String mCallsite = "SurfaceControl.Builder";
 
         public Builder() {}
-        public Builder(Object session) {}  // SurfaceSession overload (untyped: no SurfaceSession in tree)
+        /** AOSP Builder(SurfaceSession): a layer of that client of SurfaceFlinger; one client here. */
+        public Builder(SurfaceSession session) {}
 
         public Builder setName(String name) { mName = name; return this; }
         public Builder setBufferSize(int width, int height) {
+            if (width < 0 || height < 0) {
+                throw new IllegalArgumentException("width and height must be positive");
+            }
             mWidth = width; mHeight = height; return this;
         }
         public Builder setFormat(int format) { return this; }
         public Builder setProtected(boolean protectedContent) { return this; }
         public Builder setSecure(boolean secure) { return this; }
         public Builder setOpaque(boolean opaque) { return this; }
-        public Builder setHidden(boolean hidden) { return this; }
-        public Builder setParent(SurfaceControl parent) { return this; }
+        public Builder setHidden(boolean hidden) {
+            mFlags = hidden ? (mFlags | HIDDEN) : (mFlags & ~HIDDEN);
+            return this;
+        }
+        public Builder setParent(SurfaceControl parent) { mParent = parent; return this; }
         public Builder setMetadata(int key, int data) { return this; }
-        public Builder setEffectLayer() { return this; }
-        public Builder setColorLayer() { return this; }
-        public Builder setBLASTLayer() { return this; }
-        public Builder setContainerLayer() { return this; }
-        public Builder setFlags(int flags) { return this; }
-        public Builder setCallsite(String callsite) { return this; }
-        public Builder setLocalOwnerView(View view) { return this; }
+        public Builder setEffectLayer() { mWidth = mHeight = 0; return setFlags(FX_SURFACE_EFFECT, FX_SURFACE_MASK); }
+        public Builder setColorLayer() { return setEffectLayer(); }
+        public Builder setBLASTLayer() { return setFlags(FX_SURFACE_BLAST, FX_SURFACE_MASK); }
+        public Builder setContainerLayer() {
+            mWidth = mHeight = 0;
+            return setFlags(FX_SURFACE_CONTAINER, FX_SURFACE_MASK);
+        }
+        /** AOSP setFlags(int): all of the flags, as given. */
+        public Builder setFlags(int flags) { mFlags = flags; return this; }
+        private Builder setFlags(int flags, int mask) { mFlags = (mFlags & ~mask) | flags; return this; }
+        public Builder setCallsite(String callsite) { mCallsite = callsite; return this; }
+        public Builder setLocalOwnerView(View view) { mLocalOwnerView = view; return this; }
 
         public SurfaceControl build() {
-            return new SurfaceControl(mName, mWidth, mHeight);
+            int type = mFlags & FX_SURFACE_MASK;
+            if ((mWidth > 0 || mHeight > 0) && (type == FX_SURFACE_EFFECT || type == FX_SURFACE_CONTAINER)) {
+                throw new IllegalStateException("Only buffer layers can set a valid buffer size.");
+            }
+            SurfaceControl sc = new SurfaceControl(mName, mWidth, mHeight);
+            sc.mCallsite = mCallsite;
+            Layer l = sc.mLayer;
+            synchronized (sTreeLock) {
+                l.parent = mParent;
+                l.shown = (mFlags & HIDDEN) == 0;
+                l.buffer = type != FX_SURFACE_EFFECT && type != FX_SURFACE_CONTAINER;
+                if (mLocalOwnerView != null) l.owner = new java.lang.ref.WeakReference<>(mLocalOwnerView);
+            }
+            MacapkLayerTree tree = sTree;
+            if (tree != null && mParent != null && l.buffer) tree.layerBuilt(sc);
+            return sc;
         }
     }
 
     /**
-     * A batch of compositor changes. Setters chain and record; apply() is a
-     * no-op because macOS composites our windows directly.
+     * A batch of compositor changes, applied together by apply(). What the compositor here
+     * composes -- a layer's parent, position, z-order, visibility and buffer size -- is recorded
+     * and applied to the layer tree (Win.apk's SurfaceFlinger: see the class note); the other
+     * setters chain and record nothing.
      */
     public static class Transaction implements Closeable, Parcelable {
         public Transaction() {}
 
-        public void apply() { macapkFireCommitted(); }
-        public void apply(boolean sync) { macapkFireCommitted(); }
-        public void applyAsyncUnsafe() {}
+        /** One recorded change; answers whether it changed a child layer (one the compositor
+         *  places over its window), so that the compositor composes again. */
+        private interface Op {
+            boolean run(java.util.List<Runnable> after);
+        }
+        private java.util.ArrayList<Op> mOps;
 
-        public Transaction setVisibility(SurfaceControl sc, boolean visible) { return this; }
-        public Transaction show(SurfaceControl sc) { return this; }
-        public Transaction hide(SurfaceControl sc) { return this; }
-        public Transaction setPosition(SurfaceControl sc, float x, float y) { return this; }
+        private Transaction op(SurfaceControl sc, Op op) {
+            if (sc == null) throw new IllegalArgumentException("Invalid SurfaceControl");
+            synchronized (this) {
+                if (mOps == null) mOps = new java.util.ArrayList<>(4);
+                mOps.add(op);
+            }
+            return this;
+        }
+
+        /** The recorded changes, in order, on the layer tree; the compositor told once. */
+        private void applyOps() {
+            java.util.ArrayList<Op> ops;
+            synchronized (this) {
+                ops = mOps;
+                mOps = null;
+            }
+            if (ops == null) return;
+            boolean changed = false;
+            java.util.List<Runnable> after = new java.util.ArrayList<>(0);
+            synchronized (sTreeLock) {
+                for (Op o : ops) changed |= o.run(after);
+            }
+            for (Runnable r : after) r.run();
+            MacapkLayerTree tree = sTree;
+            if (changed && tree != null) tree.treeChanged();
+        }
+
+        public void apply() { applyOps(); macapkFireCommitted(); }
+        public void apply(boolean sync) { apply(); }
+        public void applyAsyncUnsafe() { apply(); }
+
+        /** AOSP clear(): the recorded changes are dropped. */
+        public void clear() {
+            synchronized (this) { mOps = null; }
+        }
+
+        public Transaction setVisibility(SurfaceControl sc, boolean visible) {
+            return visible ? show(sc) : hide(sc);
+        }
+        public Transaction show(SurfaceControl sc) {
+            return op(sc, after -> { sc.mLayer.shown = true; return sc.mLayer.parent != null; });
+        }
+        public Transaction hide(SurfaceControl sc) {
+            return op(sc, after -> { sc.mLayer.shown = false; return sc.mLayer.parent != null; });
+        }
+        public Transaction setPosition(SurfaceControl sc, float x, float y) {
+            return op(sc, after -> {
+                sc.mLayer.x = x;
+                sc.mLayer.y = y;
+                return sc.mLayer.parent != null;
+            });
+        }
         public Transaction setScale(SurfaceControl sc, float scaleX, float scaleY) { return this; }
-        public Transaction setBufferSize(SurfaceControl sc, int w, int h) { return this; }
-        public Transaction setLayer(SurfaceControl sc, int z) { return this; }
+        /** AOSP setBufferSize(SurfaceControl, int, int): the size of the layer's buffers (BLAST's
+         *  update gives it too). */
+        public Transaction setBufferSize(SurfaceControl sc, int w, int h) {
+            return op(sc, after -> {
+                sc.mWidth = w;
+                sc.mHeight = h;
+                return sc.mLayer.parent != null;
+            });
+        }
+        public Transaction setLayer(SurfaceControl sc, int z) {
+            return op(sc, after -> { sc.mLayer.z = z; return sc.mLayer.parent != null; });
+        }
         public Transaction setRelativeLayer(SurfaceControl sc, SurfaceControl relativeTo, int z) {
             return this;
         }
@@ -276,7 +601,27 @@ public final class SurfaceControl implements Parcelable {
         public Transaction setColor(SurfaceControl sc, float[] color) { return this; }
         public Transaction setOpaque(SurfaceControl sc, boolean isOpaque) { return this; }
         public Transaction setSecure(SurfaceControl sc, boolean isSecure) { return this; }
-        public Transaction reparent(SurfaceControl sc, SurfaceControl newParent) { return this; }
+        /** AOSP reparent(SurfaceControl, SurfaceControl): the layer moves under newParent, or out of
+         *  the tree (null: no longer composed); its reparent listeners are told when it applies. */
+        public Transaction reparent(SurfaceControl sc, SurfaceControl newParent) {
+            return op(sc, after -> {
+                boolean was = sc.mLayer.parent != null;
+                sc.mLayer.parent = newParent;
+                if (sc.mLayer.reparentListeners != null) {
+                    for (OnReparentListener l : new java.util.ArrayList<>(sc.mLayer.reparentListeners)) {
+                        after.add(() -> l.onReparent(this, newParent));
+                    }
+                }
+                return was || newParent != null;
+            });
+        }
+
+        /** AOSP remove(SurfaceControl): reparent(sc, null), and the handle is released now. */
+        public Transaction remove(SurfaceControl sc) {
+            reparent(sc, null);
+            sc.release();
+            return this;
+        }
         public Transaction setBuffer(SurfaceControl sc, Object buffer) { return this; }
         /** AOSP (API 33) setBuffer(SurfaceControl, HardwareBuffer): the layer's
          *  next content. No compositor takes it (see the class note). */
@@ -302,7 +647,34 @@ public final class SurfaceControl implements Parcelable {
             }
             return this;
         }
-        public Transaction merge(Transaction other) { return this; }
+        /** AOSP merge(Transaction): other's changes join this one's, after them; other is left
+         *  empty. */
+        public Transaction merge(Transaction other) {
+            if (other == null || other == this) return this;
+            java.util.ArrayList<Op> ops;
+            java.util.ArrayList<Runnable> listeners;
+            synchronized (other) {
+                ops = other.mOps;
+                other.mOps = null;
+                listeners = other.mCommittedListeners;
+                other.mCommittedListeners = null;
+            }
+            synchronized (this) {
+                if (ops != null) {
+                    if (mOps == null) mOps = new java.util.ArrayList<>(ops.size());
+                    mOps.addAll(ops);
+                }
+                if (listeners != null) {
+                    if (mCommittedListeners == null) mCommittedListeners = new java.util.ArrayList<>(listeners.size());
+                    mCommittedListeners.addAll(listeners);
+                }
+            }
+            return this;
+        }
+
+        /** AOSP sendSurfaceFlushJankData(SurfaceControl): asks SurfaceFlinger for the jank data it
+         *  holds; there is no frame timeline here (JankData), so there is none to send. */
+        public static void sendSurfaceFlushJankData(SurfaceControl sc) {}
 
         // ---- AOSP API-36 surface completion (android.view lane) -------------
         // Same contract as every setter above: chain and record, because macOS
@@ -404,7 +776,7 @@ public final class SurfaceControl implements Parcelable {
          *  deprecated at API 35. */
         public Transaction clearTrustedPresentationCallback(SurfaceControl sc) { return this; }
 
-        @Override public void close() {}
+        @Override public void close() { clear(); }
         @Override public int describeContents() { return 0; }
         @Override public void writeToParcel(Parcel dest, int flags) {}
 

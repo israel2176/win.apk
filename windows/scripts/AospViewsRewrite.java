@@ -59,8 +59,6 @@ public class AospViewsRewrite {
             "android/app/ActivityThread.isSystem()Z",
             "android/animation/Animator.getBackgroundPauseDelay()J",
             "android/view/SurfaceControl$Transaction.sanitize(II)V",
-            "android/view/SurfaceControl$Transaction.clear()V",
-            "android/view/SurfaceControl$Transaction.remove(Landroid/view/SurfaceControl;)Landroid/view/SurfaceControl$Transaction;",
             "android/view/SurfaceControl$Transaction.setBlurRegions(Landroid/view/SurfaceControl;[[F)Landroid/view/SurfaceControl$Transaction;",
             "android/view/SurfaceControl$Transaction.setDefaultFrameRateCompatibility(Landroid/view/SurfaceControl;I)Landroid/view/SurfaceControl$Transaction;",
             "android/view/SurfaceControl$Transaction.setDimmingEnabled(Landroid/view/SurfaceControl;Z)Landroid/view/SurfaceControl$Transaction;",
