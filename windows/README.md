@@ -334,7 +334,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `test/java/com/winapk/tools/AppInstallTest.java` (CI) | `com.winapk.tools.AppInstall` on a made-up `.apkm`: installed as a device leaves it (base.apk, the splits by their installed names, the split's x86_64 library, the `.installed` stamp and the record); then from what the library keeps of it (`<name>.apk` and `<name>.splits\`, hard links) installed again with every split and its library, the installed APKs still the library's files; a plain APK alone; the install session's checks as PackageInstallerSession makes them (a split alone, a base that requires its splits alone or without a required split type, another app's or version's split, a split twice), each refused with Android's message and the installed app left as it was, a store's bundle with its files named otherwise installed by its manifests' names, and `--set`'s lines |
 | `winapk-gl-test` | ANGLE makes a context, clears a pbuffer and the read-back frame has the right colors (WARP or SwiftShader on CI); the extension list an app's native code is told (`host/gl/guest_gl_extensions.h`) is a subset of ANGLE's in its order, exactly the declared extensions whose every function ANGLE resolves, `GL_CHROMIUM_bind_uniform_location` among them when ANGLE reports it |
 | `winapk-jvm-run <jni_guest.so> <classes>` | A real HotSpot JVM loads a guest library through the linker: its `JNI_OnLoad` registers a native through the guest `RegisterNatives`, another native is bound by name through the `NativeMethodBind` hook, both are called from Java and call back through the variadic bridge. Run with the x86_64 and the arm64 build of the library, and again on the staged `android-framework.jar` for libjnigraphics |
-| `test/java/android/net/HostNetworkTest.java` | Run by hand against the built jars (`MACAPK_LOG_LEVEL=7`, no natives): what `ConnectivityManager` makes of the host's default network (`MacApkHostNetwork.fromHost`: the transport for each adapter type, addresses with prefix lengths, DNS servers, no default route, junk in the answer), and that `NsdManager`'s three failures are `FAILURE_INTERNAL_ERROR`, delivered after the call from its own thread |
+| `test/java/android/net/HostNetworkTest.java` | Run by hand against the built jars (`MACAPK_LOG_LEVEL=7`, no natives): what `ConnectivityManager` makes of the host's default network (`MacApkHostNetwork.fromHost`: the transport for each adapter type, addresses with prefix lengths, DNS servers, no default route, junk in the answer) |
 | `test/java/FrameworkStubsTest.java` | Framework methods that were stubs (`test/apicheck/Completeness.java` lists them) against what Android's do: `AnimatorSet`'s interpolator, `View`'s clip bounds and the drawing cut to them. One check per stub given a body. Like `Camera2StillTest`, it runs in `winapk-runtime --data <scratch> --java-test "<build>\java\android-framework.jar;<classes>" <class>`: the framework's JVM with AOSP's graphics bound (which a plain JVM lacks, the framework having no graphics of its own) and AOSP's resources and views left off, so the framework as compiled brings Win.apk's own back, which these tests exercise |
 | `test/java/PbeProvidersTest.java` (CI) | The password-based crypto an app gets by name, in `winapk-runtime --java-test` (the preference is the host's, set straight after `JNI_CreateJavaVM`, which a plain JVM lacks): `PBEWithMD5AndDES` (Cipher, SecretKeyFactory) and the `PBEWithHmacSHA*` Macs from BC as on Android, with the ciphertexts and MAC AOSP 14's BC gives for 4-, 8- and 16-byte salts and a non-ASCII password; `getParameters()` null after a `PBEWithMD5AndDES` init with a password-only key, as on a device, the JDK's AlgorithmParameters of the name still decrypting, and a key carrying its salt giving it back; a SunJCE key or a `SecretKeySpec` with an 8-byte salt still working; `PBEWithSHA1AndDESede` left on SunJCE with its `getParameters()` round trip; AES, GCM, ChaCha20, HMAC, PBKDF2, SHA and TLS still on the JDK's providers |
 | `test/java/com/macapk/icu/IcuCalendarTest.java` | Run by hand against the built jars: `android.icu.util.Calendar` against the values Android 14's own ICU gives (week data per region, the weekend, the ICU-only fields and limits, set/clear, add/roll, `fieldDifference`, equality, `getInstance`'s class) |
@@ -3979,7 +3979,7 @@ every such change is listed here:
   slice provider checks each uri with them; `android/provider/DocumentsProvider.java`'s private copy of the
   latter is gone). `android/os/Bundle.java`: `setDefusable(Bundle, boolean)` (no effect outside the
   system server); `android/os/Parcel.java`: `readStringArray()`. `android/net/nsd/NsdManager.java`:
-  `ServiceInfoCallback` and `registerServiceInfoCallback` (it fails, as every request there);
+  `ServiceInfoCallback` and `registerServiceInfoCallback` (answered by the `NsdManager` entry below);
   `android/net/wifi/WifiManager.java`: `LocalOnlyHotspotCallback`, `LocalOnlyHotspotReservation` (none is
   made) and `startLocalOnlyHotspot` (`onFailed(ERROR_GENERIC)`: no hotspot here). The app search, Wi-Fi Aware
   and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
@@ -4053,6 +4053,15 @@ every such change is listed here:
   ICU test") checks the Hebrew calendar and its Hebrew dates, plurals, measures, relative times, collation,
   time zone names, transliteration and Bidi on the stage's data; `test/aospapp/run.sh` and
   `test/accessibility/run.sh` name ICU 72's folder beside Robolectric's ICU 68 data.
+- `runtime/java/android/net/nsd/NsdManager.java`: network service discovery on Windows' own mDNS responder
+  through `com/macapk/loader/HostNsd.java` (new; `windows/host/native_nsd.cpp`, dnsapi.dll's
+  `DnsServiceBrowse`, `DnsServiceResolve`, `DnsServiceRegister`, looked up at run time: Windows 10 1809 on).
+  `discoverServices` browses the type every few seconds and reports what appears and what misses two
+  browses in a row; `resolveService` gives the host address, port and TXT record; `registerService` registers
+  at the computer's `.local` name and hands back the name Windows took; a listener in use is refused, as AOSP
+  refuses it. Every request used to report `FAILURE_INTERNAL_ERROR`, which it still does without DNS-SD.
+  `registerServiceInfoCallback` answers once (no later updates). `windows/test/java/android/net/nsd/
+  NsdManagerTest.java` checks it over a stand-in for Windows' side.
 
 - `runtime/java/com/macapk/loader/HostNotifications.java`: a notification's actions are passed to the host
   as its buttons (`shownActions`: the shade's three, not contextual ones; a free-form `RemoteInput` as a text
