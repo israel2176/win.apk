@@ -155,7 +155,9 @@ echo "[aosp-app] the types reflection on AOSP's classes names (ReflectClosure.ja
     --aosp "$(native_path "$VIEWS")" "$(native_path "$RES")" "$(native_path "$GFX")" \
     --own "$(native_path "$FRAMEWORK")" "$(native_path "$LOADER")" \
     "$(native_path "$OUT/lib/java_base_patch")" "$(native_path "$OUT/lib/jdk_unsupported_patch")" \
-    > "$WORK/reflect.txt" 2> "$WORK/reflect.err" || { cat "$WORK/reflect.err" >&2; exit 1; }
+    > "$WORK/reflect.raw" 2> "$WORK/reflect.err" || { cat "$WORK/reflect.err" >&2; exit 1; }
+# Java ends its lines with CRLF on Windows: a name with its '\r' matches no entry of the jar.
+tr -d '\r' < "$WORK/reflect.raw" > "$WORK/reflect.txt"
 grep '^\[reflect-closure\]' "$WORK/reflect.err" >&2 || true
 if [[ -s "$WORK/reflect.txt" ]]; then
     extract "$ALL" "$WORK/reflect.txt"
