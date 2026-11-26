@@ -652,8 +652,10 @@ uses for the internet: wired, Wi-Fi, mobile broadband or a VPN, with its
 addresses and DNS servers. An app that looks for other devices on the local
 network with its own code can join multicast groups as on a phone (Windows
 Firewall may first ask whether to let Win.apk through). Android's built-in
-service discovery (`NsdManager`, mDNS) is not available yet: an app that
-relies on it alone finds nothing.
+service discovery (`NsdManager`, mDNS) is Windows' own: an app finds the
+printers, TVs, media servers and other devices that announce themselves on
+the local network, and a service the app offers is announced under your PC's
+name (Windows 10 version 1809 or later).
 
 Apps use Windows' proxy, as a phone's apps use the one its Wi-Fi settings
 name: whatever **Windows Settings > Network & internet > Proxy** says (a

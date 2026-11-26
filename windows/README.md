@@ -3938,12 +3938,21 @@ every such change is listed here:
   slice provider checks each uri with them; `android/provider/DocumentsProvider.java`'s private copy of the
   latter is gone). `android/os/Bundle.java`: `setDefusable(Bundle, boolean)` (no effect outside the
   system server); `android/os/Parcel.java`: `readStringArray()`. `android/net/nsd/NsdManager.java`:
-  `ServiceInfoCallback` and `registerServiceInfoCallback` (it fails, as every request there);
+  `ServiceInfoCallback` and `registerServiceInfoCallback` (answered by the `NsdManager` entry below);
   `android/net/wifi/WifiManager.java`: `LocalOnlyHotspotCallback`, `LocalOnlyHotspotReservation` (none is
   made) and `startLocalOnlyHotspot` (`onFailed(ERROR_GENERIC)`: no hotspot here). The app search, Wi-Fi Aware
   and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
   is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
   `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
+- `runtime/java/android/net/nsd/NsdManager.java`: network service discovery on Windows' own mDNS responder
+  through `com/macapk/loader/HostNsd.java` (new; `windows/host/native_nsd.cpp`, dnsapi.dll's
+  `DnsServiceBrowse`, `DnsServiceResolve`, `DnsServiceRegister`, looked up at run time: Windows 10 1809 on).
+  `discoverServices` browses the type every few seconds and reports what appears and what misses two
+  browses in a row; `resolveService` gives the host address, port and TXT record; `registerService` registers
+  at the computer's `.local` name and hands back the name Windows took; a listener in use is refused, as AOSP
+  refuses it. Every request used to report `FAILURE_INTERNAL_ERROR`, which it still does without DNS-SD.
+  `registerServiceInfoCallback` answers once (no later updates). `windows/test/java/android/net/nsd/
+  NsdManagerTest.java` checks it over a stand-in for Windows' side.
 
 ## License
 

@@ -650,6 +650,14 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/hostnet-test windows/test/java/android/net/HostNetworkTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/hostnet-test)" android.net.HostNetworkTest
+      - name: Run the service discovery test
+        run: |
+          # NsdManager over a stand-in for Windows' DNS-SD, on a plain JVM: found and lost services,
+          # resolve, registration, a listener in use, and no DNS-SD.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/nsd-test windows/test/java/android/net/nsd/NsdManagerTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/nsd-test)" android.net.nsd.NsdManagerTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
