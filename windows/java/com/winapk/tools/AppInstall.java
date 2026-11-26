@@ -149,6 +149,21 @@ public final class AppInstall {
                 System.err.println("[install] invalid package name \"" + pkg + "\" in " + source + ": " + bad);
                 return 3;
             }
+            // PackageManagerService refuses an app whose native code is for none of the device's ABIs
+            // (NativeLibraryHelper.copyNativeBinariesForSupportedAbi: INSTALL_FAILED_NO_MATCHING_ABIS),
+            // before anything is installed: an armeabi-v7a-only app on an x86_64 device with no ARM
+            // translation. Installed, it would start and stop at its first System.loadLibrary.
+            String[] supported = abis.split(",");
+            Set<String> present = new TreeSet<>();
+            for (Path m : members) present.addAll(libAbis(m));
+            boolean matches = present.isEmpty();
+            for (String a : supported) matches |= present.contains(a);
+            if (!matches) {
+                System.err.println("[install] INSTALL_FAILED_NO_MATCHING_ABIS: " + pkg + " has native code only for "
+                        + String.join(",", present) + "; this PC runs " + abis);
+                return 3;
+            }
+
             Path dir = androidRoot.resolve("data").resolve("app").resolve(DIR_NONCE)
                     .resolve(pkg + "-" + NAME_NONCE);
             Files.createDirectories(dir.getParent());
@@ -356,6 +371,20 @@ public final class AppInstall {
             }
         } catch (RuntimeException malformed) {
             // Not an ELF this reader understands: no dependencies known.
+        }
+        return out;
+    }
+
+    /** The ABIs one APK has lib/<abi>/*.so for. */
+    static Set<String> libAbis(Path apk) throws IOException {
+        Set<String> out = new TreeSet<>();
+        try (ZipFile zip = new ZipFile(apk.toFile())) {
+            for (Enumeration<? extends ZipEntry> e = zip.entries(); e.hasMoreElements(); ) {
+                String name = e.nextElement().getName();
+                if (!name.startsWith("lib/") || !name.endsWith(".so")) continue;
+                int slash = name.indexOf('/', 4);
+                if (slash > 4 && name.indexOf('/', slash + 1) < 0) out.add(name.substring(4, slash));
+            }
         }
         return out;
     }

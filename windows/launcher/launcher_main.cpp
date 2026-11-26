@@ -546,6 +546,10 @@ const wchar_t* tr(const wchar_t* en) {
          L"for you to attach; nothing is sent automatically.",
          L"ייפתח טופס ב-GitHub עם פרטי הגרסה והמערכת. היומן יסומן בתיקייה לצירוף; שום דבר לא נשלח אוטומטית."},
         {L"Couldn't install", L"ההתקנה נכשלה"},
+        {L"This app is built only for 32-bit ARM, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
+         L"האפליקציה הזו בנויה רק לארם 32 ביט, ו-Win.apk לא יכול להריץ אותה. הורד את הגרסה שלה ל-x86_64 או ל-arm64-v8a."},
+        {L"This app has code only for {0}, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
+         L"לאפליקציה הזו יש קוד רק ל-{0}, ו-Win.apk לא יכול להריץ אותו. הורד את הגרסה שלה ל-x86_64 או ל-arm64-v8a."},
         {L"Couldn't install {0}", L"לא ניתן היה להתקין את {0}"},
         {L"Drop an Android app here", L"אפשר לגרור לכאן אפליקציית Android"},
         {L"The reason for each failure is shown below.", L"סיבת הכישלון מוצגת ליד כל אחת."},
@@ -7703,6 +7707,19 @@ std::wstring install_failure_reason(const fs::path& log) {
     if (no_native_code) {
         return tr(L"This file has no code for PCs. Install the full bundle (.apkm, .xapk or .apks) that includes "
                   L"the arm64-v8a part.");
+    }
+    // AppInstall's INSTALL_FAILED_NO_MATCHING_ABIS: code only for processors this PC is not, as a device refuses it.
+    const std::string abi_tail = read_tail(log, 16384);
+    if (const size_t at = abi_tail.find("INSTALL_FAILED_NO_MATCHING_ABIS"); at != std::string::npos) {
+        const size_t only = abi_tail.find("only for ", at), end = abi_tail.find(';', only);
+        const std::string list = only == std::string::npos || end == std::string::npos
+                                     ? std::string() : abi_tail.substr(only + 9, end - only - 9);
+        if (list.find("x86") == std::string::npos && list.find("arm64") == std::string::npos &&
+            list.find("armeabi") != std::string::npos)
+            return tr(L"This app is built only for 32-bit ARM, which Win.apk cannot run. Download its x86_64 or "
+                      L"arm64-v8a build.");
+        return fmt(L"This app has code only for {0}, which Win.apk cannot run. Download its x86_64 or arm64-v8a build.",
+                   {utf8_to_wide(list)});
     }
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");

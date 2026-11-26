@@ -141,7 +141,7 @@ what to look for in the app or in its log.
 
 | Sign | What it is | Workaround |
 |---|---|---|
-| The APK has only `lib/armeabi-v7a` | 32-bit ARM code, which Win.apk cannot run | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
+| The install says the app is built only for 32-bit ARM (`INSTALL_FAILED_NO_MATCHING_ABIS` in the install log) | 32-bit ARM code, which Win.apk cannot run: the install is refused, as on a phone with no ARM support | Find an x86_64 or arm64-v8a build ([which build](arm-apps.md#which-build-to-install)) |
 | The APK has only `lib/arm64-v8a` | Runs, slowly at first, while it is translated | Give it a few minutes on its first runs |
 | A video plays without sound in an ExoPlayer app | Vorbis or FLAC audio | Pick a stream with AAC or Opus audio, if the app lets you |
 | "Sign in with Google" fails, or the app says Play services are missing | The app checks for Google's own Play services | Try [Google services](google-services.md) (experimental) |
