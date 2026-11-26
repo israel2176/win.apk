@@ -227,7 +227,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `EGL14`, `EGL15`, `EGLExt`, `MacApkEGL10` | 52 | `native_methods.cpp`, `egl14_bridges.inc`, `angle_glue.cpp` | `host/gl/gl_bridges.cpp` (upstream's `egl14_bridges.inc`) on ANGLE | done for Java and guest `libEGL` (window surfaces are pbuffers, see "OpenGL") | - |
 | `ClipboardManager` | 7 | `clipboard_bridge.mm` | `host/native_clipboard.cpp`: text, CF_HTML, URL, the concealed and history-exclusion formats for sensitive clips | done | - |
 | `DocumentPickerHandler` | 2 | `document_picker.mm` | `host/native_picker.cpp`: `IFileOpenDialog`/`IFileSaveDialog`, folder mode, MIME filters | done | - |
-| `HostIcu` | 2 | `icu_host_bridge.cpp` | `host/native_icu.cpp` on Windows' `icu.dll` (1903 and later) | done | - |
+| `HostIcu` | 2 | `icu_host_bridge.cpp` | none: removed with Win.apk's own `android.icu` (AOSP's ICU4J, in `aosp-graphics.jar`, needs no host natives) | gone | - |
 | `HostWallpaper` | 2 | `wallpaper_bridge.mm` | `host/native_wallpaper.cpp`: the desktop wallpaper and its placement style, through WIC | done | - |
 | `AudioInputBridge` | 10 | `audio_input.mm` | `host/native_audio_input.cpp`: WASAPI capture resampled to the app's format; the privacy switch is the permission | done | - |
 | `LocationBridge` | 12 | `location_bridge.mm` | `host/native_location.cpp`: `Windows.Devices.Geolocation` through its ABI; Windows' privacy settings (the consent store) are the host authorization | done | - |
@@ -1099,6 +1099,12 @@ Done:
   linker and run the guest's `JNI_OnLoad`, and natives bound by name resolve
   through a replaced `NativeLibrary.findEntry0` plus the `NativeMethodBind`
   thunk. No per-symbol exports are needed.
+- `System.load` of an ELF however it is called: a replaced
+  `NativeLibraries.load` (and `unload`) opens it through the linker, so a
+  reflective call, which the rewriter's Pattern N cannot see, works as on
+  Android (issue #211: an obfuscated layer called a native its library would
+  have registered, and the log showed no library loaded at all, as when such
+  a load fails on the JDK's own path).
 - `NativeLinker.nativeLinkOnly` (dependencies without `JNI_OnLoad`).
 - System functions the shim lacks are bound to stubs that report their name
   on the first call, so libraries load and the sweep can rank the gaps.
