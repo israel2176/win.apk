@@ -3313,9 +3313,11 @@ void compute_layout() {
     g_l.info_close = RectF(g_l.infobar.GetRight() - px(40), g_l.infobar.Y + px(8), px(32), px(32));
     g_l.retry = RectF(g_l.grid.X + g_l.grid.Width / 2 - px(60),
                       g_l.grid.Y + (std::min)(g_l.grid.Height / 2, px(110)) + px(66), px(120), ch);
-    // The Store and Google Play: the app's own window, a child of the panel under the title, edge to edge in the
-    // layer. Once it ended (or the Store could not be set up), Show log beside Open; else Open alone, centred.
-    g_l.panel = RectF(g_l.content.X + 1, top, g_l.content.Width - 1, (std::max)(1.0f, H - top));
+    // The Store and Google Play: the app's own window, a child of the panel filling the whole content layer, as
+    // an app fills a phone's screen: no title over it (the app has its own). The title shows only while the app
+    // is not up (getting the Store, starting, ended). Once it ended (or the Store could not be set up), Show log
+    // beside Open; else Open alone, centred.
+    g_l.panel = RectF(g_l.content.X + 1, g_l.content.Y, g_l.content.Width - 1, (std::max)(1.0f, g_l.content.Height));
     const bool panel_log = panel_shows_log();
     g_l.panel_open = RectF(g_l.grid.X + g_l.grid.Width / 2 - (panel_log ? px(140) : px(80)), g_l.retry.Y, px(160), ch);
     g_l.panel_log = RectF(g_l.panel_open.GetRight() + px(8), g_l.retry.Y, px(112), ch);
@@ -6414,8 +6416,7 @@ Embedded* shown_embedded() {
     return nullptr;
 }
 
-// Each panel's place and visibility: over the content under the title while its view is shown and the app is
-// starting or up.
+// Each panel's place and visibility: over the whole content while its view is shown and the app is up.
 void place_panels() {
     const RectF& r = g_l.panel;
     for (Embedded* e : {&g_store_app, &g_play}) {
