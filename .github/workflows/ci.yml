@@ -805,6 +805,19 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/scan-test windows/test/java/ScanRecordTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/scan-test)" ScanRecordTest
+      - name: Run the resource name lookup test
+        run: |
+          # getIdentifier on AOSP's resources (aosp-resources.jar): LoadedPackage.FindEntryByName as
+          # PortFixes answers it, over the platform's table, checked against com.android.internal.R
+          # and timed (the port's own scan cost ~0.4 ms a name; an app's R fields by name, minutes).
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w stage/lib/aosp-resources.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/find-entry-test \
+            windows/test/java/org/robolectric/res/android/FindEntryByNameTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/find-entry-test)" \
+            org.robolectric.res.android.FindEntryByNameTest "$(cygpath -w stage/bin/aosp/framework-res-34.apk)" \
+            | tee find-entry-test.log
+          grep -q "ALL PASSED" find-entry-test.log
       - name: Run the Google token service test
         run: |
           # The master token held by the account's owner alone (com.macapk.gms.GmsStore,

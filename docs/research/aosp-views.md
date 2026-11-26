@@ -835,6 +835,15 @@ from a heap dump taken by a script after scrolling; the process's private memory
   new empty package and its 256-slot type array, where AssetManager2 resets it: 254 of them, about
   half a megabyte, per theme copied. `AospResRewrite` makes that branch store null, as the C++
   does (every reader tests the slot).
+- **Robolectric's port of `LoadedPackage::FindEntryByName`** (every `getIdentifier`) decoded the whole
+  key pool from the back (`ResStringPool.indexOfString`; aapt2's pools are unsorted, so no binary search)
+  and then built an object for each entry of each configuration of the type, about 0.4 ms a name on the
+  platform's table; a bank app whose ~22k R fields were looked up by name waited 143 s for its first
+  frame. Its sparse types were read without the type header's size, so their names (46 of the
+  platform's: 38 not found, 8 found at another id, `fraction/*`, `drawable/alert_dark_frame`...).
+  `AospResRewrite` points it at `PortFixes.findEntryByName`: each pool decoded once into a hash map, a
+  type's entries indexed at its first lookup, the C++'s answer in about 0.5 us
+  (`windows/test/java/org/robolectric/res/android/FindEntryByNameTest.java`).
 - **The resource index was built twice.** `AospRes.phoneDefaults` had no locales (AOSP's
   `setToDefaults` leaves none), so Boot's index was opened, then opened again once
   `LocaleManager` set them, and the first stayed alive (4 MB of rows). It now has the default

@@ -1528,24 +1528,18 @@ public final class MacApkPackageManager extends PackageManager {
         }
     }
 
-    /** apk path -> {mtime, size, Manifest}: a registry app's parsed manifest,
-     *  re-parsed only when its installed APK changes (an update rewrites it). */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Object[]> sRegistryManifests =
-        new java.util.concurrent.ConcurrentHashMap<>();
-
+    /** A registry app's parsed manifest, re-parsed only when its installed APK
+     *  changes (an update rewrites it): Manifest.parseApk's cache, which
+     *  getPackageArchiveInfo (registryPackageInfo) shares. */
     static Manifest registryManifest(InstalledRegistry.Row row) {
         String apk = row != null ? resolvedRowApk(row) : null;
         if (apk == null) return null;
         java.io.File f = new java.io.File(apk);
         if (!f.isFile()) return null;
-        long mt = f.lastModified(), sz = f.length();
-        Object[] c = sRegistryManifests.get(apk);
-        if (c != null && (Long) c[0] == mt && (Long) c[1] == sz) return (Manifest) c[2];
         try {
-            Manifest m = Manifest.parse(null, apk);
+            Manifest m = Manifest.parseApk(apk);
             // Never let a swapped or corrupt retention describe another package.
             if (m == null || !row.pkg.equals(m.packageName)) return null;
-            sRegistryManifests.put(apk, new Object[] { mt, sz, m });
             return m;
         } catch (Throwable t) {
             NativeLog.w("MacApkPM", "[PM.registry] manifest of " + row.pkg
