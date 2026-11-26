@@ -82,21 +82,34 @@ private:
     std::vector<uint8_t> b_;
 };
 
-// Bump allocator over RWX chunks. Thunks are never freed: they live as long
-// as the native method or JNI table entry that points at them.
+// Bump allocator over dual-mapped W^X chunks (one writable view, one
+// execute-read view backed by the same anonymous section). Thunks are never
+// freed: they live as long as the native method or JNI table entry that points
+// at them.
 class ThunkPool {
 public:
     void* place(const std::vector<uint8_t>& code) {
         std::lock_guard<std::mutex> lock(mu_);
         const size_t need = (code.size() + 15) & ~size_t{15};
-        if (!cur_ || used_ + need > kChunk) {
-            cur_ = static_cast<uint8_t*>(
-                VirtualAlloc(nullptr, kChunk, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
-            if (!cur_) return nullptr;
+        if (need > kChunk) return nullptr;
+        if (!rx_ || used_ + need > kChunk) {
+            HANDLE sec = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_EXECUTE_READWRITE, 0,
+                                            static_cast<DWORD>(kChunk), nullptr);
+            if (!sec) return nullptr;
+            auto* rw = static_cast<uint8_t*>(MapViewOfFile(sec, FILE_MAP_WRITE, 0, 0, kChunk));
+            auto* rx = static_cast<uint8_t*>(MapViewOfFile(sec, FILE_MAP_EXECUTE | FILE_MAP_READ, 0, 0, kChunk));
+            CloseHandle(sec);
+            if (!rw || !rx) {
+                if (rw) UnmapViewOfFile(rw);
+                if (rx) UnmapViewOfFile(rx);
+                return nullptr;
+            }
+            rw_ = rw;
+            rx_ = rx;
             used_ = 0;
         }
-        uint8_t* p = cur_ + used_;
-        std::memcpy(p, code.data(), code.size());
+        std::memcpy(rw_ + used_, code.data(), code.size());
+        uint8_t* p = rx_ + used_;
         used_ += need;
         FlushInstructionCache(GetCurrentProcess(), p, code.size());
         return p;
@@ -105,7 +118,8 @@ public:
 private:
     static constexpr size_t kChunk = 64 * 1024;
     std::mutex mu_;
-    uint8_t* cur_ = nullptr;
+    uint8_t* rw_ = nullptr;
+    uint8_t* rx_ = nullptr;
     size_t used_ = 0;
 };
 
