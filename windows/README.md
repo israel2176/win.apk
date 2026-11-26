@@ -3730,7 +3730,8 @@ every such change is listed here:
   and report decisions (`ActivityRecord.getConfigurationChanges`, `diffPublicOnly`; Win.apk's own
   `Configuration.diff` never sets it); `android/content/pm/ComponentInfo.java` and
   `PackageItemInfo.java` read a label through `pm.getText` when the system Resources do not have
-  it, only with `WINAPK_AOSP_RES=1`; `android/os/Handler.java`: AOSP's hidden
+  it, only with `WINAPK_AOSP_RES=1`; they ask the system Resources only for a framework id (package
+  0x01): an app's id looked up there logged "No package ID 7f found" at every activity's start; `android/os/Handler.java`: AOSP's hidden
   `executeOrSendMessage`. All inert with the switches off.
 - `runtime/java/android/webkit/MacApkWebViewBridge.java`: `macapkServeFile`, the answer for a `file:`
   URL WebView2 cannot read: `windows/host/native_webview.cpp` loads `file:///X` on the file origin
