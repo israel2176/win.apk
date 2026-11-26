@@ -156,6 +156,7 @@ constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
 constexpr UINT_PTR kSetupScanTimer = 4;  // the Downloads folder settled: look for new files in it
 constexpr UINT_PTR kMaintenanceTimer = 5;  // shown or hidden: is a maintenance window due? (maintenance.h)
 constexpr UINT_PTR kQuitTimer = 6;  // hidden: an app window it did not start is still open (maybe_quit)
+constexpr UINT_PTR kRunningTimer = 7;  // shown: which apps run, started from here or not (refresh_running)
 constexpr ULONG_PTR kCopyOpen = 0x57415031;  // WM_COPYDATA from another start of Win.apk.exe (forward_to_running)
 constexpr UINT_PTR kAnimTimer = 1;
 enum Cmd { kCmdOpen = 200, kCmdStop, kCmdInfo, kCmdRemove };
@@ -1457,13 +1458,6 @@ bool any_runs() {
     return any;
 }
 
-std::vector<std::wstring> run_names() {
-    AcquireSRWLockShared(&g_proc_lock);
-    std::vector<std::wstring> names = g_runs.names();
-    ReleaseSRWLockShared(&g_proc_lock);
-    return names;
-}
-
 // The process id of the app's runtime, 0 when it has none (not started from here, still starting, over).
 DWORD run_pid(const std::wstring& name) {
     AcquireSRWLockShared(&g_proc_lock);
@@ -1658,6 +1652,12 @@ bool app_running(const std::wstring& name) {
     CloseHandle(m);
     return w == WAIT_TIMEOUT;
 }
+
+// Whether the app runs now: started from here (from the first moment of its start), or in a process this launcher
+// did not start (its shortcut's start, another launcher's), known by its instance mutex. Every place that says an app
+// runs (its badge, the count, the tooltip, the tile's menu, the details page's Stop) goes by this, through
+// g_running where it is drawn.
+bool app_is_running(const std::wstring& name) { return run_active(name) || app_running(name); }
 
 void remove_app_files(const std::wstring& name);
 struct GoogleApp;
@@ -3013,6 +3013,8 @@ struct Tile {
 };
 
 std::vector<App> g_apps;
+std::set<std::wstring> g_running;  // the library's apps that ran at the last look (refresh_running): what is drawn
+void refresh_running();
 std::vector<Tile> g_tiles;                 // what the grid shows: new installs first, then the (filtered) apps
 struct Job {
     std::wstring name;
@@ -3398,6 +3400,7 @@ void refresh() {
     g_icons.clear();
     if (!find_app(g_selected)) g_selected.clear();
     rebuild_tiles();
+    refresh_running();
 }
 
 int tile_of(const std::wstring& name) {
@@ -3568,7 +3571,7 @@ void paint_toolbar(Graphics& g) {
     const RectF& t = g_l.title;
     size_t shown = 0, running = 0;  // the library's own apps: not the system components
     for (const Tile& tile : g_tiles) shown += tile.app >= 0;
-    for (const std::wstring& r : run_names()) running += !system_app(r);
+    for (const std::wstring& r : g_running) running += !system_app(r);
     std::wstring sub = shown == 0 ? std::wstring(tr(L"No apps installed yet")) : app_count(shown);
     if (running) sub += L"  ·  " + fmt(L"{0} running", {std::to_wstring(running)});
     if (const std::wstring now = current_install(); !now.empty() && !system_app(now) && !g_setup_names.count(now)) {
@@ -3593,7 +3596,7 @@ void paint_tile(Graphics& g, int i) {
     const App* app = t.app >= 0 ? &g_apps[static_cast<size_t>(t.app)] : nullptr;
     const bool sel = app && app->name == g_selected;
     const bool hot = g_hot.kind == kHitTile && g_hot.tile == i;
-    const bool running = app && run_active(app->name);
+    const bool running = app && g_running.count(app->name);
     if (sel) {
         fill_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, g_t.dark ? 56 : 30));
         stroke_round(g, r, px(kRadiusTile), with_alpha(g_t.accent, 170));
@@ -4691,6 +4694,7 @@ void launch(const App& app) {
         bring_forward(app.name);
         return;
     }
+    refresh_running();
     // The app's window opens over the starting window, and takes its place (host/win32_window.cpp).
     auto* job = new RunJob{app.name, app.apk, {}};
     if (!start_cls.empty()) job->env.push_back(L"MACAPK_LAUNCH_ACTIVITY=" + start_cls);
@@ -5350,6 +5354,22 @@ void rebuild_page() {
     if (!page_view() || !g_page.build) return;
     g_page.sections = g_page.build();
     InvalidateRect(g_main, nullptr, FALSE);
+}
+
+// Looks again at which of the library's apps run (app_is_running): when a run of the app started from here begins or
+// ends, and every kRunningTimer while the library is shown, since an app started from its shortcut runs in a process
+// of its own whose start and end the launcher is not told of. What changed is drawn again, and an open App details
+// page of an app that started or stopped is built again, so that its Stop row comes and goes with the app.
+void refresh_running() {
+    std::set<std::wstring> now;
+    for (const App& a : g_apps) {
+        if (app_is_running(a.name)) now.insert(a.name);
+    }
+    if (now == g_running) return;
+    const bool page_changed = g_view == kAppView && now.count(g_page.app) != g_running.count(g_page.app);
+    g_running = std::move(now);
+    if (page_changed) rebuild_page();
+    if (g_main) InvalidateRect(g_main, nullptr, FALSE);
 }
 
 void page_back() {
@@ -6821,7 +6841,7 @@ std::wstring store_app_name() {
 
 bool store_app_running() {
     const std::wstring name = store_app_name();
-    return run_active(name) || app_running(name);
+    return app_is_running(name);
 }
 
 // Reads the newest release: the Store item with no store app, Try again, or the daily update check.
@@ -7114,7 +7134,7 @@ bool update_can_start() {
     }
     std::vector<std::wstring> running;
     for (const App& a : g_apps) {
-        if (run_active(a.name) || app_running(a.name)) running.push_back(a.label);
+        if (app_is_running(a.name)) running.push_back(a.label);
     }
     if (running.size() == 1) {
         info(fmt(L"Close {0} first: the update replaces files it uses.", {running[0]}), kError);
@@ -7655,7 +7675,7 @@ void show_info(const App& app) {
                                    tr(L"Open"), [a] { open_path(app_dir(a.name)); })},
                        L""});
         std::vector<Row> manage;
-        if (run_active(a.name) || app_running(a.name)) {
+        if (app_is_running(a.name)) {  // the page is built again when that changes (refresh_running)
             manage.push_back(button_row(tr(L"Stop"), tr(L"Closes the app at once, as Force stop does on a phone."),
                                         tr(L"Stop"), [a] {
                                             if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
@@ -10131,7 +10151,7 @@ void command(int id);
 // The tile's menu, under the app's icon and name: Open, Stop while it runs, App details, Remove.
 // Everything else is on the details page.
 void show_context_menu(const App& app, POINT pt, bool keyboard = false) {
-    const bool running = run_active(app.name) || app_running(app.name);
+    const bool running = app_is_running(app.name);
     const bool pending = is_pending(app.name);
     PopupMenu m;
     m.app = &app;
@@ -10204,7 +10224,7 @@ std::wstring tooltip_text(const Hit& h) {
             const Tile& t = g_tiles[static_cast<size_t>(h.tile)];
             if (t.app < 0) return fmt(L"Installing {0}…", {job_label(t.job)});
             const App& a = g_apps[static_cast<size_t>(t.app)];
-            return run_active(a.name) ? a.label + L"  ·  " + tr(L"Running") : a.label;
+            return g_running.count(a.name) ? a.label + L"  ·  " + tr(L"Running") : a.label;
         }
         default: return L"";
     }
@@ -10299,6 +10319,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             remove_old_store_data();
             SetTimer(hwnd, kUpdateTimer, 3600 * 1000, nullptr);
             SetTimer(hwnd, kMaintenanceTimer, mw::kCheckMinutes * 60 * 1000, nullptr);
+            SetTimer(hwnd, kRunningTimer, 2000, nullptr);
             return 0;
         }
         case WM_SIZE:
@@ -10399,6 +10420,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 KillTimer(hwnd, kQuitTimer);
                 maybe_quit();
             }
+            if (wp == kRunningTimer && IsWindowVisible(hwnd)) refresh_running();
             if (wp == kSetupScanTimer) {
                 KillTimer(hwnd, kSetupScanTimer);
                 if (g_view == kGmsSetupView) {
@@ -10662,6 +10684,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             std::unique_ptr<std::wstring> name(reinterpret_cast<std::wstring*>(lp));
             const RunEnd end = finish_run(*name);
             update_timer();
+            refresh_running();  // its badge goes, and its details page loses Stop
             InvalidateRect(hwnd, nullptr, FALSE);
             const std::wstring label = label_of(*name);
             if (Embedded* e = embedded_of(*name); e && e->up()) {
@@ -12727,6 +12750,7 @@ void show_library(int show) {
                                                                                   : show);
     }
     SetForegroundWindow(g_main);
+    refresh_running();  // what ran or ended while it was hidden
     auto_update_check();
 }
 

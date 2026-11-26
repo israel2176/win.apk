@@ -257,7 +257,8 @@ the background at the first app install): a few seconds of one core at low
 priority, and about 40 MB in `%LOCALAPPDATA%\Win.apk\cds`.
 
 The library marks a running app with a green badge on its tile and counts
-them under its title. **Stop** in the tile's right-click menu, or on the
+them under its title, whether it was opened from the library or from its
+own shortcut (a start from a shortcut shows up within two seconds). **Stop** in the tile's right-click menu, or on the
 app's details page, closes the app at once, like Android's **Force stop**:
 the app is not told, so close its window instead when it has something to
 save.
