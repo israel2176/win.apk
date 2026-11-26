@@ -10,12 +10,14 @@
 // reference counts, destructors, TLS, RTLD_NODELETE, thread_local
 // destructors holding a library, and dependencies going with their root.
 // Four more libraries check the order symbols are looked up in: libc at its
-// place in the DT_NEEDED order, the global group before it. And an arm64
+// place in the DT_NEEDED order, the global group before it. Two packed ones
+// check that dlsym reads the symbol tables as the constructors left them. And an arm64
 // library of an x86_64 app gets the arm64 copy of a dependency whose x86_64
 // copy is loaded (test/guest/mixed_guest.c, in arm64/ under the directory).
 //
 // Exit code: the number of failed checks.
 
+#include "winapk/elf_loader.h"
 #include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
 #include "winapk/linker.h"
@@ -29,6 +31,36 @@
 #include <windows.h>
 
 namespace {
+
+// Where an access violation happened, before the process ends: the instruction's
+// module (a host module, or a guest library and its offset) and the address read
+// or written. Run last (FirstHandler 0) and always passes the exception on.
+LONG WINAPI report_access_violation(EXCEPTION_POINTERS* e) {
+    const EXCEPTION_RECORD* r = e->ExceptionRecord;
+    if (r->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || r->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+    const void* pc = r->ExceptionAddress;
+    char where[MAX_PATH + 64] = "unknown";
+    const winapk::GuestLinker* linker = winapk::GuestLinker::process();
+    if (const winapk::ElfImage* img = linker ? linker->image_containing(pc) : nullptr) {
+        std::snprintf(where, sizeof where, "%s+%#llx", img->path().filename().string().c_str(),
+                      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pc) -
+                                                      reinterpret_cast<uintptr_t>(img->base())));
+    } else {
+        HMODULE m = nullptr;
+        char name[MAX_PATH] = "?";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               static_cast<LPCSTR>(pc), &m)) {
+            GetModuleFileNameA(m, name, sizeof name);
+        }
+        std::snprintf(where, sizeof where, "%s+%#llx", name,
+                      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pc) - reinterpret_cast<uintptr_t>(m)));
+    }
+    std::fprintf(stderr, "[linker-test] access violation %s %#llx at %p (%s), rsp %#llx\n",
+                 r->ExceptionInformation[0] == 1 ? "writing" : r->ExceptionInformation[0] == 8 ? "executing" : "reading",
+                 static_cast<unsigned long long>(r->ExceptionInformation[1]), pc, where,
+                 static_cast<unsigned long long>(e->ContextRecord->Rsp));
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
 int g_failures = 0;
 
@@ -163,6 +195,10 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: winapk-linker-test <dir with libwinapk_link_*.so>\n");
         return 2;
     }
+    // Each check's line as it happens: a guest library that crashes the process would
+    // otherwise take the buffered lines with it, and the log would not say which check.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    AddVectoredExceptionHandler(0, report_access_violation);
 
     std::printf("Win.apk guest linker\n");
     winapk::LinkerConfig config;
@@ -332,6 +368,21 @@ int main(int argc, char** argv) {
     }
     check("RTLD_DEFAULT finds the global library before libc",
           from_interpose(linker.lookup(nullptr, "strlen", nullptr, &error)));
+
+    // A packed library (NetEase's libsecexe in Dreamehome): the file's .dynstr has its export's name
+    // scrambled and its constructor puts it right. bionic's dlsym reads the tables as they are then.
+    for (const char* name : {"libwinapk_link_packed.so", "libwinapk_link_packed_sysv.so"}) {
+        error.clear();
+        void* packed = linker.open(name, winapk::GuestLinker::kRtldNow, &error);
+        check((std::string("open ") + name).c_str(), packed != nullptr, error);
+        if (!packed) continue;
+        expect_eq("its constructor put the name right in memory", call(linker, packed, "link_packed_state"), 4);
+        expect_eq("dlsym finds an export by the name its constructor put right",
+                  call(linker, packed, "link_packed_secret"), 42);
+        check("the name the file had is not an export",
+              linker.lookup(packed, "LINK_PACKED_SECRET", nullptr, &error) == nullptr);
+        linker.close(packed, &error);
+    }
 
     // An x86_64 app with a library only its arm64 set has (AppInstall puts that set in lib/arm64): the
     // arm64 library's dependency is the arm64 copy beside it, although an x86_64 library of that name is

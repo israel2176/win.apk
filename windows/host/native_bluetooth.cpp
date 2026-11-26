@@ -1061,9 +1061,9 @@ ScanCommand g_scan_command = ScanCommand::kNone;
 int g_scan_started = -1;  // the last Start's answer: 0 ok, else a ScanCallback.SCAN_FAILED_* code
 bool g_scan_running = false;
 std::thread g_scan_thread;
-// The scan response's bytes go after the advertisement's, as Android's
-// ScanRecord holds them; Windows delivers the two separately.
-std::map<uint64_t, std::vector<uint8_t>> g_last_advertisement;
+// Windows delivers an advertisement and its scan response separately; Android
+// reports them as one ScanResult (bt::ScanReassembler).
+bt::ScanReassembler<ScanEvent> g_reassembler;
 std::map<uint64_t, std::string> g_last_name;
 
 void push_scan_event(ScanEvent e) {
@@ -1087,11 +1087,15 @@ void on_advertisement(IInspectable* args_obj) {
     e.legacy = type != 5;
     e.connectable = type == 0 || type == 1;
     bool scan_response = type == 4;
+    // ADV_IND and ADV_SCAN_IND invite a SCAN_REQ; an extended advertisement
+    // says so in IsScannable below.
+    bool scannable = type == 0 || type == 2;
     auto* args2 = query<IBluetoothLEAdvertisementReceivedEventArgs2>(args, kIidReceivedArgs2);
     if (args2) {
         WinRtBool b = 0;
         if (SUCCEEDED(args2->get_IsConnectable(&b))) e.connectable = b != 0;
         if (SUCCEEDED(args2->get_IsScanResponse(&b))) scan_response = b != 0;
+        if (SUCCEEDED(args2->get_IsScannable(&b))) scannable = b != 0;
         IReference<INT16>* tx = nullptr;
         INT16 dbm = 0;
         if (SUCCEEDED(args2->get_TransmitPowerLevelInDBm(&tx)) && tx && SUCCEEDED(tx->get_Value(&dbm))) {
@@ -1128,26 +1132,18 @@ void on_advertisement(IInspectable* args_obj) {
         adv->Release();
     }
     args->Release();
-    const std::vector<uint8_t> bytes = bt::advertisement_bytes(sections);
+    e.record = bt::advertisement_bytes(sections);
+    std::optional<ScanEvent> report;
     {
         std::lock_guard<std::mutex> l(g_scan_lock);
-        if (g_last_advertisement.size() > 2048) {
-            g_last_advertisement.clear();
-            g_last_name.clear();
-        }
-        if (scan_response) {
-            e.record = g_last_advertisement[e.address];
-            e.record.insert(e.record.end(), bytes.begin(), bytes.end());
-        } else {
-            g_last_advertisement[e.address] = bytes;
-            e.record = bytes;
-        }
+        if (g_last_name.size() > 2048) g_last_name.clear();
         // A name seen in an earlier packet (the scan response, usually)
         // stays with the device, as the stack's name cache does.
         if (!e.name.empty()) g_last_name[e.address] = e.name;
-        else e.name = g_last_name[e.address];
+        report = g_reassembler.process(std::move(e), scannable, scan_response);
+        if (report && report->name.empty()) report->name = g_last_name[report->address];
     }
-    push_scan_event(std::move(e));
+    if (report) push_scan_event(std::move(*report));
 }
 
 void scan_worker() {

@@ -140,6 +140,10 @@ void android_name(wchar_t* host_name);
 // for a file outside it.
 std::string android_path_of(const std::wstring& host_file);
 
+// stdio.cpp: /proc/self/maps as native code reads it (the guest libraries, the
+// process's program and linker, the app's APKs), for the file Java code opens.
+std::string proc_maps_file_text();
+
 // cacerts.cpp: the host directory that answers Android's system CA store
 // (/system/etc/security/cacerts), built from the roots Windows trusts on the
 // first call; empty when it is turned off or could not be built.

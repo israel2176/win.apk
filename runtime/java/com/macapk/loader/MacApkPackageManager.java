@@ -4016,10 +4016,10 @@ public final class MacApkPackageManager extends PackageManager {
      *  version 0, so a request for any version above 0 is unmet. */
     @Override public boolean hasSystemFeature(String name, int version) {
         if (name == null) return false;
+        // bluetooth_le is in SYSTEM_FEATURES when the host scans and connects
+        // (HostBluetooth.leAvailable), the one answer getSystemAvailableFeatures
+        // gives too.
         boolean has = version <= 0 && SYSTEM_FEATURES.contains(name);
-        if (version <= 0 && "android.hardware.bluetooth_le".equals(name)) {
-            has = BluetoothBridge.available();
-        }
         // AOSP declares these from the device's camera HAL; here, only when a
         // webcam really autofocuses / has a torch (CameraBridge asks the driver).
         if (version <= 0 && FEATURE_CAMERA_AUTOFOCUS_NAME.equals(name)) {
@@ -4076,11 +4076,6 @@ public final class MacApkPackageManager extends PackageManager {
             android.content.pm.FeatureInfo fl = new android.content.pm.FeatureInfo();
             fl.name = FEATURE_CAMERA_FLASH_NAME;
             res.add(fl);
-        }
-        if (BluetoothBridge.available()) {
-            android.content.pm.FeatureInfo ble = new android.content.pm.FeatureInfo();
-            ble.name = "android.hardware.bluetooth_le";
-            res.add(ble);
         }
         android.content.pm.FeatureInfo gl = new android.content.pm.FeatureInfo();
         // Read the level off the SAME source ActivityManager reports through
