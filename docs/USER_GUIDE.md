@@ -304,9 +304,14 @@ report an app that stops with an error.
 
 When Win.apk ends (the library closed and no app open), everything it
 started in the background ends with it: the translation of ARM apps, the
-system broker and the Google account's service. Nothing of Win.apk goes on
-running with nothing on screen; translation goes on where it was the next
-time.
+system broker and the Google account's service, and a background update
+window (**Update apps in the background**) with Google's apps it started.
+Nothing of Win.apk goes on running with nothing on screen; translation goes
+on where it was the next time, and a Play Store update cut off half way is
+cut off as when a phone is switched off: the Play Store tries it again
+later. Once you close the library, no new background update window starts
+until you open Win.apk again (an app you leave open still has its own Google
+services, which run the Play Store's jobs that are due).
 
 Apps run with your Windows user account's permissions. There is no
 phone-style sandbox: install only apps you trust ([`SECURITY.md`](../SECURITY.md)).
@@ -378,7 +383,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; nothing runs once Win.apk is closed: there is no scheduled task or service), and **Google services setup** | See [Google account and Google services](google-services.md) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; closing Win.apk stops them, and nothing runs once it is closed: there is no scheduled task or service), and **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
