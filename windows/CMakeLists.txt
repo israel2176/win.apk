@@ -346,7 +346,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_looper.cpp host/native_audio.cpp host/audio_engine.cpp
                               host/audio_decode.cpp host/native_clipboard.cpp
                               host/native_wallpaper.cpp host/native_picker.cpp
-                              host/native_gamepad.cpp host/native_icu.cpp
+                              host/native_gamepad.cpp
                               host/native_audio_input.cpp host/native_photos.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
