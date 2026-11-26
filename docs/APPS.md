@@ -62,7 +62,7 @@ keeping a copy.
 | Area | | What exactly | What is missing | Source |
 |---|:-:|---|---|---|
 | WebView, Custom Tabs | ✅ | Microsoft Edge WebView2, with `shouldInterceptRequest` (Cordova, Capacitor); `file:///android_asset/` and `file:///android_res/` served from the APK, the app's own files with `setAllowFileAccess`; a download goes to the app's `DownloadListener`, never saved by the engine | Needs the WebView2 Runtime, which Windows 11 and most Windows 10 PCs have. A `file:` page's script sees an https origin (`location.protocol` is `https:`) | `native_webview.cpp`, `webview_file_urls.h` |
-| Notifications | ⚠️ | Windows notifications with the app's name and icon, text, large icon and progress; a click opens the app while it runs | Action buttons are not shown | `native_notifications.cpp` |
+| Notifications | ⚠️ | Windows notifications with the app's name and icon, text, large icon and progress; a click opens the app while it runs. Up to three action buttons, as in the shade; a reply action (`RemoteInput`) has a text field whose text the app gets with the action | Clicks do nothing once the app has ended; Windows takes a notification off the Action Center when one of its buttons is clicked (Android keeps it until the app updates or cancels it); no reply choices (`setChoices`), images or messaging style | `native_notifications.cpp`, `toast_xml.h` |
 | Storage | ✅ | Files, SharedPreferences, SQLite. Downloads, Pictures, Documents, Music and Movies are your Windows folders (a setting turns this off) | | `user_folders.cpp` |
 | Permissions | ✅ | Android's dialogs for every dangerous group and special access, remembered per app | | `launcher_main.cpp` (`appops`) |
 | Screen readers | ⚠️ | Narrator, NVDA and other UI Automation readers read an app's views from Android's accessibility nodes (names as TalkBack speaks them, roles, states, values, lists' positions, Compose's semantics), in Android's reading order and the app's language; they can press, toggle, type, select, set a slider, expand and collapse, scroll, and read a field by character, word and line; focus, live regions, announcements and toasts are spoken | Checked by unit tests, a UI Automation client and AOSP's views on a JVM; not yet tried with Narrator, NVDA or JAWS on real apps | `uia_tree.cpp`, `uia_provider.cpp`, `HostAccessibility.java`, `AccessibilityTree.java` |
@@ -88,12 +88,11 @@ issue has none yet; please open one before working on it.
 | 1 | The NDK media API, Vorbis/FLAC in `MediaCodec`, WebM in `MediaPlayer` | Video from native code does not play; some streams play without sound | |
 | 2 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
 | 3 | Vulkan | Games that need Vulkan do not draw | |
-| 4 | Notification action buttons | Reply, mark as read and similar buttons are missing | |
-| 5 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
-| 6 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
-| 7 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
-| 8 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
-| 9 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
+| 4 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
+| 5 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
+| 6 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
+| 7 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
+| 8 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
 
 ## The automated sweep
 

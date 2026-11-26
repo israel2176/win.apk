@@ -27,11 +27,17 @@
 // one. With `popup` (importance DEFAULT and above, not a re-post with
 // FLAG_ONLY_ALERT_ONCE) the toast shows as a banner with the notification
 // sound; without it (LOW and MIN) it joins the Action Center quietly, as such
-// notifications join the shade. A key notified again replaces its toast (the
+// notifications join the shade. The notification's actions are the toast's
+// buttons (toast_xml.h): a click on one sends that action's PendingIntent
+// (HostNotifications.onAction), with the text typed into its field when the
+// action takes a free-form RemoteInput, and does not bring the app's window
+// forward, as an action on a device opens nothing unless its intent does. A
+// key notified again replaces its toast (the
 // same tag and group), and cancel removes it from the screen and the Action
 // Center, also for a previous run's.
 
 #include "host_natives.h"
+#include "toast_xml.h"
 #include "win32_window.h"
 
 #include <cstdint>
@@ -116,13 +122,47 @@ struct IToastNotificationManagerStatics2 : IInspectable {
     virtual HRESULT STDMETHODCALLTYPE get_History(IToastNotificationHistory** value) = 0;
 };
 
-// From the SDK headers (Windows.UI.Notifications, Windows.Data.Xml.Dom).
+// What a click hands the Activated event: the arguments of what was clicked
+// (the toast's launch, or an action's), and the text of its inputs.
+struct IToastActivatedEventArgs : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_Arguments(HSTRING* value) = 0;
+};
+struct IToastActivatedEventArgs2 : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_UserInput(IInspectable** value) = 0;  // a ValueSet
+};
+// IMap<String, Object>, which a ValueSet is; only Lookup is called.
+struct IMapStringObject : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE Lookup(HSTRING key, IInspectable** value) = 0;
+};
+// Windows.Foundation.IPropertyValue, the boxed string an input's text is; GetString is the 14th.
+struct IPropertyValue : IInspectable {
+    virtual HRESULT STDMETHODCALLTYPE get_Type(int* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE get_IsNumericScalar(unsigned char* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetUInt8(unsigned char* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetInt16(INT16* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetUInt16(UINT16* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetInt32(INT32* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetUInt32(UINT32* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetInt64(INT64* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetUInt64(UINT64* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetSingle(float* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDouble(double* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetChar16(wchar_t* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetBoolean(unsigned char* value) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetString(HSTRING* value) = 0;
+};
+
+// From the SDK headers (Windows.UI.Notifications, Windows.Data.Xml.Dom, Windows.Foundation).
 constexpr GUID kIidManagerStatics = {0x50ac103f, 0xd235, 0x4598, {0xbb, 0xef, 0x98, 0xfe, 0x4d, 0x1a, 0x3a, 0xd4}};
 constexpr GUID kIidManagerStatics2 = {0x7ab93c52, 0x0e48, 0x4750, {0xba, 0x9d, 0x1a, 0x41, 0x13, 0x98, 0x18, 0x47}};
 constexpr GUID kIidToastFactory = {0x04124b20, 0x82c6, 0x4229, {0xb1, 0x09, 0xfd, 0x9e, 0xd4, 0x66, 0x2b, 0x53}};
 constexpr GUID kIidToastNotification = {0x997e2675, 0x059e, 0x4e60, {0x8b, 0x06, 0x17, 0x60, 0x91, 0x7c, 0x8b, 0x80}};
 constexpr GUID kIidToastNotification2 = {0x9dfb9fd1, 0x143a, 0x490e, {0x90, 0xbf, 0xb9, 0xfb, 0xa7, 0x13, 0x2d, 0xe7}};
 constexpr GUID kIidXmlDocumentIO = {0x6cd0e74e, 0xee65, 0x4489, {0x9e, 0xbf, 0xca, 0x43, 0xe8, 0x7b, 0xa6, 0x37}};
+constexpr GUID kIidActivatedArgs = {0xe3bf92f3, 0xc197, 0x436f, {0x82, 0x65, 0x06, 0x25, 0x82, 0x4f, 0x8d, 0xac}};
+constexpr GUID kIidActivatedArgs2 = {0xab7da512, 0xcc61, 0x568e, {0x81, 0xbe, 0x30, 0x4a, 0xc3, 0x10, 0x38, 0xfa}};
+constexpr GUID kIidMapStringObject = {0x1b0d3570, 0x0877, 0x5ec2, {0x8a, 0x2c, 0x3b, 0x95, 0x39, 0x50, 0x6a, 0xca}};
+constexpr GUID kIidPropertyValue = {0x4bd682dd, 0x7554, 0x40e9, {0x9a, 0x9b, 0x82, 0x65, 0x4e, 0xde, 0x7e, 0x62}};
 constexpr GUID kIidAgileObject = {0x94ea2b94, 0xe9cc, 0x49e0, {0xc0, 0xff, 0xee, 0x64, 0xca, 0x8f, 0x5b, 0x90}};
 constexpr GUID kIidUnknown = {0x00000000, 0x0000, 0x0000, {0xc0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
 // TypedEventHandler<ToastNotification, IInspectable> (the Activated event):
@@ -142,6 +182,7 @@ using RoGetActivationFactoryFn = HRESULT(WINAPI*)(HSTRING, REFIID, void**);
 using RoActivateInstanceFn = HRESULT(WINAPI*)(HSTRING, IInspectable**);
 using WindowsCreateStringFn = HRESULT(WINAPI*)(const wchar_t*, UINT32, HSTRING*);
 using WindowsDeleteStringFn = HRESULT(WINAPI*)(HSTRING);
+using WindowsGetStringRawBufferFn = PCWSTR(WINAPI*)(HSTRING, UINT32*);
 
 template <typename F>
 F proc(HMODULE m, const char* name) {
@@ -154,6 +195,7 @@ struct Combase {
     RoActivateInstanceFn activate = nullptr;
     WindowsCreateStringFn create_string = nullptr;
     WindowsDeleteStringFn delete_string = nullptr;
+    WindowsGetStringRawBufferFn raw_buffer = nullptr;
 
     bool load() {
         HMODULE m = LoadLibraryW(L"combase.dll");
@@ -163,7 +205,8 @@ struct Combase {
         activate = proc<RoActivateInstanceFn>(m, "RoActivateInstance");
         create_string = proc<WindowsCreateStringFn>(m, "WindowsCreateString");
         delete_string = proc<WindowsDeleteStringFn>(m, "WindowsDeleteString");
-        return ro_initialize && get_factory && activate && create_string && delete_string;
+        raw_buffer = proc<WindowsGetStringRawBufferFn>(m, "WindowsGetStringRawBuffer");
+        return ro_initialize && get_factory && activate && create_string && delete_string && raw_buffer;
     }
 };
 
@@ -204,6 +247,7 @@ std::map<std::wstring, IToastNotification*> g_shown;  // by key: the toast to hi
 JavaVM* g_vm = nullptr;
 jclass g_bridge = nullptr;  // global ref to HostNotifications
 jmethodID g_on_activated = nullptr;
+jmethodID g_on_action = nullptr;
 
 void log(const char* what, HRESULT hr) {
     std::fprintf(stderr, "[win.apk] notifications: %s (0x%08lx)\n", what, static_cast<unsigned long>(hr));
@@ -302,62 +346,6 @@ void remove_icons() {
     FindClose(h);
 }
 
-// Text into a toast's XML: the five entities, and without the control
-// characters XML 1.0 has no place for (the parser would refuse the document).
-std::wstring xml_escape(const std::wstring& s) {
-    std::wstring out;
-    out.reserve(s.size());
-    for (wchar_t c : s) {
-        switch (c) {
-            case L'&': out += L"&amp;"; break;
-            case L'<': out += L"&lt;"; break;
-            case L'>': out += L"&gt;"; break;
-            case L'"': out += L"&quot;"; break;
-            case L'\'': out += L"&apos;"; break;
-            default:
-                if (c >= 0x20 || c == L'\n' || c == L'\t') out += c;
-                else if (c == L'\r') out += L'\n';
-        }
-    }
-    return out;
-}
-
-// The toast (the "ToastGeneric" template): picture, title, text, attribution,
-// progress. A local picture is given as a file URL. Without `popup` the sound
-// is off as well as the banner.
-std::wstring toast_xml(const std::wstring& key, const std::wstring& title, const std::wstring& text,
-                       const std::wstring& sub, const std::wstring& icon, int max, int progress, bool indeterminate,
-                       bool popup) {
-    std::wstring x = L"<toast launch=\"" + xml_escape(key) + L"\" activationType=\"foreground\">";
-    x += L"<visual><binding template=\"ToastGeneric\">";
-    if (!icon.empty()) {
-        std::wstring url = L"file:///" + icon;
-        for (wchar_t& c : url) {
-            if (c == L'\\') c = L'/';
-        }
-        x += L"<image placement=\"appLogoOverride\" src=\"" + xml_escape(url) + L"\"/>";
-    }
-    if (!title.empty()) x += L"<text>" + xml_escape(title) + L"</text>";
-    if (!text.empty()) x += L"<text>" + xml_escape(text) + L"</text>";
-    if (!sub.empty()) x += L"<text placement=\"attribution\">" + xml_escape(sub) + L"</text>";
-    if (indeterminate || max > 0) {
-        std::wstring value = L"indeterminate", status;
-        if (!indeterminate) {
-            const int permille = max > 0 ? static_cast<int>(1000LL * (progress < 0 ? 0 : progress) / max) : 0;
-            const int p = permille > 1000 ? 1000 : permille;
-            value = p == 1000 ? L"1" : L"0." + std::wstring{static_cast<wchar_t>(L'0' + p / 100),
-                                                             static_cast<wchar_t>(L'0' + p / 10 % 10),
-                                                             static_cast<wchar_t>(L'0' + p % 10)};
-            status = std::to_wstring(p / 10) + L"%";
-        }
-        x += L"<progress value=\"" + value + L"\" status=\"" + status + L"\"/>";
-    }
-    x += L"</binding></visual>";
-    if (!popup) x += L"<audio silent=\"true\"/>";
-    x += L"</toast>";
-    return x;
-}
-
 // Drops the toast of `key` from g_shown, when it is still `toast` (a newer one
 // may have replaced it): the user clicked it, or it was cancelled.
 void forget(const std::wstring& key, IToastNotification* toast) {
@@ -388,6 +376,69 @@ void activate(const std::wstring& key) {
     }
 }
 
+// The user clicked action `index` of the toast of `key`, `reply` the text of its field (null: it
+// has none): the Java side sends the action's PendingIntent. The window stays where it is.
+void act(const std::wstring& key, int index, const std::wstring* reply) {
+    JNIEnv* env = java_env();
+    if (!env || !g_bridge || !g_on_action) return;
+    jstring k = env->NewString(reinterpret_cast<const jchar*>(key.data()), static_cast<jsize>(key.size()));
+    jstring text = reply ? env->NewString(reinterpret_cast<const jchar*>(reply->data()), static_cast<jsize>(reply->size()))
+                         : nullptr;
+    if (k) env->CallStaticVoidMethod(g_bridge, g_on_action, k, static_cast<jint>(index), text);
+    if (text) env->DeleteLocalRef(text);
+    if (k) env->DeleteLocalRef(k);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+}
+
+std::wstring take_string(HSTRING h) {
+    if (!h) return {};
+    UINT32 n = 0;
+    const wchar_t* p = g_combase.raw_buffer(h, &n);
+    std::wstring s = p ? std::wstring(p, n) : std::wstring();
+    g_combase.delete_string(h);
+    return s;
+}
+
+// What the click names (the toast or one of its actions) and the text of the clicked action's
+// field, from the Activated event's arguments.
+bool read_click(IInspectable* args, std::wstring* key, int* action, bool* has_reply, std::wstring* reply) {
+    *has_reply = false;
+    IToastActivatedEventArgs* a = nullptr;
+    if (!args || FAILED(args->QueryInterface(kIidActivatedArgs, reinterpret_cast<void**>(&a))) || !a) return false;
+    HSTRING h = nullptr;
+    const HRESULT hr = a->get_Arguments(&h);
+    release(a);
+    if (FAILED(hr) || !parse_toast_args(take_string(h), key, action)) return false;
+    if (*action < 0) return true;
+    IToastActivatedEventArgs2* a2 = nullptr;
+    IInspectable* input = nullptr;
+    IMapStringObject* map = nullptr;
+    if (SUCCEEDED(args->QueryInterface(kIidActivatedArgs2, reinterpret_cast<void**>(&a2))) && a2 &&
+        SUCCEEDED(a2->get_UserInput(&input)) && input &&
+        SUCCEEDED(input->QueryInterface(kIidMapStringObject, reinterpret_cast<void**>(&map))) && map) {
+        HStr id(toast_reply_id(static_cast<size_t>(*action)));
+        IInspectable* boxed = nullptr;
+        IPropertyValue* value = nullptr;
+        if (SUCCEEDED(map->Lookup(id.get(), &boxed)) && boxed &&
+            SUCCEEDED(boxed->QueryInterface(kIidPropertyValue, reinterpret_cast<void**>(&value))) && value) {
+            HSTRING text = nullptr;
+            if (SUCCEEDED(value->GetString(&text))) {
+                *reply = take_string(text);
+                *has_reply = true;
+            }
+        }
+        release(value);
+        release(boxed);
+    }
+    release(map);
+    release(input);
+    release(a2);
+    return true;
+}
+
 // The TypedEventHandler<ToastNotification, IInspectable> of one toast's
 // Activated event: delegates are IUnknown-based and are called on the thread
 // pool, so the object is agile.
@@ -412,12 +463,19 @@ public:
         return static_cast<ULONG>(n);
     }
     // The delegate's own method, the first after IUnknown's.
-    virtual HRESULT STDMETHODCALLTYPE Invoke(IInspectable* sender, IInspectable* /*args*/) {
+    virtual HRESULT STDMETHODCALLTYPE Invoke(IInspectable* sender, IInspectable* args) {
         IToastNotification* toast = nullptr;
         if (sender) sender->QueryInterface(kIidToastNotification, reinterpret_cast<void**>(&toast));
         forget(key_, toast);  // Windows takes a clicked toast off the Action Center
         release(toast);
-        activate(key_);
+        std::wstring key, reply;
+        int action = -1;
+        bool has_reply = false;
+        if (read_click(args, &key, &action, &has_reply, &reply) && action >= 0) {
+            act(key_, action, has_reply ? &reply : nullptr);
+        } else {
+            activate(key_);
+        }
         return S_OK;
     }
 
@@ -477,11 +535,12 @@ bool init_locked(JNIEnv* env) {
     if (jclass c = env->FindClass("com/macapk/loader/HostNotifications")) {
         g_bridge = static_cast<jclass>(env->NewGlobalRef(c));
         g_on_activated = env->GetStaticMethodID(c, "onActivated", "(Ljava/lang/String;)V");
+        g_on_action = env->GetStaticMethodID(c, "onAction", "(Ljava/lang/String;ILjava/lang/String;)V");
         env->DeleteLocalRef(c);
     }
     if (env->ExceptionCheck()) env->ExceptionClear();
-    if (!g_on_activated) {
-        std::fprintf(stderr, "[win.apk] notifications: HostNotifications.onActivated not found\n");
+    if (!g_on_activated || !g_on_action) {
+        std::fprintf(stderr, "[win.apk] notifications: HostNotifications.onActivated or onAction not found\n");
         return false;
     }
     g_state = 1;
@@ -493,9 +552,31 @@ jboolean JNICALL Notifications_init(JNIEnv* env, jclass) {
     return init_locked(env) ? JNI_TRUE : JNI_FALSE;
 }
 
+// The actions as the Java side lays them out: a title each, and a field's label for those that
+// take a reply (null for the others).
+std::vector<ToastAction> actions_of(JNIEnv* env, jobjectArray titles, jobjectArray replies) {
+    std::vector<ToastAction> out;
+    const jsize n = titles ? env->GetArrayLength(titles) : 0;
+    for (jsize i = 0; i < n && out.size() < kToastMaxActions; ++i) {
+        ToastAction a;
+        auto t = static_cast<jstring>(env->GetObjectArrayElement(titles, i));
+        a.title = wide(env, t);
+        if (t) env->DeleteLocalRef(t);
+        if (replies && i < env->GetArrayLength(replies)) {
+            if (auto l = static_cast<jstring>(env->GetObjectArrayElement(replies, i))) {
+                a.reply = true;
+                a.reply_label = wide(env, l);
+                env->DeleteLocalRef(l);
+            }
+        }
+        out.push_back(std::move(a));
+    }
+    return out;
+}
+
 jboolean JNICALL Notifications_post(JNIEnv* env, jclass, jstring jkey, jstring jtitle, jstring jtext, jstring jsub,
                                     jbyteArray jicon, jint max, jint progress, jboolean indeterminate,
-                                    jboolean popup) {
+                                    jboolean popup, jobjectArray jactions, jobjectArray jreplies) {
     std::lock_guard<std::mutex> hold(g_lock);
     if (!init_locked(env) || !ro_init_thread()) return JNI_FALSE;
     const std::wstring key = wide(env, jkey);
@@ -513,7 +594,7 @@ jboolean JNICALL Notifications_post(JNIEnv* env, jclass, jstring jkey, jstring j
         }
     }
     const std::wstring xml = toast_xml(key, wide(env, jtitle), wide(env, jtext), wide(env, jsub), icon, max, progress,
-                                       indeterminate == JNI_TRUE, popup == JNI_TRUE);
+                                       indeterminate == JNI_TRUE, popup == JNI_TRUE, actions_of(env, jactions, jreplies));
     IInspectable* doc = nullptr;
     HStr xml_class(L"Windows.Data.Xml.Dom.XmlDocument");
     HRESULT hr = g_combase.activate(xml_class.get(), &doc);
@@ -616,7 +697,7 @@ constexpr const char* kCls = "com.macapk.loader.HostNotifications";
 const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "nativeInit", "()Z", Notifications_init),
     WINAPK_HOST_NATIVE(kCls, "nativePost",
-                       "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;[BIIZZ)Z",
+                       "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;[BIIZZ[Ljava/lang/String;[Ljava/lang/String;)Z",
                        Notifications_post),
     WINAPK_HOST_NATIVE(kCls, "nativeCancel", "(Ljava/lang/String;)V", Notifications_cancel),
     WINAPK_HOST_NATIVE(kCls, "nativeCancelAll", "()V", Notifications_cancelAll),
