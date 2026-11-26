@@ -596,9 +596,12 @@ nobody has to find them again.
   the JDK's; only `toString`, `isAbsolute` and `toRealPath` flip to the `/`-form.
   `file.separator` stays `\` — flipping the whole JVM breaks HotSpot and the
   loader, which consume host paths.
-- Deliberately kept as host paths (consumed by code the mapper does not reach):
-  `ApplicationInfo.sourceDir`/`publicSourceDir`/`splitSourceDirs` (the ELF loader
-  mmaps them), `nativeLibraryDir` (HotSpot's `System.load`), and the loader's,
+- `ApplicationInfo.sourceDir`/`publicSourceDir`/`splitSourceDirs`/
+  `splitPublicSourceDirs` are Android names, `/data/app/~~<nonce>/<pkg>-<nonce>/
+  base.apk` (`InstalledSplits.androidPath`): their readers are java.io, java.nio
+  and the shim, which all map them. Deliberately kept as host paths (consumed by
+  code that knows a file by its host path): `nativeLibraryDir` (the class
+  loader's stub per ELF and HotSpot's `System.load`), and the loader's,
   installer's, run-lock and AOT-cmdline plumbing. A `/C:/x` file-URL path is the
   drive path, not an Android one. Gated by `-Dwinapk.android.root`, set only by
   winapk-runtime, so a plain JVM is unchanged. Tests: `winapk-paths-test`

@@ -1443,6 +1443,15 @@ public final class MacApkPackageManager extends PackageManager {
             // know them. Additive, null for a package without any.
             fillSplitFields(ai, info, apk);
         }
+        // Win.apk: another installed package's APKs by their Android names too, as
+        // this package's own (makeAppInfo).
+        ApplicationInfo pai = info != null ? info.applicationInfo : null;
+        if (pai != null) {
+            pai.sourceDir             = InstalledSplits.androidPath(pai.sourceDir);
+            pai.publicSourceDir       = InstalledSplits.androidPath(pai.publicSourceDir);
+            pai.splitSourceDirs       = InstalledSplits.androidPaths(pai.splitSourceDirs);
+            pai.splitPublicSourceDirs = InstalledSplits.androidPaths(pai.splitPublicSourceDirs);
+        }
         return info;
     }
 
@@ -4566,7 +4575,10 @@ public final class MacApkPackageManager extends PackageManager {
         // baseApkPath() additionally gives it the installed SHAPE; see its
         // header. publicSourceDir aliases it, which is AOSP's own answer for a
         // package that is not forward-locked (ApplicationInfo.java:853-858).
-        info.sourceDir        = baseApkPath();
+        // Win.apk: by its Android name, /data/app/~~<nonce>/<pkg>-<nonce>/base.apk,
+        // as a device reports it (InstalledSplits.androidPath); every reader an app
+        // has (java.io, java.nio, the shim's open) maps it to the installed file.
+        info.sourceDir        = InstalledSplits.androidPath(baseApkPath());
         info.publicSourceDir  = info.sourceDir;
         // MACAPK_DATADIR_DEVICE (EXPERIMENT): sourceDir is <appDir>/base.apk and appDir is the
         // macOS ".macapk/code/<pkg>_<ver>"; a guest (pairip) that reads sourceDir and dirnames it
@@ -4602,8 +4614,8 @@ public final class MacApkPackageManager extends PackageManager {
             SplitSet ss = installedSplits();
             if (ss != null) {
                 info.splitNames = ss.names.clone();
-                String[] dirs;
-                dirs = ss.paths.clone();
+                // By their Android names, as sourceDir.
+                String[] dirs = InstalledSplits.androidPaths(ss.paths);
                 info.splitSourceDirs       = dirs;
                 // AOSP hands one array object to both setters; equal contents
                 // is the observable part. Fresh arrays per call, so an app

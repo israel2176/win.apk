@@ -2671,10 +2671,19 @@ every such change is listed here:
   all derived from it), its device-protected sibling `/data/user_de/0/<package>`,
   and primary shared storage `/storage/emulated/0`
   (`getExternalStorageDirectory`, and `getExternalFilesDir`/`getObbDir`/… built
-  on it). `ApplicationInfo.sourceDir`/`publicSourceDir`/`splitSourceDirs`/
-  `nativeLibraryDir` stay host paths on purpose: the ELF loader mmaps them and
-  HotSpot's `System.load` opens them, neither through the path mapper (see
-  `Application.macapkSetDataDir`). The host maps an Android path to the real
+  on it). The installed APKs too: `ApplicationInfo.sourceDir`, `publicSourceDir`,
+  `splitSourceDirs` and `splitPublicSourceDirs` (so `getPackageCodePath` and
+  `getPackageResourcePath`), the app's own and another installed package's, are
+  `/data/app/~~<nonce>/<pkg>-<nonce>/base.apk` and its `split_*.apk`
+  (`com/macapk/loader/InstalledSplits.java` `androidPath`,
+  `MacApkPackageManager.java`; Unity builds its data path from `sourceDir` and
+  takes one that does not start with `/` for something else), and
+  `windows/java/aosp_res`'s `NativeApkAssets` loads one table for an APK by
+  either name. `nativeLibraryDir` stays a host path on purpose: the class
+  loader knows a library by its host file (`AppClassLoader`: the stub per ELF,
+  `libraryOnSearchPath`'s check for the app's own lib dir), and a loader given
+  the Android name as its library path would make a second stub of the same
+  library (see `Application.macapkSetDataDir`). The host maps an Android path to the real
   folder: `windows/src/bionic/paths.cpp` for native code (native code walks a
   path up to `/` and joins relative paths onto its working directory, so with
   `C:\...` it never reached `/` — Google Maps' recursive mkdir overflowed its
