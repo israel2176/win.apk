@@ -2107,7 +2107,7 @@ every such change is listed here:
   on Windows the device is upstream's, by the maintainer's choice: `BRAND` and
   `MANUFACTURER` "Apple", `MODEL` "Mac" (Windows has no `hw.model` to export),
   `DEVICE`, `PRODUCT`, `BOARD` and `USER` "macapk", what every Windows run
-  reported until 1.0.0; the check-in's own User-Agent says Win.apk. No real
+  reported until 1.0.0, and the check-in's User-Agent "Mac.apk" too. No real
   phone or Google device is named.
 - `runtime/java/com/macapk/gms/McsClient.java`: `WINAPK_PROXY` (a SOCKS proxy
   for the push connection) wins over upstream's per-app `HostProxy` policy.
