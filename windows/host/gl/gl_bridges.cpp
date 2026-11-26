@@ -28,6 +28,7 @@
 #include <EGL/eglext.h>
 
 #include "gl/gl_loader.h"
+#include "gl/gl_surface.h"
 #include "native_window.h"
 
 #define MACAPK_HAS_ANGLE 1
@@ -114,8 +115,36 @@ jboolean JNICALL egl14_destroy_surface(JNIEnv* env, jclass cls, jobject dpy, job
     return macapk::EGL14_eglDestroySurface(env, cls, dpy, surf);
 }
 
+// EGL14.eglGetDisplay(EGL_DEFAULT_DISPLAY): the app's display, the one its native code gets from
+// eglGetDisplay (guest_gl.cpp) and EGL10 from MacApkEGL10 (both gl_shared_display's), as Android's
+// libEGL has one default display for every API of a process. Upstream answered ANGLE's
+// eglGetDisplay(EGL_DEFAULT_DISPLAY), which ANGLE keys as the graphics DLL's display (a Direct3D 11
+// display of the default native display, hwui_build/glue/layers.cpp): an app's GL thread on EGL14
+// then drew on the display HWUI's render thread composes on, whose contexts ANGLE does not lock
+// against each other (gl_surface.cpp, open_display), and the render thread crashed in libGLESv2 as
+// the GL thread made its surface (windows/test/glthread, Fork14Activity).
+jobject JNICALL egl14_get_display(JNIEnv* env, jclass cls, jint id) {
+    if (id == 0 /*EGL_DEFAULT_DISPLAY*/) {
+        if (void* d = gl_shared_display()) {
+            macapk::egl_err_reset();
+            return macapk::boxDisplay(env, d);
+        }
+    }
+    return macapk::EGL14_eglGetDisplay(env, cls, id);
+}
+
+// The app's display stays up: the framework's views draw on it too (gl_surface.cpp), and on a
+// device eglTerminate is reference-counted, so the app's terminate does not reach the driver while
+// another client holds the display (guest_eglTerminate answers native code the same).
+jboolean JNICALL egl14_terminate(JNIEnv* env, jclass cls, jobject dpy) {
+    if (macapk::egl_h(env, dpy) == gl_shared_display()) return JNI_TRUE;
+    return macapk::EGL14_eglTerminate(env, cls, dpy);
+}
+
 // The EGL14 natives this file answers itself, by name.
 const void* egl14_override(const char* name) {
+    if (std::strcmp(name, "eglGetDisplay") == 0) return reinterpret_cast<const void*>(egl14_get_display);
+    if (std::strcmp(name, "eglTerminate") == 0) return reinterpret_cast<const void*>(egl14_terminate);
     if (std::strcmp(name, "eglCreateWindowSurface") == 0) return reinterpret_cast<const void*>(egl14_create_window_surface);
     if (std::strcmp(name, "eglSwapBuffers") == 0) return reinterpret_cast<const void*>(egl14_swap_buffers);
     if (std::strcmp(name, "eglDestroySurface") == 0) return reinterpret_cast<const void*>(egl14_destroy_surface);

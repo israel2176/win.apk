@@ -1213,11 +1213,17 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   heap bitmap with the pixels (no AHardwareBuffer); a TextureView draws
   through its own layer. `test/surfaces/build.sh` builds the APK that shows
   all four, each logging a `SURFACES` line.
-- An app's own GL (a `GLSurfaceView`, native EGL, a `NativeActivity`) is on
-  an ANGLE display of its own (`host/gl/gl_surface.cpp`), not the DLL's:
-  ANGLE has one Direct3D 11 device and immediate context per display and no
-  lock between contexts that share nothing, so the app's GL thread and the
-  render thread on one display crashed ANGLE. Nothing crosses between the two
+- An app's own GL (a `GLSurfaceView`, native EGL, a `NativeActivity`, an
+  `EGL14` thread) is on an ANGLE display of its own (`host/gl/gl_surface.cpp`),
+  not the DLL's: ANGLE has one Direct3D 11 device and immediate context per
+  display and no lock between contexts that share nothing, so the app's GL
+  thread and the render thread on one display crashed ANGLE. Native code's
+  `eglGetDisplay`, `MacApkEGL10` and `EGL14.eglGetDisplay(EGL_DEFAULT_DISPLAY)`
+  (`host/gl/gl_bridges.cpp`; upstream's answered ANGLE's default display, which
+  ANGLE keys as the DLL's, and the render thread crashed in `libGLESv2` as an
+  EGL14 thread made its surface) all answer that one display, as Android's
+  libEGL has one default display per process, and an app's `eglTerminate` of
+  it does not reach ANGLE while the framework draws on it. Nothing crosses between the two
   displays: the app's frames reach the compositor as the host layer's pixels.
   A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
   makes an EGL window surface on the view's holder (the host's window surface
@@ -3884,7 +3890,11 @@ every such change is listed here:
   binding of the same name), as AOSP's `EGLContextImpl` hands out. `windows/host/gl/gl_bridges.cpp`: EGL14's
   `eglCreateWindowSurface` on a SurfaceView, its holder or its Surface makes the same window surface (upstream
   put it on the Mac's native-EGL layer and answered `EGL_NO_SURFACE` here), swapped and destroyed through
-  `surface_view_window_*`. `windows/test/glthread/` checks all three in a window (CI, "GL threads").
+  `surface_view_window_*`; its `eglGetDisplay(EGL_DEFAULT_DISPLAY)` is the app's display, the one native code
+  and `MacApkEGL10` get, not the graphics DLL's, and its `eglTerminate` leaves that display up.
+  `windows/host/native_cocoa.cpp`: a renderer (`setRenderer`) is told its surface size by registration, not by
+  global ref, which the JVM reuses, so a SurfaceView of a relaunched activity hears its surface.
+  `windows/test/glthread/` checks all three in a window (CI, "GL threads").
 - Child layers (the text magnifier): `runtime/java/android/view/SurfaceControl.java` keeps SurfaceFlinger's
   layer tree: the `Builder` takes AOSP's `Builder(SurfaceSession)` (it had an untyped `Builder(Object)`, so
   AOSP's `Magnifier`, `View`'s drag shadow, `ViewRootImpl.getBoundsLayer` and `WindowlessWindowManager` threw
