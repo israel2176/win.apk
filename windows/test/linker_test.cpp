@@ -17,6 +17,7 @@
 //
 // Exit code: the number of failed checks.
 
+#include "winapk/elf_loader.h"
 #include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
 #include "winapk/linker.h"
@@ -30,6 +31,36 @@
 #include <windows.h>
 
 namespace {
+
+// Where an access violation happened, before the process ends: the instruction's
+// module (a host module, or a guest library and its offset) and the address read
+// or written. Run last (FirstHandler 0) and always passes the exception on.
+LONG WINAPI report_access_violation(EXCEPTION_POINTERS* e) {
+    const EXCEPTION_RECORD* r = e->ExceptionRecord;
+    if (r->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || r->NumberParameters < 2) return EXCEPTION_CONTINUE_SEARCH;
+    const void* pc = r->ExceptionAddress;
+    char where[MAX_PATH + 64] = "unknown";
+    const winapk::GuestLinker* linker = winapk::GuestLinker::process();
+    if (const winapk::ElfImage* img = linker ? linker->image_containing(pc) : nullptr) {
+        std::snprintf(where, sizeof where, "%s+%#llx", img->path().filename().string().c_str(),
+                      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pc) -
+                                                      reinterpret_cast<uintptr_t>(img->base())));
+    } else {
+        HMODULE m = nullptr;
+        char name[MAX_PATH] = "?";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               static_cast<LPCSTR>(pc), &m)) {
+            GetModuleFileNameA(m, name, sizeof name);
+        }
+        std::snprintf(where, sizeof where, "%s+%#llx", name,
+                      static_cast<unsigned long long>(reinterpret_cast<uintptr_t>(pc) - reinterpret_cast<uintptr_t>(m)));
+    }
+    std::fprintf(stderr, "[linker-test] access violation %s %#llx at %p (%s), rsp %#llx\n",
+                 r->ExceptionInformation[0] == 1 ? "writing" : r->ExceptionInformation[0] == 8 ? "executing" : "reading",
+                 static_cast<unsigned long long>(r->ExceptionInformation[1]), pc, where,
+                 static_cast<unsigned long long>(e->ContextRecord->Rsp));
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 
 int g_failures = 0;
 
@@ -167,6 +198,7 @@ int main(int argc, char** argv) {
     // Each check's line as it happens: a guest library that crashes the process would
     // otherwise take the buffered lines with it, and the log would not say which check.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
+    AddVectoredExceptionHandler(0, report_access_violation);
 
     std::printf("Win.apk guest linker\n");
     winapk::LinkerConfig config;
