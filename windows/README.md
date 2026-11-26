@@ -2688,7 +2688,18 @@ every such change is listed here:
   (`host_names` in `paths.cpp`); a listing under an Android path turns the
   names back (the shim's `readdir`/`scandir`, `WinNTFileSystem.list`,
   `WindowsPath.createFromNormalizedPath` for a `DirectoryStream`'s entries).
-  `java.nio`'s own parser still refuses such a name in `Paths.get`.
+  `java.nio` takes such a name too: `WindowsPath.parse` keeps an Android path
+  out of `WindowsPathParser` (which refused `:` and the rest: Firebase's
+  `shared_prefs/frc_1:<app id>:android:<hash>_settings.xml` and
+  `com.google.firebase.common.prefs:<id>.xml` threw `InvalidPathException`
+  from AOSP's `SharedPreferencesImpl` and stopped Waze, Moovit, Maccabi and
+  more in `FirebaseInitProvider`), `resolve(String)`/`resolveSibling(String)`
+  join a name onto an Android path by its text, `WinNTFileSystem.isInvalid`
+  passes an Android path with a `:`, and `new File(androidDir, "a:b")` is a
+  name, not a drive. Outside winapk-runtime (no `host0`) an Android path's
+  file is `<winapk.android.root>\<path>` with the same host names
+  (`WinApkPaths.hostNames`), so `windows/test/java/AndroidPathsTest.java`
+  checks the round trip on real files.
 - `windows/java/java_base_patch/jdk/internal/util/WinApkPaths.java` (new),
   `java/io/WinNTFileSystem.java`, `java/io/File.java`,
   `sun/nio/fs/WindowsPath.java`: the java.base overlay keeps a `/`-rooted Android

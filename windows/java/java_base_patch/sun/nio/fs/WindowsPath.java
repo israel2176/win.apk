@@ -96,6 +96,18 @@ class WindowsPath implements Path {
      * Creates a Path by parsing the given path.
      */
     static WindowsPath parse(WindowsFileSystem fs, String path) {
+        // Win.apk: an Android path's names may hold any character but '/' and NUL, as on
+        // ext4 ("frc_1:1005457359603:android:..._settings.xml", Firebase's preferences):
+        // the parser would refuse < > : " | ? * and a final dot or space. Its names are
+        // stored as they are; the host file they name spells those characters as
+        // private-use ones (WinApkPaths.hostPath, windows/src/bionic/paths.cpp).
+        String android = path.replace('\\', '/');
+        if (jdk.internal.util.WinApkPaths.isAndroid(android)) {
+            if (android.indexOf('\u0000') >= 0)
+                throw new InvalidPathException(path, "Nul character not allowed");
+            String normal = jdk.internal.util.WinApkPaths.normalize(android).replace('/', '\\');
+            return new WindowsPath(fs, WindowsPathType.DIRECTORY_RELATIVE, "\\", normal);
+        }
         WindowsPathParser.Result result = WindowsPathParser.parse(path);
         return new WindowsPath(fs, result.type(), result.root(), result.path());
     }
@@ -109,8 +121,14 @@ class WindowsPath implements Path {
     {
         // Win.apk: an entry a directory stream lists (the only caller with attributes) under an
         // Android path has its Android name (WinApkPaths.androidName), which opens the same file.
-        if (attrs != null && jdk.internal.util.WinApkPaths.isAndroid(path.replace('\\', '/'))) {
-            path = jdk.internal.util.WinApkPaths.androidName(path);
+        // Its prefix is the directory's Android form ('/'), so the whole is put in the class's
+        // '\\' form, which getFileName and getNameCount split on.
+        if (jdk.internal.util.WinApkPaths.isAndroid(path.replace('\\', '/'))) {
+            if (attrs != null) path = jdk.internal.util.WinApkPaths.androidName(path);
+            String normal = jdk.internal.util.WinApkPaths.normalize(path.replace('\\', '/')).replace('/', '\\');
+            return attrs == null
+                ? new WindowsPath(fs, WindowsPathType.DIRECTORY_RELATIVE, "\\", normal)
+                : new WindowsPathWithAttributes(fs, WindowsPathType.DIRECTORY_RELATIVE, "\\", normal, attrs);
         }
         try {
             WindowsPathParser.Result result =
@@ -635,6 +653,29 @@ class WindowsPath implements Path {
         // drop trailing slash in result
         result.setLength(result.length()-1);
         return createFromNormalizedPath(getFileSystem(), result.toString());
+    }
+
+    // Win.apk: a name relative to an Android path is an Android name, which the parser
+    // would refuse for a character Windows forbids ("a:b", "x?"): joined by its text.
+    @Override
+    public WindowsPath resolve(String other) {
+        if (isAndroidPath()) {
+            String o = other.replace('\\', '/');
+            boolean relative = !o.isEmpty() && o.charAt(0) != '/'
+                && !(o.length() > 1 && o.charAt(1) == ':' && Character.isLetter(o.charAt(0))
+                     && (o.length() == 2 || o.charAt(2) == '/'));
+            if (relative) return parse(getFileSystem(), jdk.internal.util.WinApkPaths.join(androidForm(), o));
+        }
+        return resolve(getFileSystem().getPath(other));
+    }
+
+    @Override
+    public Path resolveSibling(String other) {
+        if (isAndroidPath()) {
+            WindowsPath parent = getParent();
+            return parent == null ? getFileSystem().getPath(other) : parent.resolve(other);
+        }
+        return resolveSibling(getFileSystem().getPath(other));
     }
 
     @Override
