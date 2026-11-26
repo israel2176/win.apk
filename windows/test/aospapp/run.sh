@@ -53,6 +53,7 @@ run_test() {
         -Dwinapk.aosp.gfx=1 -Dwinapk.aosp.res=1 -Dwinapk.aosp.views=1 \
         -Dwinapk.aosp.res.framework="$STAGE/bin/aosp/framework-res-34.apk" -Dwinapk.aosp.fonts="$STAGE/bin/aosp/fonts" \
         -Dicu.data.path="$NR/icu/icudt68l.dat" -Dicu.locale.default=en-US \
+        -Dandroid.icu.impl.ICUBinary.dataPath="$STAGE/bin/aosp/icu" \
         -Dwinapk.test.gfx.runtime="$RUNTIME" -Dwinapk.test.host="$OUT/libplainjvm_host.so" \
         -cp "$CP:$OUT/classes" "$1"
 }
