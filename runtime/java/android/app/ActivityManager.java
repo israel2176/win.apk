@@ -1037,4 +1037,46 @@ public class ActivityManager {
     public static final String META_HOME_ALTERNATE = "android.app.home.alternate";
     public static final int MOVE_TASK_NO_USER_ACTION = 0x00000002;
     public static final int MOVE_TASK_WITH_HOME = 0x00000001;
+
+    /** AOSP 14 ActivityManager.PendingIntentInfo (@hide): who made a PendingIntent, as the activity
+     *  manager answers IActivityManager.getInfoForIntentSender (which names it, so reflection on
+     *  IActivityManager builds it). */
+    public static final class PendingIntentInfo implements android.os.Parcelable {
+        private final String mCreatorPackage;
+        private final int mCreatorUid;
+        private final boolean mImmutable;
+        private final int mIntentSenderType;
+
+        public PendingIntentInfo(String creatorPackage, int creatorUid, boolean immutable, int intentSenderType) {
+            mCreatorPackage = creatorPackage;
+            mCreatorUid = creatorUid;
+            mImmutable = immutable;
+            mIntentSenderType = intentSenderType;
+        }
+
+        public String getCreatorPackage() { return mCreatorPackage; }
+
+        public int getCreatorUid() { return mCreatorUid; }
+
+        public boolean isImmutable() { return mImmutable; }
+
+        public int getIntentSenderType() { return mIntentSenderType; }
+
+        @Override public int describeContents() { return 0; }
+
+        @Override public void writeToParcel(android.os.Parcel parcel, int flags) {
+            parcel.writeString(mCreatorPackage);
+            parcel.writeInt(mCreatorUid);
+            parcel.writeBoolean(mImmutable);
+            parcel.writeInt(mIntentSenderType);
+        }
+
+        public static final android.os.Parcelable.Creator<PendingIntentInfo> CREATOR =
+                new android.os.Parcelable.Creator<PendingIntentInfo>() {
+                    @Override public PendingIntentInfo createFromParcel(android.os.Parcel in) {
+                        return new PendingIntentInfo(in.readString(), in.readInt(), in.readBoolean(), in.readInt());
+                    }
+                    @Override public PendingIntentInfo[] newArray(int size) { return new PendingIntentInfo[size]; }
+                };
+    }
 }

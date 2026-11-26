@@ -482,4 +482,19 @@ public final class InputManager {
     public boolean[] deviceHasKeys(int[] keyCodes) {
         return deviceHasKeys(-1, keyCodes);
     }
+
+    /** AOSP 14 InputManager.OnTabletModeChangedListener (@hide): AOSP's InputManagerGlobal names it. */
+    public interface OnTabletModeChangedListener {
+        void onTabletModeChanged(long whenNanos, boolean inTabletMode);
+    }
+
+    /** AOSP 14 InputManager.InputDeviceBatteryListener (@hide): AOSP's InputManagerGlobal names it. */
+    public interface InputDeviceBatteryListener {
+        void onBatteryStateChanged(int deviceId, long eventTimeMillis, android.hardware.BatteryState batteryState);
+    }
+
+    /** AOSP 14 InputManager.KeyboardBacklightListener (@hide): AOSP's InputManagerGlobal names it. */
+    public interface KeyboardBacklightListener {
+        void onKeyboardBacklightChanged(int deviceId, KeyboardBacklightState state, boolean isTriggeredByKeyPress);
+    }
 }

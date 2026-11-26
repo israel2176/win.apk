@@ -101,6 +101,22 @@ source "$HERE/aosp_app_take.sh"
 aosp_app_take "$WORK/all.txt" > "$WORK/app-take.txt"
 ( cd "$APP_API" && xargs -d '\n' unzip -qo "$ALL" < "$WORK/app-take.txt" )
 
+# A few classes of AOSP's views that Win.apk's own classes name in a declaration, to compile against
+# only, likewise: they ship in aosp-views.jar (build_aosp_views.sh's closure). AccessibilityService's
+# Callbacks and IAccessibilityServiceClientWrapper and InputManager's KeyboardBacklightListener are
+# there because AOSP's classes name them: reflection on those builds every type their members name
+# (ReflectScan.java).
+VIEWS_API="$WORK/aosp-views-api"
+rm -rf "$VIEWS_API"
+mkdir -p "$VIEWS_API"
+VIEWS_API_RE='^(android/accessibilityservice/(IAccessibilityServiceClient|IAccessibilityServiceConnection)'
+VIEWS_API_RE+='|com/android/internal/inputmethod/(IAccessibilityInputMethodSessionCallback|IAccessibilityInputMethodSession'
+VIEWS_API_RE+='|IRemoteAccessibilityInputConnection|RemoteAccessibilityInputConnection|CancellationGroup)'
+VIEWS_API_RE+='|android/hardware/input/KeyboardBacklightState)([$].*)?\.class$'
+grep -E "$VIEWS_API_RE" \
+    "$WORK/all.txt" > "$WORK/views-api.txt"
+( cd "$VIEWS_API" && xargs -d '\n' unzip -qo "$ALL" < "$WORK/views-api.txt" )
+
 echo "[build_java] compiling runtime/java..."
 LIST="$WORK/java.list"
 # Paths go into an @file, which splits on spaces; upstream skips Finder
@@ -120,6 +136,7 @@ APKSIG="$RT/../thirdparty/apksig/apksig-9.5.1.jar"
 CP_SEP=":"
 command -v cygpath > /dev/null 2>&1 && CP_SEP=";"  # javac on Windows splits on ';'
 CP="$(native_path "$APKSIG")$CP_SEP$(native_path "$GFX_API")$CP_SEP$(native_path "$APP_API")"
+CP="$CP$CP_SEP$(native_path "$VIEWS_API")"
 [[ -f "$APACHE_LEGACY" ]] && CP="$CP$CP_SEP$(native_path "$APACHE_LEGACY")"
 if ! "$JAVAC" -J-Xmx2g -d "$TMP" --release 21 -nowarn -Xlint:-options -cp "$CP" @"$LIST" \
         > "$WORK/javac.log" 2>&1; then

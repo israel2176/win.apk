@@ -90,9 +90,11 @@ build tools it asks for): `fetch_apkeep.sh` builds apkeep from source.
   `WebView2Loader.dll` from `fetch_webview2.sh`; AOSP's graphics', resources'
   and views' files from `build_aosp_gfx.sh`, `build_aosp_res.sh` and
   `build_aosp_views.sh`), `lib/` (the jars from `build_java.sh` and those
-  scripts: the classes of `android-framework.jar` that `aosp-resources.jar` and
-  `aosp-views.jar` shadow, never loaded, are then dropped from it, and the jar
-  as compiled is kept in `<build dir>/java/` for the plain-JVM tests) and
+  scripts: the classes of `android-framework.jar` that `aosp-resources.jar`,
+  `aosp-views.jar` and `aosp-app.jar` shadow, never loaded, are then dropped
+  from it, with Win.apk's own nested classes of a class AOSP's replaces (its
+  `RemoteViews$1`..., which beside AOSP's `RemoteViews` did not load), and the
+  jar as compiled is kept in `<build dir>/java/` for the plain-JVM tests) and
   `clang/` (from
   `stage_clang.sh`, the compiler the arm64 translation uses). The JDK is not
   copied: the runtime uses `<out>/jre` if present, else
@@ -1093,8 +1095,8 @@ drives it: `ActivityThread`, the client transactions, `Instrumentation`,
 `ContextImpl`, `LoadedApk`, `Application`, `Activity`). The plan, with its
 measurements, is `docs/research/aosp-app.md`. Every app's process starts on
 it, with no switch (Boot through `com.macapk.loader.app.AppHost`):
-`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (about 600 classes,
-1.3 MB, first on the class path, staged by `stage_runtime.sh`) with the
+`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (about 740 classes,
+1.6 MB, first on the class path, staged by `stage_runtime.sh`) with the
 rewrite `scripts/AospAppRewrite.java` and the in-process activity manager,
 task manager and client controller of `java/aosp_app`, and
 `test/aospapp/run.sh <stage> <deps> [out] [whole android-framework.jar]` (the
@@ -1111,6 +1113,28 @@ scripts read), and the framework asks the process's Application through
 `com.macapk.loader.app.Apps`. A JVM with Win.apk's framework but not
 `aosp-app.jar` has no `android.app.Activity` or `Application` at all, so a
 test of the framework that reaches them puts the jar on its class path.
+
+Reflection on any of these classes works as on a device. Apps and their SDKs
+look members up by reflection on framework classes (an analytics SDK's
+`getMethod` on `ActivityThread`), and HotSpot then builds every declared
+method, field and constructor of the class, so every type those name must
+load: on a device every framework class exists. `scripts/ReflectClosure.java`
+(run by `build_aosp_app.sh`) takes from android-all, into `aosp-app.jar`, every
+class such a declaration in the four AOSP jars names that nothing on the class
+path has, from any package (about 90: `AssistStructure`, `IPermissionManager`,
+`IVoiceInteractionManagerService`, the notification listener's AIDL...; only
+loaded, never run unless an app goes further). A nested type of one of
+Win.apk's own classes is declared in that class instead, after AOSP 14
+(`SplashScreenView.SplashScreenViewParcelable`, `SystemProperties.Handle`,
+`Parcel.ReadWriteHelper`, `SurfaceControl.RefreshRateRange`,
+`StrictMode.ViolationInfo`, `InputManager`'s listeners...; the closure prints
+any it finds missing), and `SurfaceControl.OnJankDataListener` has AOSP 14's
+shape, an abstract class (AOSP's `FrameTracker` extends it). CI's runtime
+tests run `scripts/ReflectScan.java` on the stage: every class of
+`aosp-app.jar`, `aosp-views.jar`, `aosp-resources.jar`, `aosp-graphics.jar`
+and `android-framework.jar` loaded on the host's class path and JDK patches,
+its declared members asked for; any `NoClassDefFoundError` or
+`IncompatibleClassChangeError` fails the job.
 
 Two rules for every AOSP layer, this one and those after it (resources,
 views...), so that moving onto AOSP's code does not make Win.apk heavy:
@@ -1706,7 +1730,7 @@ start; those throw alike on both sides, and only a difference counts.
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe, and `build/java/android-framework.jar`) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
-| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
+| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, reflection over every class of the staged framework jars (`scripts/ReflectScan.java`), the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
 | AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM); its verdict, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |

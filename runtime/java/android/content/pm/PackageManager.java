@@ -2846,8 +2846,14 @@ public abstract class PackageManager {
             }
         };
     }
+
+    /** AOSP 14 PackageManager.PermissionResult (@hide): the @IntDef of checkPermission's answer;
+     *  AOSP's AnnotationValidations names it. */
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface PermissionResult {}
+
+    /** AOSP 14 PackageManager.PackageInfoFlagsBits (@hide): the @LongDef of getPackageInfo's flags;
+     *  AOSP's AnnotationValidations names it. */
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface PackageInfoFlagsBits {}
 }
-
-
-
-
