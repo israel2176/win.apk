@@ -520,10 +520,7 @@ draws nothing on it, because ANGLE takes no lock between contexts that share
 nothing on one Direct3D 11 device. A window surface's frame is read back at
 the app's swap, on its thread, and becomes a layer under the app's windows
 (below); until a SurfaceView's producer has drawn, the render tick shows black
-in its place, as AOSP's SurfaceView shows its background layer. Vulkan is not
-implemented.
-Each GL view renders into its own pbuffer; after a frame the pixels are read
-back and become a layer under the app's windows (below). Vulkan
+in its place, as AOSP's SurfaceView shows its background layer. Vulkan
 (`host/vk/guest_vk.cpp`) goes the same way: an app's native code calls the PC's
 Vulkan (the loader beside the runtime and the GPU's driver, or SwiftShader on a
 PC with none) through System V wrappers generated from `vulkan_core.h`
