@@ -3738,6 +3738,9 @@ constexpr UINT kAskTimeoutMs = 300 * 1000;  // an app's question: no answer in f
 
 constexpr int kPromptLink = 0x7000;  // the link's target id: past any switch's, and no button uses it
 constexpr int kPromptLink2 = 0x7001;  // the second link's
+// A switch's target id: kPromptSwitch + its index, past every button's. Buttons use IDOK (1), IDCANCEL (2) and
+// the like, so switches numbered from 1 took a click on Remove for a click on the first switch.
+constexpr int kPromptSwitch = 0x7100;
 
 struct Prompt {
     std::wstring app, question, note;
@@ -3813,7 +3816,7 @@ float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
     if (checks) {
         y += px(10);
         for (size_t i = 0; i < p.switches.size(); ++i) {
-            const int id = 1 + static_cast<int>(i);
+            const int id = kPromptSwitch + static_cast<int>(i);
             const float th = (std::max)(px(20), text_height(g, p.switches[i].title, g_f.body.get(), cw - px(30)) + px(2));
             const RectF row(m, y, cw, th + px(8)), box(m, y + px(4), px(20), px(20));
             p.targets.push_back({row, id});
@@ -3832,7 +3835,7 @@ float layout_prompt(Graphics& g, Prompt& p, float W, bool draw) {
         if (draw) fill_round(g, card, px(kRadiusCard), g_t.card);
         for (size_t i = 0; i < p.switches.size(); ++i) {
             const RectF r(m, y + i * rh, cw, rh);
-            const int id = 1 + static_cast<int>(i);
+            const int id = kPromptSwitch + static_cast<int>(i);
             p.targets.push_back({r, id});
             if (!draw) continue;
             if (p.hot == id) {
@@ -3909,8 +3912,8 @@ void prompt_answer(Prompt& p, int id) {
         if (p.on_link2) p.on_link2();
         return;
     }
-    if (id <= static_cast<int>(p.switches.size())) {
-        p.switches[static_cast<size_t>(id - 1)].on = !p.switches[static_cast<size_t>(id - 1)].on;
+    if (id >= kPromptSwitch && id < kPromptSwitch + static_cast<int>(p.switches.size())) {
+        p.switches[static_cast<size_t>(id - kPromptSwitch)].on = !p.switches[static_cast<size_t>(id - kPromptSwitch)].on;
         InvalidateRect(p.window, nullptr, FALSE);
         return;
     }
