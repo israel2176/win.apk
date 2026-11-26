@@ -376,6 +376,37 @@ void set_app_data(const char* package, const char* host_dir) {
     bionic::g_app_data_dir = bionic::trimmed(bionic::to_wide(host_dir, host_dir ? std::strlen(host_dir) : 0));
 }
 std::wstring android_host_path(const char* path) { return bionic::host_path(path); }
+std::string android_path_of_host(const std::wstring& host_in) {
+    std::wstring root;
+    {
+        std::lock_guard<std::mutex> hold(bionic::g_lock);
+        root = bionic::g_android_root;
+    }
+    // Both by their long names: the root or the file may be given by its 8.3 one (WINAPK_SHORT_DATA_DIR).
+    auto long_name = [](const std::wstring& p) {
+        wchar_t buf[2048];
+        const DWORD n = p.empty() ? 0 : GetLongPathNameW(p.c_str(), buf, 2048);
+        return n > 0 && n < 2048 ? std::wstring(buf, n) : p;
+    };
+    root = long_name(root);
+    const std::wstring file = long_name(host_in);
+    const std::wstring& host = file;
+    while (!root.empty() && bionic::is_separator(root.back())) root.pop_back();
+    if (root.empty() || host.size() <= root.size() || !bionic::is_separator(host[root.size()])) return {};
+    if (CompareStringOrdinal(host.c_str(), static_cast<int>(root.size()), root.c_str(), static_cast<int>(root.size()),
+                             TRUE) != CSTR_EQUAL) {
+        return {};
+    }
+    std::wstring rest = host.substr(root.size());
+    for (wchar_t& c : rest) {
+        if (c == L'\\') c = L'/';
+    }
+    const int n = WideCharToMultiByte(CP_UTF8, 0, rest.c_str(), static_cast<int>(rest.size()), nullptr, 0, nullptr,
+                                      nullptr);
+    std::string out(static_cast<size_t>(n > 0 ? n : 0), '\0');
+    if (n > 0) WideCharToMultiByte(CP_UTF8, 0, rest.c_str(), static_cast<int>(rest.size()), &out[0], n, nullptr, nullptr);
+    return out;
+}
 std::wstring android_file_name(std::wstring host_name) {
     if (!host_name.empty()) bionic::android_name(&host_name[0]);
     return host_name;

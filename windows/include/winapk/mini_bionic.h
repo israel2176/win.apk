@@ -70,6 +70,12 @@ void set_system_fonts_dir(const char* dir);
 // The running app: /data/user/0/<package> and /data/data/<package> are
 // `host_dir`, its data directory (UTF-8).
 void set_app_data(const char* package, const char* host_dir);
+// The app's installed APKs (base.apk, then its splits; UTF-8 host paths under the android root): each is
+// mapped read-only and listed in /proc/self/maps under its Android path, as ART maps an app's APKs on a
+// device (stdio.cpp). Code that finds its own APK there (a packer's self-check) reads the same file.
+void set_app_apks(const std::vector<std::string>& host_paths);
+// The Android path of a host file under the android root ("/data/app/..."); empty when it is not under it.
+std::string android_path_of_host(const std::wstring& host);
 // The host file an Android path names (host_path), for the runtime's own
 // natives (java.io, java.nio); a host path comes back as it is.
 std::wstring android_host_path(const char* path);

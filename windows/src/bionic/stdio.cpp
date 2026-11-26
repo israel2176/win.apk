@@ -139,9 +139,43 @@ int open_temp_with(const std::string& content) {
     return fd;
 }
 
+// The app's APKs as ART leaves them in a process's maps: each mapped read-only, under its Android path
+// (/data/app/~~<nonce>/<package>-<nonce>/base.apk). A packer finds the APK it was loaded from there:
+// lionscribe.hebdate's libo.so takes the first line naming the package with an .apk extension, opens
+// it and checks it, and with none jumped to a broken address on purpose (issue #208). The views stay
+// for the life of the process, as ART's do.
+struct ApkMapping {
+    std::string android_path;
+    const void* base = nullptr;
+    uint64_t size = 0;
+};
+std::mutex g_apk_lock;
+std::vector<ApkMapping> g_apks;
+
+std::string apk_maps_text() {
+    std::lock_guard<std::mutex> hold(g_apk_lock);
+    std::string out;
+    char line[128];
+    for (const ApkMapping& m : g_apks) {
+        uint32_t inode = 2166136261u;
+        for (const unsigned char c : m.android_path) inode = (inode ^ c) * 16777619u;
+        inode = (inode & 0x7fffffffu) | 1u;
+        const auto start = reinterpret_cast<uint64_t>(m.base);
+        const uint64_t end = (start + m.size + 0xfff) & ~uint64_t{0xfff};
+        const int n = std::snprintf(line, sizeof line, "%llx-%llx r--p 00000000 fd:01 %u",
+                                    static_cast<unsigned long long>(start), static_cast<unsigned long long>(end), inode);
+        if (n <= 0) continue;
+        out.append(line, static_cast<size_t>(n));
+        out.append(n < 73 ? static_cast<size_t>(73 - n) : 1, ' ');
+        out += m.android_path;
+        out += '\n';
+    }
+    return out;
+}
+
 std::string proc_maps_text() {
     GuestLinker* linker = GuestLinker::process();
-    return linker ? linker->proc_maps() : std::string();
+    return apk_maps_text() + (linker ? linker->proc_maps() : std::string());
 }
 
 bool is_random_device(const char* path) {
@@ -2437,6 +2471,33 @@ ShimTable stdio_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 }  // namespace winapk::bionic
 
 namespace winapk {
+
+void set_app_apks(const std::vector<std::string>& host_paths) {
+    std::vector<bionic::ApkMapping> made;
+    for (const std::string& host : host_paths) {
+        const int wn = MultiByteToWideChar(CP_UTF8, 0, host.c_str(), static_cast<int>(host.size()), nullptr, 0);
+        std::wstring wide(static_cast<size_t>(wn > 0 ? wn : 0), L'\0');
+        if (wn > 0) MultiByteToWideChar(CP_UTF8, 0, host.c_str(), static_cast<int>(host.size()), &wide[0], wn);
+        const std::string android = android_path_of_host(wide);
+        if (android.empty()) continue;
+        HANDLE file = CreateFileW(wide.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, nullptr,
+                                  OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE) continue;
+        LARGE_INTEGER size{};
+        HANDLE section = GetFileSizeEx(file, &size) && size.QuadPart > 0
+                             ? CreateFileMappingW(file, nullptr, PAGE_READONLY, 0, 0, nullptr)
+                             : nullptr;
+        CloseHandle(file);
+        if (!section) continue;
+        const void* view = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 0);
+        CloseHandle(section);
+        if (!view) continue;
+        made.push_back({android, view, static_cast<uint64_t>(size.QuadPart)});
+    }
+    std::lock_guard<std::mutex> hold(bionic::g_apk_lock);
+    for (const bionic::ApkMapping& m : bionic::g_apks) UnmapViewOfFile(m.base);
+    bionic::g_apks = std::move(made);
+}
 
 void* fts_open_with_stat(char* const* argv, int options, void* compar, FtsStatFill fill) {
     return bionic::fts_open_impl(argv, options, reinterpret_cast<bionic::GuestFtsCompar>(compar), fill);

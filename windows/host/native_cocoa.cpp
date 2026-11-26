@@ -829,6 +829,22 @@ void JNICALL Cocoa_setAppData(JNIEnv* env, jclass, jstring package, jstring host
     };
     winapk::set_app_data(text(package).c_str(), text(host_dir).c_str());
 }
+// Boot: the app's installed APKs (host paths), mapped and listed in /proc/self/maps as ART leaves them
+// (winapk::set_app_apks).
+void JNICALL Cocoa_setAppApks(JNIEnv* env, jclass, jobjectArray paths) {
+    std::vector<std::string> out;
+    const jsize n = paths ? env->GetArrayLength(paths) : 0;
+    for (jsize i = 0; i < n; ++i) {
+        auto* s = static_cast<jstring>(env->GetObjectArrayElement(paths, i));
+        if (!s) continue;
+        if (const char* c = env->GetStringUTFChars(s, nullptr)) {
+            out.emplace_back(c);
+            env->ReleaseStringUTFChars(s, c);
+        }
+        env->DeleteLocalRef(s);
+    }
+    winapk::set_app_apks(out);
+}
 void JNICALL Cocoa_setSharedStorageRoot(JNIEnv*, jclass, jstring) {}
 // java.io.FileReader's hook for a /proc path (Boot installs it): the file Boot
 // wrote for it under <android root>/proc (meminfo, this process's cmdline), as
@@ -1597,6 +1613,7 @@ const HostMethod kMethods[] = {
     WINAPK_HOST_NATIVE(kCls, "setNativeLibDir", "(Ljava/lang/String;)V", Cocoa_setNativeLibDir),
     WINAPK_HOST_NATIVE(kCls, "setDataSubdir", "(Ljava/lang/String;)V", Cocoa_setDataSubdir),
     WINAPK_HOST_NATIVE(kCls, "setAppData", "(Ljava/lang/String;Ljava/lang/String;)V", Cocoa_setAppData),
+    WINAPK_HOST_NATIVE(kCls, "setAppApks", "([Ljava/lang/String;)V", Cocoa_setAppApks),
     WINAPK_HOST_NATIVE(kCls, "applyWindowOrientation", "(I)V", Cocoa_applyWindowOrientation),
     WINAPK_HOST_NATIVE(kCls, "applyWindowOrientationFor", "(Ljava/lang/String;III)V", Cocoa_applyWindowOrientationFor),
     WINAPK_HOST_NATIVE(kCls, "restoreUserOrientation", "()V", Cocoa_restoreUserOrientation),

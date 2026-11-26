@@ -266,6 +266,9 @@ public final class NativeCocoa {
     /** Win.apk: the app's package and its data directory on the host, which
      *  /data/user/0/&lt;package&gt; then names for native code and java.io/java.nio. */
     public static native void setAppData(String packageName, String hostDataDir);
+    /** Win.apk: the app's installed APKs (host paths, base first), which the host maps read-only and
+     *  lists in /proc/self/maps under their Android paths, as ART leaves an app's APKs mapped. */
+    public static native void setAppApks(String[] hostPaths);
     /** The bionic shim's synthesized host file for a /proc path, or null.
      *  Installed into java.io.FileReader by Boot so Java /proc reads match
      *  native ones. */
