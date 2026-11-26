@@ -185,4 +185,94 @@ private:
     unsigned long long next_order_ = 0;
 };
 
+// ---- a batch's APK files as install sessions ----------------------------------------------------------------
+//
+// Several .apk files opened at once (dropped together, or chosen together in Add) are installed as a device's
+// installer installs the files `adb install-multiple` gives it: those of one package are one session, the base
+// and its splits (a bundle a store's site handed out as loose files, the base and config.arm64_v8a.apk). Each
+// file's package and split name come from the runtime (com.winapk.tools.AppInstall --set: a line per file,
+// "<package>\t<split name>\t<file>"); which files make which session is decided here, with no Windows call.
+// Whether a session is an app (one base, the splits of its version, the splits it requires) is AppInstall's
+// question at the install, as PackageInstallerSession's is: a set with no base is still one session, refused
+// there with Android's "Full install must include a base package".
+
+struct ApkPart {
+    std::wstring file;
+    std::wstring package;  // empty: the file has no manifest that could be read
+    std::wstring split;    // empty: a base
+};
+
+// One install: the file the library keeps as <name>.apk, and the others as <name>.splits\<file name>.
+struct InstallSet {
+    std::wstring base;
+    std::vector<std::pair<std::wstring, std::wstring>> splits;  // the file, its name in <name>.splits
+};
+
+// AppInstall --set's lines; a line that is not three fields is skipped.
+inline std::vector<ApkPart> parse_apk_set(const std::wstring& text) {
+    std::vector<ApkPart> out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find(L'\n', at);
+        if (end == std::wstring::npos) end = text.size();
+        std::wstring line = text.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        const size_t t1 = line.find(L'\t'), t2 = t1 == std::wstring::npos ? t1 : line.find(L'\t', t1 + 1);
+        if (t2 == std::wstring::npos || t2 + 1 >= line.size()) continue;
+        out.push_back({line.substr(t2 + 1), line.substr(0, t1), line.substr(t1 + 1, t2 - t1 - 1)});
+    }
+    return out;
+}
+
+// The batch's sessions, in the order each package first comes: a file whose package is unknown alone; the files
+// of one package together, the base (the first file with no split name, else the first file) as the one the
+// library keeps as the app's .apk. A split is kept as split_<split name>.apk, as a device names it, when that
+// name is a safe file name (FileUtils.isFilenameSafe: letters, digits, + , - . = _), else split_<n>.apk; a name
+// taken already gets .<n> before .apk (AppInstall reads each split's name from its manifest, not its file).
+inline std::vector<InstallSet> group_install_sets(const std::vector<ApkPart>& parts) {
+    auto safe = [](const std::wstring& s) {
+        if (s.empty()) return false;
+        for (wchar_t c : s) {
+            const bool ok = (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') || (c >= L'0' && c <= L'9') ||
+                            c == L'+' || c == L',' || c == L'-' || c == L'.' || c == L'=' || c == L'_';
+            if (!ok) return false;
+        }
+        return true;
+    };
+    std::vector<InstallSet> out;
+    std::vector<std::wstring> order;                       // the packages, as they first come
+    std::map<std::wstring, std::vector<const ApkPart*>> of;  // a package's files
+    for (const ApkPart& p : parts) {
+        // A file of no known package is keyed by a name no package has (a package starts with a letter).
+        const std::wstring key = p.package.empty() ? L"#" + std::to_wstring(order.size()) : p.package;
+        if (!of.count(key)) order.push_back(key);
+        of[key].push_back(&p);
+    }
+    for (const std::wstring& pkg : order) {
+        const std::vector<const ApkPart*>& files = of[pkg];
+        size_t base = 0;
+        for (size_t i = 0; i < files.size(); ++i) {
+            if (files[i]->split.empty()) {
+                base = i;
+                break;
+            }
+        }
+        InstallSet set{files[base]->file, {}};
+        std::vector<std::wstring> taken;
+        for (size_t i = 0; i < files.size(); ++i) {
+            if (i == base) continue;
+            const std::wstring stem =
+                L"split_" + (safe(files[i]->split) ? files[i]->split : std::to_wstring(set.splits.size() + 1));
+            std::wstring name = stem + L".apk";
+            for (int n = 2; std::find(taken.begin(), taken.end(), name) != taken.end(); ++n)
+                name = stem + L"." + std::to_wstring(n) + L".apk";
+            taken.push_back(name);
+            set.splits.emplace_back(files[i]->file, name);
+        }
+        out.push_back(std::move(set));
+    }
+    return out;
+}
+
 }  // namespace winapk::launcher
