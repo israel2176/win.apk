@@ -7024,13 +7024,17 @@ FILETIME unix_filetime(DWORD seconds) {
 
 bool update_available() { return g_update.available(); }
 
-// Installers that are not the newest release's: one that ran, or one left behind.
+// Installers that are not the newest release's: one that ran, or one left behind; and an installer's download
+// that was cut off (`<setup>.exe.part`: the process ended under it), which http_get only renames when whole. Not
+// while a download runs, whose `.part` is being written; releases.json's own `.part` is the check's.
 void remove_old_setups() {
+    if (g_update.downloading()) return;
     std::error_code ec;
     const fs::path keep = update_available() ? setup_file(g_update.latest().version) : fs::path();
     for (fs::directory_iterator it(updates_dir(), ec), end; !ec && it != end; it.increment(ec)) {
         const fs::path p = it->path();
-        if (p.extension() == L".exe" && p != keep) fs::remove(p, ec);
+        const bool cut_off = p.extension() == L".part" && p.stem().extension() == L".exe";
+        if ((p.extension() == L".exe" && p != keep) || cut_off) fs::remove(p, ec);
     }
 }
 
@@ -10747,20 +10751,27 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         case kStoreAppChecked: {
             std::unique_ptr<StoreAppCheck> c(reinterpret_cast<StoreAppCheck*>(lp));
             store_app_checked(*c);
+            maybe_quit();  // no download follows: the hidden process may end
             return 0;
         }
         case kStoreAppProgress:
             g_store_setup.progress(static_cast<int>(wp));
             if (g_view == kStoreView) InvalidateRect(hwnd, nullptr, FALSE);
             return 0;
-        case kStoreAppDownloaded: store_app_downloaded(static_cast<StoreAppDownload>(wp)); return 0;
+        case kStoreAppDownloaded:
+            store_app_downloaded(static_cast<StoreAppDownload>(wp));
+            maybe_quit();
+            return 0;
         case kUpdateChecked: {
             std::unique_ptr<UpdateCheck> c(reinterpret_cast<UpdateCheck*>(lp));
             update_checked(*c);
             return 0;
         }
         case kUpdateProgress: update_progress(static_cast<int>(wp)); return 0;
-        case kUpdateDownloaded: update_downloaded(static_cast<int>(wp)); return 0;
+        case kUpdateDownloaded:
+            update_downloaded(static_cast<int>(wp));
+            maybe_quit();
+            return 0;
         case WM_GETMINMAXINFO:
             reinterpret_cast<MINMAXINFO*>(lp)->ptMinTrackSize = {ipx(680), ipx(520)};
             return 0;
@@ -12784,10 +12795,12 @@ void end_background_work() {
 
 // What keeps the process when the library is not shown, besides an app's window it did not start
 // (windowed_processes): an install window, a splash, an app it started (to report how it ended), the log
-// or Threads window, a maintenance window it opened (until kMaintenanceEnded).
+// or Threads window, a maintenance window it opened (until kMaintenanceEnded), and a download the user started:
+// Win.apk's update (whose installer then runs, as if the library were still open) and the Store's own app
+// (which then installs), as an install goes on with the library closed.
 bool work_keeps_process() {
     return g_install_wnd || g_log_wnd || g_debug_wnd || !g_splashes.empty() || any_runs() || any_pending() ||
-           g_maintenance;
+           g_maintenance || g_update.downloading() || g_store_setup.busy();
 }
 
 // When the library is not shown, the process lives only for what it is doing (work_keeps_process), and for

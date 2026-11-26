@@ -307,9 +307,11 @@ listed in [Compatibility](APPS.md#what-works).
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
-Closing the library while an app is still running, or while an install is
-under way, only hides it: Win.apk stays until those finish, so it can still
-report an app that stops with an error.
+Closing the library while an app is still running, while an install is
+under way, or while Win.apk's update or the Store's app is downloading, only
+hides it: Win.apk stays until those finish, so it can still report an app
+that stops with an error, and the update's installer still runs once it is
+downloaded.
 
 When Win.apk ends (the library closed and no app open), everything it
 started in the background ends with it: the translation of ARM apps, the
