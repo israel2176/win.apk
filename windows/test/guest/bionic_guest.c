@@ -1493,7 +1493,8 @@ static void signal_blocked(int kind, int flags, const char* what) {
     const int rc = pthread_kill(w, 10);
     const int hit = wait_for_flag(&g_wait_hits, 1, 3000);
     char detail[128];
-    if (flags & SA_RESTART) {
+    // SA_RESTART restarts a wait, never a sleep: Linux's nanosleep ends with EINTR either way.
+    if ((flags & SA_RESTART) && kind != 2) {
         usleep(50000);
         const int still_waiting = !g_wait_done;
         sem_post(&g_wait_sem);
