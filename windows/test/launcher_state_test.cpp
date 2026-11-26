@@ -1026,14 +1026,21 @@ void test_library_files() {
     check("taken out: deleted", drop_taken_out(library, L"App") && !fs::exists(library / "App.apk.removed", ec) &&
                                     !fs::exists(library / "App.splits.removed", ec));
     check("taken out: the installed copy's file stays", read(copy / "base.apk") == "base v1");
-    // A removal that cannot take one entry out (here a name too long for the file system once renamed; on Windows a
-    // file the running app holds) leaves every entry as it was.
-    const std::wstring long_name(243, L'x');
-    write(library / (long_name + L".apk"), "apk");
-    write(library / (long_name + L".apks"), "bundle");
-    check("not taken out: refused", !take_out(library, long_name));
-    check("not taken out: the app is whole", app_entries(library, long_name, false).size() == 2 &&
-                                                 app_entries_with(library, long_name, kRemovedSuffix).empty());
+    // A removal that cannot take one entry out (on Windows a file the running app holds; here a rename that fails
+    // for the second entry) leaves every entry as it was.
+    write(library / L"Held.apk", "apk");
+    write(library / L"Held.apks", "bundle");
+    int renames = 0;
+    const bool held = take_out(library, L"Held", [&](const fs::path& from, const fs::path& to, std::error_code& e) {
+        if (++renames == 2) {
+            e = std::make_error_code(std::errc::permission_denied);
+            return;
+        }
+        fs::rename(from, to, e);
+    });
+    check("not taken out: refused", !held && renames == 2);
+    check("not taken out: the app is whole", app_entries(library, L"Held", false).size() == 2 &&
+                                                 app_entries_with(library, L"Held", kRemovedSuffix).empty());
     // A leftover of a removal, deleted at a start.
     write(library / "Gone.apk.removed", "left");
     drop_all_taken_out(library);

@@ -84,14 +84,17 @@ inline const wchar_t* const kRemovedSuffix = L".removed";
 // file a process holds open without sharing its deletion (the app's runtime, still running), so this is the step
 // that can fail, and it comes before anything else of the app goes: false then, with every entry renamed back, and
 // the app whole in the library. Once it is true the removal goes on (drop_taken_out).
-inline bool take_out(const lib_fs::path& library, const std::wstring& name) {
+// `rename` is lib_fs::rename's (from, to, error_code) form; the test passes one that fails as a held file does.
+template <typename Rename>
+inline bool take_out(const lib_fs::path& library, const std::wstring& name, Rename rename) {
     std::error_code ec;
     std::vector<std::pair<lib_fs::path, lib_fs::path>> done;
     for (const lib_fs::path& p : app_entries(library, name, false)) {
         lib_fs::path out = p;
         out += kRemovedSuffix;
         lib_fs::remove_all(out, ec);  // a removal's that could not finish
-        lib_fs::rename(p, out, ec);
+        ec.clear();
+        rename(p, out, ec);
         if (ec) {
             for (auto it = done.rbegin(); it != done.rend(); ++it) lib_fs::rename(it->second, it->first, ec);
             return false;
@@ -99,6 +102,11 @@ inline bool take_out(const lib_fs::path& library, const std::wstring& name) {
         done.emplace_back(p, out);
     }
     return true;
+}
+inline bool take_out(const lib_fs::path& library, const std::wstring& name) {
+    return take_out(library, name, [](const lib_fs::path& from, const lib_fs::path& to, std::error_code& ec) {
+        lib_fs::rename(from, to, ec);
+    });
 }
 
 // The removal's last step: the entries taken out deleted. True when none is left; one that could not be deleted is
