@@ -24,16 +24,8 @@
 - **Experimental:** Google's own Play services and Play Store, with a guided setup (Settings > Google account > **Use Google services (experimental)**).
 - English and Hebrew, light and dark.
 
-## Fixed since the previews
-- Faster starts for large apps (banking apps among them), and apps that failed on missing Android classes now open.
-- Maps and other OpenGL views draw (Waze), and the text magnifier works.
-- Google Play opens, signs in and installs; Play services no longer restart in a loop.
-- Closing Win.apk ends everything it started in the background, and each Android process runs once.
-- The Store installs without asking twice; the Store and Google Play panels have no title strip.
-
 ## Known limitations
-- Apps with only 32-bit ARM (`armeabi-v7a`) code do not run; Win.apk refuses them at install with the reason.
-- This is a beta: expect rough edges, and use **Report a problem** when an app misbehaves.
+- Apps with only 32-bit ARM (`armeabi-v7a`) code do not run.
 - No in-app purchases, Play Integrity or Vulkan; no sensor (accelerometer, gyroscope or other) is reported.
 
 [Getting started](https://github.com/israel2176/win.apk/blob/main/docs/getting-started.md) · [What works](https://github.com/israel2176/win.apk/blob/main/docs/APPS.md) · [User guide](https://github.com/israel2176/win.apk/blob/main/docs/USER_GUIDE.md) · [עברית](https://github.com/israel2176/win.apk/blob/main/README.he.md). Found a problem? Use **Report a problem** in Win.apk, or [open an issue](https://github.com/israel2176/win.apk/issues/new/choose) ([how](https://github.com/israel2176/win.apk/blob/main/docs/troubleshooting.md#reporting-a-problem)).
