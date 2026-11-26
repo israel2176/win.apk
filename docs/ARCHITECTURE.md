@@ -211,7 +211,10 @@ at the place of its first system library, so an allocator an app lists
 before `libc.so` is the one its libraries call), keeps the registry of
 loaded images, and
 implements the guest's `dlopen`, `android_dlopen_ext`, `dlsym` (with
-`RTLD_DEFAULT` and `RTLD_NEXT`), `dladdr`, `dlerror` and `dlclose`. A
+`RTLD_DEFAULT` and `RTLD_NEXT`; a name is looked up in the library's hash
+table, symbols and names as they are in memory at the call, as bionic does, so
+a packed library that decrypts its `.dynstr` in its constructors is found),
+`dladdr`, `dlerror` and `dlclose`. A
 library is reference counted and unloaded when its last reference goes
 (`DT_FINI_ARRAY` and `DT_FINI` run, leftover `__cxa_atexit` entries and
 every thread's TLS block for it are released, its native-method thunk

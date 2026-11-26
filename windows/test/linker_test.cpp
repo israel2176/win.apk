@@ -10,7 +10,8 @@
 // reference counts, destructors, TLS, RTLD_NODELETE, thread_local
 // destructors holding a library, and dependencies going with their root.
 // Four more libraries check the order symbols are looked up in: libc at its
-// place in the DT_NEEDED order, the global group before it. And an arm64
+// place in the DT_NEEDED order, the global group before it. Two packed ones
+// check that dlsym reads the symbol tables as the constructors left them. And an arm64
 // library of an x86_64 app gets the arm64 copy of a dependency whose x86_64
 // copy is loaded (test/guest/mixed_guest.c, in arm64/ under the directory).
 //
@@ -332,6 +333,20 @@ int main(int argc, char** argv) {
     }
     check("RTLD_DEFAULT finds the global library before libc",
           from_interpose(linker.lookup(nullptr, "strlen", nullptr, &error)));
+
+    // A packed library (NetEase's libsecexe in Dreamehome): the file's .dynstr has its export's name
+    // scrambled and its constructor puts it right. bionic's dlsym reads the tables as they are then.
+    for (const char* name : {"libwinapk_link_packed.so", "libwinapk_link_packed_sysv.so"}) {
+        error.clear();
+        void* packed = linker.open(name, winapk::GuestLinker::kRtldNow, &error);
+        check((std::string("open ") + name).c_str(), packed != nullptr, error);
+        if (!packed) continue;
+        expect_eq("dlsym finds an export by the name its constructor put right",
+                  call(linker, packed, "link_packed_secret"), 42);
+        check("the name the file had is not an export",
+              linker.lookup(packed, "LINK_PACKED_SECRET", nullptr, &error) == nullptr);
+        linker.close(packed, &error);
+    }
 
     // An x86_64 app with a library only its arm64 set has (AppInstall puts that set in lib/arm64): the
     // arm64 library's dependency is the arm64 copy beside it, although an x86_64 library of that name is
