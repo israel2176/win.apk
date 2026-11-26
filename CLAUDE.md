@@ -91,8 +91,8 @@ page's Permissions rows, which stop a running app on revoke), single instance
   runtime's own arithmetic); `run_thread` passes it as `WINAPK_START_WINDOW`,
   so the runtime opens the app's window over it, and `WINAPK_READY_EVENT`,
   and waits on that or the process. Ready brings the app's window forward and
-  closes the starting window; an exit first turns it into the error with
-  Show log. The run's state is
+  closes the starting window; an exit with an error first turns it into the error with
+  Show log, a clean one (exit code 0) closes it, as a phone does. The run's state is
   `g_runs` (`app_runs.h`), changed only through `begin_run`, `stop_run`,
   `expect_run_end`, `finish_run` and `run_thread`; what its end says is
   `RunEnd::kind()`. Installs likewise: `g_installs` (`installs.h`), through

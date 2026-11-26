@@ -218,8 +218,9 @@ the app's own content takes its place, in the same window to the eye, as
 soon as it has drawn. A start that takes
 long says why under the icon: **Converting the app's code. This happens once.** when the
 app's code changed, or **Still starting** after twenty seconds. Closing the
-window, or Esc, cancels the start. If the app ends before it has drawn,
-or later with an error, the window turns into a short message
+window, or Esc, cancels the start. An app that closes itself before it has drawn
+(exit code 0: a license check, for one) just closes, as on a phone. If it ends with an
+error, before it has drawn or later, the window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
