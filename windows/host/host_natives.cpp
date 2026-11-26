@@ -24,6 +24,7 @@ namespace {
 // upstream with natives and missing here fails with UnsatisfiedLinkError, which
 // names it.
 const char* const kHostClasses[] = {
+    "com.macapk.loader.HostVulkan",
     "android.app.NativeActivity",
     "android.content.ClipboardManager",
     "android.content.ClipboardManager$MacApkHostPasteboard",
@@ -109,6 +110,7 @@ const HostMethods kProviders[] = {
     native_browser_tab_methods(),
     native_webview_methods(),
     native_camera_methods(),
+    native_vulkan_methods(),
     native_radios_methods(),
     native_bluetooth_methods(),
     native_location_methods(),

@@ -512,8 +512,14 @@ checked against its SHA-256.
   the window, and `eglSwapBuffers` reads it back and presents it.
 
 Each GL view renders into its own pbuffer; after a frame the pixels are read
-back and become a layer under the app's windows (below). Vulkan is not
-implemented.
+back and become a layer under the app's windows (below). Vulkan
+(`host/vk/guest_vk.cpp`) goes the same way: an app's native code calls the PC's
+Vulkan (the loader beside the runtime and the GPU's driver, or SwiftShader on a
+PC with none) through System V wrappers generated from `vulkan_core.h`
+(`tools/gen_vk_thunks.py`), each dispatching on the instance's or device's
+table; the window system is emulated, a swapchain being images of the device's
+own, and `vkQueuePresentKHR` copies the presented one back and shows it as the
+guest layer, paced like `eglSwapBuffers`.
 
 ### The view tree's frames
 
@@ -1254,7 +1260,7 @@ sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 
 ## What is not there
 
-As of this writing: the NDK media API, Vulkan, real sensor input,
+As of this writing: the NDK media API, real sensor input,
 signal delivery for faults in arm64 guest code and handlers in arm64
 libraries, POSIX timers, static ELF TLS, W^X thunk pools with unwind tables,
 code signing, 32-bit ARM, notification action buttons,

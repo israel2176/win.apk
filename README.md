@@ -73,7 +73,7 @@ The full table, checked against the code, is on
 | ✅ Works | ⚠️ Partly | ❌ Not yet |
 |---|---|---|
 | Java and Kotlin apps | Apps with only arm64 native code: slower until translated | Apps with only 32-bit ARM code (`armeabi-v7a`) |
-| x86_64 native code | `MediaCodec`: H.264 with AAC/MP3 audio | Vulkan |
+| x86_64 native code | `MediaCodec`: H.264 with AAC/MP3 audio; Vulkan (new, untried with games) | |
 | OpenGL ES 1.1-3.2 on Direct3D 11, `NativeActivity` games | Bluetooth: paired devices, RFCOMM, LE scans and GATT client | |
 | Sound (AudioTrack, SoundPool, AAudio output, OpenSL ES), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
 | Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (none is reported) |

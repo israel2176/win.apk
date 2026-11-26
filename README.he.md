@@ -68,7 +68,7 @@ Windows Subsystem for Android) מפעילים מערכת אנדרואיד שלמ
 | ✅ עובד | ⚠️ חלקי | ❌ עדיין לא |
 |---|---|---|
 | אפליקציות Java ו-Kotlin | אפליקציות עם קוד arm64 בלבד: איטיות עד שהתרגום מוכן | אפליקציות עם קוד ARM של 32 ביט בלבד (`armeabi-v7a`) |
-| קוד מקורי x86_64 | ‏`MediaCodec`: וידאו H.264 עם שמע AAC/MP3 | ‏Vulkan |
+| קוד מקורי x86_64 | ‏`MediaCodec`: וידאו H.264 עם שמע AAC/MP3; ‏Vulkan (חדש, לא נוסה עדיין עם משחקים) | |
 | ‏OpenGL ES 1.1 עד 3.2 על Direct3D 11, משחקי `NativeActivity` | ‏Bluetooth: התקנים מצומדים, RFCOMM, סריקת LE ולקוח GATT | |
 | שמע (AudioTrack, SoundPool, פלט AAudio, ‏OpenSL ES), מיקרופון | ‏Wi-Fi: מידע בלבד, בלי התחברות לרשת | ממשק המדיה של ה-NDK (`AMediaCodec`) |
 | וידאו (`MediaPlayer`, `VideoView`) על Media Foundation | התראות: בלי כפתורי פעולה | חיישנים אמיתיים (לא מדווח אף חיישן) |
