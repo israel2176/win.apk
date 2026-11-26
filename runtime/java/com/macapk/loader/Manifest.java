@@ -1239,6 +1239,30 @@ public final class Manifest {
         return tables(apkPath).byId;
     }
 
+    /** apk path -> {mtime, size, Manifest}. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Object[]> PARSED_APKS =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The manifest of an APK on disk, parsed once per version of the file: the
+     *  same answer as parse(new File(apkPath), apkPath), kept while the file's
+     *  size and modification time stay. Android's package manager parses an
+     *  installed package once, at install or boot, and answers every
+     *  getPackageInfo and query from that; an app that walks the installed
+     *  packages (getInstalledPackages, queryIntent*, getPackageInfo per
+     *  package) made Win.apk re-read each APK's manifest every time, Play
+     *  services' (1 MB of binary XML) dozens of times in one run. An update
+     *  writes a new file, so it is parsed again. The instance is shared: its
+     *  callers copy out of it and never change it. */
+    public static Manifest parseApk(String apkPath) throws Exception {
+        File f = new File(apkPath);
+        long mt = f.lastModified(), sz = f.length();
+        Object[] c = PARSED_APKS.get(apkPath);
+        if (c != null && (Long) c[0] == mt && (Long) c[1] == sz) return (Manifest) c[2];
+        Manifest m = parse(f, apkPath);
+        if (m != null && mt != 0) PARSED_APKS.put(apkPath, new Object[] { mt, sz, m });
+        return m;
+    }
+
     public static Manifest parse(File xml, String apkPath) throws Exception {
         Document doc = null;
         if (apkPath != null && !apkPath.isEmpty()) {

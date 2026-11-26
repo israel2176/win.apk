@@ -3,8 +3,9 @@
 # "Milestone 2: the runtime on AOSP graphics"; host/aosp_gfx.h), into a staged runtime:
 #
 #   <out>/lib/aosp-graphics.jar             AOSP 14's android.graphics.** (drawables, fonts, text,
-#                                           animation, pdf; SurfaceTexture left out: Win.apk keeps
-#                                           its own), the android.text classes that measure and lay
+#                                           animation, pdf; SurfaceTexture and BLASTBufferQueue
+#                                           left out: Win.apk keeps its own), the android.text
+#                                           classes that measure and lay
 #                                           out (Layout, StaticLayout, BoringLayout, DynamicLayout,
 #                                           MeasuredParagraph, PrecomputedText, TextLine,
 #                                           Hyphenator, FontConfig), android.util.PathParser, the

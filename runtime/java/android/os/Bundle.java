@@ -33,6 +33,11 @@ public final class Bundle extends BaseBundle implements Parcelable, Cloneable {
      *  reproduces ArrayMap.EMPTY's observable pair exactly: put throws
      *  UnsupportedOperationException, remove of an absent key does not. */
     public static final Bundle EMPTY = new Bundle();
+
+    /** {@hide} AOSP setDefusable(Bundle, boolean): marks a bundle whose bad contents are erased instead
+     *  of thrown on unparcel, which only the system server does (sShouldDefuse); an app's process keeps
+     *  the throw (BaseBundle.unparcel), so the mark changes nothing here. AOSP's SliceManager sets it. */
+    public static Bundle setDefusable(Bundle bundle, boolean defusable) { return bundle; }
     static {
         EMPTY.map = java.util.Collections.<String, Object>emptyMap();
     }

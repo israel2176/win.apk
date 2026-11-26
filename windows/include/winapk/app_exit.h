@@ -17,6 +17,12 @@ constexpr unsigned long kExitAppCrashed = 0x1000000AUL;
 // app that is not responding with SIGKILL, 9, when Close app is chosen).
 constexpr unsigned long kExitClosedNotResponding = 0x10000009UL;
 
+// A process the system broker started (MACAPK_SERVICE_HOST=1) found another copy of the same process of
+// the app running or starting (the app's single-instance lock held): it exits at once and the broker waits
+// for that copy to attach, as ActivityManager hands a request to the process it is already starting
+// (SystemServer.ALREADY_RUNNING_EXIT has the same number). Not a crash.
+constexpr unsigned long kExitAlreadyRunning = 0x10000011UL;
+
 // Whether a run that ended with `code` crashed as Android counts a crash: the framework's handler ended
 // it, or a native fault did, which on a device debuggerd reports to the same handleApplicationCrash:
 // an NTSTATUS exception code (0xC...) or abort() (3). A DLL that would not load is Win.apk's own install

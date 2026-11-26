@@ -95,6 +95,7 @@
 
 #include "winapk/aot_files.h"
 #include "winapk/aot_stamp.h"
+#include "winapk/app_exit.h"
 #include "winapk/arm64_aot.h"
 #include "winapk/mini_bionic.h"
 
@@ -255,6 +256,64 @@ using CreateVmFn = jint(JNICALL*)(JavaVM**, void**, void*);
 // own exceptions and the unhandled-exception filter never sees it.
 void JNICALL jvm_abort_hook() { winapk::host::crash_report_fatal("the JVM's fatal error handler"); }
 
+// ART has no modules: an app's reflection reaches every class of the core library and its private
+// members (setAccessible), the hidden-API lists aside, and libraries count on it (Gson reads
+// java.lang.ref.Reference's fields, others java.util.concurrent's, java.sql's...). HotSpot refuses
+// such reflection into a package its module does not open, so every package of every module of the
+// boot layer is opened to the unnamed modules, the app's classes' and the framework's: what one
+// --add-opens=<module>/<package>=ALL-UNNAMED per package would do, without a list to keep in step
+// with the Java runtime. jdk.internal.module.Modules.addOpensToAllUnnamed is the call the launcher
+// makes for a jar manifest's Add-Opens; JNI reaches it across the module boundary. Before any of
+// the framework's or the app's code runs, and leaving the class-data sharing archive as it is.
+void open_platform_packages(JNIEnv* env) {
+    auto fail = [&](const char* what) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        std::fprintf(stderr, "[win.apk] cannot open the Java runtime's packages to apps: %s\n", what);
+    };
+    jclass layer_cls = env->FindClass("java/lang/ModuleLayer");
+    jclass module_cls = env->FindClass("java/lang/Module");
+    jclass set_cls = env->FindClass("java/util/Set");
+    jclass modules_cls = env->FindClass("jdk/internal/module/Modules");
+    if (!layer_cls || !module_cls || !set_cls || !modules_cls) return fail("a class is missing");
+    jmethodID boot = env->GetStaticMethodID(layer_cls, "boot", "()Ljava/lang/ModuleLayer;");
+    jmethodID layer_modules = env->GetMethodID(layer_cls, "modules", "()Ljava/util/Set;");
+    jmethodID packages = env->GetMethodID(module_cls, "getPackages", "()Ljava/util/Set;");
+    jmethodID to_array = env->GetMethodID(set_cls, "toArray", "()[Ljava/lang/Object;");
+    jmethodID open = env->GetStaticMethodID(modules_cls, "addOpensToAllUnnamed",
+                                            "(Ljava/lang/Module;Ljava/lang/String;)V");
+    if (!boot || !layer_modules || !packages || !to_array || !open) return fail("a method is missing");
+    jobject layer = env->CallStaticObjectMethod(layer_cls, boot);
+    jobject mods = layer ? env->CallObjectMethod(layer, layer_modules) : nullptr;
+    auto mod_array = mods ? static_cast<jobjectArray>(env->CallObjectMethod(mods, to_array)) : nullptr;
+    if (!mod_array || env->ExceptionCheck()) return fail("no boot layer");
+    int opened = 0;
+    const jsize n_mods = env->GetArrayLength(mod_array);
+    for (jsize m = 0; m < n_mods; ++m) {
+        jobject mod = env->GetObjectArrayElement(mod_array, m);
+        jobject pkgs = env->CallObjectMethod(mod, packages);
+        auto pkg_array = pkgs ? static_cast<jobjectArray>(env->CallObjectMethod(pkgs, to_array)) : nullptr;
+        if (pkg_array) {
+            const jsize n_pkgs = env->GetArrayLength(pkg_array);
+            for (jsize i = 0; i < n_pkgs; ++i) {
+                jobject pn = env->GetObjectArrayElement(pkg_array, i);
+                env->CallStaticVoidMethod(modules_cls, open, mod, pn);
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                else ++opened;
+                env->DeleteLocalRef(pn);
+            }
+            env->DeleteLocalRef(pkg_array);
+        }
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (pkgs) env->DeleteLocalRef(pkgs);
+        env->DeleteLocalRef(mod);
+    }
+    env->DeleteLocalRef(mod_array);
+    env->DeleteLocalRef(mods);
+    env->DeleteLocalRef(layer);
+    std::fprintf(stderr, "[win.apk] %d packages of %d Java runtime modules opened to apps' reflection\n", opened,
+                 static_cast<int>(n_mods));
+}
+
 // `exit_hook`, when given, is HotSpot's "exit" hook: System.exit ends there rather than in the CRT's exit.
 bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv** env,
                void(JNICALL* exit_hook)(jint) = nullptr) {
@@ -280,6 +339,7 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
     }
     winapk::host::rearm_crash_report();  // HotSpot installed its own unhandled-exception filter
     winapk::host::cds_vm_created(*vm, *env);
+    open_platform_packages(*env);
     return true;
 }
 
@@ -439,8 +499,8 @@ int run_process(std::wstring cmdline) {
 //
 // <app dir>\.macapk-dex-stamp records what classes.jar was made from:
 //
-//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar), then "+framework"
-//                              when it read the class hierarchy from android-framework.jar
+//   converter=<converter_id>   the converter (com/macapk/dex/ in macapk-loader.jar), then "+framework+aosp"
+//                              when it read the class hierarchy from the AOSP jars and android-framework.jar
 //   apk=<file_id>              the installed base.apk
 //
 // The jar is converted again when either line differs, and when there is no
@@ -654,9 +714,23 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     // (YouTube's ScrollFeedbackProvider.createProvider with android-34 installed: every touch move threw
     // IncompatibleClassChangeError), while a PC with no SDK had no hierarchy at all. The stamp says so
     // ("+framework"), which converts once more the jars made the other way.
+    //
+    // That framework is the AOSP jars first, as the app's JVM puts them (host/aosp_gfx.h), and Win.apk's own
+    // jar after them: the stage drops from android-framework.jar every class AOSP's app, views and resources
+    // replace, so with that jar alone Application$ActivityLifecycleCallbacks, an interface of aosp-app.jar,
+    // was not found and an app's `ActivityLifecycleCallbacks.super.onActivityPreCreated(...)` was written as
+    // a Methodref (IncompatibleClassChangeError "must be InterfaceMethodref constant" when an activity
+    // started). "+aosp" in the stamp converts once more the jars made against android-framework.jar alone.
     const fs::path framework = o.lib / "android-framework.jar";
     const bool with_framework = fs::exists(framework, ec);
-    const DexStamp want{converter_id(o.lib / "macapk-loader.jar") + (with_framework ? "+framework" : ""),
+    std::wstring hierarchy;
+    if (with_framework) {
+        for (const wchar_t* j : {L"aosp-app.jar", L"aosp-views.jar", L"aosp-resources.jar", L"aosp-graphics.jar"}) {
+            if (fs::exists(o.lib / j, ec)) hierarchy += (o.lib / j).wstring() + L";";
+        }
+        hierarchy += framework.wstring();
+    }
+    const DexStamp want{converter_id(o.lib / "macapk-loader.jar") + (with_framework ? "+framework+aosp" : ""),
                         file_id(o.apk)};
     DexStamp have;
     const bool stamped = read_dex_stamp(stamp, &have);
@@ -676,7 +750,7 @@ bool convert_dex(const Options& o, const fs::path& app_dir, fs::path* jar) {
     };
     discard();
     std::vector<std::wstring> args;
-    if (with_framework) args = {L"--classpath", framework.wstring()};
+    if (with_framework) args = {L"--classpath", hierarchy};
     args.push_back(o.apk.wstring());
     args.push_back(tmp.wstring());
     const unsigned heap = dex_heap_mb();
@@ -2561,6 +2635,8 @@ int wmain(int argc, wchar_t** argv) {
         std::fprintf(stderr, "[win.apk] %s is already running; not starting a second copy\n",
                      utf8(b.app_dir.filename().wstring()).c_str());
         if (b.options.install_only) return 3;
+        // The broker's start: the copy that holds the lock attaches to it instead (SystemServer).
+        if (env_var(L"MACAPK_SERVICE_HOST") == L"1") return static_cast<int>(winapk::kExitAlreadyRunning);
         if (env_var(L"WINAPK_HEADLESS").empty()) activate_running(instance);
         winapk::host::signal_launcher_ready();  // the running copy is what the user sees
         return 0;

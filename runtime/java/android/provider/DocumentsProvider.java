@@ -175,34 +175,6 @@ public abstract class DocumentsProvider extends ContentProvider {
         return uri == null ? null : validateIncomingUri(uri);
     }
 
-    /** AOSP ContentProvider.validateIncomingUri (ContentProvider.java:2727-2769),
-     *  which our ContentProvider does not carry: the authority must be one this
-     *  provider serves (SecurityException naming both), and "//" runs in the path
-     *  are collapsed. One user, so no user-id check. */
-    private Uri validateIncomingUri(Uri uri) throws SecurityException {
-        String auth = uri.getAuthority();
-        String bare = auth;
-        if (bare != null) {
-            int at = bare.lastIndexOf('@');
-            if (at >= 0) bare = bare.substring(at + 1);
-        }
-        boolean ours = false;
-        if (mAuthority != null && bare != null) {
-            for (String a : mAuthority.split(";")) {
-                if (bare.equals(a.trim())) { ours = true; break; }
-            }
-        }
-        if (!ours) {
-            throw new SecurityException("The authority " + auth + " does not match the one of the "
-                    + "contentProvider: " + mAuthority);
-        }
-        final String encodedPath = uri.getEncodedPath();
-        if (encodedPath != null && encodedPath.indexOf("//") != -1) {
-            return uri.buildUpon().encodedPath(encodedPath.replaceAll("//+", "/")).build();
-        }
-        return uri;
-    }
-
     public String createDocument(String parentDocumentId, String mimeType, String displayName)
             throws FileNotFoundException {
         throw new UnsupportedOperationException("Create not supported");

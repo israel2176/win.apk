@@ -28,7 +28,7 @@ public final class ToastService {
         final CharSequence text;
         final ITransientNotification tn;
         final ITransientNotificationCallback callback;
-        final int duration;
+        int duration;
         ToastPresenter presenter;
 
         Record(String pkg, IBinder token, CharSequence text, ITransientNotification tn,
@@ -65,8 +65,21 @@ public final class ToastService {
 
     public void finishToken(String pkg, IBinder token) {}
 
+    /** NotificationManagerService.enqueueToast: one record per token. A toast shown again while it is
+     *  queued or showing (Toast.show twice on one Toast) updates that record's duration in place and
+     *  keeps its place; the toast on screen is not shown a second time nor its timeout restarted. */
     private void enqueue(Record r) {
         AospWindows.main().post(() -> {
+            Record same = mShowing != null && mShowing.token == r.token ? mShowing : null;
+            if (same == null) {
+                for (Record q : mQueue) {
+                    if (q.token == r.token) { same = q; break; }
+                }
+            }
+            if (same != null) {
+                same.duration = r.duration;
+                return;
+            }
             mQueue.add(r);
             if (mShowing == null) showNext();
         });

@@ -212,4 +212,57 @@ public class SearchableInfo implements android.os.Parcelable {
         }
         @Override public SearchableInfo[] newArray(int size) { return new SearchableInfo[size]; }
     };
+
+    /** AOSP 14 SearchableInfo.findActionKey: the searchable's &lt;actionkey&gt; for a key code, which
+     *  SearchView asks for each key. This SearchableInfo reads no &lt;actionkey&gt; elements, so it
+     *  answers as AOSP does for a searchable that declares none. */
+    public ActionKeyInfo findActionKey(int keyCode) { return null; }
+
+    /** AOSP 14 SearchableInfo.ActionKeyInfo: one &lt;actionkey&gt; of a searchable (SearchView names it). */
+    public static class ActionKeyInfo implements android.os.Parcelable {
+        private final int mKeyCode;
+        private final String mQueryActionMsg;
+        private final String mSuggestActionMsg;
+        private final String mSuggestActionMsgColumn;
+
+        ActionKeyInfo(android.content.Context activityContext, android.util.AttributeSet attr) {
+            this(0, null, null, null);
+        }
+
+        private ActionKeyInfo(android.os.Parcel in) {
+            this(in.readInt(), in.readString(), in.readString(), in.readString());
+        }
+
+        private ActionKeyInfo(int keyCode, String query, String suggest, String column) {
+            mKeyCode = keyCode;
+            mQueryActionMsg = query;
+            mSuggestActionMsg = suggest;
+            mSuggestActionMsgColumn = column;
+        }
+
+        public int getKeyCode() { return mKeyCode; }
+
+        public String getQueryActionMsg() { return mQueryActionMsg; }
+
+        public String getSuggestActionMsg() { return mSuggestActionMsg; }
+
+        public String getSuggestActionMsgColumn() { return mSuggestActionMsgColumn; }
+
+        @Override public int describeContents() { return 0; }
+
+        @Override public void writeToParcel(android.os.Parcel dest, int flags) {
+            dest.writeInt(mKeyCode);
+            dest.writeString(mQueryActionMsg);
+            dest.writeString(mSuggestActionMsg);
+            dest.writeString(mSuggestActionMsgColumn);
+        }
+
+        public static final android.os.Parcelable.Creator<ActionKeyInfo> CREATOR =
+                new android.os.Parcelable.Creator<ActionKeyInfo>() {
+                    @Override public ActionKeyInfo createFromParcel(android.os.Parcel in) {
+                        return new ActionKeyInfo(in);
+                    }
+                    @Override public ActionKeyInfo[] newArray(int size) { return new ActionKeyInfo[size]; }
+                };
+    }
 }

@@ -891,6 +891,12 @@ jlong JNICALL Cocoa_getPlaceholderWindow(JNIEnv*, jclass) {
 // draws with ANGLE's context current on its pbuffer (gl_surface.h).
 struct Renderer {
     jobject callbacks = nullptr;  // global ref
+    // Which registration this is. The tick writes the size it announced back only to the renderer it
+    // drove, and a global ref cannot tell: setRenderer deletes the old one and makes the new one, and
+    // the JVM hands the freed slot straight out again, so a SurfaceView registered while the tick
+    // drove the one before it (an activity relaunched by a resize) took that view's announced size
+    // and never heard its own surface (no surfaceCreated: windows/test/glthread's relaunch).
+    uint64_t serial = 0;
     bool gl = false;
     int announced_w = 0, announced_h = 0;
 };
@@ -1301,7 +1307,7 @@ DWORD WINAPI render_thread(void*) {
             {
                 std::lock_guard<std::mutex> hold(g_renderer_lock);
                 auto it = g_renderers.find(view);
-                if (it != g_renderers.end() && it->second.callbacks == r.callbacks) {
+                if (it != g_renderers.end() && it->second.serial == r.serial) {
                     it->second.announced_w = r.announced_w;
                     it->second.announced_h = r.announced_h;
                 }
@@ -1327,8 +1333,10 @@ void JNICALL Cocoa_setRenderer(JNIEnv* env, jclass, jlong view, jobject callback
         g_renderers.erase(it);
     }
     if (!callbacks) return;
+    static uint64_t serials = 0;
     Renderer r;
     r.callbacks = env->NewGlobalRef(callbacks);
+    r.serial = ++serials;
     r.gl = is_gl_view(view);
     g_renderers[view] = r;
     if (!started) {

@@ -74,6 +74,16 @@ public final class NsdManager {
         void onServiceResolved(NsdServiceInfo serviceInfo);
     }
 
+    /** AOSP NsdManager.ServiceInfoCallback (API 34): a resolved service's updates. Play services
+     *  implements it; R8 puts a stand-in for it into the app, which loads when no platform class does
+     *  and fails at its first use. */
+    public interface ServiceInfoCallback {
+        void onServiceInfoCallbackRegistrationFailed(int errorCode);
+        void onServiceUpdated(NsdServiceInfo serviceInfo);
+        void onServiceLost();
+        void onServiceInfoCallbackUnregistered();
+    }
+
     public NsdManager() {}
     public NsdManager(Context context) {}
 
@@ -131,6 +141,20 @@ public final class NsdManager {
     }
     /** As unregisterService: no discovery ever started. */
     public void stopServiceDiscovery(DiscoveryListener listener) {}
+    /** AOSP registerServiceInfoCallback (API 34): with no responder, the registration fails, delivered
+     *  on the caller's executor as AOSP delivers every callback of it. */
+    public void registerServiceInfoCallback(NsdServiceInfo serviceInfo,
+            java.util.concurrent.Executor executor, final ServiceInfoCallback listener) {
+        if (executor == null) throw new NullPointerException("executor");
+        checkListener(listener);
+        handler().post(new Runnable() { @Override public void run() {
+            executor.execute(new Runnable() { @Override public void run() {
+                listener.onServiceInfoCallbackRegistrationFailed(FAILURE_INTERNAL_ERROR);
+            } });
+        } });
+    }
+    /** As unregisterService: no callback was ever registered. */
+    public void unregisterServiceInfoCallback(ServiceInfoCallback listener) {}
     public void resolveService(final NsdServiceInfo serviceInfo, final ResolveListener listener) {
         checkListener(listener);
         handler().post(new Runnable() { @Override public void run() {

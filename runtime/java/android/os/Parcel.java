@@ -59,6 +59,7 @@ public final class Parcel {
         flattening.clear();
         pos = 0;
         size = 0;
+        mReadWriteHelper = ReadWriteHelper.DEFAULT;
     }
 
     // AOSP Parcel exception protocol -- the RPC reply header every generated
@@ -1045,10 +1046,35 @@ public final class Parcel {
         }
     }
 
+    /** AOSP Parcel.ReadWriteHelper (@hide): how a parcel writes and reads its strings, replaceable
+     *  per parcel (RemoteViews installs its own, ALTERNATIVE_DEFAULT, made in its static initializer).
+     *  The default writes them as the parcel does; this parcel has one string encoding, so a helper
+     *  is recorded (hasReadWriteHelper) but its strings are this parcel's own. */
+    public static class ReadWriteHelper {
+        public static final ReadWriteHelper DEFAULT = new ReadWriteHelper();
+
+        public void writeString8(Parcel p, String s) { p.writeString8(s); }
+
+        public void writeString16(Parcel p, String s) { p.writeString(s); }
+
+        public String readString8(Parcel p) { return p.readString8(); }
+
+        public String readString16(Parcel p) { return p.readString(); }
+    }
+
+    private ReadWriteHelper mReadWriteHelper = ReadWriteHelper.DEFAULT;
+
+    /** AOSP Parcel.setReadWriteHelper(): null puts the default back. */
+    public void setReadWriteHelper(ReadWriteHelper helper) {
+        mReadWriteHelper = helper != null ? helper : ReadWriteHelper.DEFAULT;
+    }
+
     /** AOSP Parcel.hasReadWriteHelper(): true only when a ReadWriteHelper other
-     *  than the no-op default is installed. We have no such hook, so BaseBundle's
-     *  "unparcel before copying the blob" branch never fires. */
-    public final boolean hasReadWriteHelper() { return false; }
+     *  than the default is installed, as RemoteViews does while it writes; then
+     *  BaseBundle unparcels before copying the blob, as on Android. */
+    public final boolean hasReadWriteHelper() {
+        return mReadWriteHelper != null && mReadWriteHelper != ReadWriteHelper.DEFAULT;
+    }
     /** AOSP copies the source's per-loader creator cache so a nested Parcel does
      *  not repeat the Class.forName work. Purely a cache; behaviour is identical
      *  without it, which is why it is safe for this to be shallow. */
@@ -1204,6 +1230,9 @@ public final class Parcel {
         for (int i = 0; i < n; i++) arr[i] = readString();
         return arr;
     }
+    /** {@hide} AOSP readStringArray(): the array createStringArray reads (AOSP's Slice and SliceItem
+     *  read their hints with it). */
+    public String[] readStringArray() { return createStringArray(); }
     public void readStringArray(String[] out) {
         int n = readInt();
         if (out != null && n == out.length) for (int i = 0; i < n; i++) out[i] = readString();

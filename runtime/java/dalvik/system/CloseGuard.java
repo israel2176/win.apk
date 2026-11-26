@@ -8,6 +8,8 @@ public final class CloseGuard {
     public static void setEnabled(boolean enabled) { ENABLED = enabled; }
     public static boolean isEnabled() { return ENABLED; }
     public void open(String closer) {}
+    /** AOSP openWithCallSite(String closer, String callsite): open(), naming who made it. */
+    public void openWithCallSite(String closer, String callsite) { open(closer); }
     public void close() {}
     public void warnIfOpen() {}
     public interface Reporter { void report(String message, Throwable allocationSite); }

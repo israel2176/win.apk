@@ -562,7 +562,12 @@ not affected (they inflate and draw detached views). Both are fixed below.
   layer's canvas comes back in its initial state at each lock, as AOSP's native
   `lockCanvas` gives one (`ViewRootImpl` translates by the surface insets after
   every lock; a floating window's content walked off its layer frame by frame).
-  The relayout sizes a layer with AOSP's `WindowLayout.computeSurfaceSize`
+  A layer built as a child of a window's control (`SurfaceControl.Builder
+  .setParent`: the text `Magnifier`'s popup through a `BLASTBufferQueue`, a
+  drag shadow) is SurfaceFlinger's child layer: Win.apk's `SurfaceControl`
+  keeps the tree, its Transactions set position, z and visibility, and each
+  buffer layer of it is composed with its window, among its siblings by z
+  (`MagnifierTest`). The relayout sizes a layer with AOSP's `WindowLayout.computeSurfaceSize`
   (a dialog's is its frame plus 64 px of surface insets each side).
 - **The system bars** (`Bars`). Which bars exist stays Win.apk's decision:
   none by default (`StatusBarDriver.systemBarsEnabled`), both with
@@ -797,7 +802,8 @@ it; and the AIDL Stubs (the in-process services' own: `INotificationManager`,
 `ActivityThread.getSystemContext()`'s `ContextImpl`, now a `Context` (`Compat.systemContext`, the
 Application) through both rewrites. Left, behind services Win.apk does not offer: augmented
 autofill (`AssistStructure$ViewNodeBuilder`), translation (`ITranslationCallback`), inline
-suggestions (`SurfaceControl$OnReparentListener`) and `LockPatternUtils` (`IStrongAuthTracker`).
+suggestions (`SurfaceControl$OnReparentListener`, since added: a layer's reparent listeners) and
+`LockPatternUtils` (`IStrongAuthTracker`).
 
 A rotation with an override's Resources: Sudoku in a window (Xvfb), Dark mode picked, then the
 window made landscape (1200x700): the night override's Resources follow the application's
@@ -835,6 +841,15 @@ from a heap dump taken by a script after scrolling; the process's private memory
   new empty package and its 256-slot type array, where AssetManager2 resets it: 254 of them, about
   half a megabyte, per theme copied. `AospResRewrite` makes that branch store null, as the C++
   does (every reader tests the slot).
+- **Robolectric's port of `LoadedPackage::FindEntryByName`** (every `getIdentifier`) decoded the whole
+  key pool from the back (`ResStringPool.indexOfString`; aapt2's pools are unsorted, so no binary search)
+  and then built an object for each entry of each configuration of the type, about 0.4 ms a name on the
+  platform's table; a bank app whose ~22k R fields were looked up by name waited 143 s for its first
+  frame. Its sparse types were read without the type header's size, so their names (46 of the
+  platform's: 38 not found, 8 found at another id, `fraction/*`, `drawable/alert_dark_frame`...).
+  `AospResRewrite` points it at `PortFixes.findEntryByName`: each pool decoded once into a hash map, a
+  type's entries indexed at its first lookup, the C++'s answer in about 0.5 us
+  (`windows/test/java/org/robolectric/res/android/FindEntryByNameTest.java`).
 - **The resource index was built twice.** `AospRes.phoneDefaults` had no locales (AOSP's
   `setToDefaults` leaves none), so Boot's index was opened, then opened again once
   `LocaleManager` set them, and the first stayed alive (4 MB of rows). It now has the default

@@ -2122,5 +2122,8 @@ public class Intent implements Parcelable, Cloneable {
         @Override public int hashCode() { return mHashCode; }
     }
 
+    /** AOSP 14 Intent.Flags (@hide): the @IntDef of setFlags's flags; AOSP's AnnotationValidations
+     *  names it. */
+    @java.lang.annotation.Retention(java.lang.annotation.RetentionPolicy.SOURCE)
+    public @interface Flags {}
 }
-

@@ -102,13 +102,16 @@ has not checked in with Google yet, so the store has no device id (its log says
 the line tagged `MacApkTrust` just before it names the server, the certificates
 it sent and who issued them, which is what to attach to a report.
 
+**Play services or another Google app stops starting.** A process the system
+broker starts that crashes twice within two minutes is not started again
+until you open the app or it is updated, as Android stops restarting it:
+`logs\system.log` says `process <name> ... has crashed too many times`, and
+that process's own log in `logs\services\` shows the crash. Attach both to a
+report.
+
 **Gmail or the Play Store says "This device isn't Play Protect certified".**
-Win.apk is not a certified device and does not pretend to be. Register its
-device ID with your Google account on Google's own page: **Settings > Google
-account > Device ID for Google**, **Copy**, then **Register this device**
-([the steps](google-services.md#play-protect-certification)). No such row:
-Google services are off, or have not checked in with Google yet (open the
-Play Store once).
+Win.apk is not a certified device and does not pretend to be
+([Play Protect certification](google-services.md#play-protect-certification)).
 
 **The camera, location or Wi-Fi names are missing.** Windows' privacy switches
 apply: Settings > Privacy & security > Camera, Microphone or Location, with

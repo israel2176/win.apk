@@ -110,4 +110,9 @@ public class Vibrator {
     public android.os.vibrator.VibratorFrequencyProfile getFrequencyProfile() {
         return null;
     }
+
+    /** AOSP 14 Vibrator.OnVibratorStateChangedListener (API 31): AOSP's InputDeviceVibrator names it. */
+    public interface OnVibratorStateChangedListener {
+        void onVibratorStateChanged(boolean isVibrating);
+    }
 }

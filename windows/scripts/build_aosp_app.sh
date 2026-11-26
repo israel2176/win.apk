@@ -144,6 +144,26 @@ if [[ -d "$HERE/../java/aosp_app" ]]; then
         -cp "$(cp_of "$CLASSES" "$VIEWS" "$RES" "$ALL" "$FRAMEWORK" "$LOADER")" @"$WORK/src.txt"
 fi
 
+# What reflection on AOSP's classes resolves, from any package (ReflectClosure.java): an app's
+# getMethod or getDeclaredField on ActivityThread, View or any class of the AOSP jars builds every
+# declared member, so each type a member names must load, as every framework class does on a device.
+# Taken into this jar, first on the class path, for the classes of all four AOSP jars; a nested class
+# of one of Win.apk's own is declared in Win.apk's class instead (runtime/java), and ReflectScan.java
+# checks the stage (CI's runtime tests).
+echo "[aosp-app] the types reflection on AOSP's classes names (ReflectClosure.java)"
+"$JAVA" -cp "$ASM" "$(native_path "$HERE/ReflectClosure.java")" "$(native_path "$CLASSES")" "$(native_path "$ALL")" \
+    --aosp "$(native_path "$VIEWS")" "$(native_path "$RES")" "$(native_path "$GFX")" \
+    --own "$(native_path "$FRAMEWORK")" "$(native_path "$LOADER")" \
+    "$(native_path "$OUT/lib/java_base_patch")" "$(native_path "$OUT/lib/jdk_unsupported_patch")" \
+    > "$WORK/reflect.raw" 2> "$WORK/reflect.err" || { cat "$WORK/reflect.err" >&2; exit 1; }
+# Java ends its lines with CRLF on Windows: a name with its '\r' matches no entry of the jar.
+tr -d '\r' < "$WORK/reflect.raw" > "$WORK/reflect.txt"
+grep '^\[reflect-closure\]' "$WORK/reflect.err" >&2 || true
+if [[ -s "$WORK/reflect.txt" ]]; then
+    extract "$ALL" "$WORK/reflect.txt"
+    echo "[aosp-app]   + $(wc -l < "$WORK/reflect.txt") classes reflection on them names"
+fi
+
 echo "[aosp-app] the rewrite (AospAppRewrite.java)"
 "$JAVA" -cp "$ASM" "$(native_path "$HERE/AospAppRewrite.java")" "$(native_path "$CLASSES")"
 

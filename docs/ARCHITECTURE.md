@@ -139,8 +139,10 @@ and name the launcher shows), plus an overlay for `java.base`.
 upstream Mac.apk's `runtime/src/main.cpp`. It finds the runtime files, installs and
 converts the app, creates the HotSpot JVM in-process with upstream's options
 (SerialGC, a 16 MB thread stack, upstream's `java.base` changes, bytecode
-verification off) and class-data sharing (below), binds the host natives, and
-calls `Boot.run`. One file per
+verification off) and class-data sharing (below), opens every package of the Java
+runtime's modules to the apps' reflection, as ART has no modules (`open_platform_packages`:
+Gson's `setAccessible` on `java.lang.ref.Reference.referent` works as on a phone), binds the
+host natives, and calls `Boot.run`. One file per
 Java class: `native_cocoa.cpp` (the screen, the render tick, input delivery,
 presenting frames), `win32_window.cpp` (the window itself),
 `native_audio.cpp`, `native_webview.cpp`, `native_camera.cpp`,
@@ -494,7 +496,12 @@ checked against its SHA-256.
   upstream's generated GL bindings are compiled unchanged
   (`host/gl/gl_bridges.cpp`) and their `gl*` and `egl*` calls land in
   forwarders (`gl_stubs.inc`, generated from the Khronos headers) that look
-  ANGLE up on first use, so the runtime starts without it.
+  ANGLE up on first use, so the runtime starts without it. A renderer runs
+  on its own GL thread, as on Android: `GLSurfaceView` is AOSP's, whose
+  GLThread makes an EGL10 context (`MacApkEGL10`, real for every thread) and
+  a window surface on the view's holder, and an app's own GL thread does the
+  same on EGL10 or EGL14; that window surface is the host's window surface on
+  the SurfaceView, below.
 - **From native code** (`host/gl/guest_gl.cpp`): every GLES 1.1 to 3.2 and
   EGL 1.5 function wrapped for the System V convention, the Khronos and
   ANGLE/Chromium extensions' functions too (GLES 1's those ANGLE has:
@@ -533,6 +540,10 @@ to top as `Compositor` (`windows/java/aosp_views`) orders them as
 WindowManagerService would, with the dim layer under a `FLAG_DIM_BEHIND`
 window, into the host window's ANGLE surface, placed where the window puts the
 phone (`host/hwui_host.cpp`, `window_gpu_layout`); SurfaceFlinger's part. A
+buffer layer an app builds under a window's `SurfaceControl` (the text
+magnifier's popup, a drag shadow) is a layer as well, which Win.apk's
+`SurfaceControl` keeps in SurfaceFlinger's tree (parent, position, z, shown, as
+Transactions set them) and `Compositor` draws over its window. A
 window drawn in software (`hardwareAccelerated="false"`) posts its bitmap to
 its layer. What the host has as pixels (a GL view read back, a SurfaceView's
 `lockCanvas`, an app's native window, a video frame) is a host layer under the
@@ -791,7 +802,14 @@ the user installed run as apps, as upstream runs them on the Mac:
   (`Local\WinApk-system`, then the pipe name); it exits when no app has been
   open for a minute. It starts an app for another's request as the launcher
   would, `winapk-runtime --apk <library file>`, headless; a second
-  `android:process` of a package gets its own single-instance key. When you
+  `android:process` of a package gets its own single-instance key, so there
+  is one process per (package, process name): a start that finds the key
+  held exits (`kExitAlreadyRunning`) and the broker waits for the running
+  copy to attach. A process it started exits when the broker does. One that
+  crashes again within two minutes of its last crash is a bad process, as
+  ActivityManager's AppErrors marks it: the broker does not start it again
+  for anyone until the user opens the app or the package is updated
+  (`ProcessCrashes`). When you
   open an app the broker is running headless that way (Play services binds
   the Play Store's services, for one), the new start stops the headless
   process and takes its place with a window; its clients bind again, as

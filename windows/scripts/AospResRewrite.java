@@ -107,7 +107,7 @@ public class AospResRewrite {
                 cv = new Rewriter(cv, name, bridge);
             }
             if (name.equals(PORT_THEME)) cv = themeSetToResets(cv);
-            if (name.equals(PORT_PACKAGE)) cv = collectConfigurationsFixed(cv);
+            if (name.equals(PORT_PACKAGE)) cv = findEntryByNameIndexed(collectConfigurationsFixed(cv));
             cr.accept(cv, 0);
             byte[] out = cw.toByteArray();
             if (!java.util.Arrays.equals(in, out)) Files.write(f, out);
@@ -136,6 +136,32 @@ public class AospResRewrite {
                 mv.visitMaxs(0, 0);
                 mv.visitEnd();
                 count("LoadedPackage.CollectConfigurations made the C++'s loop");
+                return null;
+            }
+        };
+    }
+
+    /** The port's LoadedPackage.FindEntryByName (getIdentifier's) decoded every string of the key pool
+     *  (indexOfString on an unsorted pool) and walked every entry of the type for each name: an app
+     *  looking up ~20k names waited minutes. Its body becomes PortFixes.findEntryByName, the same
+     *  answer from each pool decoded once into a hash map. */
+    static ClassVisitor findEntryByNameIndexed(ClassVisitor next) {
+        return new ClassVisitor(Opcodes.ASM9, next) {
+            @Override public MethodVisitor visitMethod(int acc, String name, String desc, String sig, String[] exc) {
+                MethodVisitor mv = super.visitMethod(acc, name, desc, sig, exc);
+                if (!name.equals("FindEntryByName") || !desc.equals("(Ljava/lang/String;Ljava/lang/String;)I")) {
+                    return mv;
+                }
+                mv.visitCode();
+                mv.visitVarInsn(Opcodes.ALOAD, 0);
+                mv.visitVarInsn(Opcodes.ALOAD, 1);
+                mv.visitVarInsn(Opcodes.ALOAD, 2);
+                mv.visitMethodInsn(Opcodes.INVOKESTATIC, "org/robolectric/res/android/PortFixes",
+                        "findEntryByName", "(L" + PORT_PACKAGE + ";Ljava/lang/String;Ljava/lang/String;)I", false);
+                mv.visitInsn(Opcodes.IRETURN);
+                mv.visitMaxs(0, 0);
+                mv.visitEnd();
+                count("LoadedPackage.FindEntryByName made a hash lookup");
                 return null;
             }
         };

@@ -28,9 +28,12 @@ BUDGETS = [
     # 1x1, build_aosp_res.sh).
     ("AOSP resources and views", ["lib/aosp-resources.jar", "lib/aosp-views.jar", "bin/aosp/framework-res-34.apk"],
      25),
-    # AOSP's app layer (ActivityThread, Activity, ContextImpl...: docs/research/aosp-app.md), 1.3 MB,
-    # about 1.25 MB under LZMA; Win.apk's own android.app classes it shadows left the framework jar.
-    ("AOSP app layer", ["lib/aosp-app.jar"], 2),
+    # AOSP's app layer (ActivityThread, Activity, ContextImpl...: docs/research/aosp-app.md), 1.6 MB with
+    # the classes reflection on AOSP's classes names (ReflectClosure.java; 1.3 MB, about 1.25 MB under LZMA,
+    # before them); Win.apk's own android.app classes it shadows left the framework jar. 2.1 MB since the
+    # platform classes apps extend that Win.apk had none of (aosp_app_take.sh's PLATFORM_TAKE: app search
+    # 0.19 MB, Wi-Fi Aware 0.11, RTT 0.05, slices 0.04).
+    ("AOSP app layer", ["lib/aosp-app.jar"], 3),
     ("AOSP graphics (what everything draws with)",
      ["bin/aosp/", "bin/robolectric-nativeruntime.dll", "lib/aosp-graphics.jar"], 70),
     ("Java runtime (jre/)", ["jre/"], 140),

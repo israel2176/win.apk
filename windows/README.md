@@ -90,9 +90,11 @@ build tools it asks for): `fetch_apkeep.sh` builds apkeep from source.
   `WebView2Loader.dll` from `fetch_webview2.sh`; AOSP's graphics', resources'
   and views' files from `build_aosp_gfx.sh`, `build_aosp_res.sh` and
   `build_aosp_views.sh`), `lib/` (the jars from `build_java.sh` and those
-  scripts: the classes of `android-framework.jar` that `aosp-resources.jar` and
-  `aosp-views.jar` shadow, never loaded, are then dropped from it, and the jar
-  as compiled is kept in `<build dir>/java/` for the plain-JVM tests) and
+  scripts: the classes of `android-framework.jar` that `aosp-resources.jar`,
+  `aosp-views.jar` and `aosp-app.jar` shadow, never loaded, are then dropped
+  from it, with Win.apk's own nested classes of a class AOSP's replaces (its
+  `RemoteViews$1`..., which beside AOSP's `RemoteViews` did not load), and the
+  jar as compiled is kept in `<build dir>/java/` for the plain-JVM tests) and
   `clang/` (from
   `stage_clang.sh`, the compiler the arm64 translation uses). The JDK is not
   copied: the runtime uses `<out>/jre` if present, else
@@ -320,7 +322,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-apk-icon-test [<file>...]` | The parsing behind Explorer's thumbnails of the app files (`shell/apk_icon.cpp`, no Windows call; it builds with the host's compiler too): an APK made in the test (a binary manifest, a resource table with a density per configuration and a French one, an alias, an adaptive icon with a color and a picture layer, a vector) gives the densest picture, follows the alias, reads both layers and the package, and gives none for the vector; a bundle's `icon.png`, its base APK read in place, a density split's picture; every truncation and 3000 corrupted copies parsed without a crash or an icon from nowhere. With files, what each gives |
 | `winapk-uia-tree-test` | What a screen reader is told of the views, with no window (`host/uia_tree.h`, `test/uia_tree_test.cpp`; it builds with the host's compiler too): a snapshot written and read back (an editor's line breaks and tabs kept), names as TalkBack speaks them (a clickable row takes its plain texts, which leave UIA's control and content views; a description wins; an editor named by its label, its hint as help), control types by class, the patterns of each, the events from one snapshot to the next (focus, toggles, values, ranges, selection, the caret, a live region spoken, a toast spoken, a window added, a removed node, many lists at once as one change), and the Text pattern's units: a pointed Hebrew letter as one character, words from the app's breaks or the fallback, the Layout's lines, Move and ExpandToEnclosingUnit at the edges, rectangles (a caret, a range over three lines), the offset at a point, FindText |
 | `winapk-uia-test` | The window's UI Automation provider (`host/uia_provider.h`) on a real window with a stand-in app: nothing runs before a client asks, then navigation, names, bounds on the screen, LabeledBy, PositionInSet, HeadingLevel, LiveSetting, Culture, a disabled element refusing; Invoke, Toggle, Value, RangeValue (a value outside the range refused), Scroll (a page down as `ACTION_SCROLL_DOWN`), ScrollItem, SelectionItem, Selection, ExpandCollapse, each reaching the app as its Android action; the Text pattern (document, words, lines, rectangles on the screen, Select, FindText, the selection, the caret, the offset at a point, attributes); hit-testing and focus; an element whose node left. Then a UI Automation client (`IUIAutomation`) finds, reads and invokes by name; under Wine 9 its client lacks this, so those checks are reported and not counted |
-| `winapk-launcher-state-test` | The launcher's state machines, which hold no lock and make no Windows call (it also builds with the host's compiler; CI's launcher check runs it that way). An app's run (`launcher/app_runs.h`): every path from start to end says the right thing (nothing, the splash goes, "didn't start", "stopped with an error", Android's crash dialog for the framework's crash exit and a native fault but not for the app's own `System.exit(10)` or a DLL that would not load, nothing after Close app in "isn't responding": `include/winapk/app_exit.h`), Stop at each point of a run, steps out of order change nothing. An install (`launcher/installs.h`): done, failed, left alone because the app runs; Cancel while it waits, while the file is copied, while the runtime converts it, once it is being kept (refused) and after its end (refused, and nothing is left for the next install of that name); the queue's order. A batch's `.apk` files (`installs.h`, `group_install_sets`): AppInstall `--set`'s lines read, one app's files made one install with its base kept as the app's `.apk` and each split named as a device names it, other apps' and unreadable files apart, a set with no base still one install (refused there). The update check and download (`launcher/updates.h`): one check at a time, what each result leaves known and what the InfoBar says of it (a release once), a failed check keeps a newer version found before, the download's progress. The Store's app (`launcher/store_app.h`): its `apk-store.apk` downloaded only with GitHub's SHA-256 of it and kept only at the release's size and SHA-256; the first opening, the daily check's update, an update that waits while the store app runs, and each failure. Background updates (`launcher/maintenance.h`): a maintenance window only with the setting on and the setup done, never beside a running window or broker, once every 4 hours (at once with none noted or when the clock went back), and it waits on battery, with no network or while an app starts. The Threads window (`launcher/debug_threads.h`, `include/winapk/debug_protocol.h`): an agent's answer reads back and survives a cut-off reply, every Windows thread is a row with or without an agent, the agent's extra threads are rows too, CPU shares, the search, a sort that holds still. The library's files (`launcher/library_files.h`, std::filesystem only, on real files in a scratch folder): a bundle kept as `<name>.apk` and `<name>.splits\`, hard links to its installed APKs (two names each, one copy), that step done again over a cut-off one, no installed copy and the bundle stays, an update's files set aside and never written, then dropped or put back |
+| `winapk-launcher-state-test` | The launcher's state machines, which hold no lock and make no Windows call (it also builds with the host's compiler; CI's launcher check runs it that way). An app's run (`launcher/app_runs.h`): every path from start to end says the right thing (nothing, the splash goes, "didn't start", "stopped with an error", Android's crash dialog for the framework's crash exit and a native fault but not for the app's own `System.exit(10)` or a DLL that would not load, nothing after Close app in "isn't responding": `include/winapk/app_exit.h`), Stop at each point of a run, steps out of order change nothing. An install (`launcher/installs.h`): done, failed, left alone because the app runs; Cancel while it waits, while the file is copied, while the runtime converts it, once it is being kept (refused) and after its end (refused, and nothing is left for the next install of that name); the queue's order. A batch's `.apk` files (`installs.h`, `group_install_sets`): AppInstall `--set`'s lines read, one app's files made one install with its base kept as the app's `.apk` and each split named as a device names it, other apps' and unreadable files apart, a set with no base still one install (refused there). The update check and download (`launcher/updates.h`): one check at a time, what each result leaves known and what the InfoBar says of it (a release once), a failed check keeps a newer version found before, the download's progress. The Store's app (`launcher/store_app.h`): its `apk-store.apk` downloaded only with GitHub's SHA-256 of it and kept only at the release's size and SHA-256; the first opening, the daily check's update, an update that waits while the store app runs, and each failure. Background updates (`launcher/maintenance.h`): a maintenance window only with the setting on and the setup done, never beside a running window or broker, once every 4 hours (at once with none noted or when the clock went back), and it waits on battery, with no network or while an app starts; none once the user closed the library, and the hidden launcher waits for a window it opened only when the user did not close the library. The Threads window (`launcher/debug_threads.h`, `include/winapk/debug_protocol.h`): an agent's answer reads back and survives a cut-off reply, every Windows thread is a row with or without an agent, the agent's extra threads are rows too, CPU shares, the search, a sort that holds still. The library's files (`launcher/library_files.h`, std::filesystem only, on real files in a scratch folder): a bundle kept as `<name>.apk` and `<name>.splits\`, hard links to its installed APKs (two names each, one copy), that step done again over a cut-off one, no installed copy and the bundle stays, an update's files set aside and never written, then dropped or put back |
 | `test/java/com/macapk/loader/BrokerJobsTest.java` (CI) | The broker's job store (`BrokerJobs`) with its own clock and host: a job is its process's until the process dies, then the broker's; not started before it is due, nor with a constraint unmet (network, unmetered, charging, battery not low, storage not low, idle) until its override deadline; a job running when its process died is held with its backoff; work items and content triggers go with their process; a failed hand-over waits; what keeps the broker up; the store written and read back, a Windows reboot keeping only persisted jobs; `setRequiredNetwork(NOT_METERED)` an unmetered job across a Parcel |
 | `test/java/com/macapk/loader/SessionUpdateTest.java` (CI) | AOSP's update rules (`PackageInstallerBackend.checkUpdate`: the same signer, another refused `UPDATE_INCOMPATIBLE`, a key rotation either way accepted, a downgrade refused `VERSION_DOWNGRADE` with AOSP's message, `GENTLE_UPDATE`); then a session in a child JVM with a stand-in install helper: base APK, config split and dex metadata written, committed, one bundle without the `.dm` handed to the helper, `STATUS_SUCCESS` with its package, the staging removed; declined `STATUS_FAILURE_ABORTED`, failed `STATUS_FAILURE` with the reason, a helper that prints `[helper] exit <code>` and stays up 30 s has its status sent at that line, empty `STATUS_FAILURE_INVALID` without the helper |
 | `test/java/com/macapk/gms/GmsTokensTest.java` (CI) | The Google master token held by the account's owner alone, on a plain JVM with a stand-in for DPAPI: an older install's `gms_state.properties` with the master token and a token in the clear is listed but not readable in an app's process, and the owner's first read moves both into the sealed `tokens.dat` (the public file keeps the account, without them); `masterToken`, `putAccount`, `removeAccount` in the owner, refused in an app; an app's peek, put, invalidate, scoped and app-token requests through `GmsTokenService` with the reasons as `lastError()`, another app's cached ID token and a token minted for another package or certificate refused; the broker's plain accounts table moved into `accounts_ce.dat`, sealed; and a scan that no app-side source reads the master token or the token files |
@@ -1093,8 +1095,8 @@ drives it: `ActivityThread`, the client transactions, `Instrumentation`,
 `ContextImpl`, `LoadedApk`, `Application`, `Activity`). The plan, with its
 measurements, is `docs/research/aosp-app.md`. Every app's process starts on
 it, with no switch (Boot through `com.macapk.loader.app.AppHost`):
-`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (about 600 classes,
-1.3 MB, first on the class path, staged by `stage_runtime.sh`) with the
+`scripts/build_aosp_app.sh <stage>` makes `lib/aosp-app.jar` (about 740 classes,
+1.6 MB, first on the class path, staged by `stage_runtime.sh`) with the
 rewrite `scripts/AospAppRewrite.java` and the in-process activity manager,
 task manager and client controller of `java/aosp_app`, and
 `test/aospapp/run.sh <stage> <deps> [out] [whole android-framework.jar]` (the
@@ -1103,7 +1105,9 @@ resources and views shadow: `<build>/java/android-framework.jar`) runs AOSP's
 `ActivityThread` through an
 application and two activities' whole lifecycle in Android's order (the
 graphics bound by the host's own redirect, `host/aosp_gfx_redirect.cpp`, built
-into the test's library); CI runs it on Ubuntu (informational). Win.apk's own
+into the test's library), then `MagnifierTest` (a window's child layers placed
+by Transactions in the compositor's scene, and `Magnifier.show` over an
+`EditText`); CI runs it on Ubuntu (informational). Win.apk's own
 `Activity`, `Application`, `ActivityThread`, `Instrumentation`, `LoadedApk`
 and framework `Fragment` classes are deleted: `build_java.sh` compiles the
 framework against android-all's (`scripts/aosp_app_take.sh`, the one list both
@@ -1111,6 +1115,28 @@ scripts read), and the framework asks the process's Application through
 `com.macapk.loader.app.Apps`. A JVM with Win.apk's framework but not
 `aosp-app.jar` has no `android.app.Activity` or `Application` at all, so a
 test of the framework that reaches them puts the jar on its class path.
+
+Reflection on any of these classes works as on a device. Apps and their SDKs
+look members up by reflection on framework classes (an analytics SDK's
+`getMethod` on `ActivityThread`), and HotSpot then builds every declared
+method, field and constructor of the class, so every type those name must
+load: on a device every framework class exists. `scripts/ReflectClosure.java`
+(run by `build_aosp_app.sh`) takes from android-all, into `aosp-app.jar`, every
+class such a declaration in the four AOSP jars names that nothing on the class
+path has, from any package (about 90: `AssistStructure`, `IPermissionManager`,
+`IVoiceInteractionManagerService`, the notification listener's AIDL...; only
+loaded, never run unless an app goes further). A nested type of one of
+Win.apk's own classes is declared in that class instead, after AOSP 14
+(`SplashScreenView.SplashScreenViewParcelable`, `SystemProperties.Handle`,
+`Parcel.ReadWriteHelper`, `SurfaceControl.RefreshRateRange`,
+`StrictMode.ViolationInfo`, `InputManager`'s listeners...; the closure prints
+any it finds missing), and `SurfaceControl.OnJankDataListener` has AOSP 14's
+shape, an abstract class (AOSP's `FrameTracker` extends it). CI's runtime
+tests run `scripts/ReflectScan.java` on the stage: every class of
+`aosp-app.jar`, `aosp-views.jar`, `aosp-resources.jar`, `aosp-graphics.jar`
+and `android-framework.jar` loaded on the host's class path and JDK patches,
+its declared members asked for; any `NoClassDefFoundError` or
+`IncompatibleClassChangeError` fails the job.
 
 Two rules for every AOSP layer, this one and those after it (resources,
 views...), so that moving onto AOSP's code does not make Win.apk heavy:
@@ -1164,7 +1190,12 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   is a layer in the DLL (`aosp_views/HwuiLayers`): HWUI draws it into a
   pbuffer of its size, and the DLL's compositor draws the layers in
   `Compositor`'s order, with the dim behind dialogs, into the host window's
-  ANGLE surface on the render thread (`host/hwui_host.cpp`; where the phone
+  ANGLE surface on the render thread. A buffer layer an app builds as a child
+  of a window's `SurfaceControl` (the text `Magnifier`'s popup, drawn by a
+  `ThreadedRenderer.SimpleRenderer` through Win.apk's `BLASTBufferQueue`; a
+  drag shadow) is a layer too, composed over its window at the place, z and
+  visibility its Transactions give it; no crop, alpha, scale or color layer is
+  composed (`host/hwui_host.cpp`; where the phone
   goes in the window is `win32_window.cpp`'s `window_gpu_layout`). Nothing
   is composed before a window or a host layer has drawn, as WindowManager
   shows a window only once it has drawn: a splash that holds its first draw
@@ -1182,12 +1213,22 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   heap bitmap with the pixels (no AHardwareBuffer); a TextureView draws
   through its own layer. `test/surfaces/build.sh` builds the APK that shows
   all four, each logging a `SURFACES` line.
-- An app's own GL (a `GLSurfaceView`, native EGL, a `NativeActivity`) is on
-  an ANGLE display of its own (`host/gl/gl_surface.cpp`), not the DLL's:
-  ANGLE has one Direct3D 11 device and immediate context per display and no
-  lock between contexts that share nothing, so the app's GL thread and the
-  render thread on one display crashed ANGLE. Nothing crosses between the two
+- An app's own GL (a `GLSurfaceView`, native EGL, a `NativeActivity`, an
+  `EGL14` thread) is on an ANGLE display of its own (`host/gl/gl_surface.cpp`),
+  not the DLL's: ANGLE has one Direct3D 11 device and immediate context per
+  display and no lock between contexts that share nothing, so the app's GL
+  thread and the render thread on one display crashed ANGLE. Native code's
+  `eglGetDisplay`, `MacApkEGL10` and `EGL14.eglGetDisplay(EGL_DEFAULT_DISPLAY)`
+  (`host/gl/gl_bridges.cpp`; upstream's answered ANGLE's default display, which
+  ANGLE keys as the DLL's, and the render thread crashed in `libGLESv2` as an
+  EGL14 thread made its surface) all answer that one display, as Android's
+  libEGL has one default display per process, and an app's `eglTerminate` of
+  it does not reach ANGLE while the framework draws on it. Nothing crosses between the two
   displays: the app's frames reach the compositor as the host layer's pixels.
+  A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
+  makes an EGL window surface on the view's holder (the host's window surface
+  on the SurfaceView, read back at each swap), as does an app's own copy of
+  it, on EGL10 or EGL14; `test/glthread/` checks both, and a resize.
 - The snapshot (Ctrl+Shift+F12) and the headless frame file
   (`WINAPK_HEADLESS_FRAME`) read the composed frame back on the render thread.
 - Shader caches: ANGLE's programs (`EGL_ANDROID_blob_cache`) and Skia's
@@ -1384,6 +1425,7 @@ Package job runs it on the stage and `Win.apk-Setup.exe` it just built
 | Part | Today | Budget |
 |---|---:|---:|
 | AOSP graphics files (`bin\aosp\`, the DLL, the jar) | 60.5 MB | 70 MB |
+| AOSP app layer (`lib\aosp-app.jar`; 1.6 MB before the platform classes apps extend, `PLATFORM_TAKE`) | 2.1 MB | 3 MB |
 | Java runtime (`jre\`) | 127.3 MB | 140 MB |
 | The arm64 translation's compiler (`clang\`) | 232.9 MB | 250 MB |
 | Win.apk itself (the rest, `bin\tools\` included) | 105.2 MB, about 81 MB without the API-36 table and the shadowed classes, about 74 MB without Java2D's graphics | 92 MB |
@@ -1706,9 +1748,9 @@ start; those throw alike on both sides, and only a difference counts.
 | Launcher check | Ubuntu | What changed | The launcher compiled with MinGW-w64, warnings as errors: an answer in about a minute |
 | Build | `windows-latest` | What changed | Every CMake target with MSYS2 CLANG64 through ccache (the cache is restored from the newest run, `main`'s for a pull request's first one), then `stage_runtime.sh build stage` and `bake_jre.sh` into `stage/jre`. Uploads `winapk-binaries` (every exe, and `build/java/android-framework.jar`) and `runtime-stage` |
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
-| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
+| Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, reflection over every class of the staged framework jars (`scripts/ReflectScan.java`), the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
-| AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM); its verdict, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
+| AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM, then `MagnifierTest`: a window's child layers and `Magnifier.show`); its verdicts, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
@@ -1848,6 +1890,10 @@ every such change is listed here:
   `android/icu/text/MeasureFormat.java` and `android/icu/util/LocaleData.java`:
   comments only.
 
+- `runtime/java/android/os/BinderProxy.java`: `unlinkToDeath` answers as AOSP's
+  `android_os_BinderProxy_unlinkToDeath`: true once the far process is dead (`DEAD_OBJECT`) or the link is
+  removed, and `NoSuchElementException` only for a recipient never linked to a live binder (upstream threw on
+  every dead binder, which crashed `LoadedApk`'s `doConnected` when a service's process died and came back).
 - `runtime/java/android/os/MacApkBinderTransport.java`: tries `nativeInit()`
   before looking for upstream's `libmacapk-binder.dylib`, since the Windows
   host binds the transport's natives itself (`windows/host/binder_win.cpp`);
@@ -2104,12 +2150,11 @@ every such change is listed here:
   view. Comparing the wrapper itself skipped it, so a NativeActivity (SDL)
   never got its window and stayed blank. An upstream bug too.
 - `runtime/java/android/os/Build.java`, `com/macapk/gms/CheckinClient.java`:
-  on Windows the device is Win.apk: `BRAND`, `MANUFACTURER` and `MODEL`
-  "Win.apk", `DEVICE`, `PRODUCT`, `BOARD` and `USER` "winapk", `HARDWARE`
-  "x86_64", `DISPLAY` "Win.apk-1", `HOST` "winapk"; `FINGERPRINT`, the `ro.*`
-  properties and the GMS clients' user agents follow from them, and the
-  check-in's own User-Agent says Win.apk. Upstream reports Apple and the Mac's
-  hardware model, which a PC is not; no real phone or Google device is named.
+  on Windows the device is upstream's, by the maintainer's choice: `BRAND` and
+  `MANUFACTURER` "Apple", `MODEL` "Mac" (Windows has no `hw.model` to export),
+  `DEVICE`, `PRODUCT`, `BOARD` and `USER` "macapk", what every Windows run
+  reported until 1.0.0, and the check-in's User-Agent "Mac.apk" too. No real
+  phone or Google device is named.
 - `runtime/java/com/macapk/gms/McsClient.java`: `WINAPK_PROXY` (a SOCKS proxy
   for the push connection) wins over upstream's per-app `HostProxy` policy.
 - `runtime/java/com/macapk/loader/Manifest.java` and `MacApkPackageManager.java`:
@@ -2250,7 +2295,8 @@ every such change is listed here:
   died at start on the missing method). Not Windows-specific.
 - `runtime/java/com/macapk/loader/Boot.java` (`writeJavaProcMirror`,
   `writeProcCmdline`): the `/proc` mirror also writes
-  `<android root>/proc/<pid>/cmdline`, the process name and a NUL, which
+  `<android root>/proc/<pid>/cmdline`, the process name (the manifest's, `Boot.processName`: AOSP's
+  `ActivityThread.currentProcessName()` is null until `bindApplication`) and a NUL, which
   `/proc/self/cmdline` and `/proc/<pid>/cmdline` name (`paths.cpp`;
   `java.io.FileReader`'s `/proc` hook, `Cocoa_remapProcPath`), and drops the
   directories of pids that no longer run (Breezy Weather reads the file in
@@ -2722,7 +2768,7 @@ every such change is listed here:
   VFS (`SQLiteDatabase` hands it Android database paths) and `MediaPlayer`'s file
   source (`HostVideo`) all map an Android path to the host file first.
 - `runtime/java/javax/microedition/khronos/egl/MacApkEGL10.java`: an app's
-  own GL thread with a real context (not a GLSurfaceView fork) that calls
+  own GL thread with a real context that calls
   `eglCreateWindowSurface` on a SurfaceView or its holder gets a window
   surface on the SurfaceView: `nativeCreateSurfaceViewWindow` makes a pbuffer
   over the native window, and `nativeSwapSurfaceViewWindow` presents it as
@@ -3043,6 +3089,22 @@ every such change is listed here:
   `MOVED_TO_SECURE` / `MOVED_TO_GLOBAL` do. Discount and Mercantile read
   `Settings.System` `android_id` and threw on null in `Application.onCreate`.
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/ProcessCrashes.java` (new), `SystemServer.java`,
+  `SystemClient.java`: one process per (package, process name), and none
+  started again in a crash loop, as ActivityManagerService keeps them. A
+  process the broker started that crashes again within AOSP 14's
+  `MIN_CRASH_INTERVAL` (two minutes) is bad (AppErrors), and the broker
+  refuses to start it for a bind, start, provider, broadcast, job, the boot or
+  a revival until the user opens the app or the package changes
+  (`process ... has crashed too many times` in `system.log`); Play services
+  crashing as it started was booted again for every bind the Play Store made,
+  276 times in one log. A start that finds the app's single-instance lock held
+  by a copy of the same process exits with `kExitAlreadyRunning`
+  (`include/winapk/app_exit.h`) and the broker waits for that copy to attach,
+  and a start left waiting on a copy that is gone is forgotten at its timeout.
+  A process the broker started exits when the broker does, or when its attach
+  fails (AMS kills it), instead of lingering as a copy no broker knows.
+  `windows/test/java/com/macapk/loader/ProcessCrashesTest.java`.
 - `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`:
   `ServiceInfo.permission` is the service's `android:permission` (else the
   application's). IBM Trusteer's TAZ checks a job service for
@@ -3595,7 +3657,9 @@ every such change is listed here:
   AOSP's Activity does; it declares the 13 `Window.Callback` methods Win.apk's interface had as
   defaults, with the same bodies (AOSP's interface has them abstract). `android/app/Application.java`,
   `android/content/Context.java`: `getSystemService` asks `ViewHost.systemService` first (null on
-  Win.apk's views). `android/os/ServiceManager.java`: `addService` registers in-process binders and
+  Win.apk's views) and keeps its answer, one manager per name for the context's life, as ContextImpl's
+  service cache does (ToastPresenter holds the window manager only weakly).
+  `android/os/ServiceManager.java`: `addService` registers in-process binders and
   the lookups answer them (nothing is added on Win.apk's views, so every lookup is null as before).
   `android/os/Handler.java`: AOSP's hidden `Handler(Looper, Callback, boolean)` (now public),
   `Handler(boolean)`, `Handler(Callback, boolean)`, `getMain` and `runWithScissors`.
@@ -3748,8 +3812,8 @@ every such change is listed here:
   `main`, read from a copy with its WAL through the runtime's SQLite, as
   `InstallerOfRecord` reads Play's ledger) as a signed decimal, or, with no
   GSF database, the layer's own checkin rendered as `GservicesProvider`
-  hands it to apps; no line when there is none. Settings > Google account's
-  **Device ID for Google** row asks it. Nothing changes on the Mac but the
+  hands it to apps; no line when there is none. Nothing in the launcher asks
+  it (Settings has no registration row). Nothing changes on the Mac but the
   new verb.
 - `runtime/java/com/macapk/loader/CameraBridge.java`,
   `android/hardware/Camera.java`, `camera2/CameraBackend.java`,
@@ -3810,6 +3874,85 @@ every such change is listed here:
   activity finished; `Boot`'s `moveToBack` and `taskEmpty` note it). `HostUrlIntake.shouldClaim` is gone with
   the old rule: an open that happens claims the redirect schemes. Upstream's rule refused every link with AOSP's
   input, which noted no real input (`AospInput` now does, for the frame heartbeat).
+- `runtime/java/com/macapk/loader/AppClassLoader.java` (`maybePopulateRClassFields`, R-init): only an R
+  field that still reads 0 (an R8-shrunk class whose `<clinit>` was stripped) is looked up by name; every
+  other one keeps the value its dex gave it (the converter's `ConstantValue`), the value ART has the app
+  read. Upstream looked up every field, a `getIdentifier` each: ~22k on a large app's first activity.
+- `runtime/java/com/macapk/loader/Manifest.java` (`parseApk`), `MacApkPackageManager.java`
+  (`registryManifest`), `android/content/pm/PackageManager.java` (`getPackageArchiveInfo`): an APK's
+  manifest is parsed once per version of the file (its path, size and modification time), as Android's
+  package manager parses a package once and answers every query from that. An app walking the installed
+  packages re-read each one's manifest per call (Play services' 1 MB of binary XML dozens of times a run).
+- `runtime/java/android/opengl/GLSurfaceView.java` (deleted), `android/view/SurfaceView.java`,
+  `javax/microedition/khronos/egl/MacApkEGL10.java`, `com/google/android/gles_jni/GLImpl.java` (new),
+  `com/macapk/loader/view/ViewHost.java`, `WinApkViewHost.java`, `TouchDispatcher.java`: GL renderers run
+  on their own GL thread, as on Android. `GLSurfaceView` is AOSP 14's (`aosp_gfx_take.sh`, in
+  `lib/aosp-graphics.jar`): its GLThread makes an EGL10 context and a window surface on the view's holder
+  (`MacApkEGL10.viewWindow`, the host's window surface on the SurfaceView, `windows/host/gl/egl10_window.cpp`)
+  and calls `onSurfaceCreated`, `onSurfaceChanged` and `onDrawFrame` there, again at every resize. Upstream's
+  own `GLSurfaceView` drove the renderer from the host's render thread, and upstream's `SurfaceView` looked
+  for any other renderer by reflection (a field whose value had an `onDrawFrame`) and drove it the same way,
+  while `MacApkEGL10` refused an app's own GLThread (a copy of GLSurfaceView's) its context so that it died:
+  the Mac could give such a thread no window. A renderer the reflection could not find (an obfuscated
+  app's, or one a helper object holds: Waze's map, `com.waze.map.opengl.x` on its SurfaceView) then never
+  drew, and the log filled with `macapkDrawFrame skip #N: no renderer resolved yet`. Gone with it: the
+  reflected drive, the fork thread detection, the single-owner rule, the refusal survivors, the fork
+  event-queue drain and the GL size helpers only upstream's `GLSurfaceView` called (and their `ViewHost`
+  members); `MacApkEGL10`'s legacy contract is now only what a JVM without the EGL14 natives answers.
+  `EGLContext.getGL()` is a `GLImpl` (each GL10/GL11 method forwarded to the `GLES10`/`GLES11`/`GLES20`
+  binding of the same name), as AOSP's `EGLContextImpl` hands out. `windows/host/gl/gl_bridges.cpp`: EGL14's
+  `eglCreateWindowSurface` on a SurfaceView, its holder or its Surface makes the same window surface (upstream
+  put it on the Mac's native-EGL layer and answered `EGL_NO_SURFACE` here), swapped and destroyed through
+  `surface_view_window_*`; its `eglGetDisplay(EGL_DEFAULT_DISPLAY)` is the app's display, the one native code
+  and `MacApkEGL10` get, not the graphics DLL's, and its `eglTerminate` leaves that display up.
+  `windows/host/native_cocoa.cpp`: a renderer (`setRenderer`) is told its surface size by registration, not by
+  global ref, which the JVM reuses, so a SurfaceView of a relaunched activity hears its surface.
+  `windows/test/glthread/` checks all three in a window (CI, "GL threads").
+- Child layers (the text magnifier): `runtime/java/android/view/SurfaceControl.java` keeps SurfaceFlinger's
+  layer tree: the `Builder` takes AOSP's `Builder(SurfaceSession)` (it had an untyped `Builder(Object)`, so
+  AOSP's `Magnifier`, `View`'s drag shadow, `ViewRootImpl.getBoundsLayer` and `WindowlessWindowManager` threw
+  `NoSuchMethodError`: dragging a text handle killed the app), AOSP's flags (`HIDDEN` by default, container,
+  effect and BLAST layers), the parent and the owner view; a layer (shared by its handles: `copyFrom`, AOSP's
+  copy constructor) has a parent, position, z and visibility, which `Transaction`'s `setPosition`, `setLayer`,
+  `show`, `hide`, `setVisibility`, `reparent`, `remove` and `setBufferSize` now record and `apply` sets
+  (`merge` moves them, `clear` drops them; the other setters still record nothing), and a buffer layer built
+  with a parent is given a layer by the window manager's compositor (`MacapkLayerTree`, which `Compositor`
+  sets), released with its last handle. Also AOSP's `getLayerId`, `isSameSurface`, `getLocalOwnerView`,
+  `getCallsite`, `setUnreleasedWarningCallSite`, `addOnReparentListener`/`removeOnReparentListener`,
+  `dumpDebug`, the static `addJankDataListener`/`removeJankDataListener` and
+  `Transaction.sendSurfaceFlushJankData` (no jank data, as before), `JankData`'s `frameVsyncId`/`jankType` and
+  `JankData(long, int)`, and `RefreshRateRange` (`DisplayInfo`'s). `Transaction.remove` and `clear` were
+  `aosp_views/Compat`'s no-ops. New: `android/view/SurfaceSession.java` (to compile against: AOSP's ships in
+  `aosp-views.jar` and this one is dropped from the stage) and `android/graphics/BLASTBufferQueue.java`
+  (Win.apk's, left out of `aosp-graphics.jar` by `aosp_gfx_take.sh`: a BLAST layer's buffers are its layer in
+  the DLL, which HWUI finds through the Surface `createSurface` copies from the control; a transaction merged
+  with the next frame applies at once). `dalvik/system/CloseGuard.java`: `openWithCallSite`
+  (`SurfaceControlViewHost`'s). `android/view/SurfaceView.java`: AOSP's `onSetSurfacePositionAndScale`
+  (`InlineContentView` overrides it). `windows/test/aospapp/MagnifierTest.java` checks the tree and
+  `Magnifier.show`.
+- Platform classes apps extend (Google Play services crashed at every start, 26.34.36): R8 puts into an app
+  built for an older minSdk a stand-in for each platform class the app extends that its minSdk lacks, a class
+  whose static initializer throws `NoClassDefFoundError`; on a device the boot class path's class wins over
+  it, and `AppClassLoader` asks the framework first for `android.*` as ART does, so the stand-in was loaded
+  only because Win.apk had no such class. Play services declares slice providers
+  (`FastPairSliceProvider`...), so installing them threw `NoClassDefFoundError` from
+  `android.app.slice.SliceProvider.<clinit>`. `runtime/java/android/app/slice/` (deleted): the package is
+  AOSP 14's, taken whole into `lib/aosp-app.jar` (`aosp_app_take.sh`'s `PLATFORM_TAKE`, with
+  `android.app.appsearch`, `android.net.wifi.aware` and `.rtt`, and `MediaRoute2ProviderService` with its
+  AIDL: the other platform classes Play services, the Play Store and the Services Framework carry stand-ins
+  for). `android/content/Context.java`: `SLICE_SERVICE`, AOSP's `SliceManager` over the in-process
+  `ISliceManager` an app's process registers (`windows/java/aosp_app/.../SliceService.java`: pins and grants
+  as a phone with no slice host keeps them; a first pin reaches the provider's `onSlicePinned`).
+  `android/content/ContentProvider.java`: AOSP's `getUriWithoutUserId` and `validateIncomingUri` (the
+  slice provider checks each uri with them; `android/provider/DocumentsProvider.java`'s private copy of the
+  latter is gone). `android/os/Bundle.java`: `setDefusable(Bundle, boolean)` (no effect outside the
+  system server); `android/os/Parcel.java`: `readStringArray()`. `android/net/nsd/NsdManager.java`:
+  `ServiceInfoCallback` and `registerServiceInfoCallback` (it fails, as every request there);
+  `android/net/wifi/WifiManager.java`: `LocalOnlyHotspotCallback`, `LocalOnlyHotspotReservation` (none is
+  made) and `startLocalOnlyHotspot` (`onFailed(ERROR_GENERIC)`: no hotspot here). The app search, Wi-Fi Aware
+  and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
+  is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
+  `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
 
 ## License
 
