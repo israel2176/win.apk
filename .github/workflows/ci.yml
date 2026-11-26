@@ -681,6 +681,16 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/stubs-test windows/test/java/FrameworkStubsTest.java
           MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
             --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/stubs-test)" FrameworkStubsTest
+      - name: Run the PBE providers test
+        run: |
+          # The password-based crypto Android answers from BC (PBEWithMD5AndDES with any salt, the
+          # PBEWithHmacSHA* Macs) resolves to BC with AOSP 14's bytes, as the host's preference set at
+          # JVM start makes it, and AES, GCM, SHA, HMAC, PBKDF2 and TLS stay on the JDK's providers.
+          # In winapk-runtime (--java-test): the preference is the host's, set before any Java runs.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          "$JAVA_HOME/bin/javac" -d build/pbe-test windows/test/java/PbeProvidersTest.java
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/pbe-test)" PbeProvidersTest
       - name: Run the DateTimeView test
         run: |
           # android.widget.DateTimeView (a notification template's time) as
