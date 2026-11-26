@@ -228,6 +228,24 @@ public class ContextWrapper extends Context {
         if (baseContext != null) baseContext.startActivity(intent, options);
         else super.startActivity(intent, options);
     }
+    /** AOSP ContextWrapper: each of these goes to the base context. */
+    @Override public int startActivitiesAsUser(Intent[] intents, android.os.Bundle options,
+            android.os.UserHandle userHandle) {
+        if (baseContext != null) return baseContext.startActivitiesAsUser(intents, options, userHandle);
+        return super.startActivitiesAsUser(intents, options, userHandle);
+    }
+    @Override public void startActivityForResult(String who, Intent intent, int requestCode,
+            android.os.Bundle options) {
+        if (baseContext != null) baseContext.startActivityForResult(who, intent, requestCode, options);
+        else super.startActivityForResult(who, intent, requestCode, options);
+    }
+    @Override public boolean canStartActivityForResult() {
+        return baseContext != null ? baseContext.canStartActivityForResult() : super.canStartActivityForResult();
+    }
+    @Override public boolean isAutofillCompatibilityEnabled() {
+        return baseContext != null ? baseContext.isAutofillCompatibilityEnabled() : super.isAutofillCompatibilityEnabled();
+    }
+
     @Override public void startActivities(Intent[] intents) {
         if (baseContext != null) baseContext.startActivities(intents);
         else super.startActivities(intents);

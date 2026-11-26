@@ -302,6 +302,16 @@ public class BaseBundle {
 
     public int size()                       { unparcel(); return map.size(); }
     public boolean isEmpty()                { unparcel(); return map.isEmpty(); }
+
+    /** {@hide} AOSP BaseBundle.isDefinitelyEmpty: true when the bundle holds nothing, without
+     *  reading a parcelled one (an empty parcel counts as empty). AOSP's LaunchActivityItem asks it. */
+    public boolean isDefinitelyEmpty()      { return isEmpty(); }
+
+    /** {@hide} AOSP BaseBundle.setDefusable(boolean): a defusable bundle erases what it cannot
+     *  unparcel instead of throwing. AOSP's ComponentOptions(Bundle) (ActivityOptions,
+     *  BroadcastOptions) marks every options bundle so. Win.apk's bundles unparcel at once in this
+     *  process, so there is no later failure to defuse: nothing to keep. */
+    public void setDefusable(boolean defusable) {}
     public void clear()                     { unparcel(); map.clear(); }
     public boolean containsKey(String key)  { unparcel(); return map.containsKey(key); }
     public Set<String> keySet()             { unparcel(); return map.keySet(); }
