@@ -53,8 +53,47 @@ public final class WinApkPaths {
             String h = host0(p);
             return h != null ? h : p;
         } catch (UnsatisfiedLinkError unbound) {
-            return p;
+            // A JVM without winapk-runtime's table (the overlay's own tests): the table's
+            // last rule, <android root>/<the rest>, with the same host names.
+            String root = System.getProperty("winapk.android.root");
+            if (root == null) return p;
+            while (root.endsWith("\\") || root.endsWith("/")) root = root.substring(0, root.length() - 1);
+            return root + hostNames(normalize(p)).replace('/', '\\');
         }
+    }
+
+    // Whether Windows refuses `c` in a file name wherever it stands (NUL is never a name's).
+    private static boolean forbidden(int c) {
+        return (c < 0x20 && c != 0) || "<>:\"|?*".indexOf(c) >= 0;
+    }
+
+    /**
+     * The names of an Android path (or one name) as they are on the host: each character
+     * Windows forbids in a name (&lt; &gt; : " | ? *, the control characters, and a name's
+     * final dot or space, which Windows drops) is U+F000 + the character, the mapping
+     * WSL's DrvFs and Cygwin use and paths.cpp's host_names. "." and ".." stay links.
+     */
+    public static String hostNames(String p) {
+        int n = p.length();
+        StringBuilder sb = null;
+        int start = 0;  // of the name `i` is in
+        for (int i = 0; i < n; i++) {
+            char c = p.charAt(i);
+            if (c == '/' || c == '\\') {
+                start = i + 1;
+                continue;
+            }
+            boolean map = forbidden(c);
+            if (!map && (c == '.' || c == ' ') && (i == n - 1 || p.charAt(i + 1) == '/' || p.charAt(i + 1) == '\\')) {
+                int len = i + 1 - start;
+                map = c == ' ' || !(len == 1 || (len == 2 && p.charAt(start) == '.'));
+            }
+            if (map) {
+                if (sb == null) sb = new StringBuilder(p);
+                sb.setCharAt(i, (char) (0xF000 + c));
+            }
+        }
+        return sb == null ? p : sb.toString();
     }
 
     /** An Android path in normal form: '/' separators, no repeated or trailing '/'. */
@@ -118,7 +157,7 @@ public final class WinApkPaths {
             if (c <= 0xF000 || c > 0xF07F) continue;
             char plain = (char) (c - 0xF000);
             boolean last = i == n - 1 || s.charAt(i + 1) == '/' || s.charAt(i + 1) == '\\';
-            if (plain < 0x20 || "<>:\"|?*".indexOf(plain) >= 0 || (last && (plain == '.' || plain == ' '))) {
+            if (forbidden(plain) || (last && (plain == '.' || plain == ' '))) {
                 if (sb == null) sb = new StringBuilder(s);
                 sb.setCharAt(i, plain);
             }

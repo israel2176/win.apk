@@ -577,10 +577,14 @@ nobody has to find them again.
   directory by an Android path (or a descriptor): `readdir`/`scandir`/`fts` in
   the shim, `WinNTFileSystem.list` and a `DirectoryStream`'s entries in the
   overlay (`WinApkPaths.androidName`). The `*at()` calls map the name they join
-  onto the directory's host path. Not done: `java.nio`'s `WindowsPathParser`
-  (not overlaid) still throws `InvalidPathException` for such a name given to
-  `Paths.get`/`File.toPath`; `realpath`/`getcwd` answer host paths, which keep
-  the private-use characters and open as they are.
+  onto the directory's host path. `java.nio` takes such a name as well:
+  `WindowsPath.parse` keeps an Android path out of `WindowsPathParser` (not
+  overlaid), whose `InvalidPathException` on `:` in `File.toPath` stopped every
+  app with Firebase (`shared_prefs/frc_1:<app id>:...xml` through AOSP's
+  `SharedPreferencesImpl` and `Os.stat`), and `resolve(String)` joins a name onto
+  an Android path by its text. Not done: `realpath`/`getcwd` answer host paths,
+  which keep the private-use characters and open as they are; a relative path
+  with no Android directory (`Paths.get("a:b")`) is still Windows' to parse.
 - java.io and java.nio keep the Android form in the overlay
   (`jdk.internal.util.WinApkPaths`, `WinNTFileSystem`, `File`, `WindowsPath`):
   `isAndroid(p)` is "one leading `/`, not `//` (UNC) and not `/C:` (a file URL's

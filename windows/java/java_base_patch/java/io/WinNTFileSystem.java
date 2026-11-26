@@ -290,9 +290,11 @@ final class WinNTFileSystem extends FileSystem {
         int cn = child.length();
         if (cn == 0) return parent;
         if (WinApkPaths.isAndroid(parent)) {
-            // Win.apk: under an Android path a child joins with '/'; a drive in
-            // it nests as below ("D:\a" -> "D/a").
-            if (cn >= 2 && isLetter(child.charAt(0)) && child.charAt(1) == ':') {
+            // Win.apk: under an Android path a child joins with '/'; a drive path in
+            // it nests as below ("D:\a" -> "D/a"), but a name with a colon is a name
+            // ("a:b": Android's names may hold any character but '/' and NUL).
+            if (cn >= 2 && isLetter(child.charAt(0)) && child.charAt(1) == ':'
+                    && (cn == 2 || child.charAt(2) == '\\' || child.charAt(2) == '/')) {
                 child = child.charAt(0) + "/" + child.substring(2);
             }
             return WinApkPaths.join(parent, child);
@@ -391,6 +393,10 @@ final class WinNTFileSystem extends FileSystem {
     public boolean isInvalid(File f) {
         if (f.getPath().indexOf('\u0000') >= 0)
             return true;
+
+        // Win.apk: an Android name may hold any character but '/' and NUL (WinApkPaths).
+        if (WinApkPaths.isAndroid(f.getPath()))
+            return false;
 
         if (ENABLE_ADS)
             return false;

@@ -82,7 +82,7 @@ void fonts_search() {
 // The shim's own calls on real files, under a scratch Android root in %TEMP%:
 // a file whose name Windows forbids is created, found on disk under its
 // private-use name, listed by its Android name (by path and by descriptor),
-// opened again through the directory's descriptor, and removed.
+// opened again through the directory's descriptor, renamed and back, and removed.
 struct Dirent {  // Bionic's struct dirent on x86_64
     uint64_t d_ino;
     int64_t d_off;
@@ -101,6 +101,8 @@ void listing_round_trip() {
     const auto g_openat = shim<int (WINAPK_GUEST_ABI*)(int, const char*, int, unsigned)>("openat");
     const auto g_close = shim<int (WINAPK_GUEST_ABI*)(int)>("close");
     const auto g_unlink = shim<int (WINAPK_GUEST_ABI*)(const char*)>("unlink");
+    const auto g_rename = shim<int (WINAPK_GUEST_ABI*)(const char*, const char*)>("rename");
+    const auto g_access = shim<int (WINAPK_GUEST_ABI*)(const char*, int)>("access");
     const auto g_rmdir = shim<int (WINAPK_GUEST_ABI*)(const char*)>("rmdir");
     const auto g_opendir = shim<void* (WINAPK_GUEST_ABI*)(const char*)>("opendir");
     const auto g_fdopendir = shim<void* (WINAPK_GUEST_ABI*)(int)>("fdopendir");
@@ -115,7 +117,8 @@ void listing_round_trip() {
     WideCharToMultiByte(CP_UTF8, 0, scratch.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
     winapk::set_android_root(utf8);
 
-    const char* names[] = {"a|b", "107904171429698120635||.entitystore", "name.", "name ", "a:b", "plain.txt"};
+    const char* names[] = {"a|b", "107904171429698120635||.entitystore", "name.", "name ", "a:b", "plain.txt",
+                           "q?", "s*", "lt<", "gt>", "dq\"", "frc_1:2:android:3_settings.xml"};
     const auto listed_all = [&](const char* what, void* dir) {
         std::set<std::string> found;
         while (dir) {
@@ -166,6 +169,15 @@ void listing_round_trip() {
         }
     }
     listed_all("fdopendir", g_fdopendir(dirfd));  // closes dirfd
+    // Renamed to another forbidden name and back: both ends are mapped.
+    for (const char* name : names) {
+        const std::string from = std::string("/names/") + name, to = from + ":renamed?";
+        if (g_rename(from.c_str(), to.c_str()) != 0 || g_access(to.c_str(), 0) != 0 || g_access(from.c_str(), 0) == 0 ||
+            g_rename(to.c_str(), from.c_str()) != 0 || g_access(from.c_str(), 0) != 0) {
+            ++g_failed;
+            std::fprintf(stderr, "FAIL rename %s\n", name);
+        }
+    }
     for (const char* name : names) {
         if (g_unlink((std::string("/names/") + name).c_str()) != 0) {
             ++g_failed;
