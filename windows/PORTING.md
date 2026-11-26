@@ -227,7 +227,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `EGL14`, `EGL15`, `EGLExt`, `MacApkEGL10` | 52 | `native_methods.cpp`, `egl14_bridges.inc`, `angle_glue.cpp` | `host/gl/gl_bridges.cpp` (upstream's `egl14_bridges.inc`) on ANGLE | done for Java and guest `libEGL` (window surfaces are pbuffers, see "OpenGL") | - |
 | `ClipboardManager` | 7 | `clipboard_bridge.mm` | `host/native_clipboard.cpp`: text, CF_HTML, URL, the concealed and history-exclusion formats for sensitive clips | done | - |
 | `DocumentPickerHandler` | 2 | `document_picker.mm` | `host/native_picker.cpp`: `IFileOpenDialog`/`IFileSaveDialog`, folder mode, MIME filters | done | - |
-| `HostIcu` | 2 | `icu_host_bridge.cpp` | `host/native_icu.cpp` on Windows' `icu.dll` (1903 and later) | done | - |
+| `HostIcu` | 2 | `icu_host_bridge.cpp` | none: removed with Win.apk's own `android.icu` (AOSP's ICU4J, in `aosp-graphics.jar`, needs no host natives) | gone | - |
 | `HostWallpaper` | 2 | `wallpaper_bridge.mm` | `host/native_wallpaper.cpp`: the desktop wallpaper and its placement style, through WIC | done | - |
 | `AudioInputBridge` | 10 | `audio_input.mm` | `host/native_audio_input.cpp`: WASAPI capture resampled to the app's format; the privacy switch is the permission | done | - |
 | `LocationBridge` | 12 | `location_bridge.mm` | `host/native_location.cpp`: `Windows.Devices.Geolocation` through its ABI; Windows' privacy settings (the consent store) are the host authorization | done | - |

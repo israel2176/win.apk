@@ -642,7 +642,7 @@ how CI boots apps.
 | File and folder pickers | `IFileOpenDialog` / `IFileSaveDialog` | `native_picker.cpp` |
 | Game controllers | XInput, polled | `native_gamepad.cpp` |
 | Photos, wallpaper | The Pictures and Videos folders with shell thumbnails; the desktop wallpaper | `native_photos.cpp`, `native_wallpaper.cpp` |
-| ICU | Windows' `icu.dll` for what the JDK has no data for (`MeasureFormat`'s units, `LocaleData`); with no `icu.dll` (Windows 10 before 1903, Wine) `HostIcu` answers from Java instead (`IcuFallback`: the locale's number format, CLDR root's unit symbols and territory lists), never an exception | `native_icu.cpp`, `runtime/java/com/macapk/icu/` |
+| ICU (`android.icu`) | AOSP's own ICU4J, as apps have it on a device: every calendar (Hebrew, Islamic, Chinese...), the number, date, plural, measure and relative-time formatters, collation, normalization, transliteration, Bidi; on ICU 72's data, the same file the graphics DLL reads (`bin\aosp\icu\icudt72l.dat`), and beside it the time zone tables a device's tz module gives (`zoneinfo64.res` and three more, a newer tzdata) | `lib/aosp-graphics.jar` (`aosp_gfx_take.sh`), `windows/java/aosp_gfx/android/icu/platform/AndroidDataFiles.java` |
 | SQLite | Upstream's `NativeSqlite` compiled unchanged over the SQLite amalgamation | `runtime/src/native_sqlite.cpp`, `compat/CoreFoundation` |
 | `NativeActivity`, the NDK input queue, `AConfiguration` | A port of upstream's, over the guest linker and the shim's `ALooper` | `native_activity.cpp` |
 | Shared storage | The volume's Download, Pictures, Documents, Music and Movies are junctions to the user's Windows folders | `user_folders.cpp` |
