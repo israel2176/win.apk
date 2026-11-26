@@ -3015,6 +3015,10 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/java/android/os/Process.java`: `myTid()` on the main looper's thread is `myPid()`, as Linux
+  numbers a process's main thread (clalit's packer loads its native library only when `myPid() ==
+  myTid()`, and died on `UnsatisfiedLinkError` without it, issue #208); another thread keeps its Java
+  thread id. Native `gettid()` still answers Windows' thread id on every thread.
 - `runtime/java/android/os/Process.java`, `android/widget/ExpandableListView.java`:
   values AppsFlyer's obfuscated loader folds into the length of a class name
   it decrypts, as Android has them. `getElapsedCpuTime()` is the process's CPU

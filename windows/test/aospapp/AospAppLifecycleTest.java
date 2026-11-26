@@ -146,7 +146,7 @@ public class AospAppLifecycleTest {
 
     static final List<String> platform = java.util.Collections.synchronizedList(new ArrayList<>());
     static final List<String> PLATFORM_EXPECTED = List.of("safety center true enabled false",
-            "backup transport null enabled false");
+            "backup transport null enabled false", "main tid is pid true, another thread's is not true");
     static final List<String> SLICES_EXPECTED = List.of("Slices.onCreate", "App.onCreate", "manager true",
             "pinned [content://" + SLICES + "/s]", "bound /s hi", "full access false");
 
@@ -257,6 +257,13 @@ public class AospAppLifecycleTest {
                 // BackupManager's system members as AOSP answers them with no backup service.
                 android.app.backup.BackupManager bm = new android.app.backup.BackupManager(this);
                 platform.add("backup transport " + bm.getCurrentTransport() + " enabled " + bm.isBackupEnabled());
+                // Linux numbers the main thread as the process: packers test myPid() == myTid().
+                int[] other = new int[1];
+                Thread t = new Thread(() -> other[0] = android.os.Process.myTid());
+                t.start();
+                try { t.join(); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                platform.add("main tid is pid " + (android.os.Process.myTid() == android.os.Process.myPid())
+                        + ", another thread's is not " + (other[0] != android.os.Process.myPid()));
                 startService(new Intent(this, Started.class).putExtra("s", "go"));
                 sendOrderedBroadcast(new Intent(STATIC).setPackage(PKG).putExtra("v", "m"), null,
                         new android.content.BroadcastReceiver() {
