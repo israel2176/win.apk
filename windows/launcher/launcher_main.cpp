@@ -4380,7 +4380,7 @@ void report_problem(HWND parent, const std::wstring& name, const std::wstring& l
     p.default_id = IDOK;
     if (run_dialog(p, parent) != IDOK) return;
 
-    // The form's own title pattern: "<App name> <version>: <what goes wrong>".
+    // The title: "<App name> <version>: <what goes wrong>".
     const std::wstring app_line = label + (app_version.empty() ? L"" : L" " + app_version) +
                                   (package.empty() ? L"" : L" (" + package + L")");
     std::wstring url = std::wstring(kIssuesUrl) + L"/new?template=app_problem.yml";
