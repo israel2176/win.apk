@@ -133,7 +133,7 @@ jobject JNICALL egl14_get_display(JNIEnv* env, jclass cls, jint id) {
     return macapk::EGL14_eglGetDisplay(env, cls, id);
 }
 
-// The app's display stays up: the framework's views draw on it too (gl_surface.cpp), and on a
+// The app's display stays up: native code and MacApkEGL10 hold it too (gl_surface.cpp), and on a
 // device eglTerminate is reference-counted, so the app's terminate does not reach the driver while
 // another client holds the display (guest_eglTerminate answers native code the same).
 jboolean JNICALL egl14_terminate(JNIEnv* env, jclass cls, jobject dpy) {
