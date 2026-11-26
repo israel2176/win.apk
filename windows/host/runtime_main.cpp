@@ -2270,6 +2270,8 @@ DWORD WINAPI boot_thread(void* param) {
         check_exception(env, "Boot.run lookup");
         return 1;
     }
+    // The app's APKs in its /proc/self/maps, as on a device.
+    winapk::set_app_code(utf8(o.apk.wstring()).c_str());
     // The manifest argument names a decoded text manifest, which Windows does
     // not produce; Manifest.parse then reads the binary one from the APK.
     env->CallStaticVoidMethod(boot, run, jstr(o.apk), jstr(b->app_jar), jstr(b->app_dir),
