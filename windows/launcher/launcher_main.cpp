@@ -6607,8 +6607,9 @@ void paint_play(Graphics& g) {
 // installed the same way, once the store app is not running. Nothing of what the user does is sent: the request is
 // GitHub's public list of releases.
 //
-// What the store app installs goes through the install helper (helper_main): the confirmation, the progress and
-// "App installed." with Open and Done, and the installer of record its runtime writes (PackageInstallerBackend).
+// What the store app installs goes through the install helper (helper_main) with no question, as a phone's
+// preinstalled store installs what the user picked in it (appops::caller_is_builtin_store), and the installer of
+// record its runtime writes (PackageInstallerBackend).
 // Its "Install unknown apps" is allowed from its first install (grant_builtin_store), as a device's preinstalled
 // store is; the user's later answer to that switch is kept across its updates.
 
@@ -10936,6 +10937,7 @@ void notify_library() {
 
 namespace appops {
 bool caller_is_play_store();
+bool caller_is_builtin_store();
 bool installs_allowed_from_caller();
 }
 
@@ -11111,28 +11113,31 @@ int helper_main(int argc, wchar_t** argv) {
     const std::wstring wpkg = utf8_to_wide(pkg);
     // The Play Store installs as a phone's system installer does, with no question: it holds INSTALL_PACKAGES
     // there, and the user already chose the app in it. Only the real one: the asking runtime runs the
-    // library's com.android.vending and Google signed that APK (appops::caller_is_play_store).
-    const bool play = appops::caller_is_play_store();
+    // library's com.android.vending and Google signed that APK (appops::caller_is_play_store). Win.apk's own
+    // Store is a store that came with the PC, as a phone's preinstalled store holds INSTALL_PACKAGES: the user
+    // chose the app in it, so it asks no second time (appops::caller_is_builtin_store: the very release asset
+    // the launcher installed).
+    const bool system_store = appops::caller_is_play_store() || appops::caller_is_builtin_store();
     // Any other app installs only from a source the user allowed ("Install unknown apps"), as Android's
     // installer checks before its question (PackageInstallerActivity: the blocked dialog, Settings, back).
-    if (!play && !appops::installs_allowed_from_caller())
+    if (!system_store && !appops::installs_allowed_from_caller())
         return helper_fail(3, "unknown-sources", "installs from this app are not allowed");
     // PackageInstallerActivity's question: the app's name over "Do you want to install this app?" (a new app's
     // name is not known before its install reads it: its package stands in).
     const bool agreed =
-        play || (update ? helper_consent(existing, tr(L"Do you want to update this app?"),
-                                         fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}),
-                                         tr(L"Update"))
-                        : helper_consent(nullptr, tr(L"Do you want to install this app?"),
-                                         fmt(L"{0} asks to install it.", {who}), tr(L"Install"), wpkg));
+        system_store ||
+        (update ? helper_consent(existing, tr(L"Do you want to update this app?"),
+                                 fmt(L"{0} asks to update it with the copy it has ({1}).", {who, wpkg}), tr(L"Update"))
+                : helper_consent(nullptr, tr(L"Do you want to install this app?"),
+                                 fmt(L"{0} asks to install it.", {who}), tr(L"Install"), wpkg));
     if (!agreed) return helper_fail(3, "consent", "declined");
     helper_progress(0.1, "consented");
 
     const std::wstring name = update ? existing->name : file_name_safe(wpkg);
     // Everyone else's install is shown as Android's installer shows it after the question: its progress, then
     // its end with Open and Done (helper_install_ui).
-    if (!play) return helper_install_ui(apk, name, pkg, update, update ? existing->label : wpkg);
-    // The Play Store's update of an app open in a window: PackageManagerService kills an app it replaces, and
+    if (!system_store) return helper_install_ui(apk, name, pkg, update, update ? existing->label : wpkg);
+    // A system store's update of an app open in a window: PackageManagerService kills an app it replaces, and
     // the Play Store has already waited for it when it asked to (an auto-update's InstallConstraints, "app not
     // interacting"), or the user tapped Update in it. So the app is stopped, not the update refused. Any other
     // installer's update leaves an open window to the user (stop_app_for_install).
@@ -11928,6 +11933,19 @@ bool caller_is_play_store() {
         else if (line == L"GOOGLE\t1") google = true;
     }
     return pkg && verified && google;
+}
+
+// Whether the app asking is Win.apk's own Store as the launcher installed it: the parent runtime runs the
+// library's app.apkstore and its APK is the release asset whose SHA-256 the launcher checked against GitHub's and
+// noted at its install (store-app\installed.sha256). A copy of the Store from anywhere else is an ordinary store.
+bool caller_is_builtin_store() {
+    Caller c;
+    std::string why;
+    if (!resolve(&c, &why) || c.id.package != winapk::launcher::kStorePackage) return false;
+    const App* app = find_app(c.name);
+    if (!app) return false;
+    const std::string want = installed_store_sha();
+    return !want.empty() && sha256_of(app->apk) == want;
 }
 
 // ---- the dialog ----------------------------------------------------------------
