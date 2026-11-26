@@ -197,7 +197,9 @@ What makes a report useful:
   saves the app's own picture and the window as shown, side by side, in the
   logs folder (`snapshot-...-frame.png`, `snapshot-...-window.png`), and writes
   the numbers between the two into the log;
-- **the whole log**, not a part of it.
+- **the whole log**, not a part of it, as the file itself: drag `run-<app>.log`
+  into the form. Pasted into the text, a log is cut where GitHub's limit of
+  65,536 characters falls, and the failure is usually at its end.
 
 You can write in English or in Hebrew. Security problems go to
 [SECURITY.md](../SECURITY.md), not to a public issue.
