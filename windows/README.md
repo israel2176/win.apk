@@ -3944,6 +3944,57 @@ every such change is listed here:
   and RTT managers are not handed out (`getSystemService` answers null for them), and a media route provider
   is never bound. `windows/test/aospapp/AospAppLifecycleTest.java` installs a `SliceProvider` through
   `ActivityThread.installProvider` and pins and binds its slice through the `SliceManager`.
+- What AOSP's app layer and views call on Win.apk's classes and did not find (`NoSuchMethodError`,
+  `NoClassDefFoundError`; israel2176/win.apk#173, the API gap survey; the build's
+  `aosp-views.links.txt` and `aosp-app.links.txt` list what is left):
+  `android/content/IntentSender.java`: `getTarget()` (the PendingIntent's `IIntentSender`, made by
+  `android/app/PendingIntent.java`'s `Target`) and `getWhitelistToken()`, which
+  `Activity.startIntentSenderForResult` and `ContextImpl.startIntentSender` hand to
+  `IActivityTaskManager.startActivityIntentSender` (`windows/java/aosp_app/.../ActivityTaskService.java`:
+  PendingIntentRecord.sendInner's start, the fill-in merged and the caller's flags applied; `MediaStore`'s
+  consent screens give `RESULT_CANCELED`); `PendingIntent(IIntentSender)` and the activity result sender
+  `IActivityManager.getIntentSenderWithFeature` makes (`Activity.createPendingResult`), `getActivitiesAsUser`
+  (`TaskStackBuilder`), the send's code passed through; `com/macapk/loader/app/IntentSenders.java` (new): the
+  app layer's door to them. `android/content/ContentResolver.java`: `getResourceId` and
+  `OpenResourceIdResult` (`ImageView.setImageURI` with an `android.resource://` uri).
+  `android/content/ContentProvider.java`: the user id helpers (`getUserIdFromUri`, `getUserIdFromAuthority`,
+  `maybeAddUserId`, `uriHasUserId`) of `ContextImpl`'s uri permissions and `InputContentInfo`.
+  `android/app/ActivityManager.java`: `getLauncherLargeIconSizeInner(Context)` (`Activity.setTaskDescription`
+  with a bitmap) and `getTaskService()`. `android/content/ClipData.java`: `prepareToLeaveProcess` and
+  `prepareToEnterProcess` (`View.startDragAndDrop`, a drop: nothing to do, a drag stays in the process).
+  `android/content/Context.java`, `ContextWrapper.java`: `startActivitiesAsUser` (`TaskStackBuilder
+  .startActivities`), `startActivityForResult(String, ...)`, `canStartActivityForResult`,
+  `isAutofillCompatibilityEnabled`. `android/os/BaseBundle.java`: `setDefusable(boolean)` (every
+  `ActivityOptions(Bundle)`) and `isDefinitelyEmpty`. `android/util/DebugUtils.java`: `buildShortClassTag`
+  (`Fragment.toString`). `android/content/pm/ComponentInfo.java`: `getComponentName`;
+  `ActivityInfo.java`: `supportsPictureInPicture`, `getMaxAspectRatio`. `android/app/
+  ServiceStartNotAllowedException.java`: `newInstance`. `android/transition/Transition.java`:
+  `isValidTarget`, `pause`, `resume`, `setNameOverrides`; `Visibility.java`: `setSuppressLayout` (activity
+  scene transitions). `windows/scripts/aosp_app_take.sh`: `IIntentSender` and `IIntentReceiver`, which the
+  framework now compiles against.
+  `android/widget/VideoView.java`: Win.apk's again (`build_aosp_views.sh`'s `KEEP`): AOSP's implements
+  `SubtitleController.Anchor` and builds the subtitle renderers over `MediaPlayer` members Win.apk's has not,
+  so it did not load, and every `VideoView` ended the app.
+  Members of later Android levels an app targeting them calls (PresentedSdk): `windows/java/aosp_views/
+  .../Api36.java` (new, added to AOSP's classes by `AospAddMethods.java` as `Api35` is):
+  `AccessibilityNodeInfo`'s tri-state checked, expanded state, required field, supplemental description and
+  labels list, `BackEvent.getFrameTimeMillis` (androidx.activity reads it from every Back), `View`'s
+  supplemental description, `Display`'s HDR ratio, suggested rate and ARR, `AutofillId`, `EditorInfo`,
+  `InputMethodSubtype`, `ContentCaptureSession.flush`; `windows/java/aosp_app/.../Api36.java` (new,
+  `build_aosp_app.sh` now runs `AospAddMethods.java` too): `ActivityOptions.setAllowPassThroughOnTouchOutside`
+  (androidx.browser calls it on 36: Jerboa died opening a link), the permission calls with a device id,
+  `Service.onTimeout`, `PictureInPictureUiState.isTransitioningToPip`.
+  And: `android/content/Context.java` hands out `TelecomManager`, `CarrierConfigManager`,
+  `NetworkStatsManager`, `CrossProfileApps`, `EuiccManager`, `VpnManager` and `BugreportManager`, which
+  AOSP's `SystemServiceRegistry` registers for every app (their classes were here, no case reached them:
+  null where a phone never gives it). `android/app/job/JobService.java`: AOSP's final `onBind` (an app's job
+  service inherited `Service`'s abstract one). `android/telephony/TelephonyManager.java`:
+  `getNetworkOperatorName()` is `""` without a SIM (it was upstream's name). `android/media/session/
+  MediaController.java`: transport controls, `dispatchMediaButtonEvent` and `sendCommand` reach the session's
+  `Callback` on its handler (they were dropped). `android/media/MediaCodec.java`: `detachOutputSurface` lets
+  the surface go. `windows/test/aospapp/AospAppLifecycleTest.java` calls `setTaskDescription` with a
+  bitmap, `TaskStackBuilder.getPendingIntent`, `ImageView.setImageURI` with a resource uri,
+  `startIntentSender` and loads `VideoView` (each of the first three threw `NoSuchMethodError` before).
 
 ## License
 
