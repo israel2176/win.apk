@@ -2902,7 +2902,11 @@ every such change is listed here:
   `getStackTrace()` starts with `dalvik.system.VMStack.getThreadStackTrace`,
   as on Android, so code that reads its caller at a fixed index finds it (a
   bank's security library read index 3 of a three-frame trace, its native
-  side went on with a null object and the process crashed).
+  side went on with a null object and the process crashed). A thread that asks
+  for a stack size gets ART's: the request plus 1 MB and ART's overflow reserve,
+  rounded to a page (`FixStackSize`), not the request alone; an app's executor
+  asking for a small stack overflowed in its first class load (ColorNote, issue
+  #180). Zero is still the VM's default.
 - `runtime/java/android/graphics/Bitmap.java`: the host images are
   `transient`, so reflection over a model that holds a Bitmap (Gson) does not
   walk into `java.awt.image`.
@@ -3034,7 +3038,10 @@ every such change is listed here:
   JDK's own `User-Agent`/`Host` not; setting a field after that throws. The
   JDK lowers its connected flag on `disconnect()` after an error answer and
   then answers with its whole header list, the request line as a key whose
-  value is null: Dynatrace (bit) took an NPE on it.
+  value is null: Dynatrace (bit) took an NPE on it. `setDoInput(false)` is kept
+  on the wrapper, the JDK's connection stays at true: OkHttp answers the status
+  and headers then and refuses only `getInputStream()`, where the JDK's
+  `getResponseCode()` threw `ProtocolException` (ColorNote, issue #180).
   `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java` (CI: "Run
   the HttpURLConnection request properties test").
 - `runtime/net_spi/com/macapk/net/SniSocketFactory.java` (new),
