@@ -443,7 +443,8 @@ if(WINAPK_JNI_INCLUDE)
   # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.
   add_executable(winapk-ndk-media-test test/ndk_media_test.cpp host/native_media.cpp host/ndk_media_codec.cpp
                  host/video_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
-  target_include_directories(winapk-ndk-media-test PRIVATE host include)
+  target_include_directories(winapk-ndk-media-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
   target_include_directories(winapk-ndk-media-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
   target_link_libraries(winapk-ndk-media-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid
                         shlwapi)
