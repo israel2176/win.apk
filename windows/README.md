@@ -3587,7 +3587,8 @@ every such change is listed here:
   defaults, with the same bodies (AOSP's interface has them abstract). `android/app/Application.java`,
   `android/content/Context.java`: `getSystemService` asks `ViewHost.systemService` first (null on
   Win.apk's views) and keeps its answer, one manager per name for the context's life, as ContextImpl's
-  service cache does (ToastPresenter holds the window manager only weakly). `android/os/ServiceManager.java`: `addService` registers in-process binders and
+  service cache does (ToastPresenter holds the window manager only weakly).
+  `android/os/ServiceManager.java`: `addService` registers in-process binders and
   the lookups answer them (nothing is added on Win.apk's views, so every lookup is null as before).
   `android/os/Handler.java`: AOSP's hidden `Handler(Looper, Callback, boolean)` (now public),
   `Handler(boolean)`, `Handler(Callback, boolean)`, `getMain` and `runWithScissors`.
