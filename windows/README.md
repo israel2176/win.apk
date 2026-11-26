@@ -3069,6 +3069,22 @@ every such change is listed here:
   `MOVED_TO_SECURE` / `MOVED_TO_GLOBAL` do. Discount and Mercantile read
   `Settings.System` `android_id` and threw on null in `Application.onCreate`.
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/ProcessCrashes.java` (new), `SystemServer.java`,
+  `SystemClient.java`: one process per (package, process name), and none
+  started again in a crash loop, as ActivityManagerService keeps them. A
+  process the broker started that crashes again within AOSP 14's
+  `MIN_CRASH_INTERVAL` (two minutes) is bad (AppErrors), and the broker
+  refuses to start it for a bind, start, provider, broadcast, job, the boot or
+  a revival until the user opens the app or the package changes
+  (`process ... has crashed too many times` in `system.log`); Play services
+  crashing as it started was booted again for every bind the Play Store made,
+  276 times in one log. A start that finds the app's single-instance lock held
+  by a copy of the same process exits with `kExitAlreadyRunning`
+  (`include/winapk/app_exit.h`) and the broker waits for that copy to attach,
+  and a start left waiting on a copy that is gone is forgotten at its timeout.
+  A process the broker started exits when the broker does, or when its attach
+  fails (AMS kills it), instead of lingering as a copy no broker knows.
+  `windows/test/java/com/macapk/loader/ProcessCrashesTest.java`.
 - `runtime/java/com/macapk/loader/Manifest.java`, `MacApkPackageManager.java`:
   `ServiceInfo.permission` is the service's `android:permission` (else the
   application's). IBM Trusteer's TAZ checks a job service for

@@ -224,6 +224,10 @@ public final class SystemServer {
 
     private static final long START_TIMEOUT_MS = 180_000L;
 
+    /** A service host's exit code when the app's single-instance lock is held by another copy of
+     *  the same process (windows/include/winapk/app_exit.h kExitAlreadyRunning). */
+    static final int ALREADY_RUNNING_EXIT = 0x10000011;
+
     /** A package this broker can start. */
     static final class PackageRecord {
         final String pkg, apkPath;
@@ -430,14 +434,49 @@ public final class SystemServer {
                 if (r != null && r.thread.isBinderAlive()) return r;
                 f = starting.get(proc);
                 if (f == null) {
+                    // ProcessList.startProcessLocked: a start that is not the user's is refused
+                    // while the process is bad (it crashed again within MIN_CRASH_INTERVAL).
+                    if (crashes.isBad(pr.pkg, proc)) {
+                        throw new IllegalStateException(proc + " is a bad process (it crashed twice within "
+                                + (ProcessCrashes.MIN_CRASH_INTERVAL_MS / 1000) + " s); not starting it until "
+                                + "the user opens it or the package changes");
+                    }
                     f = new CompletableFuture<>();
                     starting.put(proc, f);
-                    launch(pr, proc);
+                    try {
+                        launch(pr, proc);
+                    } catch (Exception e) {
+                        starting.remove(proc);
+                        f.completeExceptionally(e);
+                        throw e;
+                    }
                 }
             }
-            return f.get(START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            try {
+                return f.get(START_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            } catch (java.util.concurrent.TimeoutException e) {
+                // A start left waiting on a copy that is gone (another start of it held the app's
+                // single-instance lock and never attached): forget it, so the next request starts
+                // the process again instead of waiting on nothing forever.
+                synchronized (this) {
+                    if (starting.get(proc) == f && !spawnedAlive(proc)) starting.remove(proc);
+                }
+                throw e;
+            }
         }
     }
+
+    /** Whether a process this broker started as `proc` is alive. Caller holds the monitor. */
+    private boolean spawnedAlive(String proc) {
+        for (Map.Entry<Long, String[]> e : spawnedAs.entrySet()) {
+            Process p = spawned.get(e.getKey());
+            if (proc.equals(e.getValue()[1]) && p != null && p.isAlive()) return true;
+        }
+        return false;
+    }
+
+    /** AppErrors' crash record: which processes crashed when, and the bad ones. */
+    final ProcessCrashes crashes = new ProcessCrashes();
 
     private final Map<String, Object> startLocks = new java.util.concurrent.ConcurrentHashMap<>();
     private Object startLock(String pkg) { return startLocks.computeIfAbsent(pkg, k -> new Object()); }
@@ -554,10 +593,24 @@ public final class SystemServer {
         p.onExit().thenAccept(x -> {
             spawned.remove(p.pid());
             spawnedAs.remove(p.pid());
+            int code = x.exitValue();
+            // AppErrors.handleAppCrashLocked: a second crash within MIN_CRASH_INTERVAL makes the
+            // process bad, and nothing but the user starts it again.
+            if (ProcessCrashes.crashExit(code) && crashes.crashed(pr.pkg, proc, System.currentTimeMillis())) {
+                log("process " + proc + " (pid " + p.pid() + ") has crashed too many times: "
+                        + "not starting it again until the user opens it");
+            }
             synchronized (SystemServer.this) {
+                // The app's single-instance lock was held: a copy of this process is running or
+                // starting already (one the user opened, still booting). That copy attaches and
+                // completes the start, as AMS hands a request to the process it is starting.
+                if (code == ALREADY_RUNNING_EXIT && starting.get(proc) != null) {
+                    log(proc + " (pid " + p.pid() + ") is running already; waiting for it to attach");
+                    return;
+                }
                 CompletableFuture<AppRecord> f = starting.remove(proc);
                 if (f != null) f.completeExceptionally(
-                        new IllegalStateException(proc + " exited (" + x.exitValue() + ") before attaching"));
+                        new IllegalStateException(proc + " exited (" + code + ") before attaching"));
             }
         });
     }
@@ -652,7 +705,11 @@ public final class SystemServer {
         }
         CompletableFuture<AppRecord> f = starting.remove(proc);
         if (f != null) f.complete(r);
-        if (!spawned.containsKey((long) pid)) { lastClientMs = System.currentTimeMillis(); sawOpenApp = true; }
+        if (!spawned.containsKey((long) pid)) {
+            lastClientMs = System.currentTimeMillis();
+            sawOpenApp = true;
+            crashes.userStarted(pkg, proc);   // the user opened it: ProcessList clears a bad process
+        }
         log(proc + " attached (pid " + pid + ")" + (spawned.containsKey((long) pid) ? "" : " [open app]"));
         final AppRecord fr = r;
         new Thread(() -> sendBootBroadcasts(fr), "broker-boot").start();
@@ -1315,6 +1372,9 @@ public final class SystemServer {
                         + " services) <- " + apk);
             }
         }
+        // The package was stopped for its install or removal (forceStopPackage): its processes start
+        // clean, a bad one too, since the new code may not crash.
+        crashes.forgetPackage(pkg);
         android.net.Uri data = android.net.Uri.fromParts("package", pkg, null);
         if (op == PACKAGE_REMOVED) {
             // The removed package does not hear its own removal (Intent.ACTION_PACKAGE_REMOVED).

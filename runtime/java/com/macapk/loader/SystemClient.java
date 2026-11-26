@@ -212,6 +212,7 @@ public final class SystemClient {
             IBinder sys = broker();
             if (sys == null) {
                 NativeLog.w(TAG, "broker " + systemName() + " not found; cross-app binds stay in-process");
+                serviceHostOrphaned("its broker is gone");
                 return;
             }
             sApp = app;
@@ -239,9 +240,23 @@ public final class SystemClient {
             for (String a : sObserved) sendObserve(sys, a);
             NativeLog.i(TAG, "attached " + sProcess + " to " + systemName()
                       + (isServiceHost() ? " (service host: no activity)" : ""));
+            // A process the broker started lives for the broker: on a device every app process goes
+            // when system_server does. Left running, it is a copy no broker knows, which holds the
+            // app's single-instance lock and the memory of a whole JVM while the next broker starts
+            // another.
+            if (isServiceHost()) sys.linkToDeath(() -> serviceHostOrphaned("its broker exited"), 0);
         } catch (Throwable t) {
             NativeLog.w(TAG, "attach to broker failed: " + t);
+            // ActivityManagerService kills a process whose attachApplication failed.
+            serviceHostOrphaned("its attach failed");
         }
+    }
+
+    /** A service host the broker started cannot serve anyone without the broker: it exits (not a crash). */
+    private static void serviceHostOrphaned(String why) {
+        if (!isServiceHost()) return;
+        NativeLog.w(TAG, "service host " + Boot.processName() + ": " + why + "; exiting");
+        Runtime.getRuntime().halt(0);
     }
 
     /** The broker calls this to bind one of OUR services for another app. */
