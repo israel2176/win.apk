@@ -392,6 +392,10 @@ public final class Probes {
             }
         }
         out.add("case drawables.platform");
+        // Not here: tooltip_frame, text_cursor_material and the text select handles. A phone has them, but they
+        // are entries of sparse types, which Robolectric's port of LoadedPackage::FindEntryByName misreads, so
+        // the oracle cannot find them by name (and its com.android.internal.R lists only some of the platform's
+        // drawables). FindEntryByNameTest checks Win.apk's lookup by name against the ids that class lists.
         String[] platform = {"btn_default_material", "btn_default_mtrl_shape", "btn_colored_material",
             "btn_borderless_material", "edit_text_material", "textfield_default_mtrl_alpha",
             "textfield_activated_mtrl_alpha", "btn_check_material_anim", "btn_radio_material_anim",
@@ -400,10 +404,9 @@ public final class Probes {
             "spinner_textfield_background_material", "progress_horizontal_material", "seekbar_thumb_material_anim",
             "seekbar_track_material", "scrubber_control_material_anim", "ratingbar_material",
             "item_background_material", "item_background_borderless_material", "list_divider_material",
-            "popup_background_material", "dialog_background_material", "toast_frame", "tooltip_frame",
+            "popup_background_material", "dialog_background_material", "toast_frame",
             "ic_menu_moreoverflow_material", "ic_ab_back_material", "ic_search_api_material",
             "ic_clear_material", "ic_go_search_api_material", "ic_voice_search_api_material",
-            "text_cursor_material", "text_select_handle_middle_material", "text_select_handle_left_material",
             "fastscroll_thumb_material", "fastscroll_track_material", "scrollbar_handle_material",
             "list_selector_background", "divider_horizontal_bright", "btn_default", "btn_default_small",
             "edit_text", "editbox_background", "ic_menu_search", "ic_dialog_alert", "ic_dialog_info",
@@ -414,21 +417,7 @@ public final class Probes {
             "spinner_background", "spinner_dropdown_background", "gallery_thumb", "zoom_plate"};
         for (String name : platform) {
             int id = c.getResources().getIdentifier(name, "drawable", "android");
-            if (id == 0) id = internalDrawable(name);
             out.add(id == 0 ? "  " + name + " no such drawable" : drawableLine(c, name, id, d));
-        }
-    }
-
-    /** The platform's own id for a drawable it names, from com.android.internal.R, or 0. On a device
-     *  getIdentifier finds every name of the platform's table, but Robolectric's port of
-     *  LoadedPackage::FindEntryByName misreads sparse types (tooltip_frame, text_cursor_material and
-     *  the text select handles are "not found"), so the oracle would print `no such drawable` for
-     *  drawables a phone has. The class's ids are the table's, on both sides. */
-    private static int internalDrawable(String name) {
-        try {
-            return Class.forName("com.android.internal.R$drawable").getField(name).getInt(null);
-        } catch (ReflectiveOperationException | LinkageError e) {
-            return 0;
         }
     }
 
