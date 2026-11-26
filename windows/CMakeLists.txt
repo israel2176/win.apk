@@ -39,6 +39,7 @@ add_library(winapk_loader STATIC
   src/bionic/locale.cpp
   src/bionic/paths.cpp
   src/bionic/cacerts.cpp
+  src/bionic/cpuinfo.cpp
   src/bionic/fd.cpp
   src/bionic/socket.cpp
   src/bionic/looper.cpp

@@ -126,6 +126,11 @@ bool is_android_path(const char* guest_path);
 std::wstring host_names(const char* android_names, size_t len);
 void android_name(wchar_t* host_name);
 
+// cpuinfo.cpp: when `guest_path` is /proc/cpuinfo or /sys/devices/system/cpu/{possible,
+// present,online}, writes this machine's text to `host`, the file host_path() mapped it to,
+// once per process (the kernel's files, which Windows has not got).
+void refresh_cpu_file(const char* guest_path, const std::wstring& host);
+
 // cacerts.cpp: the host directory that answers Android's system CA store
 // (/system/etc/security/cacerts), built from the roots Windows trusts on the
 // first call; empty when it is turned off or could not be built.

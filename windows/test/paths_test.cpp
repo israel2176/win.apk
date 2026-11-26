@@ -241,6 +241,62 @@ void own_status() {
     RemoveDirectoryW(scratch.c_str());
 }
 
+// /proc/cpuinfo and /sys/devices/system/cpu/{possible,present,online}, read through the shim's own open as an
+// engine reads them: one "processor" block per logical processor Windows counts, the CPUID vendor, a flags line
+// with what every x86_64 processor has, and the CPU list "0-<n-1>".
+void cpu_files() {
+    const auto g_open = shim<int (WINAPK_GUEST_ABI*)(const char*, int, unsigned)>("open");
+    const auto g_read = shim<int64_t (WINAPK_GUEST_ABI*)(int, void*, size_t)>("read");
+    const auto g_close = shim<int (WINAPK_GUEST_ABI*)(int)>("close");
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring scratch = std::wstring(temp) + L"winapk-cpu-test-" + std::to_wstring(GetCurrentProcessId());
+    CreateDirectoryW(scratch.c_str(), nullptr);
+    char utf8[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, scratch.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+    winapk::set_android_root(utf8);
+    const auto read_all = [&](const char* path) {
+        std::string text;
+        const int fd = g_open(path, 0 /* O_RDONLY */, 0);
+        if (fd < 0) return text;
+        char buf[4096];
+        for (int64_t n; (n = g_read(fd, buf, sizeof buf)) > 0;) text.append(buf, static_cast<size_t>(n));
+        g_close(fd);
+        return text;
+    };
+    const DWORD cpus = GetActiveProcessorCount(ALL_PROCESSOR_GROUPS);
+    const std::string info = read_all("/proc/cpuinfo");
+    size_t blocks = 0;
+    for (size_t at = info.find("processor\t: "); at != std::string::npos; at = info.find("processor\t: ", at + 1)) {
+        ++blocks;
+    }
+    if (blocks != cpus || info.find("\nvendor_id\t: ") == std::string::npos ||
+        info.find("\nmodel name\t: ") == std::string::npos || info.find(" sse2 ") == std::string::npos ||
+        info.find(" lm ") == std::string::npos || info.find("\nsiblings\t: ") == std::string::npos ||
+        info.size() < 2 || info.compare(info.size() - 2, 2, "\n\n") != 0) {
+        ++g_failed;
+        std::fprintf(stderr, "FAIL /proc/cpuinfo (%zu blocks for %lu processors):\n%s\n", blocks,
+                     static_cast<unsigned long>(cpus), info.c_str());
+    }
+    const std::string list = cpus > 1 ? "0-" + std::to_string(cpus - 1) + "\n" : std::string("0\n");
+    for (const char* name : {"possible", "present", "online"}) {
+        const std::string path = std::string("/sys/devices/system/cpu/") + name;
+        const std::string got = read_all(path.c_str());
+        if (got != list) {
+            ++g_failed;
+            std::fprintf(stderr, "FAIL %s: \"%s\", want \"%s\"\n", path.c_str(), got.c_str(), list.c_str());
+        }
+    }
+    for (const wchar_t* f : {L"\\proc\\cpuinfo", L"\\sys\\devices\\system\\cpu\\possible",
+                             L"\\sys\\devices\\system\\cpu\\present", L"\\sys\\devices\\system\\cpu\\online"}) {
+        DeleteFileW((scratch + f).c_str());
+    }
+    for (const wchar_t* d : {L"\\sys\\devices\\system\\cpu", L"\\sys\\devices\\system", L"\\sys\\devices", L"\\sys",
+                             L"\\proc", L""}) {
+        RemoveDirectoryW((scratch + d).c_str());
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -345,6 +401,7 @@ int main() {
 
     listing_round_trip();
     own_status();
+    cpu_files();
 
     if (g_failed == 0) std::fprintf(stderr, "paths_test: all checks passed\n");
 

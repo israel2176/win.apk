@@ -18,6 +18,8 @@
 //                                                from the roots Windows trusts
 //   /dev/null                                 -> NUL
 //   /proc/self/...                            -> /proc/<this process's pid>/...
+//   /proc/cpuinfo, /sys/devices/system/cpu/   -> <android root>/..., written with this
+//     {possible,present,online}                  machine's text first (cpuinfo.cpp)
 //   any other /...                            -> <android root>/...
 //
 // The android root is the per-user folder the runtime mirrors Android's
@@ -285,6 +287,7 @@ std::wstring host_path(const char* p) {
             if (pid == "self" || pid == self) refresh_own_status(host);
         }
     }
+    if (p && (std::strncmp(p, "/proc/", 6) == 0 || std::strncmp(p, "/sys/", 5) == 0)) refresh_cpu_file(p, host);
     return host;
 }
 
