@@ -146,7 +146,6 @@ constexpr UINT kUpdateDownloaded = WM_APP + 15;  // wParam: 0 broke off, else up
 constexpr UINT kSetupChanged = WM_APP + 16;   // the Downloads folder changed while the Google services setup is open
 constexpr UINT kSetupChecked = WM_APP + 17;   // lParam: new SetupCheck (winapk-runtime --verify-apk's answer)
 constexpr UINT kMaintenanceEnded = WM_APP + 18;  // the maintenance window the launcher opened ended
-constexpr UINT kGmsDeviceId = WM_APP + 19;    // lParam: new std::wstring (--gms device-id's id, or empty)
 constexpr UINT kSetupFetched = WM_APP + 22;   // lParam: new SetupFetch (apkeep's download of one of Google's apps)
 constexpr UINT_PTR kInfoBarTimer = 2;  // the InfoBar closes itself
 constexpr UINT_PTR kUpdateTimer = 3;   // hourly: is the daily update check due?
@@ -326,13 +325,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"The account and its tokens are removed from this PC. Apps that used it will ask you to sign in again.",
          L"החשבון והאסימונים שלו יוסרו מהמחשב. אפליקציות שהשתמשו בו יבקשו להתחבר שוב."},
         {L"Signed out of {0}.", L"החשבון {0} נותק."},
-        {L"Device ID for Google", L"מזהה המכשיר עבור Google"},
-        {L"This device isn't Play Protect certified. Google lets you register it to your account so that Google "
-         L"apps sign in.",
-         L"המכשיר הזה אינו מאושר על ידי Play Protect. ‏Google מאפשרת לרשום אותו בחשבון שלך כדי שאפליקציות "
-         L"Google יאפשרו להתחבר."},
-        {L"Register this device", L"רישום המכשיר הזה"},
-        {L"Device ID copied.", L"מזהה המכשיר הועתק."},
         {L"Could not sign out", L"ההתנתקות נכשלה"},
         {L"{0} could not be read as an Android app. It may be damaged or not fully downloaded; download it again.", L"לא ניתן היה לקרוא את {0} כאפליקציית אנדרואיד. ייתכן שהקובץ פגום או שההורדה לא הושלמה; הורד אותו שוב."},
         {L"Win.apk could not remove the account from this PC. The log says why.", L"Win.apk לא הצליחה להסיר את החשבון מהמחשב הזה. הסיבה כתובה ביומן."},
@@ -5549,37 +5541,6 @@ void google_signout(const std::wstring& account) {
     }
 }
 
-// The device ID Google's page for uncertified devices takes (google.com/android/uncertified): the Services
-// Framework's android_id, as `--gms device-id` reads it from gservices.db with the runtime's own SQLite (or the
-// layer's own checkin without the real GSF). Win.apk is not a Play Protect certified device and never claims to
-// be; registering the ID is Google's own way on for such a device (custom ROMs use it). Asked on a
-// thread (a JVM start) once per opening of Settings, and posted to the library's window, which owns these.
-std::wstring g_device_id;
-bool g_device_id_asking = false;
-int g_device_id_page = -1;  // the page generation it was last asked for
-
-DWORD WINAPI device_id_thread(void*) {
-    std::wstring text;
-    auto* out = new std::wstring();
-    if (run_gms(L"device-id", &text) == 0) {
-        if (const size_t at = text.find(L"DEVICE_ID\t"); at != std::wstring::npos) {
-            const size_t end = text.find_first_of(L"\t\r\n", at + 10);
-            *out = text.substr(at + 10, end == std::wstring::npos ? std::wstring::npos : end - at - 10);
-        }
-    }
-    if (!PostMessageW(g_main, kGmsDeviceId, 0, reinterpret_cast<LPARAM>(out))) delete out;
-    return 0;
-}
-
-void ask_device_id() {
-    if (g_device_id_asking || g_device_id_page == g_page.generation) return;
-    g_device_id_page = g_page.generation;
-    g_device_id_asking = true;
-    HANDLE t = CreateThread(nullptr, 0, device_id_thread, nullptr, 0, nullptr);
-    if (t) CloseHandle(t);
-    else g_device_id_asking = false;
-}
-
 // An older install kept the account's master token in plain text in gms_state.properties. The runtime's
 // owner side moves it into the sealed tokens.dat the first time it reads the file (com.macapk.gms.GmsStore);
 // an app's process has the token service do that first, which costs it a JVM start. So at its start the
@@ -5595,24 +5556,6 @@ void seal_gms_tokens() {
     std::error_code ec;
     if (!fs::exists(gms_dir() / L"gms_state.properties", ec) || fs::exists(gms_dir() / L"tokens.dat", ec)) return;
     if (HANDLE t = CreateThread(nullptr, 0, seal_gms_tokens_thread, nullptr, 0, nullptr)) CloseHandle(t);
-}
-
-// The row: the ID, Copy, and the registration page as a link (the page is Google's, and the user signs in there).
-Row device_id_row() {
-    // Left to right in Hebrew too: a signed ID's minus stays in front of its digits.
-    Row r = button_row(tr(L"Device ID for Google"),
-                       L"\u202A" + g_device_id + L"\u202C\n" +
-                           tr(L"This device isn't Play Protect certified. Google lets you register it to your "
-                              L"account so that Google apps sign in."),
-                       tr(L"Copy"), [] {
-                           if (copy_text(g_main, g_device_id)) info(tr(L"Device ID copied."), kSuccess);
-                       });
-    r.link = tr(L"Register this device");
-    r.link_act = [] {
-        ShellExecuteW(nullptr, L"open", L"https://www.google.com/android/uncertified", nullptr, nullptr,
-                      SW_SHOWNORMAL);
-    };
-    return r;
 }
 
 bool google_apps_ready();
@@ -5675,8 +5618,6 @@ Section google_account_section() {
                                                           : tr(L"Install Play services, Services Framework and "
                                                                L"Play Store from their downloads."),
                                       tr(L"Open"), [] { show_gms_setup(true); }));
-        ask_device_id();
-        if (!g_device_id.empty()) sec.rows.push_back(device_id_row());
     }
     sec.footer = tr(L"Sign-in takes place on Google's own page, in a separate window; Win.apk never sees your "
                     L"password. The account's tokens are stored only on this PC.");
@@ -10698,15 +10639,6 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             // An app may have added the account (its "Sign in with Google") or the user signed out.
             if (wp && google_account_present() != !g_account.empty()) refresh_account();
             break;
-        case kGmsDeviceId: {
-            std::unique_ptr<std::wstring> id(reinterpret_cast<std::wstring*>(lp));
-            g_device_id_asking = false;
-            if (*id != g_device_id) {
-                g_device_id = *id;
-                if (g_view == kSettingsView) rebuild_page();
-            }
-            return 0;
-        }
         case kGmsAccount: {
             std::unique_ptr<std::wstring> account(reinterpret_cast<std::wstring*>(lp));
             g_account = *account;

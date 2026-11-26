@@ -378,7 +378,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |
-| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; nothing runs once Win.apk is closed: there is no scheduled task or service), **Google services setup**, and **Device ID for Google** (once Google services have checked in: the Services Framework's ID, **Copy**, and **Register this device**, Google's page for devices that are not Play Protect certified) | See [Google account and Google services](google-services.md) |
+| Google account | **Sign in**, **Add another account**, **Sign out**; **Use Google services (experimental)** (off), and with it on **Update apps in the background** (on: every few hours while Win.apk is open, even with only an app or the install window showing, and the PC is on mains power with a network, Google services start for a few minutes so that the Play Store can update apps; nothing runs once Win.apk is closed: there is no scheduled task or service), and **Google services setup** | See [Google account and Google services](google-services.md) |
 | Troubleshooting | **Logs** | Opens the `logs` folder in Explorer, to attach files to a bug report |
 | Troubleshooting | **App data** | Opens `%LOCALAPPDATA%\Win.apk` |
 | Troubleshooting | **Debug mode** | Off by default. For developers: apps opened from now on report every thread they have, with its Java and native stack, to the [Threads window](#debug-mode-the-threads-window). With it on, a **Threads** row under it opens that window on every running app |
@@ -590,9 +590,7 @@ shortcut. The Play Store updates your apps as on a phone, in the background
 too (**Update apps in the background**); an app you have open is updated
 once you close it when the Play Store asks to wait, else closed for its update.
 Win.apk is not a Play Protect certified device and does not pretend to be, so
-Gmail and the Play Store may say so; **Device ID for Google** shows the ID to
-register with your account on Google's page for such devices (**Register this
-device**), after which Google apps sign in.
+Gmail and the Play Store may say so.
 
 [Google account and Google services](google-services.md) explains both, the
 setup step by step, and what does not work.
