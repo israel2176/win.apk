@@ -331,11 +331,10 @@ void write_whole(const std::wstring& file, const std::string& text) {
 }
 
 // /proc/<this pid>/maps for Java code, which opens the host file the path names
-// (java_io_open.cpp): the text native code reads (stdio.cpp, from
-// GuestLinker::proc_maps), written at every open, as the kernel makes it then.
+// (java_io_open.cpp): the text native code reads (stdio.cpp's), written at every
+// open, as the kernel makes it then.
 void refresh_own_maps(const std::wstring& file) {
-    GuestLinker* linker = GuestLinker::process();
-    if (linker) write_whole(file, linker->proc_maps());
+    if (GuestLinker::process()) write_whole(file, proc_maps_file_text());
 }
 
 // The process's program and linker (process_image.h), there for any reader
