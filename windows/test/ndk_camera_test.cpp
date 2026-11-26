@@ -15,6 +15,7 @@
 // NO_BUFFER_AVAILABLE and MAX_IMAGES_ACQUIRED; stopRepeating (the sequence completed, onReady);
 // closing the session (onClosed) and the device (the camera stopped).
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -22,6 +23,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <set>
 #include <string>
