@@ -7,7 +7,9 @@
 // IIDs the SDK headers publish (IAsyncOperation<boolean>, IReference<int>,
 // TypedEventHandler<IInspectable, IInspectable>) and the two Geolocator
 // handlers native_location.cpp already uses; the UUID and address
-// conversions both ways; the advertisement bytes a scan result carries.
+// conversions both ways; the advertisement bytes a scan result carries, and
+// an advertisement joined with its scan response before it is reported, as
+// Android's LeScanningReassembler does.
 // Builds on any host: no Windows header is involved.
 
 #include <cstdio>
@@ -21,6 +23,15 @@ namespace bt = winapk::host::bt;
 namespace {
 
 int g_failures = 0;
+
+// What ScanReassembler needs of a scan result (native_bluetooth.cpp's ScanEvent).
+struct Report {
+    uint64_t address = 0;
+    std::vector<uint8_t> record;
+    bool connectable = false;
+    bool legacy = true;
+    int rssi = 0;
+};
 
 void check(const char* what, bool ok) {
     std::printf("  [%s] %s\n", ok ? "PASS" : "FAIL", what);
@@ -120,6 +131,44 @@ int main() {
     check("oversized section left out",
           bt::advertisement_bytes({{0x16, std::vector<uint8_t>(255, 1)}, {0x01, {0x06}}}) ==
               std::vector<uint8_t>({0x02, 0x01, 0x06}));
+
+    std::printf("advertisement and scan response\n");
+    {
+        bt::ScanReassembler<Report> r;
+        const uint64_t ac = 0xC03937B4B67FULL;
+        // A scannable advertiser (an air conditioner's ADV_IND: flags and a
+        // 16-bit service) whose name and data are in its scan response.
+        const std::vector<uint8_t> adv = {0x02, 0x01, 0x06, 0x03, 0x02, 0xF0};
+        const std::vector<uint8_t> rsp = {0x07, 0x09, 'G', 'R', '-', 'A', 'C', '1', 0x05, 0xFF, 0x2B, 0x00, 0x00, 0x01};
+        check("advertisement held for its scan response", !r.process({ac, adv, true, true, -50}, true, false));
+        auto got = r.process({ac, rsp, false, true, -49}, false, true);
+        std::vector<uint8_t> joined = adv;
+        joined.insert(joined.end(), rsp.begin(), rsp.end());
+        check("one report, advertisement then scan response", got && got->record == joined);
+        check("the advertisement's properties, the scan response's signal",
+              got && got->connectable && got->rssi == -49);
+        check("nothing held after", r.held() == 0);
+        check("scan response with no advertisement dropped", !r.process({ac, rsp, false, true, -49}, false, true));
+
+        check("a new advertisement replaces the held one", !r.process({ac, {0x02, 0x01, 0x05}, true, true, -60}, true, false) &&
+                                                               !r.process({ac, adv, true, true, -60}, true, false));
+        got = r.process({ac, rsp, false, true, -61}, false, true);
+        check("joined with the newest advertisement", got && got->record == joined);
+
+        const std::vector<uint8_t> beacon = {0x02, 0x01, 0x04, 0x05, 0xFF, 0x4C, 0x00, 0x02, 0x15};
+        got = r.process({0x1, beacon, false, true, -70}, false, false);
+        check("not scannable: reported at once", got && got->record == beacon && r.held() == 0);
+
+        r.process({0x2, adv, true, true, -70}, true, false);
+        got = r.process({0x2, {0x02, 0x01, 0x06}, false, true, -70}, false, false);
+        check("a device that stops being scannable is reported, its held advertisement dropped",
+              got && got->record == std::vector<uint8_t>({0x02, 0x01, 0x06}) && r.held() == 0);
+
+        for (uint64_t a = 100; a < 140; ++a) r.process({a, adv, true, true, -70}, true, false);
+        check("at most 17 advertisers held", r.held() == bt::ScanReassembler<Report>::kMaximumCacheSize + 1);
+        check("the oldest dropped", !r.process({100, rsp, false, true, -70}, false, true) &&
+                                        r.process({139, rsp, false, true, -70}, false, true));
+    }
 
     std::printf("%s\n", g_failures ? "FAILED" : "OK");
     return g_failures ? 1 : 0;

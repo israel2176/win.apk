@@ -18,6 +18,12 @@
 //                                                from the roots Windows trusts
 //   /dev/null                                 -> NUL
 //   /proc/self/...                            -> /proc/<this process's pid>/...
+//                                                (its status and maps written at
+//                                                each open, as the kernel makes them)
+//   /system/bin/app_process64, linker64,
+//   /apex/com.android.runtime/bin/linker64    -> <android root>/..., written with
+//                                                the process's ELF header
+//                                                (process_image.h)
 //   /proc/cpuinfo, /sys/devices/system/cpu/   -> <android root>/..., written with this
 //     {possible,present,online}                  machine's text first (cpuinfo.cpp)
 //   any other /...                            -> <android root>/...
@@ -38,6 +44,7 @@
 
 #include "bionic_internal.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <mutex>
@@ -47,8 +54,10 @@
 #include <windows.h>
 #include <tlhelp32.h>
 
+#include "winapk/linker.h"
 #include "winapk/long_path.h"
 #include "winapk/mini_bionic.h"
+#include "winapk/process_image.h"
 
 namespace winapk::bionic {
 
@@ -304,6 +313,45 @@ void refresh_own_status(const std::wstring& file) {
     CloseHandle(h);
 }
 
+// Every folder of `file` that is missing, from the top.
+void make_parents(const std::wstring& file) {
+    for (size_t i = file.find_first_of(L"\\/", 3); i != std::wstring::npos; i = file.find_first_of(L"\\/", i + 1)) {
+        CreateDirectoryW(file.substr(0, i).c_str(), nullptr);
+    }
+}
+
+// `text` as the whole of `file`, written in place as refresh_own_status does:
+// a reader that has it open keeps its handle.
+void write_whole(const std::wstring& file, const std::string& text) {
+    make_parents(file);
+    HANDLE h = CreateFileW(file.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return;
+    DWORD wrote = 0;
+    WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &wrote, nullptr);
+    SetEndOfFile(h);
+    CloseHandle(h);
+}
+
+// /proc/<this pid>/maps for Java code, which opens the host file the path names
+// (java_io_open.cpp): the text native code reads (stdio.cpp's), written at every
+// open, as the kernel makes it then.
+void refresh_own_maps(const std::wstring& file) {
+    if (GuestLinker::process()) write_whole(file, proc_maps_file_text());
+}
+
+// The process's program and linker (process_image.h), there for any reader
+// whatever opened them, as on a device. Written once: the header never changes.
+void ensure_process_image(const std::wstring& file) {
+    const std::array<uint8_t, 64> header = process_image_header();
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (GetFileAttributesExW(file.c_str(), GetFileExInfoStandard, &a) && a.nFileSizeHigh == 0 &&
+        a.nFileSizeLow == header.size()) {
+        return;
+    }
+    write_whole(file, std::string(header.begin(), header.end()));
+}
+
 std::wstring mapped_path(const char* p);
 
 }  // namespace
@@ -312,11 +360,16 @@ std::wstring host_path(const char* p) {
     std::wstring host = mapped_path(p);
     if (p && std::strncmp(p, "/proc/", 6) == 0) {
         size_t len = std::strlen(p);
+        const std::string self = std::to_string(GetCurrentProcessId());
         if (len > 7 && std::strcmp(p + len - 7, "/status") == 0) {
-            const std::string self = std::to_string(GetCurrentProcessId());
             const std::string pid(p + 6, len - 13);
             if (pid == "self" || pid == self) refresh_own_status(host);
+        } else if (len > 5 && std::strcmp(p + len - 5, "/maps") == 0) {
+            const std::string pid(p + 6, len - 11);
+            if (pid == "self" || pid == "thread-self" || pid == self) refresh_own_maps(host);
         }
+    } else if (is_process_image_path(p) && !host.empty() && host[0] != L'/') {
+        ensure_process_image(host);
     }
     if (p && (std::strncmp(p, "/proc/", 6) == 0 || std::strncmp(p, "/sys/", 5) == 0)) refresh_cpu_file(p, host);
     return host;

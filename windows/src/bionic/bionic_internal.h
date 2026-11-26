@@ -164,6 +164,10 @@ void android_name(wchar_t* host_name);
 // for a file outside it.
 std::string android_path_of(const std::wstring& host_file);
 
+// stdio.cpp: /proc/self/maps as native code reads it (the guest libraries, the
+// process's program and linker, the app's APKs), for the file Java code opens.
+std::string proc_maps_file_text();
+
 // cpuinfo.cpp: when `guest_path` is /proc/cpuinfo or /sys/devices/system/cpu/{possible,
 // present,online}, writes this machine's text to `host`, the file host_path() mapped it to,
 // once per process (the kernel's files, which Windows has not got).

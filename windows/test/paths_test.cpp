@@ -10,6 +10,9 @@
 
 #include "winapk/mini_bionic.h"
 
+#include "winapk/linker.h"
+#include "winapk/process_image.h"
+
 #include "winapk/guest_abi.h"
 
 #include <chrono>
@@ -370,6 +373,74 @@ void app_code_maps() {
     RemoveDirectoryW(scratch.c_str());
 }
 
+// The process's program and linker (process_image.h): /proc/self/maps names them for Java code
+// too, at memory that holds their ELF header, and their files are there with the same bytes,
+// x86_64's, as on a 64-bit-only device; there is no 32-bit linker. NetEase's and ijiami's
+// packers choose the build of their loader by these.
+void process_files() {
+    wchar_t temp[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp);
+    const std::wstring scratch = std::wstring(temp) + L"winapk-image-test-" + std::to_wstring(GetCurrentProcessId());
+    CreateDirectoryW(scratch.c_str(), nullptr);
+    char utf8[MAX_PATH * 3];
+    WideCharToMultiByte(CP_UTF8, 0, scratch.c_str(), -1, utf8, sizeof utf8, nullptr, nullptr);
+    winapk::set_android_root(utf8);
+    winapk::GuestLinker linker{winapk::LinkerConfig{}};
+    auto read_all = [](const std::wstring& file) {
+        std::string text;
+        if (FILE* f = _wfopen(file.c_str(), L"rb")) {
+            char buf[512];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+        }
+        return text;
+    };
+    auto fail = [](const char* what, const std::string& detail) {
+        ++g_failed;
+        std::fprintf(stderr, "FAIL %s:\n%s\n", what, detail.c_str());
+    };
+    const std::string header = [] {
+        const auto h = winapk::process_image_header();
+        return std::string(h.begin(), h.end());
+    }();
+    if (header.compare(0, 4, "\x7f" "ELF") != 0 || header[4] != 2 || header[18] != 62) fail("the header", header);
+
+    const std::wstring maps_file = winapk::android_host_path("/proc/self/maps");
+    const std::string maps = read_all(maps_file);
+    for (const char* path : {winapk::kAppProcessPath, winapk::kRuntimeLinkerPath}) {
+        const size_t at = maps.find(std::string(" ") + path + "\n");
+        if (at == std::string::npos) {
+            fail("/proc/self/maps for Java names the process's files", maps);
+            continue;
+        }
+        const size_t line = maps.rfind('\n', at) == std::string::npos ? 0 : maps.rfind('\n', at) + 1;
+        const uint64_t start = std::strtoull(maps.c_str() + line, nullptr, 16);
+        const char* mem = reinterpret_cast<const char*>(static_cast<uintptr_t>(start));
+        if (!start || std::string(mem, header.size()) != header) fail("the memory a maps line names holds the header", path);
+        if (maps.compare(maps.find(' ', line) + 1, 4, "r--p") != 0) fail("read-only", maps.substr(line, at - line));
+    }
+    for (const char* path : {winapk::kAppProcessPath, winapk::kRuntimeLinkerPath, winapk::kSystemLinkerPath}) {
+        const std::wstring file = winapk::android_host_path(path);
+        if (read_all(file) != header) fail("the file is the header", path);
+    }
+    if (GetFileAttributesW(winapk::android_host_path("/system/bin/linker").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        fail("no 32-bit linker", "/system/bin/linker exists");
+    }
+    // Remove the scratch tree (proc/<pid>/maps, system/bin, apex/com.android.runtime/bin).
+    for (const char* path : {winapk::kAppProcessPath, winapk::kRuntimeLinkerPath, winapk::kSystemLinkerPath}) {
+        DeleteFileW(winapk::android_host_path(path).c_str());
+    }
+    DeleteFileW(maps_file.c_str());
+    for (const wchar_t* dir : {L"\\proc\\", L"\\system\\bin", L"\\system", L"\\apex\\com.android.runtime\\bin",
+                               L"\\apex\\com.android.runtime", L"\\apex"}) {
+        std::wstring d = scratch + dir;
+        if (d.back() == L'\\') d += std::to_wstring(GetCurrentProcessId());
+        RemoveDirectoryW(d.c_str());
+    }
+    RemoveDirectoryW((scratch + L"\\proc").c_str());
+    RemoveDirectoryW(scratch.c_str());
+}
+
 }  // namespace
 
 int main() {
@@ -476,6 +547,7 @@ int main() {
     own_status();
     cpu_files();
     app_code_maps();
+    process_files();
 
     if (g_failed == 0) std::fprintf(stderr, "paths_test: all checks passed\n");
 

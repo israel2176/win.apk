@@ -6,11 +6,18 @@
 #include "winapk/guest_abi.h"
 #include "winapk/long_path.h"
 #include "winapk/mini_bionic.h"
+#include "winapk/process_image.h"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <unordered_set>
+
+#include <windows.h>
+// windows.h defines these; the library search below names a variable `near`.
+#undef near
+#undef far
 
 #include <windows.h>
 
@@ -557,42 +564,80 @@ std::vector<GuestLinker::PhdrView> GuestLinker::phdr_views() const {
     return out;
 }
 
-// /proc/self/maps as Linux prints it (fs/proc/task_mmu.c show_map_vma): one
-// line per PT_LOAD of every loaded guest library, page-aligned, with its
-// permissions, file offset and path, the path starting at column 73. Native
-// code that locates itself or its neighbours through this file (Facebook's
-// MobileConfig in WhatsApp opens it right after boot and threw
-// "fopen(/proc/self/maps): No such file or directory") gets the same library
-// set and the same path dladdr and dl_iterate_phdr report. Host modules and
-// anonymous memory are not listed: they are not part of the guest's address
-// space as Bionic would describe it.
-std::string GuestLinker::proc_maps() const {
-    std::lock_guard<std::recursive_mutex> hold(lock_);
-    std::string out;
+namespace {
+
+// The process's program and linker as /proc/self/maps names them
+// (process_image.h): a read-only page each, holding the ELF header their
+// files hold, made once, so a reader of the address finds what the file has.
+struct ProcessImage {
+    const char* path;
+    uintptr_t at;
+};
+
+const std::array<ProcessImage, 2>& process_images() {
+    static const std::array<ProcessImage, 2> images = [] {
+        std::array<ProcessImage, 2> out{{{kAppProcessPath, 0}, {kRuntimeLinkerPath, 0}}};
+        for (ProcessImage& image : out) {
+            void* p = VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+            if (!p) continue;
+            const std::array<uint8_t, 64> header = process_image_header();
+            std::memcpy(p, header.data(), header.size());
+            DWORD old;
+            VirtualProtect(p, 0x1000, PAGE_READONLY, &old);
+            image.at = reinterpret_cast<uintptr_t>(p);
+        }
+        return out;
+    }();
+    return images;
+}
+
+// One line as fs/proc/task_mmu.c show_map_vma prints it: the path at column 73,
+// a stable stand-in inode so file-backed lines look file-backed.
+void append_maps_line(std::string* out, uint64_t start, uint64_t end, uint32_t flags, uint64_t offset,
+                      const std::string& file) {
+    uint32_t inode = 2166136261u;
+    for (const unsigned char c : file) inode = (inode ^ c) * 16777619u;
+    inode = (inode & 0x7fffffffu) | 1u;
     char line[128];
+    const int n = std::snprintf(line, sizeof line, "%llx-%llx %c%c%cp %08llx fd:01 %u",
+                                static_cast<unsigned long long>(start), static_cast<unsigned long long>(end),
+                                (flags & 4) ? 'r' : '-', (flags & 2) ? 'w' : '-', (flags & 1) ? 'x' : '-',
+                                static_cast<unsigned long long>(offset), inode);
+    if (n <= 0) return;
+    out->append(line, static_cast<size_t>(n));
+    out->append(n < 73 ? static_cast<size_t>(73 - n) : 1, ' ');
+    *out += file;
+    *out += '\n';
+}
+
+}  // namespace
+
+// /proc/self/maps as Linux prints it (fs/proc/task_mmu.c show_map_vma): the
+// process's program and linker first, as every app process on a 64-bit
+// device has them (process_image.h), then one line per PT_LOAD of every
+// loaded guest library, page-aligned, with its permissions, file offset and
+// path. Native code that locates itself or its neighbours through this file
+// (Facebook's MobileConfig in WhatsApp opens it right after boot and threw
+// "fopen(/proc/self/maps): No such file or directory") gets the same library
+// set and the same path dladdr and dl_iterate_phdr report; Java code reads the
+// same text (paths.cpp). Host modules and anonymous memory are not listed: they
+// are not part of the guest's address space as Bionic would describe it.
+std::string GuestLinker::proc_maps() const {
+    std::string out;
+    for (const ProcessImage& image : process_images()) {
+        if (image.at) append_maps_line(&out, image.at, image.at + 0x1000, 4, 0, image.path);
+    }
+    std::lock_guard<std::recursive_mutex> hold(lock_);
     for (const auto& l : libs_) {
         const ElfImage* img = l->image.get();
         if (!img) continue;
-        // A stable stand-in inode, so file-backed lines look file-backed.
-        uint32_t inode = 2166136261u;
-        for (const unsigned char c : l->file) inode = (inode ^ c) * 16777619u;
-        inode = (inode & 0x7fffffffu) | 1u;
         const uint64_t bias = img->load_bias();
         constexpr uint64_t kPage = 0x1000;
         for (const elf::Phdr& ph : img->phdrs()) {
             if (ph.p_type != elf::kPtLoad || ph.p_memsz == 0) continue;
             const uint64_t start = (bias + ph.p_vaddr) & ~(kPage - 1);
             const uint64_t end = (bias + ph.p_vaddr + ph.p_memsz + kPage - 1) & ~(kPage - 1);
-            const int n = std::snprintf(line, sizeof line, "%llx-%llx %c%c%cp %08llx fd:01 %u",
-                                        static_cast<unsigned long long>(start), static_cast<unsigned long long>(end),
-                                        (ph.p_flags & 4) ? 'r' : '-', (ph.p_flags & 2) ? 'w' : '-',
-                                        (ph.p_flags & 1) ? 'x' : '-',
-                                        static_cast<unsigned long long>(ph.p_offset & ~(kPage - 1)), inode);
-            if (n <= 0) continue;
-            out.append(line, static_cast<size_t>(n));
-            out.append(n < 73 ? static_cast<size_t>(73 - n) : 1, ' ');
-            out += l->file;
-            out += '\n';
+            append_maps_line(&out, start, end, ph.p_flags, ph.p_offset & ~(kPage - 1), l->file);
         }
     }
     return out;

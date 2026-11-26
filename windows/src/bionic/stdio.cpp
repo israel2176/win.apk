@@ -2525,6 +2525,9 @@ const ShimSymbol kSymbols[] = {
 
 }  // namespace
 
+// The text of /proc/self/maps, for the file java.io opens for it (paths.cpp).
+std::string proc_maps_file_text() { return proc_maps_text(); }
+
 size_t file_write(void* f, const char* data, size_t n) { return std::fwrite(data, 1, n, host_file(f)); }
 int64_t fd_write(int fd, const void* data, size_t n) { return g_write(fd, data, n); }
 void* host_stream(void* guest_file) { return host_file(guest_file); }
