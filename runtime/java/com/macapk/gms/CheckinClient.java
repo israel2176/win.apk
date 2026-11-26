@@ -11,8 +11,8 @@
 // We send what we honestly are: the Build fields android.os.Build already
 // reports to every guest (BRAND/MANUFACTURER "Apple", MODEL the host hw.model, the real SDK level,
 // the real ABI list, the real screen metrics). We register as a Mac.apk device
-// because that is what this is. Win.apk: on Windows the same Build fields say
-// "Win.apk" / "winapk" / "x86_64", and so does the User-Agent below.
+// because that is what this is. Win.apk: on Windows the same Build fields (the
+// owner's choice, Build.java), and the User-Agent below says Win.apk.
 //
 // microG's reference implementation fabricates several identifiers that we
 // OMIT, and the omissions are deliberate rather than unfinished:

@@ -225,10 +225,9 @@ fake a certification, and will not.
 - Only copies whose signature verifies with Google's key (or a newer Google
   key that took over from it) are treated as Google's apps. An app that only
   uses their package names is an ordinary app.
-- Google sees this PC as a device of its own: brand, maker and model
-  "Win.apk", device "winapk", hardware "x86_64". Win.apk never claims to be a
-  real phone. (Before v0.8.0 it called itself "Mac.apk", so Google meets it as
-  a new device once.)
+- Google sees this PC as Mac.apk's device: brand and maker "Apple", model
+  "Mac", device "macapk", as every Win.apk did until 1.0.0. Win.apk never
+  claims to be a real phone, and fakes no certification or Play Integrity.
 - Every app still runs with your Windows account's rights; there is no
   sandbox between apps on Windows. Keeping the Google account's token
   encrypted and out of the apps protects it from copies of the data folder,

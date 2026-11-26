@@ -2132,12 +2132,11 @@ every such change is listed here:
   view. Comparing the wrapper itself skipped it, so a NativeActivity (SDL)
   never got its window and stayed blank. An upstream bug too.
 - `runtime/java/android/os/Build.java`, `com/macapk/gms/CheckinClient.java`:
-  on Windows the device is Win.apk: `BRAND`, `MANUFACTURER` and `MODEL`
-  "Win.apk", `DEVICE`, `PRODUCT`, `BOARD` and `USER` "winapk", `HARDWARE`
-  "x86_64", `DISPLAY` "Win.apk-1", `HOST` "winapk"; `FINGERPRINT`, the `ro.*`
-  properties and the GMS clients' user agents follow from them, and the
-  check-in's own User-Agent says Win.apk. Upstream reports Apple and the Mac's
-  hardware model, which a PC is not; no real phone or Google device is named.
+  on Windows the device is upstream's, by the maintainer's choice: `BRAND` and
+  `MANUFACTURER` "Apple", `MODEL` "Mac" (Windows has no `hw.model` to export),
+  `DEVICE`, `PRODUCT`, `BOARD` and `USER` "macapk", what every Windows run
+  reported until 1.0.0; the check-in's own User-Agent says Win.apk. No real
+  phone or Google device is named.
 - `runtime/java/com/macapk/gms/McsClient.java`: `WINAPK_PROXY` (a SOCKS proxy
   for the push connection) wins over upstream's per-app `HostProxy` policy.
 - `runtime/java/com/macapk/loader/Manifest.java` and `MacApkPackageManager.java`:
