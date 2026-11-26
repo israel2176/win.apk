@@ -226,8 +226,10 @@ __attribute__((constructor)) static void packed_init(void) {
     }
     if (!strtab) return;
     g_state = 1;
-    const char* sealed = "LINK_PACKED_SECRET";
-    const size_t n = strlen(sealed);
+    // Not strlen: by now linker_test.cpp has made libwinapk_link_interpose.so global, whose
+    // strlen answers 1000, and a library loaded after it gets that one, as on a device.
+    static const char sealed[] = "LINK_PACKED_SECRET";
+    const size_t n = sizeof sealed - 1;
     for (unsigned long i = 0; i + n <= strsz; ++i) {
         size_t k = 0;
         while (k < n && strtab[i + k] == sealed[k]) ++k;
