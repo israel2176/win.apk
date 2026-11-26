@@ -113,8 +113,8 @@ way Android's package installer does it:
    **Install unknown apps** switch ("Allow ... to install other apps?");
    **Allow** goes on to the install, **Cancel** or **Don't allow** stops it.
    The answer is kept (see [Permissions](#permissions)), so this comes once
-   per store, and an update of the store keeps it. The built-in Store is
-   allowed from the start, as a phone's own store is.
+   per store, and an update of the store keeps it. The built-in Store and
+   the Play Store skip all of these steps, as a phone's own store does.
 2. **Do you want to install this app?** (or **Do you want to update this
    app?** when the library has the app): **Install** / **Update**, or
    **Cancel**.
@@ -174,12 +174,13 @@ no shortcut, and the Store item is its one way in.
 - **Updates**: the daily update check (Settings > Updates, **Check for updates
   automatically**) also looks for a newer release of the store app, and
   installs it the same way, once the Store is not open.
-- **Installing an app** from the Store goes through Win.apk as for any store
-  (see [Apps that install apps](#apps-that-install-apps)): **Do you want to
-  install this app?**, the install window, then **App installed.** with
-  **Open** and **Done**. The Store is allowed to install apps from the start,
-  as a phone's own store is, and the apps it installs name it as their
-  installer.
+- **Installing an app** from the Store asks nothing more: choosing it in the
+  Store is the answer, as a phone's own store installs what you pick in it
+  (the Play Store does the same). The Store shows the install and says when
+  it is done, and the apps it installs name it as their installer. This holds
+  for the Store as Win.apk installed it, the release it checked against
+  GitHub; a copy of the Store from elsewhere asks as any other store does
+  (see [Apps that install apps](#apps-that-install-apps)).
 - Leaving for another item keeps the Store running, as a phone keeps an app
   in the background; the Store item shows it again at once. Closing the
   library window closes it. If it closes, the page says so, with **Open the
@@ -688,7 +689,7 @@ and the launch window open the right log themselves when something fails.
 | `google-download.log` | The Google services setup's downloads (apkeep's output, from APKPure) |
 | `system.log`, `services\` | With Google services on: the system broker (its `jobs:` lines: the apps' background jobs it keeps and starts, the Play Store's update checks among them), and the apps it starts for other apps |
 | `maintenance.log` | With **Update apps in the background** on: the last background window Win.apk opened |
-| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed: no question, as on a phone), and library maintenance |
+| `install-helper.log`, `package-backfill.log` | Installs an app itself asked for (a store installing another app: Win.apk asks first; the Play Store Google signed and the built-in Store: no question, as on a phone), and library maintenance |
 | `hs_err_pid<n>.log` | A crash report from the Java VM, if the VM itself crashed |
 | `crash-<app>-<date>.dmp` | A minidump of the app's process when its native code crashed (the last three per app); attach it to an issue with the log |
 
