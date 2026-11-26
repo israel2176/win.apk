@@ -207,8 +207,28 @@ typedef struct {
     long d_tag;
     unsigned long d_val;
 } Dyn;
+typedef struct {
+    unsigned int p_type, p_flags;
+    unsigned long p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align;
+} Phdr;
 extern Dyn _DYNAMIC[] __attribute__((visibility("hidden")));
 extern char __ehdr_start[] __attribute__((visibility("hidden")));
+
+// The protection of the PT_LOAD that holds `vaddr`, as mprotect takes it (PF_X is
+// PROT_EXEC's bit and PF_R PROT_READ's: they swap). A newer lld puts .text in the
+// segment of the headers and .dynstr (R E), so the page made writable here may be
+// the constructor's own code: it keeps its execute bit, as a self-patching library
+// must, or Windows stops at the next instruction (Wine does not).
+static int segment_prot(unsigned long vaddr) {
+    const unsigned short phnum = *(const unsigned short*)(__ehdr_start + 56);
+    const Phdr* ph = (const Phdr*)(__ehdr_start + *(const unsigned long*)(__ehdr_start + 32));
+    for (unsigned short i = 0; i < phnum; ++i) {
+        if (ph[i].p_type != 1 || vaddr < ph[i].p_vaddr || vaddr >= ph[i].p_vaddr + ph[i].p_memsz) continue;
+        const unsigned int f = ph[i].p_flags;
+        return ((f & 4) ? 1 : 0) | ((f & 2) ? 2 : 0) | ((f & 1) ? 4 : 0);
+    }
+    return 1;
+}
 
 // The file has "LINK_PACKED_SECRET" where the linker wrote the export's name;
 // the constructor lowers it back, as a packer decrypts its .dynstr. How far it
@@ -237,7 +257,8 @@ __attribute__((constructor)) static void packed_init(void) {
         g_state = 2;
         unsigned long page = (unsigned long)(strtab + i) & ~4095ul;
         unsigned long end = (unsigned long)(strtab + i + n + 4095) & ~4095ul;
-        if (mprotect((void*)page, end - page, 3) != 0) {  // PROT_READ | PROT_WRITE
+        const int prot = segment_prot((unsigned long)(strtab + i) - (unsigned long)__ehdr_start);
+        if (mprotect((void*)page, end - page, prot | 2) != 0) {  // and PROT_WRITE
             g_state = -2;
             return;
         }
@@ -245,7 +266,7 @@ __attribute__((constructor)) static void packed_init(void) {
         for (k = 0; k < n; ++k) {
             if (strtab[i + k] >= 'A' && strtab[i + k] <= 'Z') strtab[i + k] = (char)(strtab[i + k] + 32);
         }
-        mprotect((void*)page, end - page, 1);  // PROT_READ
+        mprotect((void*)page, end - page, prot);
         g_state = 4;
         return;
     }
