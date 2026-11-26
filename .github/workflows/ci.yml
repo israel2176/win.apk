@@ -1049,6 +1049,17 @@ jobs:
           grep -E "frames presented" window.log
           grep -E "\[win.apk\] (window|window resized|resize):" window.log
           grep -E "resize: the app drew at 400x600 px" window.log
+      - name: GL threads (windows/test/glthread, in a window)
+        run: |
+          # A renderer set before its surface exists -- the platform's GLSurfaceView and an app's
+          # own copy of its GLThread, on EGL10 and on EGL14 -- must be created, sized and drawn on
+          # its GL thread, and sized again when the window is resized (run.sh says what it checks).
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          if ! windows/test/glthread/build.sh glthread; then
+            echo "::warning::the GL thread test was not built (no Android SDK on the runner?)"
+            exit 0
+          fi
+          windows/test/glthread/run.sh ./stage/bin/winapk-runtime.exe glthread/glthread.apk glthread-run
       - name: Frame time (the frame bench, in a window)
         id: framebench
         run: |
@@ -1085,6 +1096,7 @@ jobs:
             boot.log
             window.log
             frames-aosp.log
+            glthread-run/*.log
             nogfx.log
             host.log
             replace.log

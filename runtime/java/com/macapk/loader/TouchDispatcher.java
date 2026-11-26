@@ -10,26 +10,13 @@
 // Thread model: Cocoa events arrive on the AppKit main thread, which is
 // also the JVM main thread, so dispatching is direct (no posting).
 //
-// Renderer-direct fallback: cocos2d-style engines deliver touches from
-// onTouchEvent through queueEvent(runnable) onto their GL thread. After
-// the regular view-tree dispatch we walk the content view for a renderer
-// with handleActionDown/Up/Move and invoke them directly -- but ONLY
-// where the queued copy will never run. v1.0.1639: our own
-// android.opengl.GLSurfaceView now services queueEvent every frame
-// (GLSurfaceView.macapkRunQueuedGlEvents, AOSP GLThread semantics), so
-// for a renderer hosted by it (GD Lite, OpenGD) direct delivery would
-// deliver every touch TWICE (a phantom second tap when DOWN and UP land
-// in one frame) and is suppressed. It remains for vendored GLSurfaceView
-// forks with their own GLThread (Hill Climb's FSGLSurfaceView), hosts
-// that override queueEvent, and MACAPK_GLQ_DRAIN=0.
-// 2026-09-27 (MACAPK_TOUCH_APP_QUEUE_ONLY, default ON): a fork's queue is now
-// drained to empty before every draw by SurfaceView.macapkDrainForkedGlQueue
-// (MACAPK_GLTHREAD_DRAIN_EMPTY), so for a fork host whose CURRENT GL thread is
-// orphaned (dead, not a survivor) the app's own onTouchEvent -> queueEvent
-// already delivers the touch, as on Android, and direct delivery is
-// suppressed there too. It still runs where nothing would drain the queue
-// (a live or survivor GL thread, a re-attach not yet re-bound, the drain off).
-// docs/cocos2dx-touch-renderer-direct-retired_2026-09-27.md.
+// Renderer-direct fallback (upstream's): a renderer's handleActionDown/Up/Move
+// called directly, for an engine whose onTouchEvent -> queueEvent copy would
+// never run because nothing drained its GL thread's queue. Every GL thread now
+// runs and drains its own queue, as on Android (GLSurfaceView is AOSP's, and an
+// app's own GLThread is no longer refused its context), so forkQueueDelivers
+// always answers yes and the fallback delivers nothing; with AOSP's views the
+// host's input does not come through these entries at all (AospInput).
 package com.macapk.loader;
 
 import android.app.Activity;
@@ -1731,16 +1718,8 @@ public class TouchDispatcher {
      *  and for injected input (injectTargetsSurfaceTree), so a harness tap
      *  keeps travelling the same thread a real click does. */
     static boolean hostInputTree(View root) {
-        return treeHasOsMainRenderedSurface(root);
-    }
-    private static boolean treeHasOsMainRenderedSurface(View v) {
-        if (v instanceof android.view.SurfaceView
-                && ViewHost.get().rendersOnOsMain((android.view.SurfaceView) v)) return true;
-        if (v instanceof ViewGroup) {
-            ViewGroup vg = (ViewGroup) v;
-            for (int i = 0, n = vg.getChildCount(); i < n; i++)
-                if (treeHasOsMainRenderedSurface(vg.getChildAt(i))) return true;
-        }
+        // No renderer runs on the host's render thread any more: a GLSurfaceView's renderer, and
+        // an app's own, run on their GL thread, as on Android.
         return false;
     }
     private static boolean treeHasSurfaceView(View v) {
@@ -3591,15 +3570,6 @@ public class TouchDispatcher {
     private static boolean s_queueServiced;
     /** The view that holds s_renderer. Read per event by the fork check. */
     private static View    s_owner;
-    /** MACAPK_GLTHREAD_DRAIN_TRACE=1 (the SurfaceView fork-drain trace, which
-     *  logs EVERY drained runnable): lift LOG_CAP on the renderer-direct lines
-     *  too, so a touch A/B can count direct vs drained deliveries one to one
-     *  past the first 64 events. Diagnostic; changes no delivery. */
-    private static final boolean s_directTrace =
-        "1".equals(System.getenv("MACAPK_GLTHREAD_DRAIN_TRACE"));
-    /** Last logged fork-suppression state (-1 none yet); log transitions only. */
-    private static int s_forkSuppressState = -1;
-    private static final AtomicInteger s_forkSuppressLogN = new AtomicInteger(0);
     private static Method  s_handleDown;
     private static Method  s_handleUp;
     private static Method  s_handleMove;
@@ -3690,13 +3660,13 @@ public class TouchDispatcher {
         try {
             m.invoke(s_renderer, args);
             int n = s_directLogN.getAndIncrement();
-            if (n < LOG_CAP || s_directTrace) {
+            if (n < LOG_CAP) {
                 NativeLog.i(TAG, "renderer-direct " + m.getName() + " ok (px="
                     + px + " py=" + py + ")");
             }
         } catch (Throwable t) {
             int n = s_directLogN.getAndIncrement();
-            if (n < LOG_CAP || s_directTrace) {
+            if (n < LOG_CAP) {
                 NativeLog.w(TAG, "renderer-direct " + m.getName() + " threw " + t);
             }
         }
@@ -3765,31 +3735,10 @@ public class TouchDispatcher {
         return true;
     }
 
-    /** MACAPK_TOUCH_APP_QUEUE_ONLY: does the bound host's OWN queue deliver
-     *  this touch? True only for a SurfaceView fork whose current GL thread
-     *  SurfaceView drains for (see SurfaceView.macapkForkGlQueueServiced). Logs
-     *  each change of answer (bounded), so a run shows when delivery moved
-     *  from the direct call to the app's queue and back. */
+    /** Does the bound host's OWN queue deliver this touch? Always: the host's GL thread, a
+     *  GLSurfaceView's or an app's own, runs and drains its queue, as on Android. */
     private static boolean forkQueueDelivers(View owner) {
-        if (!(owner instanceof android.view.SurfaceView)) return false;
-        boolean yes;
-        try {
-            yes = ViewHost.get().forkGlQueueServiced((android.view.SurfaceView) owner);
-        } catch (Throwable t) {
-            yes = false;
-        }
-        int st = yes ? 1 : 0;
-        if (st != s_forkSuppressState) {
-            s_forkSuppressState = st;
-            if (s_forkSuppressLogN.getAndIncrement() < LOG_CAP || s_directTrace) {
-                NativeLog.i(TAG, "renderer-direct: " + (yes
-                    ? "SUPPRESSED -- " + owner.getClass().getName()
-                        + "'s own GL-thread queue is drained every frame, onTouchEvent delivers"
-                    : "delivering -- " + owner.getClass().getName()
-                        + "'s GL-thread queue is not drained by us right now"));
-            }
-        }
-        return yes;
+        return true;
     }
 
     /** {owner View, renderer}, or null. */

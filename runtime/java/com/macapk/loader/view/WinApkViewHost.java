@@ -287,51 +287,6 @@ final class WinApkViewHost implements ViewHost {
         return SurfaceView.macapkPresentVideoFrame(surface, argb, width, height);
     }
 
-    @Override public boolean isSurfaceViewGlThread(Thread thread) {
-        return SurfaceView.macapkIsSurfaceViewGlThread(thread);
-    }
-
-    @Override public void markGlThreadSurvivedRefusal(Thread thread, String call) {
-        SurfaceView.macapkMarkGlThreadSurvivedRefusal(thread, call);
-    }
-
-    @Override public boolean glWaitFrame() { return SurfaceView.macapkGlWaitFrame(); }
-
-    @Override public boolean holderSizeIsBufferSize() { return SurfaceView.macapkHolderSizeIsBufferSize(); }
-
     @Override public boolean isZOrderOnTop(SurfaceView view) { return view.macapkIsZOrderOnTop(); }
 
-    @Override public boolean rendersOnOsMain(SurfaceView view) { return view.macapkRendersOnOsMain(); }
-
-    @Override public boolean forkGlQueueServiced(SurfaceView view) { return view.macapkForkGlQueueServiced(); }
-
-    @Override public boolean rendererMayStart(SurfaceView view, int displayW, int displayH) {
-        return view.macapkRendererMayStart(displayW, displayH);
-    }
-
-    @Override public int[] rendererSurfaceSize(SurfaceView view, int displayW, int displayH) {
-        return view.macapkRendererSurfaceSize(displayW, displayH);
-    }
-
-    @Override public void warnGlSizeSplit(SurfaceView view, int toldW, int toldH, int displayW, int displayH) {
-        view.macapkWarnGlSizeSplit(toldW, toldH, displayW, displayH);
-    }
-
-    @Override public int[] driveOverlayForCurrentSurface(SurfaceView view) {
-        return view.macapkDriveOverlayForCurrentSurface();
-    }
-
-    @Override public void convergeSurfaceLifecycle(SurfaceView view, int widthPx, int heightPx) {
-        view.macapkConvergeSurfaceLifecycle(widthPx, heightPx);
-    }
-
-    @Override public void detectDrawBehindTop(SurfaceView view, Object renderer) {
-        view.macapkDetectDrawBehindTop(renderer);
-    }
-
-    @Override public void noteNativeDisplaySize(SurfaceView view, int w, int h) {
-        view.macapkNoteNativeDisplaySize(w, h);
-    }
-
-    @Override public boolean ownerStoppedUnderTop(SurfaceView view) { return view.macapkOwnerStoppedUnderTop(); }
 }

@@ -495,7 +495,12 @@ checked against its SHA-256.
   upstream's generated GL bindings are compiled unchanged
   (`host/gl/gl_bridges.cpp`) and their `gl*` and `egl*` calls land in
   forwarders (`gl_stubs.inc`, generated from the Khronos headers) that look
-  ANGLE up on first use, so the runtime starts without it.
+  ANGLE up on first use, so the runtime starts without it. A renderer runs
+  on its own GL thread, as on Android: `GLSurfaceView` is AOSP's, whose
+  GLThread makes an EGL10 context (`MacApkEGL10`, real for every thread) and
+  a window surface on the view's holder, and an app's own GL thread does the
+  same on EGL10 or EGL14; that window surface is the host's window surface on
+  the SurfaceView, below.
 - **From native code** (`host/gl/guest_gl.cpp`): every GLES 1.1 to 3.2 and
   EGL 1.5 function wrapped for the System V convention, the Khronos and
   ANGLE/Chromium extensions' functions too (`third_party/angle/`'s
