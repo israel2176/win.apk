@@ -165,6 +165,7 @@ final class ActiveServices {
             return null;
         }
         if (si == null) return null;
+        if (runtimeOwn(si)) si = hostedHere(si);
         if (si.applicationInfo == null) si.applicationInfo = app.info;
         if (si.packageName == null) si.packageName = app.info.packageName;
         if (si.processName == null) si.processName = app.info.processName;
@@ -172,6 +173,33 @@ final class ActiveServices {
         byName.put(cn, r);
         byToken.put(r.token, r);
         return r;
+    }
+
+    /** Whether `si` is one of the runtime's own services standing in for another package's (the
+     *  register and measurement services the package manager resolves for com.google.android.gms
+     *  when Play services is not installed): a class of the runtime, not of any installed app. On
+     *  a device that package's process would run it; here it runs in the app's, as the old host
+     *  ran it. AOSP's handleCreateService would otherwise build that package's LoadedApk, and
+     *  there is no such package to load. */
+    private boolean runtimeOwn(ServiceInfo si) {
+        if (si.packageName == null || si.packageName.equals(app.info.packageName)) return false;
+        try {
+            Class<?> c = Class.forName(si.name, false, app.classLoader);
+            ClassLoader own = c.getClassLoader();
+            return Service.class.isAssignableFrom(c) && own != app.classLoader
+                    && own == ActiveServices.class.getClassLoader();
+        } catch (ClassNotFoundException | LinkageError e) {
+            return false;
+        }
+    }
+
+    /** A copy of `si` that runs with the app's ApplicationInfo and process; its component name
+     *  (the package it answers for) stays. */
+    private ServiceInfo hostedHere(ServiceInfo si) {
+        ServiceInfo here = new ServiceInfo(si);
+        here.applicationInfo = app.info;
+        here.processName = app.info.processName;
+        return here;
     }
 
     private ServiceInfo undeclared(ComponentName cn) {
