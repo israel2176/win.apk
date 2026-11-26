@@ -37,6 +37,8 @@ public class AospAppLifecycleTest {
     static final List<String> log = new ArrayList<>();
     static final String PING = PKG + ".PING";
     static volatile String heard;
+    /** What became of the application context's window manager once nothing but the context held it. */
+    static volatile String windowManager;
     /** The services' callbacks, in their own order (each service's is Android's; between the two
      *  services and the activities it is the main queue's), checked once at the end. */
     static final List<String> svc = java.util.Collections.synchronizedList(new ArrayList<>());
@@ -130,6 +132,14 @@ public class AospAppLifecycleTest {
             super.onCreate();
             note("App.onCreate");
             prov.add("App.onCreate");
+            // A context's window manager is its own for the context's life (ContextImpl's service
+            // cache): ToastPresenter keeps it only in a WeakReference and removes its toast with it.
+            Object wm = getSystemService(WINDOW_SERVICE);
+            java.lang.ref.WeakReference<Object> weak = new java.lang.ref.WeakReference<>(wm);
+            boolean same = wm != null && wm == getSystemService(android.view.WindowManager.class);
+            wm = null;
+            System.gc();
+            windowManager = !same ? "a new one on each call" : weak.get() == null ? "collected" : "kept";
             // A receiver registered on the application's context hears a broadcast an activity sends
             // (step A3: ContextImpl's receivers and broadcasts). Not in the callback order: when it
             // is heard is the broadcast queue's, checked once at the end.
@@ -518,6 +528,11 @@ public class AospAppLifecycleTest {
         if (!new java.util.HashSet<>(sticky).equals(java.util.Set.of("live initial=false", "replay initial=true"))) {
             System.out.println("FAILED: the sticky broadcast's receivers gave " + sticky
                     + ", Android gives [live initial=false, replay initial=true]");
+            System.exit(1);
+        }
+        if (!"kept".equals(windowManager)) {
+            System.out.println("FAILED: the application context's window manager: " + windowManager
+                    + ", Android keeps one per context");
             System.exit(1);
         }
         System.out.println("ALL PASSED");

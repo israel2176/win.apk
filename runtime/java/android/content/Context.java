@@ -144,6 +144,11 @@ public abstract class Context {
     /** Cached facade; LocaleManager shares stored state through SharedPrefsImpl. */
     private android.app.LocaleManager macapkLocaleManager;
     private android.location.LocationManager macapkLocationManager;
+    /** The view host's managers this Context was handed (window, layout_inflater...), by name: AOSP's
+     *  ContextImpl keeps them in its mServiceCache (SystemServiceRegistry's CachedServiceFetcher), one
+     *  per context for the context's life. Callers rely on it: ToastPresenter holds the window manager
+     *  only weakly, so a manager made afresh for each call is collected and its toast never removed. */
+    private final java.util.Map<String, Object> macapkViewServices = new java.util.concurrent.ConcurrentHashMap<>(4);
     public android.content.res.Resources.Theme getTheme() {
         if (macapkTheme == null) {
             Resources r = getResources();
@@ -1218,8 +1223,10 @@ public abstract class Context {
         Object result;
         // AOSP's views (-Dwinapk.aosp.views=1) own their managers (window, layout_inflater,
         // input_method, accessibility...); Win.apk's view host answers null for every name.
+        if (name != null && (result = macapkViewServices.get(name)) != null) return result;
         if (name != null && (result = com.macapk.loader.view.ViewHost.get().systemService(this, name)) != null) {
-            return result;
+            Object first = macapkViewServices.putIfAbsent(name, result);
+            return first != null ? first : result;
         }
         if (name == null) {
             result = null;
