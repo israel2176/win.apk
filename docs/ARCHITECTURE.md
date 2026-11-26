@@ -1271,7 +1271,7 @@ sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 As of this writing: the NDK media API, real sensor input,
 signal delivery for faults in arm64 guest code and handlers in arm64
 libraries, POSIX timers, static ELF TLS, W^X thunk pools with unwind tables,
-code signing, 32-bit ARM, notification action buttons,
+code signing, 32-bit ARM,
 and the Play Store features listed above. `windows/PORTING.md`, section 7,
 has the finer gaps and section 8 the plan.
 
