@@ -32,6 +32,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -386,13 +387,13 @@ WINAPK_GUEST_ABI int g_actions_addopen(void** a, int fd, const char* path, int f
 WINAPK_GUEST_ABI int g_actions_addclose(void** a, int fd) {
     FileActions* fa = actions_of(a);
     if (!fa || fd < 0) return kEINVAL;
-    fa->actions.push_back({FileAction::kClose, fd});
+    fa->actions.push_back({FileAction::kClose, fd, -1, 0, 0, {}});
     return 0;
 }
 WINAPK_GUEST_ABI int g_actions_adddup2(void** a, int fd, int newfd) {
     FileActions* fa = actions_of(a);
     if (!fa || fd < 0 || newfd < 0) return kEINVAL;
-    fa->actions.push_back({FileAction::kDup2, fd, newfd});
+    fa->actions.push_back({FileAction::kDup2, fd, newfd, 0, 0, {}});
     return 0;
 }
 // addchdir and addfchdir (API 34): the child starts where winapk-exec starts it; accepted.
