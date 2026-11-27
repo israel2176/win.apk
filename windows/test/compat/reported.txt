@@ -1,5 +1,5 @@
-# The reported apps: the Play apps users reported as not working, and fixes were merged for
-# (the issue, then the pull requests). reported.yml (Actions > Reported apps > Run workflow) downloads
+# The reported apps: the Play apps users reported as not working (an issue), with the fixes merged for them
+# when there are (the issue, then the pull requests). reported.yml (Actions > Reported apps > Run workflow) downloads
 # each from APKPure with the staged apkeep, as the Google services setup's Download does (x86_64
 # where APKPure has it, else arm64-v8a, for API level 34), boots it headless with sweep.py and
 # fails when one that was downloaded does not draw its first screen. Not every app is on APKPure:
@@ -26,3 +26,11 @@ com.ideomobile.discount                        # Discount: #185; #164
 com.egged.egg                                  # Egged: #159
 com.paamonim                                   # Paamonim: #171
 com.ideomobile.hapoalim                        # Bank Hapoalim: #220
+# Reported in open issues, with no fix merged yet (the issue only):
+com.alphainventor.filemanager                  # File Manager+: #224
+org.sefaria.sefaria                            # Sefaria: #228
+com.MizrahiTefahot.nh                          # Mizrahi Tefahot: #223
+com.roborock.smart                             # Roborock: #196, #217
+com.oceanwing.soundcore                        # soundcore: #181, #240
+com.android.chrome                             # Chrome: #191
+com.exovoid.weather.app                        # Weather XL: #229
