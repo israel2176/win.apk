@@ -245,6 +245,22 @@ public class Thread implements Runnable {
     @SuppressWarnings("unused")
     private volatile long nativePeer;
 
+    /* Win.apk: a stack size asked for is the size ART gives, not the size itself.
+     * ART's FixStackSize adds 1 MB to every request ("Dalvik used the bionic pthread
+     * default stack size for native threads"), then its overflow reserve (32 KB here,
+     * which covers ART's on every ABI), rounded to a page; HotSpot takes the request
+     * as it is. An app's executor asking for a small
+     * stack (64 KB) then overflowed in its first class load, which here runs the
+     * class-file rewrite and the verifier on that stack (ColorNote, issue #180:
+     * StackOverflowError in AppClassLoader.findClass on "TaskExecutor P[HIGH]").
+     * Zero stays zero: the VM's default, as ART's default is its own. */
+    private static long androidStackSize(long requested) {
+        if (requested <= 0) return requested;
+        long size = requested + (1L << 20) + (32L << 10);
+        if (size < 0) return Long.MAX_VALUE & ~4095L;
+        return (size + 4095L) & ~4095L;
+    }
+
     // thread id
     private final long tid;
 
@@ -737,7 +753,7 @@ public class Thread implements Runnable {
             }
 
             int priority = Math.min(parent.getPriority(), g.getMaxPriority());
-            this.holder = new FieldHolder(g, task, stackSize, priority, parent.isDaemon());
+            this.holder = new FieldHolder(g, task, androidStackSize(stackSize), priority, parent.isDaemon());
         }
 
         if (attached && VM.initLevel() < 1) {

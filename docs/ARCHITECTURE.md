@@ -531,7 +531,10 @@ nothing on one Direct3D 11 device. A window surface's frame is read back at
 the app's swap, on its thread, and becomes a layer under the app's windows
 (below); until a SurfaceView's producer has drawn, the render tick shows black
 in its place, as AOSP's SurfaceView shows its background layer. Vulkan is not
-implemented.
+implemented. The app's GL threads share one ANGLE display, whose Direct3D 11
+renderer holds one context's state at a time, so each GL call takes the
+display's turn (`host/gl/gl_turn.h`): one call at a time, and a context
+another thread displaced is made current again before its thread's next call.
 
 ### The view tree's frames
 
