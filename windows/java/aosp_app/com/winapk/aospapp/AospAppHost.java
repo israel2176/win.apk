@@ -1,6 +1,7 @@
 // The runtime's AppHost (com.macapk.loader.app.AppHost): Boot starts the app's process through it
 // on AOSP's ActivityThread (AospApp), and the host's window reaches the task through it: closed
-// (every activity destroyed, top first), minimized (the task behind), restored (the task in front).
+// (every activity destroyed, top first), minimized (the task behind), restored (the task in front),
+// the Windows session ending (every activity stopped, the task kept for the next process).
 package com.winapk.aospapp;
 
 import com.macapk.loader.app.AppHost;
@@ -35,6 +36,33 @@ public final class AospAppHost implements AppHost {
         }
         app.tasks.handler.post(() -> app.tasks.terminate(done, topPaused));
         return done;
+    }
+
+    @Override public CountDownLatch shutdown() {
+        CountDownLatch done = new CountDownLatch(1);
+        AospApp app = AospApp.get();
+        if (app == null) {
+            done.countDown();
+            return done;
+        }
+        app.tasks.handler.post(() -> app.tasks.shutdown(done));
+        return done;
+    }
+
+    @Override public void processCrashed() {
+        AospApp app = AospApp.get();
+        if (app == null) return;
+        if (app.tasks.handler.getLooper().isCurrentThread()) {
+            app.tasks.crashed();
+            return;
+        }
+        java.util.concurrent.FutureTask<Void> f = new java.util.concurrent.FutureTask<>(app.tasks::crashed, null);
+        app.tasks.handler.post(f);
+        try {
+            f.get(1, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            // the system thread did not answer: the file keeps what it had (the top, resumed, has no state)
+        }
     }
 
     @Override public void hostMinimized() {

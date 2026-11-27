@@ -773,6 +773,9 @@ fs::path data_dir() {
 }
 fs::path library_dir() { return data_dir() / L"library"; }
 fs::path app_dir(const std::wstring& name) { return data_dir() / L"apps" / name; }
+// The task the runtime keeps for the app's next start (the activities' saved state, sealed, as system_server
+// keeps a dead process's ActivityRecords: aosp_app/.../SavedTask.java). Stop and an install drop it.
+fs::path task_state_file(const std::wstring& name) { return app_dir(name) / L"task-state.parcel"; }
 fs::path logs_dir() { return data_dir() / L"logs"; }
 fs::path last_run_log() { return logs_dir() / L"last-run.log"; }
 fs::path run_log(const std::wstring& name) { return logs_dir() / (L"run-" + name + L".log"); }
@@ -1543,10 +1546,22 @@ DWORD WINAPI run_thread(void* param) {
 
 // Stops the app; one still starting (run_thread has no process yet) is stopped as soon as it has one,
 // or not started at all. True when there was one to stop: however it ends is then no error.
-bool stop_run(const std::wstring& name) {
+// TerminateProcess returns before the process has ended: with `wait_ms`, this waits that long for it
+// (outside g_proc_lock, on a handle of its own), so that nothing the process was still writing lands
+// after the caller's next step.
+bool stop_run(const std::wstring& name, DWORD wait_ms = 0) {
+    HANDLE ended = nullptr;
     AcquireSRWLockExclusive(&g_proc_lock);
-    const bool found = g_runs.stop(name, [](HANDLE p) { return TerminateProcess(p, 1) != 0; });
+    const bool found = g_runs.stop(name, [&ended, wait_ms](HANDLE p) {
+        if (!TerminateProcess(p, 1)) return false;
+        if (wait_ms) DuplicateHandle(GetCurrentProcess(), p, GetCurrentProcess(), &ended, SYNCHRONIZE, FALSE, 0);
+        return true;
+    });
     ReleaseSRWLockExclusive(&g_proc_lock);
+    if (ended) {
+        WaitForSingleObject(ended, wait_ms);
+        CloseHandle(ended);
+    }
     return found;
 }
 
@@ -1922,6 +1937,10 @@ bool install_into_library(const fs::path& source, const std::wstring& name, bool
         AcquireSRWLockExclusive(&g_installs_lock);
         const bool keep = code == 0 && g_installs.commit(name);
         ReleaseSRWLockExclusive(&g_installs_lock);
+        // An install or update of the app ends its task, as Android force-stops a replaced package and
+        // drops its activities: nothing of the task the runtime kept for the previous copy's next start
+        // comes back (task_state_file). The runtime's own version check stays as a backstop.
+        if (keep) fs::remove(task_state_file(name), ec);
         ok = keep &&
              MoveFileExW((app_dir(name) / L"label.txt").c_str(), label_file(name).c_str(),
                          MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED) != 0;
@@ -4735,7 +4754,21 @@ void launch(const App& app) {
 void appops_forget(const std::string& pkg);
 std::vector<std::string> package_of(const std::wstring& name);
 namespace appops {
-bool stop_runtime_of(const fs::path& apk);
+bool stop_runtime_of(const fs::path& apk, DWORD wait_ms = 0);
+}
+
+// How long Stop waits for the app's process to end before it deletes the task's saved state: a write of
+// it under way (SavedTask writes a .part and moves it in place) would otherwise put it back afterwards.
+constexpr DWORD kForceStopWaitMs = 5000;
+
+// Stop, Android's Force stop: on a device it ends the app's activities with its process
+// (ActivityTaskManagerService.onForceStopPackage), so the task the runtime keeps for the app's next start
+// (task_state_file) goes too; the next start is a fresh one. The file is deleted once the process has
+// ended (or after kForceStopWaitMs).
+void force_stop(const App& a) {
+    if (!stop_run(a.name, kForceStopWaitMs)) appops::stop_runtime_of(a.apk, kForceStopWaitMs);
+    std::error_code ec;
+    fs::remove(task_state_file(a.name), ec);
 }
 
 // Deletes a folder and what is in it without going through a junction or link inside it (the
@@ -7835,9 +7868,7 @@ void show_info(const App& app) {
         std::vector<Row> manage;
         if (app_is_running(a.name)) {  // the page is built again when that changes (refresh_running)
             manage.push_back(button_row(tr(L"Stop"), tr(L"Closes the app at once, as Force stop does on a phone."),
-                                        tr(L"Stop"), [a] {
-                                            if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
-                                        }));
+                                        tr(L"Stop"), [a] { force_stop(a); }));
         }
         // No "Update from a file": opening or dropping a newer file of the app already installs over it.
         manage.push_back(button_row(tr(L"Remove"), tr(L"Removes the app and its shortcuts. You can also remove what "
@@ -10355,9 +10386,7 @@ void command(int id) {
     const App a = *sel;
     switch (id) {
         case kCmdOpen: launch(a); break;
-        case kCmdStop:
-            if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
-            break;
+        case kCmdStop: force_stop(a); break;
         case kCmdInfo: show_info(a); break;
         case kCmdRemove: remove_app(a, true); break;
     }
@@ -12125,8 +12154,9 @@ fs::path apk_of_command_line(const std::wstring& cmd) {
 // Ends the runtime running `apk`, whoever started it (the library window, a
 // shortcut's Win.apk.exe --run): Android kills a process whose runtime
 // permission or all-files access was taken away, and the app comes back
-// clean when opened again. True when one was found.
-bool stop_runtime_of(const fs::path& apk) {
+// clean when opened again. True when one was found. With `wait_ms`, waits
+// that long for each one to have ended (TerminateProcess does not).
+bool stop_runtime_of(const fs::path& apk, DWORD wait_ms) {
     bool stopped = false;
     HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snap == INVALID_HANDLE_VALUE) return false;
@@ -12134,10 +12164,14 @@ bool stop_runtime_of(const fs::path& apk) {
     std::error_code ec;
     for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
         if (_wcsicmp(pe.szExeFile, L"winapk-runtime.exe") != 0) continue;
-        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, pe.th32ProcessID);
+        HANDLE p = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | SYNCHRONIZE, FALSE,
+                               pe.th32ProcessID);
         if (!p) continue;
         const fs::path theirs = apk_of_command_line(command_line_of(p));
-        if (!theirs.empty() && fs::equivalent(theirs, apk, ec) && TerminateProcess(p, 1)) stopped = true;
+        if (!theirs.empty() && fs::equivalent(theirs, apk, ec) && TerminateProcess(p, 1)) {
+            stopped = true;
+            if (wait_ms) WaitForSingleObject(p, wait_ms);
+        }
         CloseHandle(p);
     }
     CloseHandle(snap);
