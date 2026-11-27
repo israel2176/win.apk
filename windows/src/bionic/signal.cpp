@@ -18,15 +18,8 @@
 //     delivered right away, as a call; to another thread by suspending it,
 //     parking its registers on its own stack and resuming it in
 //     winapk_sig_async_entry, which runs the handler there and restores the
-//     registers (RtlRestoreContext). A thread asleep in a wait resumes there
-//     only when the wait returns, so the shim's sleeps (futex, the pthread
-//     waits, nanosleep, poll, epoll_wait, select) are SignalableSleeps that
-//     the sender wakes: the handler runs at once, and the sleep is restarted
-//     or fails with EINTR as signal(7) says, as when Linux interrupts a
-//     system call. A thread stopped inside ntdll, other than at a system
-//     call's return, is let go and stopped again a moment later. A signal
-//     blocked by the target's mask is left pending and delivered when
-//     sigprocmask unblocks it.
+//     registers (RtlRestoreContext). A signal blocked by the target's mask is
+//     left pending and delivered when sigprocmask unblocks it.
 //
 // Semantics follow Linux and ART's libsigchain (what a device does, upstream's
 // bionic_shim_sigchain.cpp being the reference):
@@ -289,7 +282,6 @@ struct ThreadSignals {
     uint64_t np_addr = 0;
     int np_count = 0;
     uint64_t handlers_run = 0;  // what pause and sigsuspend wait on
-    bool last_restart = false;  // whether the last handler run had SA_RESTART (SignalableSleep)
 };
 thread_local ThreadSignals t_sig{};
 
@@ -511,7 +503,6 @@ void run_handler(int sig, const GuestSigaction& act, GuestSiginfo* info, CONTEXT
                  uint64_t err = 0) {
     ThreadSignals& ts = t_sig;
     ++ts.handlers_run;
-    ts.last_restart = (static_cast<uint32_t>(act.flags) & kSaRestart) != 0;
     alignas(16) GuestUcontext uc;
     std::memset(&uc, 0, sizeof(uc));
     context_to_ucontext(*ctx, &uc);
@@ -900,114 +891,6 @@ extern "C" void winapk_sig_async_entry(int sig, CONTEXT* saved) {
     __builtin_unreachable();
 }
 
-// ---- waking a sleeping thread for its signal ----------------------------------------
-// Each thread that sleeps in a SignalableSleep has a slot here, found by its
-// Windows thread id, saying how to wake its current sleep. A fixed table in
-// static memory, so the sender never reads memory a thread that ended freed:
-// open addressing on the id, a slot marked gone when its thread ends and
-// claimed again by a later thread. A full table only means sleeps are not cut
-// short.
-struct WaitSlot {
-    std::atomic<uint32_t> tid{0};
-    std::atomic<int> kind{-1};  // a SignalableSleep::Kind while asleep, -1 awake
-    std::atomic<const volatile void*> address{nullptr};
-    std::atomic<HANDLE> event{nullptr};  // the kEvent sleeps' event, made once and kept with the slot
-};
-constexpr size_t kWaitSlots = 2048;
-constexpr uint32_t kSlotFree = 0, kSlotGone = 1;  // Windows thread ids are multiples of four
-WaitSlot g_wait_slots[kWaitSlots];
-
-size_t slot_hash(uint32_t tid) { return (tid >> 2) % kWaitSlots; }
-
-WaitSlot* find_wait_slot(uint32_t tid) {
-    for (size_t i = 0, at = slot_hash(tid); i < kWaitSlots; ++i, at = (at + 1) % kWaitSlots) {
-        const uint32_t t = g_wait_slots[at].tid.load(std::memory_order_acquire);
-        if (t == tid) return &g_wait_slots[at];
-        if (t == kSlotFree) return nullptr;
-    }
-    return nullptr;
-}
-
-struct OwnWaitSlot {
-    WaitSlot* slot = nullptr;
-    bool tried = false;
-    ~OwnWaitSlot() {
-        if (!slot) return;
-        slot->kind.store(-1);
-        slot->address.store(nullptr);
-        slot->tid.store(kSlotGone, std::memory_order_release);
-    }
-};
-thread_local OwnWaitSlot t_wait_slot;
-
-WaitSlot* my_wait_slot() {
-    OwnWaitSlot& own = t_wait_slot;
-    if (own.slot || own.tried) return own.slot;
-    own.tried = true;
-    const uint32_t me = GetCurrentThreadId();
-    // A slot of this id already: left by an earlier thread of the same id that did not end cleanly.
-    own.slot = find_wait_slot(me);
-    for (size_t i = 0, at = slot_hash(me); !own.slot && i < kWaitSlots; ++i, at = (at + 1) % kWaitSlots) {
-        uint32_t t = g_wait_slots[at].tid.load();
-        if ((t == kSlotFree || t == kSlotGone) && g_wait_slots[at].tid.compare_exchange_strong(t, me)) {
-            own.slot = &g_wait_slots[at];
-        }
-    }
-    if (own.slot && !own.slot->event.load()) own.slot->event.store(CreateEventW(nullptr, TRUE, FALSE, nullptr));
-    return own.slot;
-}
-
-// After a signal was injected into `tid`: if it sleeps in a SignalableSleep,
-// wake it so that it returns to the injected handler now.
-void wake_for_signal(uint32_t tid) {
-    WaitSlot* s = find_wait_slot(tid);
-    if (!s) return;
-    switch (s->kind.load(std::memory_order_acquire)) {
-        case SignalableSleep::kAddress:
-            if (const volatile void* a = s->address.load()) WakeByAddressAll(const_cast<void*>(a));
-            break;
-        case SignalableSleep::kDescriptors:
-            fd_notify();
-            break;
-        case SignalableSleep::kEvent:
-            if (HANDLE e = s->event.load()) SetEvent(e);
-            break;
-        default:
-            break;
-    }
-}
-
-// Where a thread may be stopped to run a handler. A thread stopped in ntdll's
-// own code, other than at a system call's return, may hold one of its locks
-// (the address-wait table's, the loader's, a heap's); a handler that then
-// wakes a futex (WakeByAddress) or allocates would wait on its own thread for
-// good. On Linux the kernel runs a handler only on a return to user space,
-// where the thread holds no lock of the kernel's. Such a stop is let go and
-// tried again a moment later; after kSafePointTries the signal goes in anyway.
-struct ModuleRange {
-    uintptr_t lo = 0, hi = 0;
-};
-ModuleRange ntdll_range() {
-    static const ModuleRange range = [] {
-        ModuleRange r;
-        auto* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(L"ntdll.dll"));
-        if (!base) return r;
-        const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-        const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-        r.lo = reinterpret_cast<uintptr_t>(base);
-        r.hi = r.lo + nt->OptionalHeader.SizeOfImage;
-        return r;
-    }();
-    return range;
-}
-bool safe_to_interrupt(uint64_t rip, const ModuleRange& ntdll) {
-    if (rip < ntdll.lo + 2 || rip >= ntdll.hi) return true;
-    const auto* code = reinterpret_cast<const uint8_t*>(rip);
-    // The return from a system call: right after `syscall` (0f 05) or `int 2e` (cd 2e).
-    return (code[-2] == 0x0f && code[-1] == 0x05) || (code[-2] == 0xcd && code[-1] == 0x2e);
-}
-constexpr int kSafePointTries = 200;
-
 // Delivers `sig` to another thread of this process: its registers are parked
 // below its stack pointer (past the System V red zone) and it resumes in
 // winapk_sig_async_stub with the signal and the parked copy as arguments.
@@ -1017,53 +900,42 @@ int inject(uint32_t tid, int sig) {
     HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION,
                           FALSE, tid);
     if (!h) return kESRCH;
-    const ModuleRange ntdll = ntdll_range();
-    int result = 0;
-    for (int attempt = 0;; ++attempt) {
-        if (SuspendThread(h) == static_cast<DWORD>(-1)) {
-            CloseHandle(h);
-            return kESRCH;
-        }
-        alignas(16) CONTEXT ctx;
-        std::memset(&ctx, 0, sizeof(ctx));
-        ctx.ContextFlags = CONTEXT_FULL;
-        if (!GetThreadContext(h, &ctx)) {
-            result = kEAGAIN;
-        } else if (!safe_to_interrupt(ctx.Rip, ntdll) && attempt < kSafePointTries) {
-            ResumeThread(h);
-            SwitchToThread();
-            continue;
-        } else {
-            // Below the red zone, a 16-aligned slot for the CONTEXT, then the
-            // shadow space and return-address slot the callee expects (rsp == 8
-            // mod 16 at entry); the stub's arguments sit in the shadow space.
-            uint64_t slot = (ctx.Rsp - 128 - sizeof(CONTEXT)) & ~uint64_t{15};
-            const uint64_t new_rsp = slot - 40;
-            MEMORY_BASIC_INFORMATION mbi{};
-            if (!VirtualQuery(reinterpret_cast<const void*>(new_rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
-                (mbi.Protect & PAGE_GUARD) ||
-                reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize < ctx.Rsp) {
-                result = kEAGAIN;  // the target's stack is not where a call can be parked
-            } else {
-                CONTEXT resumed = ctx;
-                std::memcpy(reinterpret_cast<void*>(slot), &ctx, sizeof(CONTEXT));
-                auto* frame = reinterpret_cast<uint64_t*>(new_rsp);
-                frame[0] = 0;  // the stub never returns
-                frame[1] = static_cast<uint64_t>(sig);
-                frame[2] = slot;
-                resumed.Rsp = new_rsp;
-                resumed.Rip = reinterpret_cast<uint64_t>(&winapk_sig_async_stub);
-                resumed.ContextFlags = CONTEXT_CONTROL;
-                if (!SetThreadContext(h, &resumed)) result = kEAGAIN;
-            }
-        }
-        ResumeThread(h);
-        break;
+    if (SuspendThread(h) == static_cast<DWORD>(-1)) {
+        CloseHandle(h);
+        return kESRCH;
     }
+    int result = 0;
+    alignas(16) CONTEXT ctx;
+    std::memset(&ctx, 0, sizeof(ctx));
+    ctx.ContextFlags = CONTEXT_FULL;
+    if (!GetThreadContext(h, &ctx)) {
+        result = kEAGAIN;
+    } else {
+        // Below the red zone, a 16-aligned slot for the CONTEXT, then the
+        // shadow space and return-address slot the callee expects (rsp == 8
+        // mod 16 at entry); the stub's arguments sit in the shadow space.
+        uint64_t slot = (ctx.Rsp - 128 - sizeof(CONTEXT)) & ~uint64_t{15};
+        const uint64_t new_rsp = slot - 40;
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<const void*>(new_rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
+            (mbi.Protect & PAGE_GUARD) ||
+            reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize < ctx.Rsp) {
+            result = kEAGAIN;  // the target's stack is not where a call can be parked
+        } else {
+            CONTEXT resumed = ctx;
+            std::memcpy(reinterpret_cast<void*>(slot), &ctx, sizeof(CONTEXT));
+            auto* frame = reinterpret_cast<uint64_t*>(new_rsp);
+            frame[0] = 0;  // the stub never returns
+            frame[1] = static_cast<uint64_t>(sig);
+            frame[2] = slot;
+            resumed.Rsp = new_rsp;
+            resumed.Rip = reinterpret_cast<uint64_t>(&winapk_sig_async_stub);
+            resumed.ContextFlags = CONTEXT_CONTROL;
+            if (!SetThreadContext(h, &resumed)) result = kEAGAIN;
+        }
+    }
+    ResumeThread(h);
     CloseHandle(h);
-    // A thread asleep in a wait goes to its new rip only when the wait
-    // returns: cut a SignalableSleep short so that the handler runs now.
-    if (result == 0) wake_for_signal(tid);
     return result;
 }
 
@@ -1394,35 +1266,6 @@ const ShimSymbol kSymbols[] = {
 };
 
 }  // namespace
-
-SignalableSleep::SignalableSleep(Kind kind, const volatile void* address) {
-    handlers_before_ = t_sig.handlers_run;
-    WaitSlot* s = my_wait_slot();
-    if (!s) return;
-    slot_ = s;
-    // A handler run during this sleep may sleep too; the outer sleep is put back when that one ends.
-    saved_kind_ = s->kind.load();
-    saved_address_ = s->address.load();
-    if (kind == kEvent) {
-        event_ = s->event.load();
-        if (event_) ResetEvent(event_);
-    }
-    s->address.store(address);
-    s->kind.store(kind, std::memory_order_release);
-}
-
-SignalableSleep::~SignalableSleep() {
-    auto* s = static_cast<WaitSlot*>(slot_);
-    if (!s) return;
-    s->kind.store(saved_kind_);
-    s->address.store(saved_address_);
-}
-
-SignalableSleep::Outcome SignalableSleep::interrupted() const {
-    const ThreadSignals& ts = t_sig;
-    if (ts.handlers_run == handlers_before_) return kNotInterrupted;
-    return ts.last_restart ? kRestart : kEintr;
-}
 
 ShimTable signal_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
 

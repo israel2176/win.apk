@@ -116,77 +116,50 @@ WINAPK_GUEST_ABI double g_difftime(int64_t end, int64_t start) {
 }
 WINAPK_GUEST_ABI glong g_clock() { return thread_cpu_ns(nullptr, true) / 1000; }  // CLOCKS_PER_SEC 1000000
 
-// Sleeps `ns`; returns the nanoseconds left when a signal's handler cut the
-// sleep short (Linux's nanosleep fails with EINTR then, whatever SA_RESTART
-// says), else 0.
-int64_t sleep_ns(int64_t ns) {
-    if (ns <= 0) return 0;
-    // A high-resolution waitable timer where Windows has one; a timed wait otherwise.
+void sleep_ns(int64_t ns) {
+    if (ns <= 0) return;
+    // A high-resolution waitable timer where Windows has one; Sleep otherwise.
     static const bool high_res = [] {
         HANDLE t = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /*HIGH_RESOLUTION*/, TIMER_ALL_ACCESS);
         if (t) CloseHandle(t);
         return t != nullptr;
     }();
-    SignalableSleep sleep(SignalableSleep::kEvent);
-    HANDLE signal_event = static_cast<HANDLE>(sleep.event());
-    const ULONGLONG start = GetTickCount64();
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, high_res ? 0x00000002 : 0, TIMER_ALL_ACCESS);
-    const DWORD ms = static_cast<DWORD>(std::min<int64_t>((ns + 999999) / 1000000, INFINITE - 1));
-    if (timer) {
-        LARGE_INTEGER due;
-        due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
-        SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+    if (!timer) {
+        Sleep(static_cast<DWORD>((ns + 999999) / 1000000));
+        return;
     }
-    for (;;) {
-        HANDLE waits[2] = {timer, signal_event};
-        DWORD r;
-        if (timer && signal_event) r = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-        else if (timer) r = WaitForSingleObject(timer, INFINITE);
-        else if (signal_event) r = WaitForSingleObject(signal_event, ms) == WAIT_OBJECT_0 ? WAIT_OBJECT_0 + 1 : WAIT_OBJECT_0;
-        else r = (Sleep(ms), WAIT_OBJECT_0);
-        if (r != WAIT_OBJECT_0 + 1) break;  // the time is up
-        if (sleep.interrupted() != SignalableSleep::kNotInterrupted) {
-            if (timer) CloseHandle(timer);
-            const int64_t slept = static_cast<int64_t>(GetTickCount64() - start) * 1000000;
-            return std::max<int64_t>(ns - slept, 1);
-        }
-        ResetEvent(signal_event);  // set for a signal whose handler had already run
-        if (!timer) break;
-    }
-    if (timer) CloseHandle(timer);
-    return 0;
-}
-void put_left(int64_t left, GuestTimespec* rem) {
-    if (!rem) return;
-    rem->tv_sec = left / 1000000000LL;
-    rem->tv_nsec = left % 1000000000LL;
+    LARGE_INTEGER due;
+    due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
+    SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+    WaitForSingleObject(timer, INFINITE);
+    CloseHandle(timer);
 }
 WINAPK_GUEST_ABI int g_nanosleep(const GuestTimespec* req, GuestTimespec* rem) {
     if (!req || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL) {
         *guest_errno() = kEINVAL;
         return -1;
     }
-    const int64_t left = sleep_ns(req->tv_sec * 1000000000LL + req->tv_nsec);
-    put_left(left, rem);
-    if (left) return *guest_errno() = kEINTR, -1;
+    sleep_ns(req->tv_sec * 1000000000LL + req->tv_nsec);
+    if (rem) rem->tv_sec = rem->tv_nsec = 0;
     return 0;
 }
 WINAPK_GUEST_ABI int g_clock_nanosleep(int clock, int flags, const GuestTimespec* req, GuestTimespec* rem) {
     if (flags & 1) {  // TIMER_ABSTIME
         GuestTimespec now;
         g_clock_gettime(clock, &now);
-        // Interrupted, an absolute sleep reports EINTR and nothing left (the deadline stands).
-        return sleep_ns((req->tv_sec - now.tv_sec) * 1000000000LL + (req->tv_nsec - now.tv_nsec)) ? kEINTR : 0;
+        sleep_ns((req->tv_sec - now.tv_sec) * 1000000000LL + (req->tv_nsec - now.tv_nsec));
+        return 0;
     }
     return g_nanosleep(req, rem) == 0 ? 0 : *guest_errno();
 }
 WINAPK_GUEST_ABI int g_usleep(uint32_t us) {
-    if (sleep_ns(static_cast<int64_t>(us) * 1000)) return *guest_errno() = kEINTR, -1;
+    sleep_ns(static_cast<int64_t>(us) * 1000);
     return 0;
 }
 WINAPK_GUEST_ABI unsigned g_sleep(unsigned s) {
-    // The seconds left when a handler cut it short, rounded up as Bionic's sleep does.
-    return static_cast<unsigned>((sleep_ns(static_cast<int64_t>(s) * 1000000000LL) + 999999999LL) / 1000000000LL);
+    sleep_ns(static_cast<int64_t>(s) * 1000000000LL);
+    return 0;
 }
 
 // struct tm is the same 9 ints on both sides, then Bionic adds tm_gmtoff (long)
@@ -1595,28 +1568,11 @@ int64_t guest_futex(uint32_t* uaddr, int op, uint32_t val, const GuestTimespec* 
             }
             ms = ns <= 0 ? 0 : static_cast<DWORD>((ns + 999999) / 1000000);
         }
-        // A signal's handler cuts the wait short: EINTR, or with SA_RESTART the wait goes on
-        // while the word is unchanged (signal(7)); a timed wait is never restarted.
-        const ULONGLONG start = GetTickCount64();
-        for (;;) {
-            SignalableSleep sleep(SignalableSleep::kAddress, uaddr);
-            DWORD left = ms;
-            if (ms != INFINITE) {
-                const ULONGLONG spent = GetTickCount64() - start;
-                left = spent >= ms ? 0 : static_cast<DWORD>(ms - spent);
-            }
-            if (!WaitOnAddress(uaddr, &val, sizeof(val), left) && GetLastError() == ERROR_TIMEOUT) {
-                *guest_errno() = kETIMEDOUT;
-                return -1;
-            }
-            const SignalableSleep::Outcome outcome = sleep.interrupted();
-            if (outcome == SignalableSleep::kNotInterrupted) return 0;
-            if (outcome == SignalableSleep::kEintr || ts) {
-                *guest_errno() = kEINTR;
-                return -1;
-            }
-            if (*reinterpret_cast<volatile uint32_t*>(uaddr) != val) return 0;
+        if (!WaitOnAddress(uaddr, &val, sizeof(val), ms) && GetLastError() == ERROR_TIMEOUT) {
+            *guest_errno() = kETIMEDOUT;
+            return -1;
         }
+        return 0;
     }
     if (cmd == 1 || cmd == 10) {  // FUTEX_WAKE, FUTEX_WAKE_BITSET
         if (val == 1) WakeByAddressSingle(uaddr);
