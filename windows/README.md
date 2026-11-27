@@ -313,6 +313,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-frame-times-test` | The frame-time record (`host/frame_times.h`): nearest-rank percentiles over its 50 us buckets, never above the exact max, a frame over 200 ms, the warm-up frames apart, and the `frame times` line logged at exit ([Frame time](#frame-time)) |
 | `winapk-machine-load-test` | The machine's load to the first frame (`host/machine_load.h`): the busy share from two system samples, this process's share of all processors, other processes' CPU time between two samples by image name (a reused pid or a process started since counts whole; this process, the idle process and names under 0.1 s left out), busiest first, and the `startup: machine ... busy` line, with no process list or no time passed |
 | `winapk-toast-xml-test` | The Windows notification an Android one becomes (`host/toast_xml.h`, no Windows call): no actions on a plain one; up to three buttons, a reply action's text field before them, named by its button, the label as placeholder; text escaped; the toast's and each button's click arguments parsed back to the key and the action, foreign ones refused |
+| `winapk-print-layout-test` | Where a printed PDF page goes on the printer's paper (`host/print_layout.h`, no Windows call): the sheet in mils with its unprintable edges as margins; a page laid out for the paper drawn one to one, shifted by the unprintable edge; a page of another size scaled to fit and centred; the picture no finer than 600 dpi; bands that cover every device row once within 32 MB each; collated and uncollated copies; pages past the end left out |
 | `winapk-swap-pacing-test` | When an app's presenting `eglSwapBuffers` returns (`host/swap_pacing.h`): a producer faster than the display at its rate (60, or 30 at swap interval 2), interval 0 never paced, a slower one never waits, the schedule keeps its phase and makes up nothing after a pause |
 | `winapk-webview-urls-test` | The app's `file:` URLs on WebView2 (`host/webview_file_urls.h`): `file:///X` (and `file://localhost/X`, `file:/X`) to the file origin `https://winapk-file.example/X` and back (query and fragment kept, host without case, its default port, a share and web URLs left alone, a look-alike host or another port not the origin); a `loadDataWithBaseURL` page's `file:///` references made the origin's where an attribute, a string or `url(` starts, not in its text; a base's request form; origins as a browser writes them (default ports dropped, user info, IPv6); who may read the origin: a `file:` page, the app's data page (`Origin: null`, or its web base), not a web page, a web frame in a `file:` page, nor another origin's CORS request; a `Range` header's one byte range (open end, suffix, cut to the body, 416 past it, the whole body for several ranges or junk) |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
@@ -342,6 +343,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `test/java/com/macapk/icu/IcuCalendarTest.java` | Run by hand against the built jars: `android.icu.util.Calendar` against the values Android 14's own ICU gives (week data per region, the weekend, the ICU-only fields and limits, set/clear, add/roll, `fieldDifference`, equality, `getInstance`'s class) |
 | `test/java/com/macapk/loader/BrokerPermissionsTest.java` (CI) | The system broker's permission checks (`BrokerPermissions`) on APKs it signs with two keys: a signature permission held by the declarer's signer and not another's (Play services' `c2dm.permission.SEND`: Play services and the Play Store hold it and may send to an app's FCM receiver; another app may not), a normal one held when requested only, one nobody declares held by nobody, the platform's from `framework-res-34.apk` (normal, signature, signature\|privileged, dangerous granted or by a legacy target), the same app always; a provider opened with its read or write permission and AOSP's denial, read and write per operation, path-permissions; URI grants: made by the provider's app, refused when the provider does not allow them or the granter has no access, the one uri only, read not write, passed on, a prefix, ClipData, revoked, gone with the package |
 | `test/java/HandlerCallbackTest.java` (CI) | `android.os.Handler`'s callback as apps reach it: AOSP's `mCallback` by reflection, holding the constructor's callback; one set through it is asked first, `false` lets `handleMessage` run, `true` stops it, the callback it replaced still runs when it delegates, and a posted `Runnable` skips it, on a handler shaped like `ActivityThread.H` |
+| `test/java/com/macapk/loader/ContactsProviderTest.java` (CI) | The contacts and call log providers (`ContactsProvider`, `CallLogProvider`) through an app's ContentResolver, in `winapk-runtime --java-test` (SQLite's natives): Permission Denial without `READ_CONTACTS`, `WRITE_CONTACTS`, `READ_CALL_LOG`, `WRITE_CALL_LOG`; a contact written as an editor writes one (applyBatch with back references, one notification), read as apps read it (Contacts with its display name joined from the name's parts, Phone with the normalized number, Email by selection and lookup, PhoneLookup by another form of the number, the Contacts and Phone filters, a lookup URI, contacts/<id>/data, the RawContacts entity iterator, the photo by query and as a file); starred and strequent, a second raw contact its own contact until `TYPE_KEEP_TOGETHER` joins them, an account's raw contact marked deleted and its sync adapter's delete, a contact deleted with its data and listed in deleted_contacts; a second provider over the same database seeing the rows; the call log's insert, observer, `getLastOutgoingCall`, number filter, limit, voicemail and unknown-column refusals, `last_modified`, delete by selection; a selection that closes the provider's parenthesis (`1) OR (1`) kept inside it on query, update and delete (contacts/<id>, a deleted raw contact in the entities, voicemail rows without `READ_VOICEMAIL`), one ending in a comment refused, and an unknown column or a subquery in the projection refused |
 | `test/java/PermissionModelTest.java` | `SpecialAccessStore.GroupModel` against PermissionController's rules (grant, deny, deny twice, auto grant, background permissions, legacy targets, App info rows) |
 | `test/java/FileSeparatorRewriteTest.java` | Guest code reads Android's `/` from `File.separator` while the JDK's own classes keep the backslash |
 | `winapk-binder-test <classpath> com.macapk.loader.BinderTransportTest` | `host/binder_win.cpp` between real JVMs in three processes (`test/java/com/macapk/loader/BinderTransportTest.java`): transact, the OS calling pid and the receiver-derived uid, oneway order, a nested callback, binder identity both ways, a Messenger and its replyTo with the sender's uid in `Message.sendingUid` and a PendingIntent's creator uid, fds both ways, death notification; then the system broker's checks: a process that is no installed app, or that claims another package, is refused, android:exported, a service's android:permission (`RESOLVE_NO_PERMISSION`), `CHECK_PERMISSION`, a provider refused with AOSP's message, a URI grant refused and made, the package uid; then the launcher's package changes (`pkgevents` child from a copy in `inst\bin`, another copy as `inst\Win.apk.exe` running `--notify`, `winapk/package_events.h`): a package added while the broker runs is accepted on attach and a running app's dynamic receiver gets `PACKAGE_ADDED`, an update's `PACKAGE_ADDED` with `EXTRA_REPLACING`, `PACKAGE_REPLACED` and `MY_PACKAGE_REPLACED`, a removal's `PACKAGE_REMOVED` and `PACKAGE_FULLY_REMOVED`, `FLAG_RECEIVER_REGISTERED_ONLY` by the rules, a change from anyone but the launcher and an app's own `PACKAGE_ADDED` refused; then JobScheduler through the broker (`jobbroker`, `jobclient`, `jobhost` children): a job a process reported before it exited is held by the broker and, once due, handed (`JOB_RUN`) to the package's process, which the broker starts for it; then the account service's Google accounts (`accounts` child, its own GmsStore folder): an account signed in or out by another process after the service started is mirrored into or removed from the accounts table, asked or not, with the master token as password and `GoogleUserId` in its table sealed with DPAPI (`accounts_ce.dat`) and no master token in `gms_state.properties`, and a row it did not mirror stays |
@@ -4127,6 +4129,30 @@ every such change is listed here:
   refuses it. Every request used to report `FAILURE_INTERNAL_ERROR`, which it still does without DNS-SD.
   `registerServiceInfoCallback` answers once (no later updates). `windows/test/java/android/net/nsd/
   NsdManagerTest.java` checks it over a stand-in for Windows' side.
+- `runtime/java/android/print/PrintManager.java`, `PrintSpooler.java` (new), `PrintDocumentAdapter.java`
+  (comment): printing to Windows' printers. `print()` returns the job in `STATE_CREATED` and, as Android's print
+  spooler, drives the app's adapter on the main thread: `onStart`, `onLayout` for Windows' default printer with
+  the app's attributes applied (a preview's layout), Windows' own Print dialog over the app's window
+  (`com/macapk/loader/HostPrinting.java`, new; `windows/host/native_printing.cpp`, `PrintDlgEx`), `onLayout` again
+  for the printer, paper, orientation, colour and two-sided chosen (not a preview), `onWrite` for the pages
+  chosen into a spool file, then `STATE_QUEUED` and `onFinish`. The PDF is printed on its own thread: each page
+  rendered by Windows.Data.Pdf (looked up at run time) at the printer's resolution, at most 600 dpi, in bands
+  (`host/print_layout.h`), drawn into the printer's device context made from the dialog's DEVMODE, so the driver
+  applies the user's settings; `STATE_STARTED`, then `STATE_COMPLETED`, `STATE_FAILED` with the printer's words
+  (`restart()` prints the spooled document again) or `STATE_CANCELED` (the dialog cancelled, `PrintJob.cancel()`,
+  or the printing activity destroyed before the print UI was done: the adapter is then dropped, never called
+  again, and a layout or write in progress has its `CancellationSignal` cancelled, as AOSP's
+  `PrintDocumentAdapterDelegate` and spooler do). Windows' printer calls (the default printer's lookup, the
+  dialog, printing) run on host threads, never the app's main thread; the copies are printed by Win.apk, so the
+  driver's DEVMODE is set to one copy.
+  A whole document written where some pages were asked is cut to them, as AOSP's spooler does. `print()` throws
+  outside an activity, as AOSP's does (the manager gets the context's outer context, as `SystemServiceRegistry`
+  gives it). The job used to be saved to a file in the app's folder and reported completed. No preview is
+  shown, and a layout or write the adapter fails fails the job with its message as the status where a device
+  would show it. `windows/test/java/android/print/PrintManagerTest.java` checks the lifecycle over a stand-in for
+  Windows' side. The graphics DLL now has `android.graphics.pdf.PdfDocument` (`hwui_build/mods.sh`,
+  `patch_src.py`: `hwui/jni/pdf/PdfDocument.cpp` on Skia's PDF backend; `PdfEditor`, `PdfRenderer` stay out), which
+  `PrintedPdfDocument` and AndroidX's `PrintHelper` write with.
 - `runtime/java/android/media/AudioManager.java`: the streams' volumes as AOSP's AudioService keeps them, one
   per stream for the process (they were per `AudioManager` object, so a value set was lost at the next
   `getSystemService`), in AOSP's ranges and defaults, with AOSP's aliasing for a device without telephony;
@@ -4136,6 +4162,32 @@ every such change is listed here:
   `setStreamMute` and `isStreamMute` act on them (they did nothing); `isMusicActive` is whether an audio
   session plays on the default output device.
 
+- `runtime/java/com/macapk/loader/ContactsProvider.java`, `CallLogProvider.java` (new): the contacts
+  (`com.android.contacts`) and call log (`call_log`) providers, attached in every app's process by
+  `Boot.installSystemProviders` (unless the app serves the authority) over one database each,
+  `<android root>/data/data/com.android.providers.contacts/databases/contacts2.db` and `calllog.db`, AOSP's
+  schema and URIs: raw contacts, data, contacts with their aggregate columns, groups, aggregation exceptions,
+  deleted contacts, PhoneLookup, the phone, email, postal, callable and contactable kinds with their filters,
+  lookup keys, entities, the photo; the call log's calls, by id and number filter. Their ProviderInfo is AOSP's
+  manifest entry (package `com.android.providers.contacts`, `READ_CONTACTS`/`WRITE_CONTACTS`,
+  `READ_CALL_LOG`/`WRITE_CALL_LOG`), so the transport checks the app's runtime grants. A query's rows are copied
+  out before it returns, so no statement holds the database while another process writes; a write transaction
+  takes the write lock first. An app's selection is handled as AOSP's strict `SQLiteQueryBuilder` handles it
+  (`ContactsProvider.andSelection`: compiled on its own, run wrapped twice, refused when it compiles wrapped once
+  but not twice), so it cannot reach past the provider's own clause (voicemail rows, deleted raw contacts, a
+  URI's id, account and directory filters); a projection names the view's columns, or an aggregate of one, or
+  is refused with "Invalid column" (`checkedProjection`, the projection maps' check). Differs from AOSP: raw
+  contacts of different accounts are not aggregated by matching names (only by `AggregationExceptions`), no
+  legacy `contacts` authority, no profile, vCards, search suggestions or display photo files. The databases
+  are plain files under the Android root that each app's process opens itself, not a separate process's: the
+  permission checks stand between an app and the providers, but every app runs as the same Windows user, so
+  an app that opens `contacts2.db` or `calllog.db` as a file (native code, or Java by its host path) is not
+  stopped by a missing `READ_CONTACTS` or `READ_CALL_LOG`, as it would be by the provider's own uid on a
+  device. `runtime/java/android/provider/ContactsContract.java`: the top-level query
+  parameter constants (`CALLER_IS_SYNCADAPTER`, `LIMIT_PARAM_KEY`...), `RawContactsColumns` as AOSP's (the
+  account columns are `SyncColumns'`, so `RawContacts.ACCOUNT_NAME` compiles), `RawContacts.newEntityIterator`
+  and `Groups.newEntityIterator` over the cursor; `CallLog.java`, `Contacts.java`: their comments.
+  `windows/test/java/com/macapk/loader/ContactsProviderTest.java` (CI).
 - `runtime/java/com/macapk/loader/HostNotifications.java`: a notification's actions are passed to the host
   as its buttons (`shownActions`: the shade's three, not contextual ones; a free-form `RemoteInput` as a text
   field), and `onAction` sends the clicked action's intent, the typed reply added as `RemoteInput` results

@@ -198,6 +198,11 @@ target_include_directories(winapk-machine-load-test PRIVATE host)
 # The toast an Android notification becomes and the clicks that come back (test/toast_xml_test.cpp).
 add_executable(winapk-toast-xml-test test/toast_xml_test.cpp)
 
+# Where a printed page goes on the printer's paper and the order of pages and copies
+# (host/print_layout.h). No printer. test/print_layout_test.cpp.
+add_executable(winapk-print-layout-test test/print_layout_test.cpp)
+target_include_directories(winapk-print-layout-test PRIVATE host)
+
 # When an app's presenting eglSwapBuffers returns (host/swap_pacing.h): producers of several
 # speeds on a simulated clock. No window. test/swap_pacing_test.cpp.
 add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
@@ -352,6 +357,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_wallpaper.cpp host/native_picker.cpp
                               host/native_gamepad.cpp
                               host/native_audio_input.cpp host/native_nsd.cpp host/native_volume.cpp host/native_photos.cpp
+                              host/native_printing.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
                               host/native_location.cpp host/machine_load.cpp
@@ -363,7 +369,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 oleaut32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi
-                        bthprops winmm bcrypt psapi winhttp crypt32)
+                        bthprops winmm bcrypt psapi winhttp crypt32 comdlg32 winspool)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
