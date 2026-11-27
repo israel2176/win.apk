@@ -128,7 +128,10 @@ public class PackageItemInfo {
         // the tobsolitaire toolbar read "GameSelector" where the emulator reads
         // "Simple Solitaire Collection".
         // See docs/canvas-ab-analyst-report-b_2026-08-02.md item 10.
-        if (labelRes != 0) {
+        // Only a framework id (package 0x01) is read from the system Resources: an app's id there is
+        // looked up in a table without the app's package, and AOSP's AssetManager logged "No package
+        // ID 7f found" at every activity's start (issue #208's logs, in every app).
+        if (labelRes != 0 && (labelRes >>> 24) == 0x01) {
             try {
                 android.content.res.Resources r =
                     android.content.res.Resources.getSystem();
@@ -137,6 +140,8 @@ public class PackageItemInfo {
                     if (s != null && !s.isEmpty()) return s;
                 }
             } catch (Throwable ignored) {}
+        }
+        if (labelRes != 0) {
             // AOSP's own way (loadUnsafeLabel): pm.getText out of the package's Resources. AOSP's
             // system Resources (-Dwinapk.aosp.res=1) hold the framework's table only, as on a device.
             try {

@@ -2116,6 +2116,13 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  recursion if two libraries reference each other in DT_NEEDED. */
     private final java.util.Set<String> preloading =
         java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    /** Dependencies preloadDependencies has loaded into this loader (with their own closure first).
+     *  Without it every library walked its whole DT_NEEDED closure again: Microsoft Word's 63 libraries
+     *  logged 1,647 "preloading" lines on the main thread, each a file read of the ELF and a System.load,
+     *  and the main thread took no input for over 5 s (an ANR, issue #208). The dynamic linker loads a
+     *  library once per process. */
+    private final java.util.Set<String> preloadedDeps =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /** Libnames whose DT_NEEDED closure has been loaded, each once, as
      *  bionic's dlopen loads a library once. Without it every library walked
@@ -2486,6 +2493,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                 // Bionic system libs (c, m, dl, log, android, GLESv2,
                 // EGL, OpenSLES, etc.) aren't shipped in the APK and
                 // are resolved by the loader's symbol-fallback path.
+                if (preloadedDeps.contains(depName)) continue;   // loaded, with its closure
                 File depSo = locateApkSo(depName);
                 if (depSo == null) continue;
                 // Translate + cache the dependency, then dlopen it by
@@ -2535,6 +2543,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                     // searches only the declaring class's loader, so the symbols
                     // were loaded and still unresolvable. See NativeLoaderShim.
                     loadIntoThisLoader(cached.getAbsolutePath());
+                    preloadedDeps.add(depName);
                 } catch (UnsatisfiedLinkError e) {
                     NativeLog.w(TAG,
                         "preload load(" + depName + ") failed: " + e);

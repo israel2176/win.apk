@@ -1156,6 +1156,8 @@ public abstract class Context {
     public static final String ROLLBACK_SERVICE              = "rollback";
     /** AOSP Context.SLICE_SERVICE. */
     public static final String SLICE_SERVICE                 = "slice";
+    /** AOSP Context.SAFETY_CENTER_SERVICE (@SystemApi, API 33). */
+    public static final String SAFETY_CENTER_SERVICE         = "safety_center";
     public static final String STATUS_BAR_SERVICE            = "statusbar";
     public static final String STORAGE_STATS_SERVICE         = "storagestats";
     public static final String SYSTEM_HEALTH_SERVICE         = "systemhealth";
@@ -1641,6 +1643,19 @@ public abstract class Context {
                     result = null;
                 }
                 break;
+            case SAFETY_CENTER_SERVICE:
+                // AOSP's SafetyCenterManager (lib/aosp-app.jar) over the in-process service an app's
+                // process registers (com.winapk.aospapp.SafetyCenterService): Safety Center off, as on
+                // a phone whose config disables it. Every phone from API 33 hands the manager out;
+                // Google Play died on its class missing (NoClassDefFoundError, issue #208).
+                if (android.os.ServiceManager.getService(SAFETY_CENTER_SERVICE) != null) {
+                    result = new android.safetycenter.SafetyCenterManager(this,
+                            android.safetycenter.ISafetyCenterManager.Stub.asInterface(
+                                    android.os.ServiceManager.getService(SAFETY_CENTER_SERVICE)));
+                } else {
+                    result = null;
+                }
+                break;
             case CREDENTIAL_SERVICE:
                 // No credential providers on a de-Googled device; the manager
                 // exists and its get/create calls report "no credential" via
@@ -1757,6 +1772,8 @@ public abstract class Context {
                 return CREDENTIAL_SERVICE;
             case "android.app.slice.SliceManager":
                 return SLICE_SERVICE;
+            case "android.safetycenter.SafetyCenterManager":
+                return SAFETY_CENTER_SERVICE;
             // v1.0.463 (subsystem-04): explicit mappings for managers whose
             // canonical service name does NOT derive from the simple-name via
             // the strip-Manager + lowercase-first heuristic (snake_case names,

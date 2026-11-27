@@ -41,7 +41,16 @@ public class Process {
     public static final int SIGNAL_USR1 = 10;
 
     public static int  myPid()  { return (int) ProcessHandle.current().pid(); }
-    public static int  myTid()  { return (int) Thread.currentThread().getId(); }
+    /** Linux gives a process's main thread the process's own id as its tid, and apps rely on it:
+     *  `Process.myPid() == Process.myTid()` is how a packer tells it runs on the main thread (clalit's
+     *  loaded its native library only then, and died on UnsatisfiedLinkError, issue #208). The main
+     *  looper's thread answers myPid() here too; another thread its Java thread id. Not pinning a
+     *  main thread: getMainLooper() is asked only once one is registered. */
+    public static int  myTid()  {
+        Thread current = Thread.currentThread();
+        if (Looper.macapkHasMainThread() && Looper.getMainLooper().getThread() == current) return myPid();
+        return (int) current.getId();
+    }
     /** This app's uid. With the Mac.apk system broker on, each package has its
      *  own (com.macapk.loader.AppUids, as PMS assigns them) so another process
      *  can tell callers apart; otherwise the one app uid, as before. */

@@ -593,7 +593,6 @@ const wchar_t* tr(const wchar_t* en) {
         {L"Still starting. The first start can take a minute.", L"עדיין בהפעלה. ההפעלה הראשונה עשויה להימשך כדקה."},
         {L"Stop installing", L"עצירת ההתקנה"},
         {L"Stop installing?", L"לעצור את ההתקנה?"},
-        {L"The app closed before it showed a window.", L"האפליקציה נסגרה לפני שהציגה חלון."},
         {L"The app is in Start > Win.apk Apps either way.", L"האפליקציה נמצאת בכל מקרה בתפריט התחל > Win.apk Apps."},
         {L"The app stopped with an error.", L"האפליקציה נעצרה עם שגיאה."},
         {L"The app's file  ·  {0}", L"קובץ האפליקציה  ·  {0}"},
@@ -9660,7 +9659,7 @@ const wchar_t* run_phase(const fs::path& log) {
 }
 
 // Why the app did not come up, in a sentence: the log's own reason when it has a known one.
-std::wstring failure_reason(const fs::path& log, bool clean_exit) {
+std::wstring failure_reason(const fs::path& log) {
     // No runtime started at all: "the app stopped with an error" would blame the app (as an install says).
     std::error_code ec;
     if (!fs::exists(runtime_exe(), ec)) return tr(L"Win.apk's runtime is missing. Install Win.apk again.");
@@ -9672,7 +9671,7 @@ std::wstring failure_reason(const fs::path& log, bool clean_exit) {
     }
     // Not the app's fault: say so, rather than "the app stopped with an error".
     if (std::wstring why = runtime_failure_reason(log); !why.empty()) return why;
-    return tr(clean_exit ? L"The app closed before it showed a window." : L"The app stopped with an error.");
+    return tr(L"The app stopped with an error.");
 }
 
 void paint_splash(Splash& s, Graphics& g, float W, float H) {
@@ -10631,7 +10630,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                                         (end.kind() == RunEnd::kCrashed && !end.was_ready));
             } else {
                 switch (end.kind()) {
-                    case RunEnd::kQuiet: break;
+                    case RunEnd::kQuiet:
                     case RunEnd::kStopped: close_splash(*name); break;
                     case RunEnd::kCrashed: {
                         // Win.apk's own part missing says so on the starting window, as it did.
@@ -10652,11 +10651,11 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     }
                     case RunEnd::kDidNotStart:
                         splash_failed(*name, fmt(L"{0} didn't start", {label}),
-                                      failure_reason(run_log(*name), end.clean));
+                                      failure_reason(run_log(*name)));
                         break;
                     case RunEnd::kFailed:
                         splash_failed(*name, fmt(L"{0} stopped with an error", {label}),
-                                      failure_reason(run_log(*name), false));
+                                      failure_reason(run_log(*name)));
                         break;
                 }
             }

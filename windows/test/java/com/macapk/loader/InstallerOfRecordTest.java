@@ -1,17 +1,19 @@
 // InstallerOfRecordTest -- the installer PackageManager reports (com.macapk.loader.InstallerOfRecord):
 // Google Play for an app the user installed while Settings > Apps > "Report Google Play as the
-// installer" is on (WINAPK_PLAY_INSTALLER, absent = on), null when it is off, and a real record
-// (an app that installed another through PackageInstaller) over either.
+// installer" is on (WINAPK_PLAY_INSTALLER, absent = on), whichever store installed it; with it off
+// a real record (an app that installed another through PackageInstaller), else null.
 //
 //   java -cp android-framework.jar;macapk-loader.jar;<classes> com.macapk.loader.InstallerOfRecordTest <scratch dir>
 //
 // The environment, whether a Play Store package is reported and the Play ledger backfill are the
-// class's test seams; the record is a file in the scratch dir. Checks: the setting absent/1/0; a
-// record wins either way and its removal brings the default back; a package not installed, Play,
+// class's test seams; the record is a file in the scratch dir. Checks: the setting absent/1/0; with
+// it on Play is reported over a record (issue #208: pairip closes an app a store installed), with it
+// off the record, and its removal brings null back; a package not installed, Play,
 // Play services and GSF get no default; no Play Store package, no default;
 // and MacApkPackageManager's two doors: getInstallerPackageName and getInstallSourceInfo (installing,
 // initiating, originating, update owner, package source) agree, in the shape a Play install has on
-// Android 14, and keep the plain shape for another store.
+// Android 14, also for an app another store installed, and keep the plain shape for that store
+// with the setting off.
 // Prints PASS/FAIL per check and "ALL PASSED" at the end; exits 1 on a failure.
 package com.macapk.loader;
 
@@ -58,14 +60,19 @@ public class InstallerOfRecordTest {
         eq("setting 0: no installer", null, InstallerOfRecord.reported(APP, true));
         check("setting 0: playDefaultOn false", !InstallerOfRecord.playDefaultOn());
 
-        // A real record wins either way, and its removal brings the default back.
+        // With the setting off a real record is reported; with it on, Play over the record (a store
+        // installed the app: the record is kept, get() still names it).
         InstallerOfRecord.set(APP, FDROID);
         eq("record, setting 0: the recorded store", FDROID, InstallerOfRecord.reported(APP, true));
-        env.remove("WINAPK_PLAY_INSTALLER");
-        eq("record, setting on: the recorded store, not Play", FDROID, InstallerOfRecord.reported(APP, true));
-        eq("record: get() is the record", FDROID, InstallerOfRecord.get(APP));
         InstallerOfRecord.set(APP, null);
-        eq("record removed: Play again", PLAY, InstallerOfRecord.reported(APP, true));
+        eq("record removed, setting 0: no installer", null, InstallerOfRecord.reported(APP, true));
+        InstallerOfRecord.set(APP, FDROID);
+        env.remove("WINAPK_PLAY_INSTALLER");
+        eq("record, setting on: Play, not the recorded store", PLAY, InstallerOfRecord.reported(APP, true));
+        eq("record: get() is the record", FDROID, InstallerOfRecord.get(APP));
+        eq("record, not installed: the record", FDROID, InstallerOfRecord.reported(APP, false));
+        InstallerOfRecord.set(APP, null);
+        eq("record removed: Play", PLAY, InstallerOfRecord.reported(APP, true));
         eq("no record: get() null", null, InstallerOfRecord.get(APP));
 
         // No default where a device has no store as installer.
@@ -100,12 +107,18 @@ public class InstallerOfRecordTest {
 
         InstallerOfRecord.set(APP, FDROID);
         info = pm.getInstallSourceInfo(APP);
-        eq("PM record: getInstallerPackageName", FDROID, pm.getInstallerPackageName(APP));
+        eq("PM record, setting 0: getInstallerPackageName", FDROID, pm.getInstallerPackageName(APP));
         eq("PM record: installing", FDROID, info.getInstallingPackageName());
         eq("PM record: initiating", FDROID, info.getInitiatingPackageName());
         eq("PM record: update owner", null, info.getUpdateOwnerPackageName());
-        InstallerOfRecord.set(APP, null);
         env.remove("WINAPK_PLAY_INSTALLER");
+        info = pm.getInstallSourceInfo(APP);
+        eq("PM record, setting on: getInstallerPackageName", PLAY, pm.getInstallerPackageName(APP));
+        eq("PM record, setting on: installing", PLAY, info.getInstallingPackageName());
+        eq("PM record, setting on: initiating", PLAY, info.getInitiatingPackageName());
+        eq("PM record, setting on: package source STORE",
+                PackageInstaller.SessionParams.PACKAGE_SOURCE_STORE, info.getPackageSource());
+        InstallerOfRecord.set(APP, null);
 
         if (failures == 0) {
             System.out.println("ALL PASSED");
