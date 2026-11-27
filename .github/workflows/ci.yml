@@ -823,6 +823,20 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the contacts and call log providers test
+        run: |
+          # com.android.contacts and call_log (ContactsProvider, CallLogProvider) through an app's
+          # ContentResolver: denied without READ_/WRITE_CONTACTS and READ_/WRITE_CALL_LOG; a contact
+          # written by applyBatch and read as apps read it (Phone, Email, PhoneLookup, filters, lookup
+          # keys, entities, photo); joining, deleting; the call log's rules; observers; a second
+          # process's provider over the same database. In winapk-runtime (--java-test): SQLite's natives.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/contacts-test windows/test/java/com/macapk/loader/ContactsProviderTest.java
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/contacts-test)" \
+            com.macapk.loader.ContactsProviderTest "$(cygpath -w "$RUNNER_TEMP/contacts")" | tee contacts-test.log
+          grep -q "ALL PASSED" contacts-test.log
       - name: Run the APK signature verification test
         run: |
           # com.macapk.loader.ApkVerification (apksig) on APKs the test signs

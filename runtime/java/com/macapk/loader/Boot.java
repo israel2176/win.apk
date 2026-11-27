@@ -2789,8 +2789,10 @@ public final class Boot {
      *  there is no <provider> element to parse here, since no APK ever
      *  declares android:authorities="media" itself.
      *
-     *  Currently backs exactly one authority ("media" ->
-     *  android.provider.MediaStoreProvider). Wrapped in the same
+     *  Backs "media" (android.provider.MediaStoreProvider), the documents
+     *  the user picks (HostDocumentsProvider), "com.android.contacts" and
+     *  "call_log" (ContactsProvider, CallLogProvider) and, with Google
+     *  services, gservices. Wrapped in the same
      *  single try/catch-per-provider tolerance as
      *  appProviders so a failure here degrades to "no media
      *  index" rather than blocking app boot. App-agnostic: gated on
@@ -2823,6 +2825,13 @@ public final class Boot {
             dinfo.grantUriPermissions = true;
             docs.attachInfo(application, dinfo);   // runs onCreate
             android.content.ContentProviderRegistry.register(dinfo.authority, docs);
+            // The contacts and call log providers (com.android.contacts, call_log), over the
+            // database every app's process shares; an app serving either authority itself keeps it.
+            try {
+                ContactsProvider.install(application);
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "contacts providers failed: " + t + " -- continuing");
+            }
             // Google Services Framework's gservices settings, answered from
             // the device's real checkin (see GservicesProvider's header). App
             // providers are already installed, so a hosted package that serves
