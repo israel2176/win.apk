@@ -573,8 +573,23 @@ permissions** forgets them all. Turning a permission off stops the app if it
 is running, as Android does.
 
 Granting a permission does not create the data behind it: a PC has no
-contacts, SIM, SMS or sensors, so an app that is granted those finds them
-empty. Apps are told of no sensor at all (no accelerometer, gyroscope,
+SIM, SMS or sensors, so an app that is granted those finds them empty.
+Contacts and the call log are the phone's: one address book and one call log
+that every app shares, kept in Win.apk's Android file system
+(`%LOCALAPPDATA%\Win.apk\android\data\data\com.android.providers.contacts`).
+They start empty; an app with **Contacts** (or **Call logs**) allowed reads
+them, and one that may write adds to them, as a contacts app, a dialer or a
+backup app does on a phone. Win.apk has no calls of its own, so nothing is
+logged unless an app writes it. Unlike a phone, contacts from two accounts are
+not merged into one person by matching names; an app that links them (Android's
+"Link contacts") still joins them. Two apps that run at the same time see each
+other's changes at once only with **Use Google services** on; otherwise an app
+sees them the next time it reads. The permission is checked for every app that
+asks Android for contacts or the call log, but unlike a phone the address book
+is not locked away in a system app: it is a file every app's process opens,
+and all apps run as your Windows user, so an app that reads that file directly
+is not stopped by a missing **Contacts** or **Call logs** permission. Install
+only apps you trust with what is in it. Apps are told of no sensor at all (no accelerometer, gyroscope,
 compass, light or step sensor), as on a phone without them: a tilt-steered
 game finds none, and an app that needs one says so or leaves that part out.
 The camera and microphone use the PC's webcam and microphone, behind

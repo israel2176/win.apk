@@ -129,6 +129,18 @@ a guest library imports (`windows/host/guest_libs.cpp`), is also counted
 this run reached and how often, the busiest first, so a report says which
 missing piece an app kept asking for and not only which it touched once.
 
+The providers a phone's system image has are attached in every app's process by
+`Boot.installSystemProviders`, after the app's own: MediaStore (`media`), the
+documents the user picks, and the contacts and call log (`com.android.contacts`,
+`call_log`: `com.macapk.loader.ContactsProvider` and `CallLogProvider`, AOSP's
+schema and URIs over one SQLite database per provider under
+`android\data\data\com.android.providers.contacts\databases\`, which every
+app's process opens). They stand for package `com.android.providers.contacts`
+with AOSP's read and write permissions, so an app's ContentResolver checks the
+app's runtime grants (`READ_CONTACTS`, `WRITE_CALL_LOG`...) before a call
+reaches them, and a change is announced with `notifyChange`: to the process's
+observers, and to other processes' through the system broker when it runs.
+
 Windows-only Java lives in `windows/java/`: `com.winapk.tools.AppInstall`
 (installing an APK or bundle in the device layout) and `AppMeta` (the icon
 and name the launcher shows), plus an overlay for `java.base`.
@@ -1216,7 +1228,7 @@ default; `--data` moves it for a direct run):
 |---|---|
 | `library\<name>.apk`, `.splits\`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. The `.apk` is the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update renames the app's files aside and copies the new file in, so none is written in place); an app that came as a bundle (`.apkm`, `.xapk`, `.apks`) also has `<name>.splits\split_*.apk`, hard links to its installed splits. A bundle is in the library only while it installs: its members cannot be links, so keeping it took its size twice (a 191 MB Waze `.xapk` took about 380 MB). What goes with it is what was never installed: its `manifest.json` and icon, a bundletool set's whole-app alternatives |
 | `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off); `task-state.parcel`, the app's task kept across the end of its process (`SavedTask`: the activity records and their saved state, sealed with DPAPI), deleted when the user closes the window, backs out of the task or stops the app, and when the app is installed again or updated |
-| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
+| `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `data\data\com.android.providers.contacts\databases\` (`contacts2.db` and `calllog.db`: the contacts and the call log every app shares, and `cache\photos\` the contacts' photos as files apps open), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `gms-tokens.log` (the Google token service), `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store-app\` | The Store's app: `installed.sha256` (the SHA-256 of the release asset installed, for the daily check), and `apk-store.apk` while it downloads or waits to be installed. An older install's `store\` (F-Droid's catalog) is removed at start |
 | `installed_apps.json` | The installed-apps registry the package manager answers from |

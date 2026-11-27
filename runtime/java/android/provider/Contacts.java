@@ -15,14 +15,15 @@ import java.io.InputStream;
 /**
  * The deprecated pre-ContactsContract Contacts provider surface.
  *
- * ⚠ Mac.apk deliberately registers NO contacts provider (that is a standing,
- * separately-tracked design decision, not an oversight). Everything in this
+ * ⚠ Win.apk serves ContactsContract's authority (com.android.contacts,
+ * com.macapk.loader.ContactsProvider) but not this legacy "contacts" one, which
+ * AOSP's ContactsProvider2 answers through LegacyApiSupport. Everything in this
  * file is therefore CONSTANTS and CLIENT-SIDE HELPERS: the URI/column names old
  * apps compile against resolve, and the helper methods run AOSP's exact
- * client-side logic against the ContentResolver. With no provider registered
- * those queries come back null/empty, which is what AOSP's own code does on a
- * device where the contacts provider is disabled -- and which every one of
- * these helpers already handles (they null-check the cursor).
+ * client-side logic against the ContentResolver. With no provider for the
+ * authority those queries come back null/empty, which is what AOSP's own code
+ * does on a device where the contacts provider is disabled -- and which every
+ * one of these helpers already handles (they null-check the cursor).
  *
  * Declaring these constants does NOT register a provider and does not change
  * ContentResolver's routing.
