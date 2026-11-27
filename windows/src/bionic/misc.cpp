@@ -1496,12 +1496,32 @@ WINAPK_GUEST_ABI int g_uname(GuestUtsname* u) {
     std::strcpy(u->domainname, "(none)");
     return 0;
 }
-// getauxval: AT_PAGESZ 6, AT_HWCAP 16, AT_HWCAP2 26; the rest is 0.
-WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) { return type == 6 ? 4096 : 0; }
-
 // ---- randomness ---------------------------------------------------------------------------
 WINAPK_GUEST_ABI void g_arc4random_buf(void* buf, size_t n) {
     BCryptGenRandom(nullptr, static_cast<PUCHAR>(buf), static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+}
+
+// The kernel's AT_RANDOM: 16 random bytes, fixed for the process. Bionic takes
+// its stack protector's canary, __stack_chk_guard, from their first word
+// (__libc_init_setup_stack_chk_guard); code built with -fstack-protector
+// compares every protected frame's copy with it. Zeroed memory would make the
+// canary a constant every process shares.
+struct AuxRandom {
+    alignas(16) unsigned char bytes[16];
+    AuxRandom() { g_arc4random_buf(bytes, sizeof(bytes)); }
+};
+const AuxRandom g_aux_random;
+uintptr_t g_stack_chk_guard = [] {
+    uintptr_t v;
+    std::memcpy(&v, g_aux_random.bytes, sizeof(v));
+    return v;
+}();
+
+// getauxval: AT_PAGESZ 6, AT_HWCAP 16, AT_RANDOM 25 (the bytes above), AT_HWCAP2 26; the rest is 0.
+WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) {
+    if (type == 6) return 4096;
+    if (type == 25) return reinterpret_cast<uint64_t>(g_aux_random.bytes);
+    return 0;
 }
 WINAPK_GUEST_ABI uint32_t g_arc4random() {
     uint32_t v;
@@ -2818,6 +2838,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("getpagesize", g_getpagesize),
     WINAPK_SHIM("uname", g_uname),
     WINAPK_SHIM("getauxval", g_getauxval),
+    {"__stack_chk_guard", &g_stack_chk_guard},
     WINAPK_SHIM("arc4random", g_arc4random),
     WINAPK_SHIM("arc4random_buf", g_arc4random_buf),
     WINAPK_SHIM("arc4random_uniform", g_arc4random_uniform),

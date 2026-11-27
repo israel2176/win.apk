@@ -2186,6 +2186,8 @@ int __sched_cpucount(size_t, const void*);
 int sched_setaffinity(int, size_t, const void*);
 int sched_getcpu(void);
 extern const char* __progname;
+extern unsigned long __stack_chk_guard;
+unsigned long getauxval(unsigned long);
 const char* getprogname(void);
 extern const char* const sys_signame[];
 char* strsignal(int);
@@ -2258,6 +2260,13 @@ static void test_popular_imports(const char* dir) {
     check("sched_setaffinity is accepted, sched_getcpu names a processor",
           sched_setaffinity(0, sizeof set, set) == 0 && sched_getcpu() >= 0, 0);
 
+    {
+        const unsigned char* at_random = (const unsigned char*) getauxval(25);  // AT_RANDOM
+        unsigned long first = 0;
+        if (at_random) memcpy(&first, at_random, sizeof first);
+        check("__stack_chk_guard is AT_RANDOM's first word, not zero",
+              at_random && __stack_chk_guard != 0 && __stack_chk_guard == first, 0);
+    }
     check("__progname and getprogname name the process",
           __progname && strlen(__progname) > 0 && strcmp(getprogname(), __progname) == 0, __progname);
     check("sys_signame and strsignal",
