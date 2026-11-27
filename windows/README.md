@@ -2513,6 +2513,11 @@ every such change is listed here:
   `ChromeTabbedActivity` in `split_chrome.apk`, and was rejected with "no
   launchable activity".
   Not Windows-specific.
+- `runtime/java/com/macapk/loader/SystemClient.java`, `SystemServer.java`: a bind to another app's service
+  that the broker resolved but could not bring up (its process did not start, or its bind failed) tells
+  the connection `onBindingDied`, as AMS's `connected(name, null, dead=true)` does. Before, `bindService`
+  had answered true and the connection never heard anything: a Play services client waited forever, and
+  AccuWeather, which keeps its splash screen until it hears back, showed an empty window (#213).
 - `runtime/java/com/macapk/loader/Manifest.java`, `Boot.java`: another package's manifest, parsed for a
   package query, logs only its summary line, not each activity and provider (`Manifest.runningPackage`, set
   by Boot). Play services' components alone are hundreds of lines and pushed a reported run's failure past
