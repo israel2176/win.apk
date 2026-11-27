@@ -36,6 +36,18 @@ COMMON=(
     -Wl,--pack-dyn-relocs=android+relr -Wl,--use-android-relr-tags \
     -o "$OUT/libwinapk_poc_guest_packed.so" "$HERE/guest/poc_guest.c"
 
+# The Android program winapk-exec-test starts as a child process: a PIE executable (ET_DYN with an
+# entry point and an interpreter), needing libc.so as an NDK build's would.
+EXEC_STUBS="$OUT/exec-stubs"
+mkdir -p "$EXEC_STUBS"
+# An executable may leave nothing undefined, so the stub defines what the program imports.
+printf '%s\n' 'void write(void){}' 'void read(void){}' 'void getenv(void){}' 'void strlen(void){}' \
+    'void __libc_init(void){}' 'void __stack_chk_fail(void){}' > "$EXEC_STUBS/libc_stub.c"
+"$CC" "${COMMON[@]}" -fvisibility=default -Wl,-soname,libc.so -o "$EXEC_STUBS/libc.so" "$EXEC_STUBS/libc_stub.c"
+"$CC" --target=x86_64-linux-android24 -fPIE -pie -O2 -fstack-protector-all -ffreestanding -nostdlib -fuse-ld=lld \
+    -Wl,-z,relro -Wl,-z,now -Wl,-e,_start -Wl,--dynamic-linker=/system/bin/linker64 \
+    -o "$OUT/winapk_exec_guest" "$HERE/guest/exec_guest.c" -L"$EXEC_STUBS" -lc
+
 # The linker test's dependency tree. Stub system libraries give the DT_NEEDED
 # entries an NDK build would have; they are only link inputs and never ship.
 LINK="$OUT/link"

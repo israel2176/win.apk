@@ -20,13 +20,17 @@
 // agent, and the agent's extra threads are rows too; CPU shares, the search and a sort that holds still.
 // The library's files (launcher/library_files.h, std::filesystem only), on real files: a bundle kept as hard
 // links to its installed APKs, that step done again over a cut-off one, an update's files set aside, then
-// dropped or put back, never written.
+// dropped or put back, never written; a removal that takes the app's entries out first, or leaves them all.
 // A batch's APK files (launcher/installs.h): AppInstall --set's lines read, and the files of one app made one
 // install with its base kept as the app's .apk, a split named as a device names it, other apps' files apart.
 // Background updates (launcher/maintenance.h): a maintenance window opens only with the setting on and the setup
 // done, never beside a running window or broker, once every four hours (and at once with none noted, or when the
 // clock went back), and waits while on battery, with no network or while an app starts; none once the user closed
 // the library, and the hidden launcher waits for a window it opened only when the user did not close the library.
+// Which app a file is (launcher/installs.h, place_install): the app of its package, whatever the file's name; a
+// downgrade asked first; another package's file never over an app of the same name.
+// The choice settings (launcher/settings.h): a value the Settings page never writes is the default, 0, both for what
+// is drawn and for what the page shows chosen.
 
 #include <cstdio>
 #include <cstdlib>
@@ -41,6 +45,7 @@
 #include "../launcher/installs.h"
 #include "../launcher/library_files.h"
 #include "../launcher/maintenance.h"
+#include "../launcher/settings.h"
 #include "../launcher/store_app.h"
 #include "../launcher/updates.h"
 
@@ -1012,6 +1017,35 @@ void test_library_files() {
     check("one APK: <name>.apk and no .splits", kept == library / "Single.apk" &&
                                                     !fs::exists(library / "Single.splits", ec) &&
                                                     !fs::exists(library / "Single.apkm", ec));
+
+    // A removal: the app's entries taken out first, then deleted; the installed copy is not the library's to delete.
+    check("taken out", take_out(library, L"App") && app_entries(library, L"App", false).empty() &&
+                           fs::exists(library / "App.apk.removed", ec) &&
+                           fs::exists(library / "App.splits.removed", ec));
+    check("taken out: another app stays", app_entries(library, L"Single", false).size() == 1);
+    check("taken out: deleted", drop_taken_out(library, L"App") && !fs::exists(library / "App.apk.removed", ec) &&
+                                    !fs::exists(library / "App.splits.removed", ec));
+    check("taken out: the installed copy's file stays", read(copy / "base.apk") == "base v1");
+    // A removal that cannot take one entry out (on Windows a file the running app holds; here a rename that fails
+    // for the second entry) leaves every entry as it was.
+    write(library / L"Held.apk", "apk");
+    write(library / L"Held.apks", "bundle");
+    int renames = 0;
+    const bool held = take_out(library, L"Held", [&](const fs::path& from, const fs::path& to, std::error_code& e) {
+        if (++renames == 2) {
+            e = std::make_error_code(std::errc::permission_denied);
+            return;
+        }
+        fs::rename(from, to, e);
+    });
+    check("not taken out: refused", !held && renames == 2);
+    check("not taken out: the app is whole", app_entries(library, L"Held", false).size() == 2 &&
+                                                 app_entries_with(library, L"Held", kRemovedSuffix).empty());
+    // A leftover of a removal, deleted at a start.
+    write(library / "Gone.apk.removed", "left");
+    drop_all_taken_out(library);
+    check("a removal's leftover goes at a start", !fs::exists(library / "Gone.apk.removed", ec) &&
+                                                      fs::exists(library / "Single.apk", ec));
     fs::remove_all(root, ec);
 }
 
@@ -1064,6 +1098,54 @@ void test_maintenance() {
     check("no window: nothing to wait for", !mw::wait_for_window(false, false) && !mw::wait_for_window(false, true));
 }
 
+void test_place_install() {
+    std::printf("which app a file is\n");
+    using namespace winapk::launcher;
+    const std::vector<LibraryApp> library = {
+        {L"app-release", L"com.one", 20},
+        {L"com.waze", L"com.waze", 1030744},
+        {L"Old", L"", -1},  // from before .package files
+    };
+    auto file = [](const std::wstring& package, long long version) {
+        FileIdentity f;
+        f.package = package;
+        f.version = version;
+        return f;
+    };
+    auto placed = [&](const std::wstring& name, const FileIdentity& f, Placement how, const std::wstring& as) {
+        const PlaceResult r = place_install(name, f, library, {L"com.two_queued"});
+        return r.how == how && r.name == as;
+    };
+    check("a new package under a new name: new", placed(L"Fresh", file(L"com.fresh", 1), Placement::kNew, L"Fresh"));
+    check("the same package, newer: an update", placed(L"app-release", file(L"com.one", 21), Placement::kUpdate,
+                                                       L"app-release"));
+    check("the same package, the same version: an update (installed again)",
+          placed(L"app-release", file(L"com.one", 20), Placement::kUpdate, L"app-release"));
+    check("the same package, older: a downgrade, asked", placed(L"app-release", file(L"com.one", 19),
+                                                                Placement::kDowngrade, L"app-release"));
+    check("another package under that name: a new app named by its package",
+          placed(L"app-release", file(L"com.two", 5), Placement::kOtherApp, L"com.two"));
+    check("a name in any case is the same name", placed(L"APP-RELEASE", file(L"com.two", 5), Placement::kOtherApp,
+                                                        L"com.two"));
+    check("its package's name taken: <name>_2", place_install(L"app-release", file(L"com.two_queued", 5), library,
+                                                              {L"com.two_queued"}).name == L"app-release_2");
+    check("a package the library has, under another name: that app's update, or its downgrade",
+          placed(L"Waze_4.0", file(L"com.waze", 1030745), Placement::kUpdate, L"com.waze") &&
+              placed(L"Waze_4.0", file(L"com.waze", 900000), Placement::kDowngrade, L"com.waze"));
+    check("an unknown version is no downgrade", placed(L"app-release", file(L"com.one", -1), Placement::kUpdate,
+                                                       L"app-release"));
+    check("a file that could not be read installs as before",
+          placed(L"app-release", FileIdentity{}, Placement::kUpdate, L"app-release") &&
+              placed(L"New", FileIdentity{}, Placement::kNew, L"New"));
+    check("an app of unknown package keeps its name", placed(L"Old", file(L"com.old", 3), Placement::kUpdate, L"Old"));
+    const FileIdentity id = parse_file_identity(L"PACKAGE\tcom.one\r\nVERIFIED\t1\nVERSIONCODE\t19\n"
+                                                L"VERSIONNAME\t1.9 beta\n");
+    check("--verify-apk's answer read", id.package == L"com.one" && id.version == 19 && id.version_name == L"1.9 beta");
+    check("--verify-apk: a versionCode that is not a number is unknown",
+          parse_file_identity(L"PACKAGE\tx\nVERSIONCODE\t1a\n").version == -1 &&
+              parse_file_identity(L"").package.empty());
+}
+
 void test_install_sets() {
     std::printf("A batch's APK files as installs\n");
     using winapk::launcher::ApkPart;
@@ -1099,9 +1181,26 @@ void test_install_sets() {
               lone[0].splits[1].second == L"split_2.apk");
 }
 
+void test_settings() {
+    std::printf("choice settings\n");
+    namespace st = winapk::launcher::settings;
+    check("a known theme is itself", st::theme(1) == st::Theme::kLight && st::theme(2) == st::Theme::kDark);
+    check("an unknown theme is as Windows",
+          st::theme(7) == st::Theme::kWindows && st::theme(0xFFFFFFFF) == st::Theme::kWindows);
+    check("dark: chosen, or as Windows on a dark Windows", st::theme_dark(2, false) && st::theme_dark(0, true));
+    check("light: chosen, or as Windows on a light Windows", !st::theme_dark(1, true) && !st::theme_dark(0, false));
+    check("an unknown theme draws as Windows does", st::theme_dark(7, true) && !st::theme_dark(7, false));
+    check("an unknown language is as Windows", st::language(5) == st::Language::kWindows &&
+                                                   st::language_hebrew(5, true) && !st::language_hebrew(5, false));
+    check("English chosen on a Hebrew Windows", !st::language_hebrew(1, true) && st::language_hebrew(2, false));
+    check("a phone size past the list is the first", st::choice(9, 6) == 0 && st::choice(5, 6) == 5);
+}
+
 int main() {
     test_runs();
+    test_settings();
     test_install_sets();
+    test_place_install();
     test_installs();
     test_updates();
     test_update_integrity();

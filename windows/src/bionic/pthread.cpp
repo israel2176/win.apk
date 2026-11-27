@@ -39,10 +39,20 @@ std::atomic<int32_t>* word(void* p, size_t index) {
 }
 
 // Waits while *w == expected, up to ms (INFINITE for no limit). Returns false
-// on timeout.
-bool futex_wait(std::atomic<int32_t>* w, int32_t expected, DWORD ms) {
-    if (WaitOnAddress(w, &expected, sizeof(expected), ms)) return true;
-    return GetLastError() != ERROR_TIMEOUT;
+// on timeout. A signal sent to the thread meanwhile ends the wait, its handler
+// runs here, and *end says what that means for the caller (a lock just waits
+// again; sem_wait may fail with EINTR, a condition variable wakes).
+bool futex_wait(std::atomic<int32_t>* w, int32_t expected, DWORD ms, WaitEnd* end = nullptr) {
+    bool woke = true;
+    {
+        SignalWaitScope scope(w);
+        if (!scope.posted() && !WaitOnAddress(w, &expected, sizeof(expected), ms)) {
+            woke = GetLastError() != ERROR_TIMEOUT;
+        }
+    }
+    const WaitEnd e = signal_take_posted();
+    if (end) *end = e;
+    return woke || e != WaitEnd::kNone;
 }
 void futex_wake_one(std::atomic<int32_t>* w) { WakeByAddressSingle(w); }
 void futex_wake_all(std::atomic<int32_t>* w) { WakeByAddressAll(w); }
@@ -172,6 +182,7 @@ int mutex_lock_until(void* m, const GuestTimespec* abstime, bool monotonic) {
         if (g_mutex_trylock(m) == 0) return 0;
         if (ms_until(abstime, monotonic) == 0) return kETIMEDOUT;
         Sleep(1);
+        signal_take_posted();
     }
 }
 WINAPK_GUEST_ABI int g_mutex_timedlock(void* m, const GuestTimespec* abstime) {
@@ -191,6 +202,7 @@ WINAPK_GUEST_ABI int g_mutex_lock_timeout_np(void* m, unsigned ms) {
         if (g_mutex_trylock(m) == 0) return 0;
         if (GetTickCount64() >= end) return kEBUSY;  // Bionic's answer for this one, not ETIMEDOUT
         Sleep(1);
+        signal_take_posted();
     }
 }
 
@@ -284,6 +296,7 @@ int rwlock_lock_until(void* l, bool write, const GuestTimespec* abstime, bool mo
         if ((write ? g_rwlock_trywrlock(l) : g_rwlock_tryrdlock(l)) == 0) return 0;
         if (ms_until(abstime, monotonic) == 0) return kETIMEDOUT;
         Sleep(1);
+        signal_take_posted();
     }
 }
 WINAPK_GUEST_ABI int g_rwlock_timedrdlock(void* l, const GuestTimespec* t) {
@@ -595,7 +608,11 @@ WINAPK_GUEST_ABI int g_create(Thread** out, const GuestAttr* attr, GuestStart st
 WINAPK_GUEST_ABI int g_join(Thread* t, void** result) {
     if (!t) return kEINVAL;
     if (t == t_self) return kEDEADLK;
-    WaitForSingleObject(t->handle, INFINITE);
+    // A signal to the joining thread runs its handler and the join goes on, as on Linux.
+    const HANDLE waits[2] = {t->handle, signal_wait_event()};
+    while (WaitForMultipleObjects(waits[1] ? 2 : 1, waits, FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
+        signal_take_posted();
+    }
     if (result) *result = t->result;
     CloseHandle(t->handle);
     delete t;
@@ -685,7 +702,12 @@ WINAPK_GUEST_ABI int g_kill(Thread* t, int sig) {
     return signal_send(t->tid, sig);
 }
 WINAPK_GUEST_ABI int g_atfork(void*, void*, void*) { return 0; }
-WINAPK_GUEST_ABI int g_sched_yield() { SwitchToThread(); return 0; }
+// A system call like any: a signal posted to the thread meanwhile runs on its way out.
+WINAPK_GUEST_ABI int g_sched_yield() {
+    SwitchToThread();
+    signal_take_posted();
+    return 0;
+}
 WINAPK_GUEST_ABI int g_setschedparam(Thread*, int, const int32_t*) { return 0; }
 WINAPK_GUEST_ABI int g_getschedparam(Thread*, int* policy, int32_t* prio) {
     *policy = 0;
@@ -717,7 +739,12 @@ int sem_wait_ms(void* s, const GuestTimespec* abstime, bool monotonic) {
             *guest_errno() = kETIMEDOUT;
             return -1;
         }
-        futex_wait(word(s, 0), 0, ms);
+        WaitEnd end = WaitEnd::kNone;
+        futex_wait(word(s, 0), 0, ms, &end);
+        if (end == WaitEnd::kInterrupted) {
+            *guest_errno() = kEINTR;
+            return -1;
+        }
     }
 }
 WINAPK_GUEST_ABI int g_sem_wait(void* s) { return sem_wait_ms(s, nullptr, false); }
