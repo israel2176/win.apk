@@ -32,7 +32,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REF: ${{ inputs.ref || 'main' }}
+  # A pull request's own build (stage.sh waits for it, else main's); by hand the ref given.
+  REF: ${{ inputs.ref || github.head_ref || 'main' }}
   ONLY: ${{ inputs.packages }}
   SHARDS: 4
 
