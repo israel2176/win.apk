@@ -724,6 +724,17 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
             -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
           grep -q "ALL PASSED" datetimeview-test.log
+      - name: Run the Handler callback test
+        run: |
+          # android.os.Handler's callback under AOSP's name, mCallback, as apps
+          # replace ActivityThread.mH's by reflection (AliExpress, #210): asked
+          # first, handleMessage after it unless it answers true.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/handler-callback-test windows/test/java/HandlerCallbackTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/handler-callback-test)" HandlerCallbackTest \
+            | tee handler-callback-test.log
+          grep -q "ALL PASSED" handler-callback-test.log
       - name: Run the ICU test
         run: |
           # AOSP's ICU4J (android.icu, aosp-graphics.jar) on the ICU data the stage ships, named as the host
