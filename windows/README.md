@@ -3138,7 +3138,11 @@ every such change is listed here:
   declares and answers from that package's manifest, as PMS does. Compose's
   downloadable fonts (`com.google.android.gms.fonts`) failed with "The
   requested provider was not found on this device." even with Google Play
-  services installed. Not Windows-specific.
+  services installed. Not Windows-specific. `queryBroadcastReceivers` and
+  `queryIntentServices` aimed at another installed package (its name, or a
+  component of it) answer from that package's manifest too: Firebase finds
+  Play services' `com.google.iid.TOKEN_REQUEST` receiver so, and logged
+  "Failed to resolve IID implementation package" in every app without it.
 - `runtime/java/android/content/res/TypedArray.java`: `getString` of an app
   attribute set in the XML to a compiled enum or flag answers the device's
   spelling (`"0x2"`), which the parser already records, not the symbol.
