@@ -67,7 +67,7 @@ public final class WinApkExecTest {
 
         if (args.length > 0) {
             // For real: ProcessBuilder, the Process's streams, waitFor.
-            ProcessBuilder pb = new ProcessBuilder(new File(args[0]).getAbsolutePath(), "from java", "exit=5");
+            ProcessBuilder pb = new ProcessBuilder(new File(args[0]).getAbsolutePath(), "exit=5", "from java");
             pb.environment().put("WINAPK_EXEC_TEST", "from the builder");
             Process p = pb.start();
             try (OutputStream in = p.getOutputStream()) {
