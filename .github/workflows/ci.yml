@@ -150,6 +150,7 @@ jobs:
             ${{ runner.temp }}/guest/*.so
             ${{ runner.temp }}/guest/winapk_exec_guest
             ${{ runner.temp }}/guest/link/*.so
+            ${{ runner.temp }}/guest/link/dlext_container.bin
             ${{ runner.temp }}/guest/link/arm64/*.so
             ${{ runner.temp }}/guest/arm64/*.so
             ${{ runner.temp }}/guest/e2e/libwinapk_jni_guest.so

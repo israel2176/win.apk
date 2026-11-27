@@ -76,6 +76,9 @@ link_lib INTERPOSE libwinapk_link_interpose
 link_lib USER libwinapk_link_user -L"$LINK" -L"$STUBS" -lwinapk_link_interpose -lc -ldl
 link_lib LATE libwinapk_link_late -L"$LINK" -L"$STUBS" -lc -lwinapk_link_interpose
 link_lib PLAIN libwinapk_link_plain -L"$STUBS" -lc
+# android_dlopen_ext's test: the library, and an "APK" holding it at a page-aligned offset.
+link_lib DLEXT libwinapk_link_dlext
+{ head -c 8192 /dev/zero; cat "$LINK/libwinapk_link_dlext.so"; head -c 100 /dev/zero; } > "$LINK/dlext_container.bin"
 # A packed library: the export's name scrambled in .dynstr (and only there) after
 # linking, to upper case; the hash tables keep the real name's hash.
 # Two of it: one with DT_GNU_HASH (lld's default), one with DT_HASH as the packer

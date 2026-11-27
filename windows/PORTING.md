@@ -733,9 +733,19 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   pass (Zydis, MIT license). The current scanner only matches the exact
   stack-guard encodings and could also match data bytes.
 - `dlclose` never unloads; libraries stay mapped until exit, as if loaded
-  with `RTLD_NODELETE`. Linker namespaces and `android_dlopen_ext`'s
-  `extinfo` (loading from a file descriptor or straight from the APK) are
-  ignored.
+  with `RTLD_NODELETE`. Linker namespaces are checked and not used (there is
+  one). `android_dlopen_ext`'s `extinfo` is honoured as bionic's: the reserved
+  address, a library read from a file descriptor at an offset, the RELRO
+  written to a file (for a newly loaded library, after relocation and before
+  its constructors); `ANDROID_DLEXT_USE_RELRO` keeps the library's own RELRO,
+  which holds the same bytes. A library read from a descriptor is named
+  `<apk>!/<entry>` when the offset is a stored entry of a zip, else by the name
+  asked for, never after the file (bionic names it after the file unless it
+  found it in a zip itself); its arm64 translation's files are named after the
+  file, the offset and the library. Differences:
+  `ANDROID_DLEXT_RESERVED_ADDRESS_RECURSIVE` is accepted, but only the library
+  itself goes into the reserved range, not its dependencies; the library's
+  dependencies are not looked for inside the APK it came from.
 - A library's references to symbols it defines itself are bound directly, so
   another library cannot interpose them. Bionic allows that unless the library
   was linked with `-Bsymbolic`.

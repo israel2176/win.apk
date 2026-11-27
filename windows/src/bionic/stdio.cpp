@@ -2616,6 +2616,7 @@ std::string proc_maps_file_text() { return proc_maps_text(); }
 
 size_t file_write(void* f, const char* data, size_t n) { return std::fwrite(data, 1, n, host_file(f)); }
 int64_t fd_write(int fd, const void* data, size_t n) { return g_write(fd, data, n); }
+bool host_path_of_fd(int fd, std::wstring* out) { return fd_host_path(fd, out); }
 void* host_stream(void* guest_file) { return host_file(guest_file); }
 void* guest_stdout() { return stdout; }
 void* guest_stderr() { return stderr; }
