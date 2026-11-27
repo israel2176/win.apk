@@ -24,7 +24,8 @@
 // An encoder (createEncoderByType "video/avc" or "audio/mp4a-latm", configured with
 // AMEDIACODEC_CONFIGURE_FLAG_ENCODE) keeps the same buffers and order, as Android's encoders give
 // them: input buffers of one picture (KEY_COLOR_FORMAT 19, I420; 21 or 0x7f420888, NV12: the
-// layouts Java's MediaCodec takes here) or of 16-bit PCM; INFO_OUTPUT_FORMAT_CHANGED with the
+// layouts Java's MediaCodec takes here, which getInputFormat names with its stride and
+// slice-height) or of 16-bit PCM; INFO_OUTPUT_FORMAT_CHANGED with the
 // codec data in csd-0 (and csd-1: H.264's SPS and PPS) first, then that codec data as a
 // BUFFER_FLAG_CODEC_CONFIG buffer, then the frames, the key ones with BUFFER_FLAG_KEY_FRAME,
 // then the empty end-of-stream buffer. setParameters takes "request-sync" and "video-bitrate".
@@ -272,7 +273,7 @@ void events_loop(Codec* c) {
                 }
                 break;
             case Codec::Event::kError:
-                if (cb.error) cb.error(c, user, e.error, 0, "decoder error");
+                if (cb.error) cb.error(c, user, e.error, 0, c->encoder ? "encoder error" : "decoder error");
                 break;
         }
         hold.lock();
@@ -543,6 +544,12 @@ int configure_encoder(Codec* c, MediaFormat* format) {
         if (e.profile == 0x80000) e.profile = 8;
         e.bitrate_mode = format->int32("bitrate-mode", &v) ? v : 1;
         c->in_capacity = static_cast<size_t>(c->width) * c->height * 3 / 2;
+        // The input format says the layout the input buffers are read in, as a device's encoder
+        // does: rows of the width, planes of the height, and the color format taken (a flexible
+        // YUV 4:2:0 request is NV12 here).
+        c->input_format.set_int32("stride", c->width);
+        c->input_format.set_int32("slice-height", c->height);
+        c->input_format.set_int32("color-format", color == kColorI420 ? kColorI420 : kColorNv12);
     } else {
         c->sample_rate = format->int32("sample-rate", &v) ? v : 0;
         c->channels = format->int32("channel-count", &v) ? v : 0;

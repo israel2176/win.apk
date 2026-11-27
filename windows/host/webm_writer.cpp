@@ -83,8 +83,11 @@ struct Writer::Impl {
     std::vector<TrackFormat> formats;
     std::vector<uint64_t> numbers;  // each track's Matroska number
     bool started = false, failed = false, finished = false;
-    bool have_first = false;
-    int64_t first_us = 0;
+    // Each track's first time: its samples' times are kept less it, as AOSP's WebmWriter does
+    // (WebmFrameMediaSourceThread), so every track starts the file at 0.
+    std::vector<bool> have_first;
+    std::vector<int64_t> first_us;
+    bool any_frame = false;
 
     explicit Impl(std::FILE* file) : out(file) {}
 };
@@ -146,6 +149,8 @@ int Writer::add_track(const TrackFormat& f) {
     }
     w.formats.push_back(f);
     w.numbers.push_back(number);
+    w.have_first.push_back(false);
+    w.first_us.push_back(0);
     return static_cast<int>(w.formats.size() - 1);
 }
 
@@ -161,18 +166,23 @@ bool Writer::write(int track, const uint8_t* data, size_t size, int64_t pts_us, 
     if (!w.started || w.finished || w.failed || track < 0 || track >= static_cast<int>(w.numbers.size()))
         return false;
     if (config) return true;  // the track's codec data came with its format
-    if (!data || !size) return false;
-    if (!w.have_first) {
-        w.have_first = true;
-        w.first_us = pts_us;
+    // An empty sample (an encoder's end-of-stream buffer) holds no frame: nothing to write, as
+    // MediaMuxer takes it.
+    if (!size) return true;
+    if (!data) return false;
+    const size_t t = static_cast<size_t>(track);
+    if (!w.have_first[t]) {
+        w.have_first[t] = true;
+        w.first_us[t] = pts_us;
     }
-    const int64_t at = std::max<int64_t>(0, pts_us - w.first_us);
+    const int64_t at = std::max<int64_t>(0, pts_us - w.first_us[t]);
     // Every Opus and Vorbis frame stands alone.
-    const bool sync = key || w.formats[static_cast<size_t>(track)].mime.rfind("audio/", 0) == 0;
-    if (!w.segment.AddFrame(data, size, w.numbers[static_cast<size_t>(track)], static_cast<uint64_t>(at) * 1000, sync)) {
+    const bool sync = key || w.formats[t].mime.rfind("audio/", 0) == 0;
+    if (!w.segment.AddFrame(data, size, w.numbers[t], static_cast<uint64_t>(at) * 1000, sync)) {
         w.failed = true;
         return false;
     }
+    w.any_frame = true;
     return true;
 }
 
@@ -180,7 +190,7 @@ bool Writer::finish() {
     Impl& w = *impl_;
     if (w.finished) return false;
     w.finished = true;
-    const bool ok = w.started && w.have_first && !w.failed && w.segment.Finalize();
+    const bool ok = w.started && w.any_frame && !w.failed && w.segment.Finalize();
     return w.out.close() && ok;
 }
 

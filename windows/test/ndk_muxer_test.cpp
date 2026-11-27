@@ -221,6 +221,41 @@ bool write_webm(const Ndk& n, const Contents& in, const std::string& path, bool 
     return ok;
 }
 
+// Writes `in` to `path` as WebM with every sample of the first sample's track `late_us` later, so
+// that the other track's first sample, written after it, is the earlier one, then an empty
+// end-of-stream buffer on each track, as an encoder's last output is passed on.
+bool write_webm_late_track(const Ndk& n, const Contents& in, const std::string& path, int64_t late_us) {
+    if (in.samples.empty()) return false;
+    const int late_track = in.samples.front().track;
+    const int fd = open_for_writing(path);
+    void* m = n.mux_new(fd, kWebm);
+    close_fd(fd);
+    if (!m) return false;
+    bool ok = true;
+    for (const auto& t : in.tracks) {
+        void* f = format_of(n, t);
+        ok = ok && n.mux_add(m, f) >= 0;
+        n.format_delete(f);
+    }
+    ok = ok && n.mux_start(m) == kOk;
+    int64_t last = 0;
+    for (const Sample& s : in.samples) {
+        const int64_t pts = s.pts + (s.track == late_track ? late_us : 0);
+        last = std::max(last, pts);
+        const BufferInfo info{0, static_cast<int32_t>(s.data.size()), pts, s.key ? kKeyFrame : 0u};
+        ok = ok && n.mux_write(m, static_cast<size_t>(s.track), s.data.data(), &info) == kOk;
+    }
+    constexpr uint32_t kEndOfStream = 4;
+    const uint8_t none = 0;
+    for (size_t t = 0; t < in.tracks.size(); ++t) {
+        const BufferInfo eos{0, 0, last, kEndOfStream};
+        ok = ok && n.mux_write(m, t, &none, &eos) == kOk;
+    }
+    ok = ok && n.mux_stop(m) == kOk;
+    n.mux_delete(m);
+    return ok;
+}
+
 void compare(const char* what, const Contents& a, const Contents& b) {
     const std::string w = what;
     bool same_tracks = a.tracks.size() == b.tracks.size() && !a.tracks.empty();
@@ -262,6 +297,15 @@ void webm_checks(const Ndk& n, const std::string& dir) {
     }
     std::printf("WebM: deleted while started\n");
     const Contents in = read_webm(dir + "/color.webm");
+    {
+        // Each track's times start at its own first sample's, as AOSP's WebmWriter keeps them: a
+        // track whose first sample is written second but is earlier is not cut to 0.
+        std::printf("WebM: a track starting later, and end-of-stream buffers\n");
+        const std::string late = out_path("remux-late-track.webm");
+        check("two tracks to write", in.tracks.size() == 2);
+        check("written, the empty end-of-stream buffers taken", write_webm_late_track(n, in, late, 500000));
+        compare("each track from its own start", in, read_webm(late));
+    }
     const std::string out = out_path("remux-unstopped.webm");
     write_webm(n, in, out, false);
     compare("deleted without stop", in, read_webm(out));

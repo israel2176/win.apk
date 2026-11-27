@@ -156,6 +156,7 @@ struct Ndk {
     int64_t(GUEST* dq_out)(void*, BufferInfo*, int64_t) = fn<decltype(dq_out)>("AMediaCodec_dequeueOutputBuffer");
     uint8_t*(GUEST* out_buf)(void*, size_t, size_t*) = fn<decltype(out_buf)>("AMediaCodec_getOutputBuffer");
     void*(GUEST* out_format)(void*) = fn<decltype(out_format)>("AMediaCodec_getOutputFormat");
+    void*(GUEST* in_format)(void*) = fn<decltype(in_format)>("AMediaCodec_getInputFormat");
     int(GUEST* release)(void*, size_t, bool) = fn<decltype(release)>("AMediaCodec_releaseOutputBuffer");
     int(GUEST* set_params)(void*, void*) = fn<decltype(set_params)>("AMediaCodec_setParameters");
 
@@ -644,6 +645,7 @@ std::string temp_path(const char* prefix) {
 // What an encoder gave: its output formats and buffers in order.
 struct Encoded {
     bool opened = false, format_first = false, config_second = false, eos = false;
+    bool input_layout = false;  // the input format's stride, slice-height and color format
     void* format = nullptr;  // the announced output format (the app deletes it)
     std::vector<std::vector<uint8_t>> data;
     std::vector<BufferInfo> info;
@@ -731,6 +733,13 @@ Encoded encode_video(const Ndk& n, int w, int h, int frames) {
     e.opened = n.configure(codec, f, nullptr, nullptr, 1 /* CONFIGURE_FLAG_ENCODE */) == 0 && n.start(codec) == 0;
     n.format_delete(f);
     if (e.opened) {
+        if (void* in = n.in_format(codec)) {
+            int32_t stride = 0, slice = 0, color = 0;
+            e.input_layout = n.get_int32(in, "stride", &stride) && stride == w &&
+                             n.get_int32(in, "slice-height", &slice) && slice == h &&
+                             n.get_int32(in, "color-format", &color) && color == 19;
+            n.format_delete(in);
+        }
         const std::vector<uint8_t> pic = red_over_blue_i420(w, h);
         std::vector<std::vector<uint8_t>> inputs(static_cast<size_t>(frames), pic);
         std::vector<int64_t> times;
@@ -799,6 +808,7 @@ void encoder_checks(const Ndk& n) {
     const int w = 320, h = 240, frames = 30;
     Encoded v = encode_video(n, w, h, frames);
     check("H.264: configured with FLAG_ENCODE and started", v.opened);
+    check("H.264: the input format's stride, slice-height and color format", v.input_layout);
     check("H.264: the output format first, with the SPS and the PPS",
           v.format_first && has_buffer(n, v.format, "csd-0") && has_buffer(n, v.format, "csd-1"));
     check("H.264: then the codec data as a CODEC_CONFIG buffer", v.config_second);

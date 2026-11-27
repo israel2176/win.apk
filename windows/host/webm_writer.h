@@ -10,8 +10,9 @@
 // No Windows call: the same code builds anywhere, which is how it is checked
 // (test/ndk_muxer_test.cpp).
 //
-// Times are kept as given less the first sample's, so that a stream starting late still starts
-// the file at 0, in the Segment's millisecond timecodes. The file is finished (its duration,
+// Each track's times are kept as given less that track's first sample's, as AOSP 14's
+// WebmWriter does, so every track starts the file at 0, in the Segment's millisecond timecodes.
+// An empty sample (an encoder's end-of-stream buffer) is taken and not written. The file is finished (its duration,
 // Cues and SeekHead written) by finish(); one that never was has none of them.
 
 #pragma once
