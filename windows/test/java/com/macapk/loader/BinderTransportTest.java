@@ -285,9 +285,17 @@ public final class BinderTransportTest {
             d.writeInt(i);
             svc.transact(ONEWAY, d, null, IBinder.FLAG_ONEWAY);
         }
-        d = Parcel.obtain(); r = Parcel.obtain();
-        svc.transact(COUNT, d, r, 0);
-        int count = r.readInt(), inOrder = r.readInt();
+        // A oneway call is queued for the receiver and its sender goes on, so the synchronous COUNT may
+        // overtake the last of them, as on a device (oneway calls keep their order among themselves, not
+        // against a synchronous call). Ask until all 50 are there, or 10 s have passed.
+        int count = 0, inOrder = 0;
+        for (long deadline = System.nanoTime() + 10_000_000_000L;;) {
+            d = Parcel.obtain(); r = Parcel.obtain();
+            svc.transact(COUNT, d, r, 0);
+            count = r.readInt(); inOrder = r.readInt();
+            if (count >= 50 || inOrder != 1 || System.nanoTime() > deadline) break;
+            Thread.sleep(10);
+        }
         check("50 oneway calls arrive, in order", count == 50 && inOrder == 1, count + " in order " + inOrder);
 
         final int[] cbPid = { -1 };
