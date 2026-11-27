@@ -57,6 +57,7 @@ HostMethods native_egl10_methods();     // gl/egl10_window.cpp
 HostMethods native_browser_tab_methods(); // native_browser_tab.cpp
 HostMethods native_webview_methods();   // native_webview.cpp
 HostMethods native_camera_methods();    // native_camera.cpp
+HostMethods native_vulkan_methods();    // native_vulkan.cpp
 HostMethods native_radios_methods();    // native_radios.cpp
 HostMethods native_bluetooth_methods(); // native_bluetooth.cpp
 HostMethods native_location_methods();  // native_location.cpp
