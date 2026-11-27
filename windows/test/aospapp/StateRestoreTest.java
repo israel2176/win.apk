@@ -24,7 +24,11 @@
 //   expect-fresh      a fresh start: Root has no saved state
 //
 // A run given a third argument, `updated`, is the app after an update (another APK update time): what
-// the older version left is dropped.
+// the older version left is dropped. One given `tampered` finds a file that does not open (not sealed
+// for this user): it is no saved task.
+//
+// The file is sealed (com.macapk.loader.DataProtection); a plain JVM has no DPAPI, so the test seals
+// with a codec of its own, and checks that nothing the user typed is on disk in the clear.
 //
 //   windows/test/aospapp/run.sh <stage> <deps>   (runs AospAppLifecycleTest, MagnifierTest, then these)
 //
@@ -83,6 +87,8 @@ public class StateRestoreTest {
             try { Thread.sleep(delayMs); } catch (InterruptedException e) { return; }
             AospAppHost.INSTANCE.pendingStarts();
             check(state.isFile(), "the task's saved state is on disk when the process dies (" + why + ")");
+            check(!inTheClear(state, "draft") && !inTheClear(state, "typed"),
+                    "what the user typed is not on disk in the clear");
             System.out.println("KILLED (" + why + ")");
             System.out.flush();
             Runtime.getRuntime().halt(0);
@@ -90,6 +96,47 @@ public class StateRestoreTest {
     }
 
     static boolean expecting() { return mode.startsWith("expect-"); }
+
+    /** Whether `text` is in the file as a Parcel writes a string (UTF-16) or as UTF-8. */
+    static boolean inTheClear(File f, String text) {
+        try {
+            byte[] b = java.nio.file.Files.readAllBytes(f.toPath());
+            for (java.nio.charset.Charset cs : new java.nio.charset.Charset[] {
+                    java.nio.charset.StandardCharsets.UTF_16LE, java.nio.charset.StandardCharsets.UTF_8}) {
+                byte[] t = text.getBytes(cs);
+                outer:
+                for (int i = 0; i + t.length <= b.length; i++) {
+                    for (int k = 0; k < t.length; k++) if (b[i + k] != t[k]) continue outer;
+                    return true;
+                }
+            }
+            return false;
+        } catch (java.io.IOException e) {
+            return false;
+        }
+    }
+
+    /** DPAPI's stand-in on a plain JVM: a marker, then the bytes scrambled; anything else does not open. */
+    static final class TestCodec implements com.macapk.loader.DataProtection.Codec {
+        static final byte[] MARK = {'S', 'E', 'A', 'L'};
+
+        @Override public byte[] seal(byte[] plain) {
+            byte[] out = new byte[MARK.length + plain.length];
+            System.arraycopy(MARK, 0, out, 0, MARK.length);
+            for (int i = 0; i < plain.length; i++) out[MARK.length + i] = (byte) (plain[i] ^ (0x5a + i));
+            return out;
+        }
+
+        @Override public byte[] unseal(byte[] sealed) throws java.io.IOException {
+            if (sealed.length < MARK.length
+                    || !java.util.Arrays.equals(java.util.Arrays.copyOf(sealed, MARK.length), MARK)) {
+                throw new java.io.IOException("not sealed for this user");
+            }
+            byte[] out = new byte[sealed.length - MARK.length];
+            for (int i = 0; i < out.length; i++) out[i] = (byte) (sealed[MARK.length + i] ^ (0x5a + i));
+            return out;
+        }
+    }
 
     public static class Root extends Activity {
         int n;
@@ -250,6 +297,13 @@ public class StateRestoreTest {
         // The installed APK's update time, which the package manager reports as lastUpdateTime: the
         // same for every run unless this one is the app after an update.
         boolean updated = args.length > 2 && args[2].equals("updated");
+        com.macapk.loader.DataProtection.setCodecForTest(new TestCodec());
+        if (args.length > 2 && args[2].equals("tampered")) {
+            // What a kill left, as it would be without the seal (or sealed for another user): it does not open.
+            check(state.isFile(), "a saved task is there to tamper with");
+            byte[] sealed = java.nio.file.Files.readAllBytes(state.toPath());
+            java.nio.file.Files.write(state.toPath(), new TestCodec().unseal(sealed));
+        }
         new File(ai.sourceDir).setLastModified(updated ? 1_700_000_100_000L : 1_700_000_000_000L);
         Map<String, ActivityInfo> activities = Map.of(
                 Root.class.getName(), AospAppLifecycleTest.activity(ai, Root.class),

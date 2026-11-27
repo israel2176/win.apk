@@ -17,7 +17,11 @@
 # callbacks and ends with "ALL PASSED" (exit 0) or the first difference from Android's order, then the
 # magnifier's checks and its own "ALL PASSED" or "FAILED", then each restore run's checks and a last
 # "ALL PASSED" or "FAILED: <run>".
+#
+# AOSPAPP_TESTS (a test hook: the parts to run, of "lifecycle magnifier restore", all by default) lets CI
+# run the restore test in a step of its own, which fails the run, beside the informational ones.
 set -euo pipefail
+TESTS=" ${AOSPAPP_TESTS:-lifecycle magnifier restore} "
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 STAGE="$(cd -- "${1:?usage: run.sh <stage> <deps> [out] [full android-framework.jar]}" && pwd)"
@@ -60,13 +64,18 @@ run_test() {
         -Dwinapk.test.gfx.runtime="$RUNTIME" -Dwinapk.test.host="$OUT/libplainjvm_host.so" \
         -cp "$CP:$OUT/classes" "$@"
 }
-run_test AospAppLifecycleTest
+if [[ "$TESTS" == *" lifecycle "* ]]; then
+    run_test AospAppLifecycleTest
+fi
 # The text magnifier's popup: child layers of a window, composed over it (MagnifierTest.java).
-echo "== the magnifier"
-run_test MagnifierTest
+if [[ "$TESTS" == *" magnifier "* ]]; then
+    echo "== the magnifier"
+    run_test MagnifierTest
+fi
+[[ "$TESTS" == *" restore "* ]] || exit 0
 # An app's task across the end of its process (StateRestoreTest.java): each run is one process of the
 # app, over one saved state. A kill, the session's end or a crash keeps the task; Back out of it, the
-# window's close (the task dismissed) and an update of the app drop it.
+# window's close (the task dismissed) and an update of the app drop it; one that does not open is none.
 echo "== the task across the process's end"
 STATE="$OUT/task-state.parcel"
 rm -f "$STATE"
@@ -91,4 +100,6 @@ restore_runs shutdown expect-detail
 restore_runs crash expect-root
 # An update of the app between the two processes: nothing of the older version's task.
 restore_runs background expect-fresh:updated
+# A saved task that does not open (not sealed for this Windows user): no saved task.
+restore_runs background expect-fresh:tampered
 echo "ALL PASSED"

@@ -517,7 +517,11 @@ but it lived only in memory.
   activity, intent, launch fields, result target, icicle and persistent state.
   The Bundles and intent are marshalled each on their own (an intent with live
   objects is kept as its filter; a Bundle with them is no saved state), the
-  file written whole and renamed into place, and only when it changed.
+  file sealed for the Windows user (`com.macapk.loader.DataProtection`, DPAPI:
+  saved state can hold what the user typed, which Android keeps only in
+  system_server's memory; one that cannot be sealed is not written, one that
+  does not open is no saved task), written whole and renamed into place, and
+  only when it changed.
 - **Restore:** `AospApp.attached` restores the records, none launched, before
   the process's first start. A launcher start, or a start of the root
   activity, brings the task forward (`resumeTop`: the top's
@@ -526,8 +530,11 @@ but it lived only in memory.
   sent to them (`realStart` of a record not launched).
 - **What drops it:** the window's close (`terminate`: the user dismissing the
   task, as from recents), Back out of the root (the task empties), the
-  launcher's Stop (Force stop: `force_stop` deletes the file), an update (the
-  file names the version code and the APK's update time it was written for).
+  launcher's Stop (Force stop: `force_stop` waits up to 5 s for the process
+  to end, so a write under way cannot put the file back, then deletes it), an
+  install or update of the app (the launcher deletes the file at the install's
+  commit, as Android force-stops a replaced package; as a backstop the file
+  names the version code and the APK's update time it was written for).
 - **What keeps it:** a kill (Task Manager, out of memory, a permission taken
   away), a crash (Boot's handler calls `AppHost.processCrashed` first, which
   drops the top as `finishTopCrashedActivities` does; a native fault runs no

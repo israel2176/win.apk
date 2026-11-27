@@ -11,10 +11,16 @@
 // is kept when it has saved state (mHaveState: never launched, or stopped with an icicle since it last
 // resumed) and is not finishing; a resumed or paused activity has none and is removed. What ends the
 // task drops the file: the user dismissing it (the window closed, as a task swiped from recents),
-// Force stop (the launcher's Stop deletes it) and an update of the app (the file names the version and
-// the APK's update time it was written for).
+// Force stop (the launcher's Stop deletes it once the process has ended) and an install or update of
+// the app (the launcher deletes it at the install's commit; as a backstop the file names the version and
+// the APK's update time it was written for, and another is dropped here).
 //
-// The file is a Parcel, marshalled: a header, then each record's activity, intent, launch fields and
+// The file is sealed for the Windows user (com.macapk.loader.DataProtection: DPAPI, as the Google
+// account's tokens are): saved instance state can hold what the user typed, which Android keeps only in
+// system_server's memory. A file that cannot be sealed is not written (the one there is deleted), and
+// one that does not open (changed, another user's or PC's) is no saved task.
+//
+// Inside the seal it is a Parcel, marshalled: a header, then each record's activity, intent, launch fields and
 // its two state bundles, each bundle and intent marshalled on its own so one that cannot be (a binder
 // or another live object in it, which only an in-process Parcel can carry) costs only that record.
 package com.winapk.aospapp;
@@ -23,6 +29,8 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.PersistableBundle;
+
+import com.macapk.loader.DataProtection;
 
 import java.io.File;
 import java.io.IOException;
@@ -92,10 +100,20 @@ final class SavedTask {
             }
             byte[] bytes = p.marshall();
             if (written != null && Arrays.equals(written, bytes)) return;
+            byte[] sealed;
+            try {
+                sealed = DataProtection.seal(bytes);
+            } catch (IOException e) {
+                // Never in the clear instead; and not an older task in its place.
+                System.err.println("[aosp-app] the task's saved state could not be sealed (" + e.getMessage()
+                        + "): not kept");
+                delete();
+                return;
+            }
             File dir = file.getParentFile();
             if (dir != null) dir.mkdirs();
             File part = new File(file.getPath() + ".part");
-            Files.write(part.toPath(), bytes);
+            Files.write(part.toPath(), sealed);
             Files.move(part.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING,
                     StandardCopyOption.ATOMIC_MOVE);
             written = bytes;
@@ -188,6 +206,13 @@ final class SavedTask {
             bytes = Files.readAllBytes(file.toPath());
         } catch (IOException e) {
             System.err.println("[aosp-app] the task's saved state is unreadable: " + e);
+            return out;
+        }
+        try {
+            bytes = DataProtection.unseal(bytes);
+        } catch (IOException e) {
+            System.err.println("[aosp-app] the task's saved state does not open (" + e.getMessage() + "): dropped");
+            delete();
             return out;
         }
         Parcel p = Parcel.obtain();

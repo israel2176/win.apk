@@ -281,10 +281,13 @@ back with what they saved (a half-typed text, the item you were on), the
 top one first and the ones under it when you go back. A screen that was in
 front when the app crashed or was ended does not come back, as Android drops
 it. Closing the window (its **X**), **Back** out of the app's first screen,
-**Stop** and an update of the app start it fresh next time. Win.apk keeps
-this in `%LOCALAPPDATA%\Win.apk\apps\<app>\task-state.parcel`; Android keeps
-it only until the phone restarts, Win.apk across a Windows restart too, as
-the app's window was open when Windows ended it.
+**Stop** and installing the app again or updating it start it fresh next time.
+Win.apk keeps this in `%LOCALAPPDATA%\Win.apk\apps\<app>\task-state.parcel`,
+sealed for your Windows account (DPAPI, as your Google account's tokens are:
+what you typed is not in a plain file, and another account or PC cannot open
+it), until the app is opened again, removed, updated or stopped. Android keeps
+it only in memory, until the phone restarts; Win.apk keeps it on disk, across
+a Windows restart too, as the app's window was open when Windows ended it.
 
 In an app:
 
@@ -807,7 +810,7 @@ nothing is started in the apps: no agent, no pipe.
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
 | Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk`, and for an app that came as a bundle its splits in `<app>.splits` beside it (the installed APKs themselves, not a second copy) |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
-| Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation; `task-state.parcel`, its screens and their saved state after its process ended without you closing it) |
+| Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation; `task-state.parcel`, its screens and their saved state after its process ended without you closing it, sealed for your Windows account) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
 | The Store's app, as installed (no tile; its download and checksum) | `%LOCALAPPDATA%\Win.apk\library\app.apkstore.*`, `%LOCALAPPDATA%\Win.apk\store-app` |

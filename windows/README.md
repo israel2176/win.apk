@@ -1119,8 +1119,11 @@ by Transactions in the compositor's scene, and `Magnifier.show` over an
 `task-state.parcel`: a task killed in the background, in front, at the
 session's end or by a crash comes back with each activity's saved Bundle,
 intent and view state, the top first and the one under it with its result
-when revealed; Back out of it, the window's close and an update drop it);
-CI runs it on Ubuntu (informational). Win.apk's own
+when revealed; Back out of it, the window's close and an update drop it, and
+a file that does not open is none; the file is sealed, here with the test's
+own `DataProtection` codec, and nothing typed is in it in the clear);
+CI runs it on Ubuntu: the restore step fails the run, the rest is
+informational. Win.apk's own
 `Activity`, `Application`, `ActivityThread`, `Instrumentation`, `LoadedApk`
 and framework `Fragment` classes are deleted: `build_java.sh` compiles the
 framework against android-all's (`scripts/aosp_app_take.sh`, the one list both
@@ -1777,7 +1780,7 @@ start; those throw alike on both sides, and only a difference counts.
 | Unit tests | `windows-latest` | Guest libraries, Build | Every test program above, the arm64 AOT translation included |
 | Runtime tests | `windows-latest` | Guest libraries, Build | The tests that need the staged jars or ANGLE, reflection over every class of the staged framework jars (`scripts/ReflectScan.java`), the APK booted headless and in a window (`headless-boot` artifact), the GMS CLI, and the frame bench in a window, its frame times in the run's summary ([Frame time](#frame-time)). The tests on a plain JVM take `build/java/android-framework.jar` (the framework as compiled, uploaded with the binaries): the stage's lacks what AOSP's views and resources shadow, whose own classes need natives only `winapk-runtime` binds |
 | App smoke test | `windows-latest` | Build | The ten apps of `test/compat/smoke.txt` (`--require-drew`) on the staged JRE with one framework archive made first (`--cds-prepare`): fails when one no longer draws (`smoke` artifact). Each app's peak working set and private bytes go in the report and the run's summary ([Footprint](#footprint)). The apps' classes, merged, are the `framework-classlist` artifact: copy it to `java/winapk-framework.classlist` when the framework or the smoke set has changed much |
-| AOSP app layer (informational) | Ubuntu | Build | Fails nothing (`continue-on-error`): `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` (AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM, then `MagnifierTest`: a window's child layers and `Magnifier.show`; then `StateRestoreTest`: the task across the end of its process); its verdicts, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
+| AOSP app layer | Ubuntu | Build | `build_aosp_app.sh` against `winapk-binaries`' whole `build/java/android-framework.jar`, over the build's stage (which has AOSP's resources and views) on Linux, then `test/aospapp/run.sh` in two steps (`AOSPAPP_TESTS`): AOSP's `ActivityThread` through an application's and two activities' lifecycle on a plain JVM, then `MagnifierTest` (a window's child layers and `Magnifier.show`), informational (`continue-on-error` on the step, as the accessibility step); then `StateRestoreTest` (the task across the end of its process, sealed), which fails the run; its verdicts, the jar's size and LinkScan's count in the summary, the log and LinkScan's list in the `aosp-app` artifact |
 | AOSP graphics | `windows-latest` | Build | `test/aospgfx/`: AOSP's Canvas on Robolectric's native runtime in `winapk-runtime.exe` on the staged JRE (the agent built with MSYS2 CLANG64 clang; android-all and the DLL fetched from Maven Central and cached). Fails when a check fails; the `aosp-graphics` artifact has the picture, the benchmark frame and the logs. [AOSP graphics](#aosp-graphics-milestone-1) |
 | UI gate, Android's side and the base | Ubuntu | What changed | Android's lines for the UI probe and `test/screens/gate.txt`'s apps (`gate_oracle.sh`, cached by what they are made from), the base's commit, and the base's framework jars when `main` has no CI build of it left (`ui-oracle`, `ui-base-jars`). [The UI gate](#the-ui-gate-only-closer-to-android) |
 | UI gate, `<target>` | `windows-latest` × 3 | Build, UI gate's Android side | One per target: Win.apk at the base and at the head (`gate_side.sh`), then `regress.py`; fails on a `REGRESSED`, `FARTHER` or `MISSING` line, with the first of them in the summary (`ui-gate-<target>` artifact) |
@@ -1942,7 +1945,8 @@ every such change is listed here:
   `Boot.java`: the app's task outlives its process, as system_server keeps
   it. `AppHost.Start.savedTask` names `apps\<name>\task-state.parcel`, which
   Boot passes for a process that runs the app's activities and the task
-  manager (`aosp_app/.../Tasks.java`, `SavedTask.java`) writes and restores;
+  manager (`aosp_app/.../Tasks.java`, `SavedTask.java`) writes, sealed with
+  `DataProtection` (DPAPI), and restores;
   `AppHost.shutdown` and `ActivityHost.macapkShutdown` stop every activity at
   the end of the Windows session (`WM_ENDSESSION`,
   `native_cocoa.cpp` `session_end_thread`) instead of destroying them, so
