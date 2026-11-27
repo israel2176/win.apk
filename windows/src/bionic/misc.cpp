@@ -10,7 +10,9 @@
 #include "bionic_internal.h"
 
 #include "winapk/arm64_guest.h"
+#include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
+#include "winapk/x86_syscall.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -680,12 +682,16 @@ struct SharedView {
 std::map<uintptr_t, SharedView> g_views;  // under g_maps_lock
 
 // A view of `len` bytes of the file `fd` has open, from `off`, or null to fall
-// back to a private copy: an exec or MAP_FIXED mapping, a descriptor without
+// back to a private copy: a private exec or a MAP_FIXED mapping, a descriptor without
 // a file, a range past the file's last page (Linux maps it and faults on
 // access; a section cannot be larger than the file without growing it), an
 // empty file (no section), or a read-only file asked for writing.
-void* map_shared_view(size_t len, int prot, int fd, int64_t off) {
-    if ((prot & 4) || off < 0 || fd_object(fd)) return nullptr;
+//
+// An executable MAP_SHARED view is made too when the file allows it (memfd_create's do): a JIT that maps
+// one anonymous file twice, writable and executable, writes code through the one and runs it through the
+// other, which a private copy would never show it. A private executable mapping stays a copy.
+void* map_shared_view(size_t len, int prot, int fd, int64_t off, bool shared) {
+    if (((prot & 4) && !shared) || off < 0 || fd_object(fd)) return nullptr;
     const intptr_t h = _get_osfhandle(fd);
     if (h == -1) return nullptr;
     const HANDLE file = reinterpret_cast<HANDLE>(h);
@@ -697,14 +703,17 @@ void* map_shared_view(size_t len, int prot, int fd, int64_t off) {
     GetSystemInfo(&si);
     const uint64_t base = static_cast<uint64_t>(off) & ~(static_cast<uint64_t>(si.dwAllocationGranularity) - 1);
     const size_t delta = static_cast<size_t>(static_cast<uint64_t>(off) - base);
-    const bool write = prot & 2;
-    // Size 0: the section is the file as it is now, so the file does not grow.
-    const HANDLE section = CreateFileMappingW(file, nullptr, write ? PAGE_READWRITE : PAGE_READONLY, 0, 0, nullptr);
+    const bool write = prot & 2, exec = prot & 4;
+    // Size 0: the section is the file as it is now, so the file does not grow. An executable section
+    // needs a file opened for execution; one that is not gets no view (and a copy instead).
+    const DWORD page = exec ? (write ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : (write ? PAGE_READWRITE : PAGE_READONLY);
+    const HANDLE section = CreateFileMappingW(file, nullptr, page, 0, 0, nullptr);
     if (!section) return nullptr;
     // To the section's end when the range reaches into the last page: a view
     // covers whole pages, so its tail past the file reads as zeros, as on Linux.
     const bool to_end = static_cast<uint64_t>(off) + len > static_cast<uint64_t>(size.QuadPart);
-    void* view = MapViewOfFile(section, write ? FILE_MAP_WRITE : FILE_MAP_READ, static_cast<DWORD>(base >> 32),
+    const DWORD access = (write ? FILE_MAP_WRITE : FILE_MAP_READ) | (exec ? FILE_MAP_EXECUTE : 0);
+    void* view = MapViewOfFile(section, access, static_cast<DWORD>(base >> 32),
                                static_cast<DWORD>(base), to_end ? 0 : delta + len);
     CloseHandle(section);  // the view keeps the section alive
     if (!view) return nullptr;
@@ -877,6 +886,9 @@ int protect_range(void* addr, size_t len, int prot) {
         }
         p = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
     }
+    // x86_64 guest code asked to be executable runs only once its SYSCALL instructions are found
+    // (x86_syscall.h): until its first run it gets everything else it asked for.
+    prot = winapk::x86::exec_protection(addr, len, prot);
     const DWORD want = win_protect(prot);
     for (uintptr_t p = lo; p < hi;) {
         MEMORY_BASIC_INFORMATION mbi;
@@ -922,7 +934,7 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     // reserved; a copy taken at mmap kept the new, empty file ("Invalid top
     // array size (ref: 128, array size: 0)").
     if (((flags & 3) == 1 || ((flags & 3) == 2 && !(prot & 2))) && !anonymous) {
-        if (void* v = fixed ? map_fixed_view(addr, len, prot, fd, off) : map_shared_view(len, prot, fd, off)) return v;
+        if (void* v = fixed ? map_fixed_view(addr, len, prot, fd, off) : map_shared_view(len, prot, fd, off, (flags & 3) == 1)) return v;
     }
     void* p = nullptr;
     if (fixed && map_in_place(addr, len, prot != 0 || !anonymous)) {
@@ -972,6 +984,7 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     return p;
 }
 WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {
+    winapk::x86::forget(addr, len);
     std::lock_guard<std::mutex> hold(g_maps_lock);
     const auto a = reinterpret_cast<uintptr_t>(addr);
     if (auto v = g_views.find(a); v != g_views.end()) {
@@ -1518,8 +1531,16 @@ WINAPK_GUEST_ABI int g_uname(GuestUtsname* u) {
     std::strcpy(u->domainname, "(none)");
     return 0;
 }
-// getauxval: AT_PAGESZ 6, AT_HWCAP 16, AT_HWCAP2 26; the rest is 0.
-WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) { return type == 6 ? 4096 : 0; }
+// getauxval: the process's auxiliary vector as x86_64 code sees it (winapk::process_auxv, which
+// /proc/self/auxv holds too; an arm64 library's import binds to arm64_abi.cpp's); 0 and ENOENT for a
+// type it does not have, as bionic.
+WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) {
+    static const std::string auxv = winapk::process_auxv();
+    uint64_t v = 0;
+    if (winapk::auxv_value(auxv, type, &v)) return v;
+    *guest_errno() = kENOENT;
+    return 0;
+}
 
 // ---- randomness ---------------------------------------------------------------------------
 WINAPK_GUEST_ABI void g_arc4random_buf(void* buf, size_t n) {
@@ -1649,9 +1670,12 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
             if (a == 0) return 0;
             *guest_errno() = kENOSYS;
             return -1;
-        default:
-            *guest_errno() = kENOSYS;
-            return -1;
+        default: {
+            // The rest by the shim's functions under x86_64's numbering (x86_syscall.cpp), which a raw
+            // SYSCALL instruction in guest code reaches as well.
+            const int64_t args[6] = {a, b, c, d, e, f};
+            return winapk::x86::other_syscall(nr, args);
+        }
     }
 }
 

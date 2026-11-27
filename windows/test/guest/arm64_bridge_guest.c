@@ -536,3 +536,46 @@ EXPORT int arm64_set_tid_address(void) {
     if (pthread_create(&t, 0, tid_thread, 0) || pthread_join(t, &r)) return -1;
     return (r == (void*)1L ? 1 : 0) + (g_clear_tid_word == 0 ? 2 : 0);
 }
+
+// The auxiliary vector arm64 code is given (arm64_abi.cpp's getauxval, /proc/self/auxv): the
+// translator's CPU, not the host's -- AT_HWCAP HWCAP_FP | HWCAP_ASIMD, AT_HWCAP2 0, AT_PLATFORM
+// "aarch64" -- the same by getauxval, by raw SVC openat/read and by fopen, AT_NULL last. One bit each.
+unsigned long getauxval(unsigned long type);
+typedef struct __sFILE FILE;
+FILE* fopen(const char*, const char*);
+size_t fread(void*, size_t, size_t, FILE*);
+int fclose(FILE*);
+int memcmp(const void*, const void*, size_t);
+
+EXPORT int arm64_auxv(void) {
+    int bits = 0;
+    if (getauxval(16) == 3) bits |= 1;   // AT_HWCAP
+    if (getauxval(26) == 0) bits |= 2;   // AT_HWCAP2
+    const char* platform = (const char*)getauxval(15);
+    if (platform && strcmp(platform, "aarch64") == 0) bits |= 4;
+    if (getauxval(6) == 4096) bits |= 8;  // AT_PAGESZ
+    unsigned long v[128];
+    long fd = svc6(56, -100 /* AT_FDCWD */, (long)"/proc/self/auxv", 0, 0, 0, 0);
+    long n = 0, r;
+    if (fd >= 0) {
+        while (n < (long)sizeof v && (r = svc6(63, fd, (long)v + n, (long)sizeof v - n, 0, 0, 0)) > 0) n += r;
+        svc6(57, fd, 0, 0, 0, 0, 0);
+    }
+    if (n > 0 && n % 16 == 0) {
+        const long pairs = n / 16;
+        if (v[2 * (pairs - 1)] == 0) bits |= 16;  // AT_NULL last
+        int same = 1;
+        for (long i = 0; i + 1 < pairs; ++i) {
+            if (getauxval(v[2 * i]) != v[2 * i + 1]) same = 0;
+        }
+        if (same) bits |= 32;
+    }
+    FILE* f = fopen("/proc/self/auxv", "r");
+    if (f) {
+        unsigned long w[128];
+        const size_t got = fread(w, 1, sizeof w, f);
+        fclose(f);
+        if (got == (size_t)n && n > 0 && memcmp(w, v, got) == 0) bits |= 64;
+    }
+    return bits;
+}
