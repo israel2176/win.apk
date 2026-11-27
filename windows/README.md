@@ -241,7 +241,7 @@ table lists every one (`windows/host`, `windows/src`, `runtime/java`,
 | `WINAPK_READY_EVENT=<handle>` | Plumbing | An inherited event handle, as a decimal number, that the runtime sets once its window has painted the app's first frame (the launcher's starting window waits for it) |
 | `WINAPK_START_WINDOW=<hwnd>` | Plumbing | The launcher's starting window for the app, as a decimal number: the app's window opens on that window's monitor, at its top and centred on it |
 | `WINAPK_EMBED_PARENT=<hwnd>` | Plumbing | A window handle, as a decimal number, that the app's window is created as a borderless child of, filling it (the Store and Google Play inside the library window) |
-| `WINAPK_PLAY_INSTALLER=0`/`1` | Plumbing | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of an app the user installed with no installer of record, `0` reports none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
+| `WINAPK_PLAY_INSTALLER=0`/`1` | Plumbing | Set by the runtime from Settings > Apps > "Report Google Play as the installer" (`PlayInstaller`, absent = 1) unless already set: `1` reports Google Play as the installer of every installed app, whichever store installed it, `0` reports the installer of record, else none (`runtime/java/com/macapk/loader/InstallerOfRecord.java`) |
 | `MACAPK_BROKER=1` or `0` | Plumbing | Set by the runtime from Settings > Google account > "Use Google services" (`GoogleServices`): the system broker and the real Google apps; also the broker's own and the processes it starts |
 | `MACAPK_BROKER_MAINTENANCE=1` | Plumbing | Set by `winapk-runtime --system --maintenance` (the background updates' window, which the launcher opens every 4 hours while it runs, `launcher/maintenance.h`): the broker boots the Play Store too, runs the jobs that are due and stops 180 seconds after the last |
 | `MACAPK_BROKER_LOGDIR`, `MACAPK_BROKER_RUNTIME`, `MACAPK_BROKER_ROOT`, `MACAPK_BROKER_APKS`, `MACAPK_BROKER_READY_FILE` | Plumbing | The broker's log folder (set by `winapk-runtime --system`), and upstream's development launch of a broker (its runtime, android root, package list and ready file; `BinderTransportTest` sets `MACAPK_BROKER_ROOT`) |
@@ -305,7 +305,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-jni-test`, `winapk-jni-variadic-test` | The guest `JNIEnv` against a mock JVM; the variadic bridge for all four call kinds and every argument type, through `...` and `va_list` |
 | `winapk-exec-test <winapk_exec_guest>` | An Android program (`test/guest/exec_guest.c`, an x86_64 PIE with its own `_start`) started as a child process by the shim's `posix_spawn` (`src/bionic/process.cpp`) and run by the test started again with `--exec` (`host/exec_main.cpp`, as `winapk-runtime --exec` runs it): its stdin and stdout through the shim's own pipes, stderr into a file `posix_spawn_file_actions_addopen` opened, the argv and environment the spawn gave, exit status 7; `WNOHANG` on a running child, `kill()` ending it with the signal, `waitid`, `ECHILD` with no child left, `ENOENT` for a missing program and `ENOEXEC` for a script |
 | `winapk-linker-test <dir>` | A four-library tree with a `DT_NEEDED` cycle and a runtime plugin: constructor order, symbol resolution and its order (libc at its place in `DT_NEEDED`, the global group before it), `dlsym` scopes, the guest's `dlopen`, `dlsym`, `dlerror` and `dladdr`, a library opened by its Android path; a packed library whose export's name is scrambled in the file and put right by its constructor (`DT_GNU_HASH` and `DT_HASH`); `thread_local` destructors (a thread's end runs them; a child that leaves by `exit()` and by `ExitProcess` with destructors pending runs none and ends) |
-| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, V8's page permissions (`test_page_permissions`: `mprotect` to and from `PROT_NONE` over opened and only-reserved pages and across two mappings side by side, `MADV_DONTNEED`, `MAP_FIXED` over both, `EINVAL`/`ENOMEM` as Linux), pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; the network (loopback only): a UDP datagram, socket options that are mapped, accepted as tuning or refused with `ENOPROTOOPT`, `SO_LINGER`, a multicast group joined with `IP_ADD_MEMBERSHIP` and with `MCAST_JOIN_GROUP` and a datagram received through each (skipped where the host has no multicast route), `if_nametoindex`/`if_indextoname`/`if_nameindex` against `getifaddrs`, edge-triggered epoll on a socket (`EPOLLOUT` once, then a 300 ms wait that takes 300 ms and no processor time; `EPOLLIN` once per arrival and read) and on an eventfd (every write), `EPOLLONESHOT`, `epoll_wait` and `poll` woken by another thread's send; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family; the calls the loader's missing-function stub used to answer with 0 (`test_missing_forms`): FORTIFY's `__pwrite_chk`, `__poll_chk`, `__getcwd_chk` and the string forms, `readv`/`writev`, `sendfile`, `truncate`, `renameat2`, `readdir_r`, `rewinddir`, `scandir`, `mkstemps`, `getc_unlocked`, `epoll_pwait2`, `sigwait`/`sigtimedwait`, `pthread_spin_lock`, `pthread_mutex_clocklock`, `sem_clockwait`, `ASharedMemory_create`, `sysinfo`, that `posix_spawn` and `execv` of `/system/bin/sh` answer `ENOENT` (no shell here), and that `wait4`, `openpty`, `inotify_init1`, `iconv_open`, `regcomp` and `symlink` fail as Linux reports it, `mremap` growing, shrinking and moving a private mapping, `mlock`/`munlock`/`mlockall`, `mincore` (resident, unmapped), `setpriority`/`getpriority`, the shim's `syscall()` with `rt_sigaction`'s kernel struct, `rt_sigprocmask` and `set_tid_address`, `gethostbyname`, `gethostbyname2` and `gethostbyname_r` on a numeric address, `localhost`, `::1`, a buffer too small (`ERANGE`) and a family with no hosts; and the ones the most installed apps import (`test_popular_imports`): `div`/`ldiv`/`lldiv`, `ilogbf`, `strcasestr`, `asctime_r`/`ctime`, `getrusage`, `times`, `mallinfo`, `__sched_cpucount`, `sched_setaffinity`/`sched_getcpu`, `__progname`/`getprogname`, `sys_signame`/`strsignal`, `__system_property_foreach`, `utimensat`/`futimens`/`utimes` (with `UTIME_OMIT` and a null `times`), `mkdtemp`, `ptrace` (`PTRACE_TRACEME` refused with `EACCES` as on a device, no tracee `ESRCH`, itself `EPERM`), `fchmodat`, `syslog`, `__android_log_buf_write`/`_print` |
+| `winapk-bionic-test <bionic_guest.so> <scratch dir>` | `test/guest/bionic_guest.c` exercises the shim from guest code: strings, printf and scanf through the System V `va_list`, threads and keys, files and directories, ELF TLS, system properties, locales, futex, an 8 GiB `PROT_NONE` reservation, V8's page permissions (`test_page_permissions`: `mprotect` to and from `PROT_NONE` over opened and only-reserved pages and across two mappings side by side, `MADV_DONTNEED`, `MAP_FIXED` over both, `EINVAL`/`ENOMEM` as Linux), pipes, eventfd, epoll, sockets, `ALooper`, clocks, `mmap`; the network (loopback only): a UDP datagram, socket options that are mapped, accepted as tuning or refused with `ENOPROTOOPT`, `SO_LINGER`, a multicast group joined with `IP_ADD_MEMBERSHIP` and with `MCAST_JOIN_GROUP` and a datagram received through each (skipped where the host has no multicast route), `if_nametoindex`/`if_indextoname`/`if_nameindex` against `getifaddrs`, edge-triggered epoll on a socket (`EPOLLOUT` once, then a 300 ms wait that takes 300 ms and no processor time; `EPOLLIN` once per arrival and read) and on an eventfd (every write), `EPOLLONESHOT`, `epoll_wait` and `poll` woken by another thread's send; `random(3)` against glibc's sequences (the same generator), `fts` walks, `link`, `popen`/`system` without a shell, `fscanf`, `strptime`, cleanup handlers run by `pthread_exit`, `sched_getaffinity`, FORTIFY's `FD_*`, the binary128 `lroundl` family; the calls the loader's missing-function stub used to answer with 0 (`test_missing_forms`): FORTIFY's `__pwrite_chk`, `__poll_chk`, `__getcwd_chk` and the string forms, `readv`/`writev`, `sendfile`, `truncate`, `renameat2`, `readdir_r`, `rewinddir`, `scandir`, `mkstemps`, `getc_unlocked`, `epoll_pwait2`, `sigwait`/`sigtimedwait`, `pthread_spin_lock`, `pthread_mutex_clocklock`, `sem_clockwait`, `ASharedMemory_create`, `sysinfo`, that `posix_spawn` and `execv` of `/system/bin/sh` answer `ENOENT` (no shell here), and that `wait4`, `openpty`, `inotify_init1`, `iconv_open`, `regcomp` and `symlink` fail as Linux reports it, `mremap` growing, shrinking and moving a private mapping, `mlock`/`munlock`/`mlockall`, `mincore` (resident, unmapped), `setpriority`/`getpriority`, the shim's `syscall()` with `rt_sigaction`'s kernel struct, `rt_sigprocmask` and `set_tid_address`, `gethostbyname`, `gethostbyname2` and `gethostbyname_r` on a numeric address, `localhost`, `::1`, a buffer too small (`ERANGE`) and a family with no hosts; `flock` as Linux keeps it (`test_flock`: one lock per open file, which a second call on the descriptor converts, shared to exclusive and back, and which another open file of it conflicts with); and the ones the most installed apps import (`test_popular_imports`): `div`/`ldiv`/`lldiv`, `ilogbf`, `strcasestr`, `asctime_r`/`ctime`, `getrusage`, `times`, `mallinfo`, `__sched_cpucount`, `sched_setaffinity`/`sched_getcpu`, `__progname`/`getprogname`, `sys_signame`/`strsignal`, `__system_property_foreach`, `utimensat`/`futimens`/`utimes` (with `UTIME_OMIT` and a null `times`), `mkdtemp`, `ptrace` (`PTRACE_TRACEME` refused with `EACCES` as on a device, no tracee `ESRCH`, itself `EPERM`), `fchmodat`, `syslog`, `__android_log_buf_write`/`_print` |
 | `winapk-arm64-test <dir>` | The arm64 engines: `test/guest/arm64_isa.c` built for the host and for arm64 at three optimization levels must agree on every function, on the interpreter, the JIT and the AOT translation; then `arm64_bridge_guest.c` (calls in both directions, variadics, threads, atexit, `fts` filling arm64's `struct stat`, cleanup handlers, libc++abi's abort path short of the abort: `vasprintf`, `android_set_abort_message`, `openlog`/`syslog`/`vsyslog`/`closelog`; raw SVCs by arm64's numbers (`mmap` 222, `mprotect` 226, `munmap` 215, also through `syscall()`, `getpid`, `gettid`, `getuid`, `nanosleep`, `uname`, an unknown number's `-ENOSYS`; and by the kernel's conventions: `getcwd`'s length, `rt_sigaction`'s kernel struct read back and a bad `sigsetsize`, `rt_sigprocmask`, `setpriority`/`getpriority`'s 20 - nice, `clock_nanosleep`'s `-EINVAL`, `openat` relative to a directory descriptor and arm64's `O_DIRECTORY`, `flock`, `fdatasync`, `renameat`, `epoll` with arm64's 16-byte event on an `eventfd2`, `getrlimit`, `getcpu`, `timerfd`, `memfd_create`, `mlock`/`mlock2`/`mlockall`/`munlockall`, `mincore`, `mremap`, `ptrace`, an xattr's `ENOTSUP`; `set_tid_address`'s word cleared when the thread ends); a host function's page refused to an arm64 `mprotect` (import and SVC) and `MAP_FIXED` with `EACCES`, `PROT_READ \| PROT_EXEC` a no-op, the function never guest code, while a page of the exe's `.rdata` may become executable and back (`include/winapk/host_code.h`); and that each shim function whose `va_list` the bridge converts serves no other name); `arm64_flow_guest.c` (returns into an ancestor frame with RET and BR, coroutines, RETAA, deep recursion on a 1 MB thread, `pthread_getattr_np`'s bounds against the guest stack the caller runs on (and an 8 MB thread's), saturating conversions, FRECPS/FRSQRTS, an exclusive-monitor counter shared by translated code and the JIT, the STLR/LDAR litmus test) against values worked out by hand; `arm64_patch_guest.c` (a library patching its own code, and code patched by one thread while another runs it), `arm64_eh_guest.cpp` (C++ exceptions through the NDK's libc++ and unwinder, built when `ANDROID_NDK_HOME` names an NDK), a library unloaded with `dlclose`, one linked at another address, a translation cut short under a stamp that says it is sealed (refused) and the same one whole (loaded); 400 functions of random instructions from `gen_arm64_fuzz.py`, whose results on the JIT and the translation must match the interpreter's (`WINAPK_FUZZ_STATE=<i>` starts every function from function i's states, to bisect a difference); and `arm64_bench.c` (the speed ratios) |
 | `winapk-aot-stamp-test` | A library's translation stamp (`include/winapk/aot_stamp.h`), with no file behind it: each kind written and read back, an old stamp read as a short one, a newer build's word; what the loader refuses and when it asks for a sealed DLL; for each kind whether the worker has a step to take now (none for a library never loaded, no profile; a changed library or translator, another CPU, the back-off after failures and its limit, a pass to finish, a profile that grew, the interval between two translations from a profile); which stamps the launcher takes for "translated by its profile" |
 | `winapk-host-code-test` | Which pages of a loaded PE image are host code, which an arm64 library may not `mprotect` (`include/winapk/host_code.h`), on made-up headers: a range in an executable section, one reaching into it from either side, its last partial page, a raw size larger than the virtual size, a section reaching its alignment; `.rdata`, `.data` and the headers are not code (Facebook's `force_dlopen` trampoline over `gai_strerror`'s string); headers that are not a PE image's or are cut short count as code |
@@ -1236,8 +1236,15 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   view (the SurfaceViews' native window) is no GL, a black frame until a producer draws. It was a
   pbuffer of the host's on that display, which a resize remade beside the app's GL threads
   whenever it came between Flutter's destroying its window surface and making the new one; City
-  Car crashed in the Direct3D driver from its own GL just after such a resize. Two of an app's own contexts that share nothing, on two threads,
-  still meet on one device; on a phone the driver keeps them apart.
+  Car crashed in the Direct3D driver from its own GL just after such a resize. The app's own GL threads share that display, and so its one renderer, which
+  holds the state of the context made current last on any thread
+  (`StateManager11`): every GL and EGL call through the runtime's forwarders
+  (`gl_stubs.inc`: the GLES bindings, EGL10/EGL14, native code) takes the
+  display's turn (`host/gl/gl_turn.h`), one call at a time, and a thread whose
+  context another one displaced has it made current again first. Without it a
+  thread drew with another's state: Telegram's welcome screen beside a second
+  GL view, an access violation in `StateManager11::updateState` (issue #195).
+  `winapk-gl-turn-test`, and `winapk-gl-test`'s two GL threads on real ANGLE.
   A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
   makes an EGL window surface on the view's holder (the host's window surface
   on the SurfaceView, read back at each swap), as does an app's own copy of
@@ -2135,12 +2142,18 @@ every such change is listed here:
   beside `installed_apps.json`, not in a `Library\Application Support` folder
   under the user profile. On the Mac nothing changes. `InstallerOfRecord.reported` (new) is what
   `MacApkPackageManager.getInstallerPackageName` and `getInstallSourceInfo`
-  answer: the record when there is one, else Google Play for an app the user
-  installed (the running app, or a registry app the caller may see) while
-  `WINAPK_PLAY_INSTALLER` is not `0` (some apps, banking apps among them,
-  stop at "reinstall from the store" without a store as installer),
-  as `adb install -i com.android.vending` leaves it; not for Play, Play
-  services and GSF themselves, nor when no Play Store package is reported.
+  answer: Google Play for an installed app (the running app, or a registry
+  app the caller may see) while `WINAPK_PLAY_INSTALLER` is not `0`, whichever
+  store installed it (some apps, banking apps among them, stop at "reinstall
+  from the store" without a store as installer, and Play's integrity
+  protection, pairip, closes an app whose installer is not Play: issue #208,
+  an app Win.apk's Store installed), as `adb install -i com.android.vending`
+  leaves it; not for Play, Play services and GSF themselves, nor when no Play
+  Store package is reported; then the record, else none. A phone names the
+  store that installed the app; here Play is named over the record while the
+  setting is on. The record is kept: `setApplicationCategoryHint`
+  (`android/content/pm/PackageManager.java`) still
+  allows the store that really installed the app.
   A Play answer has Play's Android 14 shape: installing and initiating Play
   (with Play's certificate), no originating package, Play the update owner,
   `PACKAGE_SOURCE_STORE`; `PackageManager.relinquishUpdateOwnership` then
@@ -2180,6 +2193,10 @@ every such change is listed here:
   Android's `/` (Pattern S) and
   `System.mapLibraryName` / `load` go through the on-demand native loader
   (Pattern N); beside upstream's Patterns L and J.
+- `runtime/java/com/macapk/loader/AppClassLoader.java`: `preloadDependencies` loads each bundled
+  DT_NEEDED dependency once (`preloadedDeps`), as the dynamic linker loads a library once per process; it
+  walked every library's whole closure again (Microsoft Word: 1,647 loads for 63 libraries on the main
+  thread, an ANR, issue #208).
 - `runtime/java/com/macapk/loader/AppClassLoader.java`: `findLibrary` asked by
   app code (not by `System.loadLibrary` or the framework) answers as Android
   does, `/data/app/.../lib/<isa>/lib<name>.so`, where upstream answers the
@@ -2942,7 +2959,11 @@ every such change is listed here:
   `getStackTrace()` starts with `dalvik.system.VMStack.getThreadStackTrace`,
   as on Android, so code that reads its caller at a fixed index finds it (a
   bank's security library read index 3 of a three-frame trace, its native
-  side went on with a null object and the process crashed).
+  side went on with a null object and the process crashed). A thread that asks
+  for a stack size gets ART's: the request plus 1 MB and ART's overflow reserve,
+  rounded to a page (`FixStackSize`), not the request alone; an app's executor
+  asking for a small stack overflowed in its first class load (ColorNote, issue
+  #180). Zero is still the VM's default.
 - `runtime/java/android/graphics/Bitmap.java`: the host images are
   `transient`, so reflection over a model that holds a Bitmap (Gson) does not
   walk into `java.awt.image`.
@@ -3039,6 +3060,13 @@ every such change is listed here:
   threw `UnsupportedEncodingException`. A `CharsetProvider` on the class path
   rather than a copy of `java.nio.charset.Charset` in `java_base_patch`: the
   JDK asks providers only after its own charsets miss.
+- `runtime/java/android/os/Handler.java`: the callback field is AOSP's `mCallback`: apps set it by reflection
+  on `ActivityThread.mH` to see its messages first (AliExpress initializes its SDKs that way from API 35 on;
+  with no field of that name it never did, and its first activity died on `TshellInitializedError`, issue #208).
+- `runtime/java/android/os/Process.java`: `myTid()` on the main looper's thread is `myPid()`, as Linux
+  numbers a process's main thread (clalit's packer loads its native library only when `myPid() ==
+  myTid()`, and died on `UnsatisfiedLinkError` without it, issue #208); another thread keeps its Java
+  thread id. Native `gettid()` still answers Windows' thread id on every thread.
 - `runtime/java/android/os/Process.java`, `android/widget/ExpandableListView.java`:
   values AppsFlyer's obfuscated loader folds into the length of a class name
   it decrypts, as Android has them. `getElapsedCpuTime()` is the process's CPU
@@ -3074,7 +3102,10 @@ every such change is listed here:
   JDK's own `User-Agent`/`Host` not; setting a field after that throws. The
   JDK lowers its connected flag on `disconnect()` after an error answer and
   then answers with its whole header list, the request line as a key whose
-  value is null: Dynatrace (bit) took an NPE on it.
+  value is null: Dynatrace (bit) took an NPE on it. `setDoInput(false)` is kept
+  on the wrapper, the JDK's connection stays at true: OkHttp answers the status
+  and headers then and refuses only `getInputStream()`, where the JDK's
+  `getResponseCode()` threw `ProtocolException` (ColorNote, issue #180).
   `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java` (CI: "Run
   the HttpURLConnection request properties test").
 - `runtime/net_spi/com/macapk/net/SniSocketFactory.java` (new),
@@ -3744,7 +3775,8 @@ every such change is listed here:
   and report decisions (`ActivityRecord.getConfigurationChanges`, `diffPublicOnly`; Win.apk's own
   `Configuration.diff` never sets it); `android/content/pm/ComponentInfo.java` and
   `PackageItemInfo.java` read a label through `pm.getText` when the system Resources do not have
-  it, only with `WINAPK_AOSP_RES=1`; `android/os/Handler.java`: AOSP's hidden
+  it, only with `WINAPK_AOSP_RES=1`; they ask the system Resources only for a framework id (package
+  0x01): an app's id looked up there logged "No package ID 7f found" at every activity's start; `android/os/Handler.java`: AOSP's hidden
   `executeOrSendMessage`. All inert with the switches off.
 - `runtime/java/android/webkit/MacApkWebViewBridge.java`: `macapkServeFile`, the answer for a `file:`
   URL WebView2 cannot read: `windows/host/native_webview.cpp` loads `file:///X` on the file origin
@@ -3985,7 +4017,13 @@ every such change is listed here:
   AIDL: the other platform classes Play services, the Play Store and the Services Framework carry stand-ins
   for). `android/content/Context.java`: `SLICE_SERVICE`, AOSP's `SliceManager` over the in-process
   `ISliceManager` an app's process registers (`windows/java/aosp_app/.../SliceService.java`: pins and grants
-  as a phone with no slice host keeps them; a first pin reaches the provider's `onSlicePinned`).
+  as a phone with no slice host keeps them; a first pin reaches the provider's `onSlicePinned`), and
+  `SAFETY_CENTER_SERVICE`, AOSP's `SafetyCenterManager` (`android.safetycenter`, taken whole the same way)
+  over the in-process `ISafetyCenterManager` (`.../SafetyCenterService.java`: Safety Center off, as on a
+  phone whose config disables it; the Play Store died on the missing class at every start, issue #208).
+  `android/app/backup/BackupManager.java`: AOSP's members, each answering as AOSP does with no backup
+  service (no transport, backup off, `requestRestore` -1): Play services' d2d `MigrateCleaner` died on
+  `getCurrentTransport` and the device checkin it ran with never finished.
   `android/content/ContentProvider.java`: AOSP's `getUriWithoutUserId` and `validateIncomingUri` (the
   slice provider checks each uri with them; `android/provider/DocumentsProvider.java`'s private copy of the
   latter is gone). `android/os/Bundle.java`: `setDefusable(Bundle, boolean)` (no effect outside the

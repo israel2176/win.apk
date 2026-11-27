@@ -2113,15 +2113,17 @@ public abstract class PackageManager {
      *  to. "@throws SecurityException when the caller is not the active
      *  installer for the given package."
      *
-     *  The installer is getInstallerPackageName's answer (InstallerOfRecord:
-     *  the recorded installer, or Google Play for an app the user installed
-     *  while Win.apk reports Play as the installer); any other caller gets the
-     *  SecurityException a device gives. */
+     *  The installer is the one that really installed the package (the
+     *  record, InstallerOfRecord.get) or getInstallerPackageName's answer
+     *  (Google Play while Win.apk reports Play as every app's installer): a
+     *  store that installed an app may still set its hint although Play is
+     *  reported. Any other caller gets the SecurityException a device gives. */
     public void setApplicationCategoryHint(String packageName, int categoryHint) {
         String installer = getInstallerPackageName(packageName);
+        String recorded = com.macapk.loader.InstallerOfRecord.get(packageName);
         android.app.Application app = com.macapk.loader.app.Apps.current();
         String self = (app != null) ? app.getPackageName() : null;
-        if (installer == null || self == null || !installer.equals(self)) {
+        if (self == null || !(self.equals(installer) || self.equals(recorded))) {
             throw new SecurityException("Calling package " + self
                     + " is not installer for " + packageName);
         }

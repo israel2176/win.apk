@@ -249,6 +249,7 @@ public class AospAppRewrite {
             {"android/app/IActivityClientController", PKG + "ActivityClientService"},
             {"android/content/pm/IPackageManager", PKG + "PackageService"},
             {"android/app/slice/ISliceManager", PKG + "SliceService"},
+            {"android/safetycenter/ISafetyCenterManager", PKG + "SafetyCenterService"},
     };
 
     static final Map<String, Integer> counts = new TreeMap<>();

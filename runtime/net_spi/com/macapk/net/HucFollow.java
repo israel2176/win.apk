@@ -40,6 +40,12 @@ final class HucFollow {
      *  back to false once the response is read (disconnectInternal), after which
      *  its getRequestProperties() answers again, request line and all. */
     boolean sent;
+    /** The app's doInput. The JDK connection's own stays true: its getResponseCode()
+     *  and header accessors read the response through getInputStream(), which throws
+     *  ProtocolException while doInput is false, where OkHttp's answer them (a
+     *  status-only request with setDoInput(false), ColorNote, issue #180). Only
+     *  getInputStream() itself refuses, as OkHttp HttpURLConnectionImpl does. */
+    boolean doInput = true;
     private boolean resolved;
     private int followUps;
 
@@ -47,6 +53,17 @@ final class HucFollow {
         this.handler = handler;
         this.proxy = proxy;
         this.d = handler.jdkConnection(u, proxy);
+    }
+
+    /** URLConnection.setDoInput: refused once connected (OkHttp's flag, see sent). */
+    void setDoInput(boolean b) {
+        if (sent) throw new IllegalStateException("Already connected");
+        doInput = b;
+    }
+
+    /** OkHttp HttpURLConnectionImpl.getInputStream's first check. */
+    void checkDoInput() throws ProtocolException {
+        if (!doInput) throw new ProtocolException("This protocol does not support input");
     }
 
     void setRequestProperty(String k, String v) {

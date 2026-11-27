@@ -6,7 +6,8 @@
 // and its map then comes back with the request line as a key whose value is null:
 // Dynatrace's NPE in bit);
 // getRequestProperty() is the last value set, Authorization included; setting a
-// field after the request went out throws. A loopback server, no network.
+// field after the request went out throws; setDoInput(false) leaves the status and
+// headers readable and refuses only the body. A loopback server, no network.
 //
 // Run: javac -d out runtime/net_spi/com/macapk/net/*.java windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java
 //      java --add-exports java.base/sun.net.www.protocol.http=ALL-UNNAMED \
@@ -96,6 +97,22 @@ public final class HttpRequestPropertiesTest {
             }
             e.disconnect();
             check(throwsIse(e::getRequestProperties), "getRequestProperties throws after an error and disconnect()");
+
+            // setDoInput(false): OkHttp answers the status and headers and refuses only
+            // getInputStream(); the JDK's getResponseCode() reads through getInputStream()
+            // and threw ProtocolException (ColorNote's status-only request, issue #180).
+            HttpURLConnection n = (HttpURLConnection) new URL(null, "http://127.0.0.1:" + port + "/", http).openConnection();
+            n.setDoInput(false);
+            check(!n.getDoInput(), "getDoInput answers the app's false");
+            int code = -1;
+            try { code = n.getResponseCode(); } catch (java.io.IOException ex) { System.out.println("  " + ex); }
+            check(code == 200, "doInput=false: getResponseCode answers 200");
+            check("5".equals(n.getHeaderField("Content-Length")), "doInput=false: headers answer");
+            boolean refused = false;
+            try { n.getInputStream(); } catch (java.net.ProtocolException ex) { refused = true; }
+            check(refused, "doInput=false: getInputStream throws ProtocolException");
+            check(throwsIse(() -> n.setDoInput(true)), "setDoInput throws once the request went out");
+            n.disconnect();
 
             HttpURLConnection s = (HttpURLConnection) new URL(null, "https://127.0.0.1:" + port + "/", https).openConnection();
             check(s instanceof HucsConnection, "https is the wrapper");

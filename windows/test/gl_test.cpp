@@ -9,11 +9,19 @@
 // list an app's native code is told (guest_gl_extensions.h) against this
 // ANGLE: every extension in it is one ANGLE reports and every one of its
 // functions resolves; ANGLE's and Chromium's own extensions pass when they do.
+// Last, two threads with a context each on the app's display (gl_turn.h): one
+// draws, the other makes its context current, the first draws again without
+// making its own current, as Telegram's welcome screen did beside a second GL
+// view (issue #195: an access violation in StateManager11::updateState); then
+// both draw at once, many times. Each must see its own colour.
 
 #include <algorithm>
+#include <atomic>
+#include <cstdint>
 #include <cstdio>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <EGL/egl.h>
@@ -21,6 +29,7 @@
 
 #include "gl/gl_loader.h"
 #include "gl/gl_surface.h"
+#include "gl/gl_turn.h"
 #include "gl/guest_gl_extensions.h"
 
 namespace {
@@ -96,6 +105,135 @@ void check_guest_extensions() {
     check("an unknown extension is not passed on", !winapk::host::guest_extension_allowed("GL_WINAPK_no_such"));
 }
 
+// One GL thread of an app: its own context on the app's display and a 16x16
+// pbuffer, a program that fills the surface with one colour from a buffer
+// object's triangle strip (the shape of Telegram's draw_textured_shape).
+struct GlThread {
+    EGLDisplay dpy = EGL_NO_DISPLAY;
+    EGLContext ctx = EGL_NO_CONTEXT;
+    EGLSurface pbuffer = EGL_NO_SURFACE;
+    GLuint program = 0, vbo = 0;
+    GLint color = -1;
+
+    bool setup(EGLDisplay d) {
+        dpy = d;
+        const EGLint config_attribs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
+                                         EGL_RED_SIZE, 8, EGL_GREEN_SIZE, 8, EGL_BLUE_SIZE, 8, EGL_ALPHA_SIZE, 8,
+                                         EGL_NONE};
+        EGLConfig config = nullptr;
+        EGLint n = 0;
+        if (!eglChooseConfig(dpy, config_attribs, &config, 1, &n) || n < 1) return false;
+        const EGLint ctx_attribs[] = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE};
+        ctx = eglCreateContext(dpy, config, EGL_NO_CONTEXT, ctx_attribs);
+        const EGLint pb_attribs[] = {EGL_WIDTH, 16, EGL_HEIGHT, 16, EGL_NONE};
+        pbuffer = eglCreatePbufferSurface(dpy, config, pb_attribs);
+        if (ctx == EGL_NO_CONTEXT || pbuffer == EGL_NO_SURFACE) return false;
+        if (!eglMakeCurrent(dpy, pbuffer, pbuffer, ctx)) return false;
+        const char* vs = "attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }";
+        const char* fs = "precision mediump float; uniform vec4 c; void main() { gl_FragColor = c; }";
+        GLuint v = glCreateShader(GL_VERTEX_SHADER), f = glCreateShader(GL_FRAGMENT_SHADER);
+        glShaderSource(v, 1, &vs, nullptr);
+        glShaderSource(f, 1, &fs, nullptr);
+        glCompileShader(v);
+        glCompileShader(f);
+        program = glCreateProgram();
+        glAttachShader(program, v);
+        glAttachShader(program, f);
+        glBindAttribLocation(program, 0, "p");
+        glLinkProgram(program);
+        GLint linked = 0;
+        glGetProgramiv(program, GL_LINK_STATUS, &linked);
+        color = glGetUniformLocation(program, "c");
+        const float strip[] = {-1, -1, 1, -1, -1, 1, 1, 1};
+        glGenBuffers(1, &vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(strip), strip, GL_STATIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        glViewport(0, 0, 16, 16);
+        return linked == GL_TRUE && vbo != 0;
+    }
+
+    // Draws `rgba` and reads the middle pixel back: whether it is that colour.
+    bool draw(uint32_t rgba) {
+        glUseProgram(program);
+        glUniform4f(color, (rgba >> 24 & 0xff) / 255.0f, (rgba >> 16 & 0xff) / 255.0f, (rgba >> 8 & 0xff) / 255.0f,
+                    (rgba & 0xff) / 255.0f);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8, nullptr);
+        glEnableVertexAttribArray(0);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+        unsigned char px[4] = {};
+        glReadPixels(8, 8, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        const uint32_t got = uint32_t{px[0]} << 24 | uint32_t{px[1]} << 16 | uint32_t{px[2]} << 8 | px[3];
+        return got == rgba && glGetError() == GL_NO_ERROR;
+    }
+
+    void end() {
+        eglMakeCurrent(dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        if (pbuffer != EGL_NO_SURFACE) eglDestroySurface(dpy, pbuffer);
+        if (ctx != EGL_NO_CONTEXT) eglDestroyContext(dpy, ctx);
+    }
+};
+
+void check_two_gl_threads() {
+    EGLDisplay dpy = winapk::host::gl_shared_display();
+    check("the app's display is up", dpy != nullptr);
+    if (!dpy) return;
+    constexpr uint32_t kRed = 0xff0000ffu, kGreen = 0x00ff00ffu;
+    std::atomic<int> step{0};
+    bool a_setup = false, a_first = false, a_after = false, b_setup = false, b_first = false, b_after = false;
+    std::atomic<int> a_wrong{0}, b_wrong{0};
+    auto wait_for = [&](int s) {
+        while (step.load() < s) std::this_thread::yield();
+    };
+    const unsigned long rebinds_before = winapk::host::gl_turn_rebinds();
+    std::thread a([&] {
+        GlThread t;
+        a_setup = t.setup(dpy);
+        std::printf("  (A set up: %d)\n", a_setup);
+        a_first = a_setup && t.draw(kRed);
+        std::printf("  (A drew)\n");
+        step = 1;
+        wait_for(2);  // B made its context current: the renderer holds B's state
+        a_after = a_setup && t.draw(kRed);
+        std::printf("  (A drew after B)\n");
+        step = 3;
+        wait_for(4);
+        for (int i = 0; i < 300 && a_setup; ++i) {
+            if (!t.draw(kRed)) a_wrong.fetch_add(1);
+        }
+        t.end();
+    });
+    std::thread b([&] {
+        wait_for(1);
+        GlThread t;
+        b_setup = t.setup(dpy);
+        std::printf("  (B set up: %d)\n", b_setup);
+        b_first = b_setup && t.draw(kGreen);
+        std::printf("  (B drew)\n");
+        step = 2;
+        wait_for(3);
+        b_after = b_setup && t.draw(kGreen);
+        step = 4;
+        for (int i = 0; i < 300 && b_setup; ++i) {
+            if (!t.draw(kGreen)) b_wrong.fetch_add(1);
+        }
+        t.end();
+    });
+    a.join();
+    b.join();
+    check("thread A: a context, a pbuffer, a program and a buffer object", a_setup);
+    check("thread A draws red", a_first);
+    check("thread B: its own context on the same display", b_setup);
+    check("thread B draws green", b_first);
+    check("thread A draws red again after B made its context current (issue #195)", a_after);
+    check("thread B draws green again after A", b_after);
+    check("A's context was made current again for it", winapk::host::gl_turn_rebinds() > rebinds_before);
+    check("both drawing at once, 300 frames each: every frame A's red", a_wrong == 0, a_wrong.load());
+    check("  ... and every frame B's green", b_wrong == 0, b_wrong.load());
+}
+
 // A context on the app's display, current on a w x h pbuffer of it on this thread.
 bool make_current(int w, int h) {
     const EGLDisplay d = static_cast<EGLDisplay>(winapk::host::gl_shared_display());
@@ -116,6 +254,8 @@ bool make_current(int w, int h) {
 }  // namespace
 
 int main() {
+    // Unbuffered: a crash in ANGLE must not take the lines before it along.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("ANGLE through the runtime's GL\n");
     const bool ready = make_current(64, 32);
     check("context current on a 64x32 pbuffer of the app's display", ready);
@@ -141,6 +281,9 @@ int main() {
 
     std::printf("\nThe extensions an app's native code is told of\n");
     check_guest_extensions();
+
+    std::printf("\nTwo GL threads on the app's display\n");
+    check_two_gl_threads();
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;

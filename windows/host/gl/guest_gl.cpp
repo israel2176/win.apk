@@ -44,6 +44,7 @@
 
 #include "gl/gl_loader.h"
 #include "gl/gl_surface.h"
+#include "gl/gl_turn.h"
 #include "gl/guest_gl_extensions.h"
 #include "native_window.h"
 #include "swap_pacing.h"
@@ -410,11 +411,12 @@ WINAPK_GUEST_ABI EGLint guest_eglDupNativeFenceFDANDROID(EGLDisplay, EGLSyncKHR)
     return EGL_NO_NATIVE_FENCE_FD_ANDROID;
 }
 
-// The KHR image and fence extensions, forwarded to ANGLE's.
+// The KHR image and fence extensions, forwarded to ANGLE's, in the display's turn (gl_turn.h).
 #define WINAPK_EGL_EXT(ret, name, params, args)                                                  \
     WINAPK_GUEST_ABI ret guest_##name params {                                                    \
         using Fn = ret(EGLAPIENTRY*) params;                                                      \
         static const Fn fn = reinterpret_cast<Fn>(gl_proc(#name, GlLib::Egl));                    \
+        GlTurn turn(false);                                                                       \
         return fn ? fn args : ret{};                                                              \
     }
 WINAPK_EGL_EXT(EGLImageKHR, eglCreateImageKHR,
