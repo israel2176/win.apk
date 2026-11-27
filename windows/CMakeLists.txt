@@ -39,11 +39,13 @@ add_library(winapk_loader STATIC
   src/bionic/locale.cpp
   src/bionic/paths.cpp
   src/bionic/cacerts.cpp
+  src/bionic/cpuinfo.cpp
   src/bionic/fd.cpp
   src/bionic/socket.cpp
   src/bionic/looper.cpp
   src/bionic/zlib.cpp
   src/bionic/setjmp.cpp
+  src/bionic/process.cpp
   src/abi_thunk.cpp
   src/linker.cpp
   src/arm64/arm64_cpu.cpp
@@ -107,6 +109,12 @@ endif()
 
 add_executable(winapk-elfrun tools/elfrun_main.cpp)
 target_link_libraries(winapk-elfrun PRIVATE winapk_loader)
+
+# posix_spawn, waitpid and kill on a child running test/guest/exec_guest.c: the test answers --exec
+# (host/exec_main.cpp) as winapk-runtime does, the program the shim starts again for a child.
+add_executable(winapk-exec-test test/exec_test.cpp host/exec_main.cpp)
+target_include_directories(winapk-exec-test PRIVATE host)
+target_link_libraries(winapk-exec-test PRIVATE winapk_loader)
 
 add_executable(winapk-thunk-test test/thunk_test.cpp)
 target_link_libraries(winapk-thunk-test PRIVATE winapk_loader)
@@ -232,6 +240,7 @@ target_include_directories(winapk-aot PRIVATE include)
 if(MINGW)
   # One self-contained .exe: no libstdc++/libgcc/winpthread DLLs next to it.
   target_link_options(winapk-elfrun PRIVATE -static)
+  target_link_options(winapk-exec-test PRIVATE -static)
   target_link_options(winapk-thunk-test PRIVATE -static)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)
@@ -336,7 +345,7 @@ if(WINAPK_JNI_INCLUDE)
 
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
-  add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
+  add_executable(winapk-runtime host/runtime_main.cpp host/exec_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
                               host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp
                               host/input_pane.cpp host/native_text_input.cpp
@@ -394,7 +403,8 @@ if(WINAPK_JNI_INCLUDE)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_gl_bridges.cmake
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_turn.cpp host/gl/gl_bridges.cpp
-                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp
+                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp host/vk/guest_vk.cpp
+                 host/native_vulkan.cpp
                  host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/ndk_camera.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
@@ -458,6 +468,13 @@ if(WINAPK_JNI_INCLUDE)
   target_include_directories(winapk-video-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
   target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
+
+  # libvulkan as an app's native code calls it (test/vulkan_test.cpp), on the loader and driver
+  # beside it: run from the staged bin\, where SwiftShader stands in for a GPU.
+  add_executable(winapk-vulkan-test test/vulkan_test.cpp host/vk/guest_vk.cpp)
+  target_include_directories(winapk-vulkan-test PRIVATE host include third_party/khronos "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_options(winapk-vulkan-test PRIVATE -static)
 
   # libmediandk's AMediaExtractor, AMediaCodec and AMediaDataSource as an app's native code
   # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.

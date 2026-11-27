@@ -92,11 +92,13 @@ switches still apply.
   the library; **Update** downloads and runs the new installer and keeps your
   apps. Settings > Updates turns the check off.
 - **An app** updates when you open or drop a newer file of it, or from the
-  Store (**Update**).
+  Store (**Update**). An older file of it asks before it replaces the app.
 - **Removing an app** (right-click > Remove) keeps what it saved unless you tick
   **Also remove accounts and data saved by the app**.
-- **Uninstalling Win.apk** (Windows Settings > Apps) keeps your apps and their
-  data in `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove everything.
+- **Uninstalling Win.apk** (Windows Settings > Apps) removes the apps'
+  shortcuts and keeps your apps and their data in `%LOCALAPPDATA%\Win.apk`;
+  installing Win.apk again brings them back. Delete that folder to remove
+  everything.
 
 Next: the [user guide](USER_GUIDE.md) covers every screen and setting, and the
 [FAQ](faq.md) answers the common questions.

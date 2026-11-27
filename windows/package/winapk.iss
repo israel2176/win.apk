@@ -91,7 +91,10 @@ Name: "{userprograms}\Win.apk"; Filename: "{app}\Win.apk.exe"; Comment: "{cm:App
 Name: "{userdesktop}\Win.apk"; Filename: "{app}\Win.apk.exe"; Comment: "{cm:AppComment}"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\.apk"; ValueType: string; ValueData: "WinApk.Package"; Flags: uninsdeletevalue
+; .apk (and the bundles' extensions the launcher claims when no other program has them, register_file_types) is let
+; go at uninstall only while it still names WinApk.Package: [Code] ReleaseFileType, not uninsdeletevalue, which would
+; delete another program's claim too.
+Root: HKCU; Subkey: "Software\Classes\.apk"; ValueType: string; ValueData: "WinApk.Package"
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package"; ValueType: string; ValueData: "{cm:FileTypeName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package\DefaultIcon"; ValueType: string; ValueData: """{app}\Win.apk.exe"",0"
 Root: HKCU; Subkey: "Software\Classes\WinApk.Package\shell\open\command"; ValueType: string; ValueData: """{app}\Win.apk.exe"" ""%1"""
@@ -102,6 +105,9 @@ Root: HKCU; Subkey: "Software\Classes\WinApk.Package\ShellEx\{{e357fccd-a995-457
 Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}"; ValueType: string; ValueData: "Win.apk app file thumbnails"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}\InprocServer32"; ValueType: string; ValueData: "{app}\bin\winapk-shell.dll"
 Root: HKCU; Subkey: "Software\Classes\CLSID\{{B5A3C1E2-7D4F-4C8B-9E61-2F0A8D3C5B17}\InprocServer32"; ValueType: string; ValueName: "ThreadingModel"; ValueData: "Apartment"
+; The apps' shortcuts go with the uninstall (remove-shortcuts below) while the library stays: a reinstall's launcher
+; then writes them all again (refresh_app_shortcuts), which it does once per ShortcutVersion.
+Root: HKCU; Subkey: "Software\Win.apk"; ValueType: none; ValueName: "ShortcutVersion"; Flags: uninsdeletevalue
 
 [UninstallDelete]
 ; The apps' shortcuts the library made (Start > Win.apk Apps).
@@ -117,6 +123,10 @@ Filename: "{app}\bin\winapk-runtime.exe"; Parameters: "--cds-prepare"; StatusMsg
 Filename: "{app}\Win.apk.exe"; Description: "{cm:OpenWinApk}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+; The apps' shortcuts the library made, on the desktop and in Start > Win.apk Apps: they start Win.apk.exe --run,
+; which is about to go. Found by their target, so the user's own shortcuts stay (launcher_main.cpp,
+; remove_shortcuts_main). Runs before the files are removed.
+Filename: "{app}\Win.apk.exe"; Parameters: "remove-shortcuts"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveAppShortcuts"
 ; The background updates' scheduled task earlier builds made (the launcher opens the windows itself now, while
 ; it runs, and deletes the task once at its start; this removes it should that start never have come).
 Filename: "{sys}\schtasks.exe"; Parameters: "/Delete /TN ""Win.apk\Background updates"" /F"; Flags: runhidden; RunOnceId: "DeleteBackgroundUpdatesTask"
@@ -165,4 +175,27 @@ end;
 procedure InitializeWizard;
 begin
   if ActiveLanguage = 'hebrew' then MirrorTitleBar(WizardForm);
+end;
+
+// The app file types Win.apk opens: each is let go only while it still names Win.apk's file type, so a program that
+// took one since keeps it, and none is left naming a file type that is removed (WinApk.Package, uninsdeletekey).
+procedure ReleaseFileType(const Ext: String);
+var
+  Key, Value: String;
+begin
+  Key := 'Software\Classes\' + Ext;
+  if RegQueryStringValue(HKCU, Key, '', Value) and (CompareText(Value, 'WinApk.Package') = 0) then begin
+    RegDeleteValue(HKCU, Key, '');
+    RegDeleteKeyIfEmpty(HKCU, Key);
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usUninstall then begin
+    ReleaseFileType('.apk');
+    ReleaseFileType('.apkm');
+    ReleaseFileType('.xapk');
+    ReleaseFileType('.apks');
+  end;
 end;
