@@ -70,6 +70,10 @@ struct LoadOptions {
     // fit. The range stays the caller's: the image does not free it.
     void* reserved_address = nullptr;
     size_t reserved_size = 0;
+    // Where the ELF file starts in the file at `path` (android_dlopen_ext's
+    // ANDROID_DLEXT_USE_LIBRARY_FD_OFFSET: a library stored uncompressed in
+    // an APK). Only the ELF's own extent from there is read.
+    uint64_t file_offset = 0;
 };
 
 class ElfImage {

@@ -136,6 +136,9 @@ const char* errno_text(int linux_errno);
 // stdout and stderr.
 size_t file_write(void* guest_file, const char* data, size_t n);
 int64_t fd_write(int fd, const void* data, size_t n);
+// The host path of the file descriptor `fd` has open; false (errno set) for
+// a descriptor that is not a file's.
+bool host_path_of_fd(int fd, std::wstring* out);
 // The CRT FILE* behind a guest FILE* (the __sF entries are the standard streams).
 void* host_stream(void* guest_file);
 void* guest_stdout();

@@ -730,9 +730,11 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   pass (Zydis, MIT license). The current scanner only matches the exact
   stack-guard encodings and could also match data bytes.
 - `dlclose` never unloads; libraries stay mapped until exit, as if loaded
-  with `RTLD_NODELETE`. Linker namespaces and `android_dlopen_ext`'s
-  `extinfo` (loading from a file descriptor or straight from the APK) are
-  ignored.
+  with `RTLD_NODELETE`. Linker namespaces are checked and not used (there is
+  one). `android_dlopen_ext`'s `extinfo` is honoured as bionic's: the reserved
+  address, a library read from a file descriptor at an offset, the RELRO
+  written to a file; `ANDROID_DLEXT_USE_RELRO` keeps the library's own RELRO,
+  which holds the same bytes.
 - A library's references to symbols it defines itself are bound directly, so
   another library cannot interpose them. Bionic allows that unless the library
   was linked with `-Bsymbolic`.

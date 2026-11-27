@@ -28,6 +28,10 @@
 #include <cstring>
 #include <string>
 
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+
 #include <windows.h>
 
 namespace {
@@ -188,6 +192,113 @@ int run_exit_child(const wchar_t* how, std::string* out) {
 }
 
 }  // namespace
+
+// android_dlopen_ext as guest code calls it (bionic's android/dlext.h, LP64): the flags checked as bionic
+// checks them; a library read from a file descriptor at a page-aligned offset (stored uncompressed in an
+// APK), into a range the caller reserved; its RELRO pages written to a file; a reserved range too small,
+// with and without the hint.
+struct DlextInfo {
+    uint64_t flags;
+    void* reserved_addr;
+    size_t reserved_size;
+    int relro_fd;
+    int library_fd;
+    int64_t library_fd_offset;
+    void* library_namespace;
+};
+constexpr uint64_t kReserved = 0x1, kReservedHint = 0x2, kWriteRelro = 0x4, kLibraryFd = 0x10, kLibraryFdOffset = 0x20;
+using DlopenExtFn = void*(WINAPK_GUEST_ABI*)(const char*, int, const void*);
+using DlerrorFn = char*(WINAPK_GUEST_ABI*)();
+
+void test_dlopen_ext(winapk::GuestLinker& linker, const char* dir) {
+    const auto dlopen_ext = reinterpret_cast<DlopenExtFn>(winapk::guest_libdl_resolve("android_dlopen_ext"));
+    const auto dlerror = reinterpret_cast<DlerrorFn>(winapk::guest_libdl_resolve("dlerror"));
+    if (!dlopen_ext || !dlerror) {
+        check("libdl has android_dlopen_ext and dlerror", false);
+        return;
+    }
+    auto last_error = [&] {
+        const char* e = dlerror();
+        return std::string(e ? e : "");
+    };
+    constexpr const char* kName = "libwinapk_link_dlext.so";
+    const std::string container = std::string(dir) + "\\dlext_container.bin";
+    const int fd = _open(container.c_str(), _O_RDONLY | _O_BINARY);
+    check("open the container file", fd >= 0, container);
+    if (fd < 0) return;
+
+    DlextInfo info{};
+    info.flags = 0x80;
+    std::string e;
+    check("an unknown flag is refused as bionic refuses it",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()) == "dlopen failed: invalid extended flags to android_dlopen_ext: 0x80",
+          e);
+    info.flags = kLibraryFdOffset;
+    check("USE_LIBRARY_FD_OFFSET without USE_LIBRARY_FD is refused",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()).find("invalid extended flag combination") != std::string::npos,
+          e);
+    info.flags = kLibraryFd | kLibraryFdOffset;
+    info.library_fd = fd;
+    info.library_fd_offset = 100;
+    check("an offset that is not page-aligned is refused",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()).find("is not page-aligned: 100") != std::string::npos,
+          e);
+    check("nothing was loaded by the refused calls", !loaded(linker, kName));
+
+    // Too small a reserved range: an error with ANDROID_DLEXT_RESERVED_ADDRESS, anywhere with the hint.
+    void* small = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+    info.library_fd_offset = 8192;
+    info.flags = kReserved | kLibraryFd | kLibraryFdOffset;
+    info.reserved_addr = small;
+    info.reserved_size = 4096;
+    check("a reserved range too small fails",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()).find("the reserved range has 4096") != std::string::npos,
+          e);
+    info.flags = kReservedHint | kLibraryFd | kLibraryFdOffset;
+    void* hinted = dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info);
+    void* sum_fn = hinted ? linker.lookup(hinted, "link_dlext_sum", nullptr, &e) : nullptr;
+    const winapk::ElfImage* image = linker.image_containing(sum_fn);
+    check("... with the hint it loads elsewhere, from the descriptor at the offset",
+          sum_fn && image && image->base() != small && call(linker, hinted, "link_dlext_sum") == 42, last_error());
+    if (hinted) linker.close(hinted, &e);
+    VirtualFree(small, 0, MEM_RELEASE);
+    check("closed, it is unloaded", !loaded(linker, kName));
+
+    // Into a reserved range, its RELRO written to a file.
+    void* range = VirtualAlloc(nullptr, 1 << 20, MEM_RESERVE, PAGE_NOACCESS);
+    const std::string relro_path = std::string(dir) + "\\dlext_relro.bin";
+    const int relro = _open(relro_path.c_str(), _O_RDWR | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+    info.flags = kReserved | kLibraryFd | kLibraryFdOffset | kWriteRelro;
+    info.reserved_addr = range;
+    info.reserved_size = 1 << 20;
+    info.relro_fd = relro;
+    void* placed = dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info);
+    check("loaded from the descriptor into the reserved range", placed != nullptr, last_error());
+    if (placed) {
+        image = linker.image_containing(linker.lookup(placed, "link_dlext_sum", nullptr, &e));
+        check("... at the range's start", image && image->base() == range);
+        expect_eq("... linked, its constructor run", call(linker, placed, "link_dlext_sum"), 42);
+        const auto table_fn = reinterpret_cast<const void*(WINAPK_GUEST_ABI*)()>(
+            linker.lookup(placed, "link_dlext_table", nullptr, &e));
+        const auto* table = table_fn ? static_cast<const uintptr_t*>(table_fn()) : nullptr;
+        const long size = _lseek(relro, 0, SEEK_END);
+        std::string bytes(static_cast<size_t>(size > 0 ? size : 0), '\0');
+        _lseek(relro, 0, SEEK_SET);
+        if (size > 0) _read(relro, bytes.data(), static_cast<unsigned>(size));
+        const std::string pointers(reinterpret_cast<const char*>(table), table ? 2 * sizeof(uintptr_t) : 0);
+        check("WRITE_RELRO wrote whole pages holding the relocated table",
+              table && size > 0 && size % 4096 == 0 && bytes.find(pointers) != std::string::npos,
+              std::to_string(size) + " bytes");
+        linker.close(placed, &e);
+    }
+    _close(relro);
+    VirtualFree(range, 0, MEM_RELEASE);
+    _close(fd);
+}
 
 int main(int argc, char** argv) {
     if (argc >= 3 && std::strcmp(argv[1], "--exit-child") == 0) return exit_child(std::strcmp(argv[2], "crt") == 0);
@@ -403,6 +514,8 @@ int main(int argc, char** argv) {
         linker.close(dep86, &error);  // the kRtldNoLoad reference
     }
     winapk::set_android_root("");
+
+    test_dlopen_ext(linker, argv[1]);
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;
