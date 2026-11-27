@@ -266,7 +266,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `bionic_shim_vulkan.cpp` | 401 | Vulkan over MoltenVK | the system Vulkan loader (M6) | not started |
 | `bionic_shim_cacerts.cpp` | 218 | CA store from the Mac's roots | `src/bionic/cacerts.cpp`: the roots Windows trusts (user, machine, policy; less Disallowed and expired) plus the JDK's | done |
 | `bionic_shim_forkwatch.cpp`, `_elfexec.cpp`, `elfexec_main.cpp` | 1,471 | forked and shipped executables | later (M5) | not started |
-| `media_ndk.cpp` | 701 | NDK `AMediaCodec` | `host/ndk_media_codec.cpp`: decoders, extractor and data source on `video_decode.h`, with no JVM; `host/native_media.cpp` has `AMediaFormat` and the keys | decoders done; no encoder or muxer |
+| `media_ndk.cpp` | 701 | NDK `AMediaCodec` | `host/ndk_media_codec.cpp`: decoders and encoders, extractor and data source on `video_decode.h` and `media_encode.h`, with no JVM; `host/ndk_media_muxer.cpp`: the muxer on `mp4_writer.h` and `webm_writer.h`; `host/native_media.cpp` has `AMediaFormat`, the keys and the crypto answers | done but DRM and an encoder's input surface |
 | `bionic_shim.cpp`: `ANativeWindow_*`, `AAssetManager_*` | - | libandroid's native window and assets | `host/native_window.cpp`, `host/native_asset.cpp` (assets through Java's AssetManager; no native APK index yet) | done |
 | `bionic_shim.cpp`: OpenSL ES | - | libOpenSLES on the audio mixer | `host/native_opensles.cpp`: Win.apk's own instead, from the 1.0.1 spec and AOSP's behaviour (players pulled by the mixer, file and http players, decoding to a queue, recorders), on `audio_engine.h`, `audio_pcm.h` and `audio_capture.h` | done |
 | `bionic_shim.cpp`: libjnigraphics | - | `AndroidBitmap_*` | `src/jnigraphics.cpp`: upstream's section, extracted at build time | done |
@@ -733,9 +733,19 @@ applies on Windows, where `FileDescriptor` holds a `handle`.
   pass (Zydis, MIT license). The current scanner only matches the exact
   stack-guard encodings and could also match data bytes.
 - `dlclose` never unloads; libraries stay mapped until exit, as if loaded
-  with `RTLD_NODELETE`. Linker namespaces and `android_dlopen_ext`'s
-  `extinfo` (loading from a file descriptor or straight from the APK) are
-  ignored.
+  with `RTLD_NODELETE`. Linker namespaces are checked and not used (there is
+  one). `android_dlopen_ext`'s `extinfo` is honoured as bionic's: the reserved
+  address, a library read from a file descriptor at an offset, the RELRO
+  written to a file (for a newly loaded library, after relocation and before
+  its constructors); `ANDROID_DLEXT_USE_RELRO` keeps the library's own RELRO,
+  which holds the same bytes. A library read from a descriptor is named
+  `<apk>!/<entry>` when the offset is a stored entry of a zip, else by the name
+  asked for, never after the file (bionic names it after the file unless it
+  found it in a zip itself); its arm64 translation's files are named after the
+  file, the offset and the library. Differences:
+  `ANDROID_DLEXT_RESERVED_ADDRESS_RECURSIVE` is accepted, but only the library
+  itself goes into the reserved range, not its dependencies; the library's
+  dependencies are not looked for inside the APK it came from.
 - A library's references to symbols it defines itself are bound directly, so
   another library cannot interpose them. Bionic allows that unless the library
   was linked with `-Bsymbolic`.

@@ -1976,6 +1976,9 @@ public final class Boot {
         if (start.launch != null) {
             start.first = first;
             start.firstSender = firstSender;
+            // The task as system_server would keep it across this process's end: in the app's run
+            // files (apps\<name>\), which are the system's, not under the data the app sees.
+            if (appDir != null && !appDir.isEmpty()) start.savedTask = new File(appDir, "task-state.parcel");
         }
         final Intent laterUrlFinal = start.launch != null ? laterUrl : null;
         start.providers = appProviders(manifest, pm, ai, resources);
@@ -2322,6 +2325,14 @@ public final class Boot {
      *  process, now, whatever thread threw. Through the host's exit (its end-of-run lines, no
      *  Java shutdown, as SIGKILL runs none); halt if there is no host. */
     private static void crashExit() {
+        // handleApplicationCrash's part of the system's side first: the crashed top is not kept for
+        // the app's next process (AppHost.processCrashed).
+        try {
+            com.macapk.loader.app.AppHost h = com.macapk.loader.app.AppHost.get();
+            if (h != null && h.started()) h.processCrashed();
+        } catch (Throwable ignored) {
+            // the crash ends the process whatever happens here
+        }
         try {
             NativeCocoa.exitProcess(CRASH_EXIT, null);
         } catch (Throwable ignored) {
@@ -2778,8 +2789,10 @@ public final class Boot {
      *  there is no <provider> element to parse here, since no APK ever
      *  declares android:authorities="media" itself.
      *
-     *  Currently backs exactly one authority ("media" ->
-     *  android.provider.MediaStoreProvider). Wrapped in the same
+     *  Backs "media" (android.provider.MediaStoreProvider), the documents
+     *  the user picks (HostDocumentsProvider), "com.android.contacts" and
+     *  "call_log" (ContactsProvider, CallLogProvider) and, with Google
+     *  services, gservices. Wrapped in the same
      *  single try/catch-per-provider tolerance as
      *  appProviders so a failure here degrades to "no media
      *  index" rather than blocking app boot. App-agnostic: gated on
@@ -2812,6 +2825,13 @@ public final class Boot {
             dinfo.grantUriPermissions = true;
             docs.attachInfo(application, dinfo);   // runs onCreate
             android.content.ContentProviderRegistry.register(dinfo.authority, docs);
+            // The contacts and call log providers (com.android.contacts, call_log), over the
+            // database every app's process shares; an app serving either authority itself keeps it.
+            try {
+                ContactsProvider.install(application);
+            } catch (Throwable t) {
+                NativeLog.w(TAG, "contacts providers failed: " + t + " -- continuing");
+            }
             // Google Services Framework's gservices settings, answered from
             // the device's real checkin (see GservicesProvider's header). App
             // providers are already installed, so a hosted package that serves

@@ -1440,9 +1440,11 @@ static void test_signal_delivery(void) {
 // ---- signals that end a wait -----------------------------------------------------------
 // A thread asleep in the shim takes a signal another thread sends it as a Linux thread takes one
 // in a system call: the wait ends, the handler runs on that thread, and the call fails with EINTR
-// (sem_wait, the futex call without SA_RESTART, nanosleep whatever SA_RESTART says) or waits on
-// (SA_RESTART). Boehm's collector (il2cpp, Mono) stops the world this way: pthread_kill to every
-// thread, many of them blocked, and a wait for each handler's answer.
+// (sem_wait, the futex call without SA_RESTART, nanosleep whatever SA_RESTART says, poll and
+// epoll_wait) or waits on (SA_RESTART; a condition variable, whose caller's loop waits again after
+// a spurious wake). Boehm's collector (il2cpp, Mono) stops the world this way: pthread_kill to every
+// thread, many of them blocked, and a wait for each handler's answer; a sampling profiler's tgkill
+// (Chromium's stack copier) waits for the sampled thread's handler too.
 typedef struct { unsigned count; int reserved[3]; } sem_t;
 int sem_init(sem_t*, int, unsigned);
 int sem_wait(sem_t*);
@@ -1450,9 +1452,14 @@ int sem_post(sem_t*);
 int sem_destroy(sem_t*);
 #define SA_RESTART 0x10000000
 
+enum { kWaitSem, kWaitFutex, kWaitNanosleep, kWaitCond, kWaitPoll, kWaitEpoll };
 static sem_t g_wait_sem;
-static volatile int g_wait_kind, g_wait_rc, g_wait_errno, g_wait_hits, g_wait_done, g_wait_handler_tid, g_waiter_tid;
+static volatile int g_wait_kind, g_wait_rc, g_wait_errno, g_wait_hits, g_wait_done, g_wait_handler_tid, g_waiter_tid,
+    g_wait_release, g_wait_cond_waits;
 static volatile unsigned g_wait_word;
+static pthread_mutex_t g_wait_mu;
+static pthread_cond_t g_wait_cv;
+static int g_wait_fd, g_wait_epoll;
 static void on_wait_signal(int sig) {
     (void)sig;
     g_wait_handler_tid = gettid();
@@ -1461,13 +1468,27 @@ static void on_wait_signal(int sig) {
 static void* blocked_waiter(void* arg) {
     (void)arg;
     g_waiter_tid = gettid();
-    if (g_wait_kind == 0) {
+    if (g_wait_kind == kWaitSem) {
         g_wait_rc = sem_wait(&g_wait_sem);
-    } else if (g_wait_kind == 1) {
+    } else if (g_wait_kind == kWaitFutex) {
         g_wait_rc = (int)syscall(202, &g_wait_word, 128, 0, 0);  // FUTEX_WAIT_PRIVATE while the word is 0
-    } else {
+    } else if (g_wait_kind == kWaitNanosleep) {
         struct timespec t = {30, 0}, rem;
         g_wait_rc = nanosleep(&t, &rem);
+    } else if (g_wait_kind == kWaitCond) {
+        pthread_mutex_lock(&g_wait_mu);
+        g_wait_rc = 0;
+        while (!g_wait_release && g_wait_rc == 0) {
+            ++g_wait_cond_waits;
+            g_wait_rc = pthread_cond_wait(&g_wait_cv, &g_wait_mu);
+        }
+        pthread_mutex_unlock(&g_wait_mu);
+    } else if (g_wait_kind == kWaitPoll) {
+        struct pollfd p = {g_wait_fd, 1, 0};
+        g_wait_rc = poll(&p, 1, 30000);
+    } else {
+        struct epoll_event ev;
+        g_wait_rc = epoll_wait(g_wait_epoll, &ev, 1, 30000);
     }
     g_wait_errno = *__errno();
     g_wait_done = 1;
@@ -1477,15 +1498,32 @@ static int wait_for_flag(volatile int* flag, int want, int ms) {
     for (int i = 0; i < ms && *flag != want; ++i) usleep(1000);
     return *flag == want;
 }
+// Lets a waiter of any kind go.
+static void release_waiter(void) {
+    sem_post(&g_wait_sem);
+    g_wait_word = 1;
+    syscall(202, &g_wait_word, 129, 1);  // FUTEX_WAKE_PRIVATE
+    pthread_mutex_lock(&g_wait_mu);
+    g_wait_release = 1;
+    pthread_cond_signal(&g_wait_cv);
+    pthread_mutex_unlock(&g_wait_mu);
+    unsigned long long one = 1;
+    write(g_wait_fd, &one, sizeof one);  // poll's and epoll_wait's eventfd
+}
 // Starts a waiter of `kind`, lets it fall asleep, signals it and reports what came of it.
 static void signal_blocked(int kind, int flags, const char* what) {
     struct guest_sigaction sa = {flags, 0, (void*)on_wait_signal, 0, 0};
     sigaction(10, &sa, 0);
     g_wait_kind = kind;
     g_wait_rc = 99;
-    g_wait_errno = g_wait_hits = g_wait_done = g_wait_handler_tid = g_waiter_tid = 0;
+    g_wait_errno = g_wait_hits = g_wait_done = g_wait_handler_tid = g_waiter_tid = g_wait_release = 0;
+    g_wait_cond_waits = 0;
     g_wait_word = 0;
     sem_init(&g_wait_sem, 0, 0);
+    g_wait_fd = eventfd(0, 0);
+    g_wait_epoll = epoll_create1(0);
+    struct epoll_event in = {1 /* EPOLLIN */, 0};
+    epoll_ctl(g_wait_epoll, 1 /* EPOLL_CTL_ADD */, g_wait_fd, &in);
     pthread_t w;
     pthread_create(&w, 0, blocked_waiter, 0);
     while (!g_waiter_tid) sched_yield();
@@ -1493,11 +1531,12 @@ static void signal_blocked(int kind, int flags, const char* what) {
     const int rc = pthread_kill(w, 10);
     const int hit = wait_for_flag(&g_wait_hits, 1, 3000);
     char detail[128];
-    // SA_RESTART restarts a wait, never a sleep: Linux's nanosleep ends with EINTR either way.
-    if ((flags & SA_RESTART) && kind != 2) {
+    // SA_RESTART restarts a wait, never a sleep or a poll: Linux's nanosleep, poll and epoll_wait end with
+    // EINTR either way. A condition variable's caller waits again whatever the flags.
+    if (((flags & SA_RESTART) && kind <= kWaitFutex) || kind == kWaitCond) {
         usleep(50000);
         const int still_waiting = !g_wait_done;
-        sem_post(&g_wait_sem);
+        release_waiter();
         wait_for_flag(&g_wait_done, 1, 3000);
         snprintf(detail, sizeof detail, "rc %d, hits %d, waited on %d, then %d", rc, g_wait_hits, still_waiting,
                  g_wait_rc);
@@ -1511,19 +1550,22 @@ static void signal_blocked(int kind, int flags, const char* what) {
                   g_wait_errno == 4,
               detail);
     }
-    if (!g_wait_done) {  // let it go, whatever happened
-        sem_post(&g_wait_sem);
-        g_wait_word = 1;
-        syscall(202, &g_wait_word, 129, 1);  // FUTEX_WAKE_PRIVATE
-    }
+    if (!g_wait_done) release_waiter();  // let it go, whatever happened
     pthread_join(w, 0);
     sem_destroy(&g_wait_sem);
+    close(g_wait_epoll);
+    close(g_wait_fd);
 }
 static void test_signal_ends_wait(void) {
-    signal_blocked(0, 0, "a thread blocked in sem_wait runs the handler and sem_wait fails with EINTR");
-    signal_blocked(0, SA_RESTART, "with SA_RESTART the handler runs and sem_wait waits on for its post");
-    signal_blocked(1, 0, "a thread blocked in the futex call runs the handler and the call fails with EINTR");
-    signal_blocked(2, SA_RESTART, "a thread in nanosleep runs the handler and the sleep ends with EINTR");
+    signal_blocked(kWaitSem, 0, "a thread blocked in sem_wait runs the handler and sem_wait fails with EINTR");
+    signal_blocked(kWaitSem, SA_RESTART, "with SA_RESTART the handler runs and sem_wait waits on for its post");
+    signal_blocked(kWaitFutex, 0, "a thread blocked in the futex call runs the handler and the call fails with EINTR");
+    signal_blocked(kWaitNanosleep, SA_RESTART, "a thread in nanosleep runs the handler and the sleep ends with EINTR");
+    signal_blocked(kWaitCond, SA_RESTART,
+                   "a thread in pthread_cond_wait runs the handler and waits on for its signal (a spurious wake "
+                   "at most)");
+    signal_blocked(kWaitPoll, SA_RESTART, "a thread in poll runs the handler and poll fails with EINTR");
+    signal_blocked(kWaitEpoll, SA_RESTART, "a thread in epoll_wait runs the handler and it fails with EINTR");
     struct guest_sigaction dfl = {0, 0, 0, 0, 0};
     sigaction(10, &dfl, 0);
 }

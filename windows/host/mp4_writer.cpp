@@ -461,6 +461,14 @@ std::unique_ptr<Writer> Writer::create(const std::wstring& path, bool three_gp) 
     return std::unique_ptr<Writer>(new Writer(std::move(impl)));
 }
 
+std::unique_ptr<Writer> Writer::adopt(std::FILE* file, bool three_gp) {
+    if (!file) return nullptr;
+    auto impl = std::make_unique<Impl>();
+    impl->file = file;
+    impl->three_gp = three_gp;
+    return std::unique_ptr<Writer>(new Writer(std::move(impl)));
+}
+
 int Writer::add_track(const TrackFormat& format) {
     Impl& w = *impl_;
     if (w.started) return -1;

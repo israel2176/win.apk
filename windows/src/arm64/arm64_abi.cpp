@@ -17,6 +17,7 @@
 
 #include "winapk/guest_abi.h"
 #include "winapk/host_code.h"
+#include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
 
 #include <atomic>
@@ -25,6 +26,7 @@
 #include <cstring>
 #include <mutex>
 #include <set>
+#include <string>
 #include <vector>
 
 #include <windows.h>
@@ -408,14 +410,42 @@ using Open = int(WINAPK_GUEST_ABI*)(const char*, int, unsigned);
 using Openat = int(WINAPK_GUEST_ABI*)(int, const char*, int, unsigned);
 
 // An arm64 library's open/openat imports bind here (abi_override): the same calls with x86_64's flags.
+// /proc/self/auxv is the vector arm64 code is given (its CPU, not the host's).
 WINAPK_GUEST_ABI int a64_open(const char* path, int flags, unsigned mode) {
+    if (is_proc_auxv_path(path)) return open_proc_auxv(true);
     static const auto fn = shim<Open>("open");
     return fn(path, x86_open_flags(flags), mode);
 }
 WINAPK_GUEST_ABI int a64_open_2(const char* path, int flags) { return a64_open(path, flags, 0); }
 WINAPK_GUEST_ABI int a64_openat(int dirfd, const char* path, int flags, unsigned mode) {
+    if (is_proc_auxv_path(path)) return open_proc_auxv(true);  // an absolute path: dirfd does not count
     static const auto fn = shim<Openat>("openat");
     return fn(dirfd, path, x86_open_flags(flags), mode);
+}
+
+// fopen of /proc/self/auxv likewise; every other path is the shim's.
+using Fopen = void*(WINAPK_GUEST_ABI*)(const char*, const char*);
+WINAPK_GUEST_ABI void* a64_fopen(const char* path, const char* mode) {
+    if (is_proc_auxv_path(path)) {
+        const int fd = open_proc_auxv(true);
+        if (fd < 0) return nullptr;
+        static const auto fdopen_fn = shim<void*(WINAPK_GUEST_ABI*)(int, const char*)>("fdopen");
+        void* f = fdopen_fn(fd, "r");
+        if (!f) shim<int(WINAPK_GUEST_ABI*)(int)>("close")(fd);
+        return f;
+    }
+    static const auto fn = shim<Fopen>("fopen");
+    return fn(path, mode);
+}
+
+// getauxval: the vector arm64 code is given (winapk::process_auxv(true)): AT_HWCAP and AT_HWCAP2 the
+// features it is told of (kHwcap, kHwcap2), AT_PLATFORM "aarch64"; 0 and ENOENT for a type it lacks.
+WINAPK_GUEST_ABI uint64_t a64_getauxval(uint64_t type) {
+    static const std::string auxv = process_auxv(true);
+    uint64_t v = 0;
+    if (auxv_value(auxv, type, &v)) return v;
+    *shim<int*(WINAPK_GUEST_ABI*)()>("__errno")() = 2;  // ENOENT
+    return 0;
 }
 WINAPK_GUEST_ABI int a64_openat_2(int dirfd, const char* path, int flags) { return a64_openat(dirfd, path, flags, 0); }
 
@@ -521,11 +551,17 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
             const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int)>("kill");
             return f(static_cast<int>(a[0]), static_cast<int>(a[1]));
         }
-        // tkill(tid, sig), tgkill(tgid, tid, sig): the threads are this
-        // process's own, and no signal is delivered on Windows (sigaction
-        // records handlers, it does not install them); signal 0, the check
-        // that a thread is alive, is the common use and is answered yes.
-        case 130: case 131: return 0;
+        // tkill(tid, sig), tgkill(tgid, tid, sig): the shim's, which deliver
+        // to the thread (signal.cpp) and answer signal 0, the check that a
+        // thread is alive, as Linux does.
+        case 130: {
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int)>("tkill");
+            return f(static_cast<int>(a[0]), static_cast<int>(a[1]));
+        }
+        case 131: {
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int, int)>("tgkill");
+            return f(static_cast<int>(a[0]), static_cast<int>(a[1]), static_cast<int>(a[2]));
+        }
         case 56:  // openat(dirfd, path, flags, mode): relative to a directory descriptor too
             return a64_openat(static_cast<int>(a[0]), reinterpret_cast<const char*>(a[1]), static_cast<int>(a[2]),
                               static_cast<unsigned>(a[3]));
@@ -617,6 +653,9 @@ void* abi_override(const char* name) {
         {"openat", reinterpret_cast<void*>(&a64_openat)},
         {"openat64", reinterpret_cast<void*>(&a64_openat)},
         {"__openat_2", reinterpret_cast<void*>(&a64_openat_2)},
+        {"fopen", reinterpret_cast<void*>(&a64_fopen)},
+        {"fopen64", reinterpret_cast<void*>(&a64_fopen)},
+        {"getauxval", reinterpret_cast<void*>(&a64_getauxval)},
     };
     for (const auto& o : kOverrides) {
         if (std::strcmp(o.name, name) == 0) return mini_bionic_resolve(name) ? o.fn : nullptr;

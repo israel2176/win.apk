@@ -12,6 +12,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 #include <vector>
@@ -34,6 +35,9 @@ class Writer {
 public:
     // `path` is a host path. three_gp only changes the brand.
     static std::unique_ptr<Writer> create(const std::wstring& path, bool three_gp);
+    // The same into an open file, written from its start (AMediaMuxer's descriptor). The
+    // writer owns `file` from here: finish() or the destructor closes it. Null when `file` is.
+    static std::unique_ptr<Writer> adopt(std::FILE* file, bool three_gp);
     ~Writer();
 
     // Before start(). The track's index, or -1 for a format it cannot write.

@@ -70,6 +70,15 @@ struct LoadOptions {
     // fit. The range stays the caller's: the image does not free it.
     void* reserved_address = nullptr;
     size_t reserved_size = 0;
+    // Where the ELF file starts in the file at `path` (android_dlopen_ext's
+    // ANDROID_DLEXT_USE_LIBRARY_FD_OFFSET: a library stored uncompressed in
+    // an APK). Only the ELF's own extent from there is read.
+    uint64_t file_offset = 0;
+    // The library's name when `path` is only the file it is read from (an
+    // APK it is stored in): what path() answers. Its arm64 translation's
+    // files are then named after `path`, the offset and this name's file
+    // name, beside `path`, so that two libraries of one file never share them.
+    std::filesystem::path name;
 };
 
 class ElfImage {
@@ -141,6 +150,8 @@ public:
     const std::vector<elf::Phdr>& phdrs() const { return phdrs_; }
     size_t mapped_size() const { return size_; }
     size_t fs_sites_patched() const { return fs_sites_patched_; }
+    // SYSCALL instructions of an x86_64 library made into UD2 at load (x86_syscall.h).
+    size_t syscall_sites_patched() const { return syscall_sites_patched_; }
     size_t relocations_applied() const { return relocs_applied_; }
 
 private:
@@ -153,6 +164,7 @@ private:
     bool protect_segments(std::string* error);
     bool apply_irelative(std::string* error);
     void register_arm64_code();
+    void patch_x86_syscalls();
     void call_init_function(uint64_t fn, bool with_args) const;
     void seal_relro();
     void run_initializers();
@@ -190,7 +202,8 @@ private:
     uint64_t init_ = 0, fini_ = 0;
     uint64_t init_array_ = 0, init_arraysz_ = 0, fini_array_ = 0, fini_arraysz_ = 0;
 
-    std::filesystem::path path_;
+    std::filesystem::path path_;    // the library's name (LoadOptions::name, else the file)
+    std::filesystem::path source_;  // the file it was read from
     LoadOptions options_;
     std::string soname_;
     std::vector<std::string> needed_;
@@ -203,6 +216,10 @@ private:
     std::deque<TlsIndex> tlsdesc_args_;
 
     size_t fs_sites_patched_ = 0;
+    size_t syscall_sites_patched_ = 0;
+    // Where code starts that PT_DYNAMIC does not name (vaddrs): e_entry and the
+    // function symbols of .symtab, when the file has them.
+    std::vector<uint64_t> code_entries_;
     size_t relocs_applied_ = 0;
     bool linked_ = false;
     bool initialized_ = false;

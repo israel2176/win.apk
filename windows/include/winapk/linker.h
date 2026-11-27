@@ -43,8 +43,11 @@
 //     allocator; a few dozen bytes each), unreferenced.
 //
 // Not done yet:
-//   * linker namespaces and android_dlopen_ext's extinfo (loading from an fd
-//     or from inside the APK) are ignored.
+//   * linker namespaces: one; android_dlopen_ext's namespace is checked, not
+//     used. Its other extinfo (a reserved address, a library read from a file
+//     descriptor at an offset, the RELRO written out) is honoured, except
+//     that ANDROID_DLEXT_RESERVED_ADDRESS_RECURSIVE places only the library
+//     itself in the range, not its dependencies.
 
 #pragma once
 
@@ -101,11 +104,18 @@ public:
     // in the search paths. RTLD_NOLOAD and RTLD_GLOBAL are honored. On failure
     // returns nullptr and sets `error` to a bionic-style message.
     // `placement`, if given, applies to the library itself, not to its
-    // dependencies (android_dlopen_ext's reserved address).
+    // dependencies: android_dlopen_ext's reserved address, the file it is
+    // read from (ANDROID_DLEXT_USE_LIBRARY_FD, _OFFSET) instead of a search
+    // by name, and its RELRO written out (ANDROID_DLEXT_WRITE_RELRO) when it
+    // is newly loaded, after relocation and before its constructors.
     struct Placement {
         void* address = nullptr;
         size_t size = 0;
         bool hint = false;  // fall back to anywhere if the range is too small
+        std::filesystem::path file;  // empty: found by `name`; else only read from
+        uint64_t file_offset = 0;
+        std::filesystem::path library_name;  // with `file`: the library's (dladdr's, dl_iterate_phdr's)
+        int relro_fd = -1;                   // >= 0: ANDROID_DLEXT_WRITE_RELRO's file
     };
     GuestLibrary* open(const std::string& name, int flags, std::string* error,
                        const Placement* placement = nullptr);
@@ -202,5 +212,22 @@ private:
 // Host address of a libdl function (dlopen, dlsym, dlclose, dlerror, dladdr,
 // android_dlopen_ext) for guest code, or nullptr.
 void* guest_libdl_resolve(const char* name);
+
+// The process's auxiliary vector, as the kernel hands it to app_process64 and
+// /proc/self/auxv holds it: (type, value) pairs of 64 bits each, AT_NULL last.
+// AT_PHDR, AT_BASE and AT_ENTRY name the program's and linker's images that
+// /proc/self/maps lists (process_image.h: an ELF header with no program
+// headers, so AT_PHNUM is 0 and AT_ENTRY is the image's base); AT_PAGESZ is
+// 4096, AT_CLKTCK 100, AT_RANDOM 16 random bytes made once, AT_EXECFN the
+// program's path; no AT_SYSINFO_EHDR, as there is no vDSO. The CPU is the
+// caller's: for x86_64 code AT_HWCAP is CPUID leaf 1's EDX and AT_PLATFORM
+// "x86_64"; for arm64 code (`arm64`) AT_HWCAP and AT_HWCAP2 are what the
+// translator implements (arm64::kHwcap, kHwcap2) and AT_PLATFORM "aarch64".
+// getauxval answers from it.
+std::string process_auxv(bool arm64 = false);
+
+// The value of `type` in an auxiliary vector made by process_auxv; false if it
+// has none (getauxval's ENOENT).
+bool auxv_value(const std::string& auxv, uint64_t type, uint64_t* value);
 
 }  // namespace winapk

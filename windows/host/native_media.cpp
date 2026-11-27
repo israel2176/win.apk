@@ -1,7 +1,8 @@
-// native_media.cpp -- libmediandk for an app's native code: AMediaFormat and the
-// AMEDIAFORMAT_KEY_* variables. AMediaCodec, AMediaExtractor and AMediaDataSource
-// are ndk_media_codec.cpp's, on the decoders and the demuxer Java's MediaCodec and
-// MediaExtractor use.
+// native_media.cpp -- libmediandk for an app's native code: AMediaFormat, the
+// AMEDIAFORMAT_KEY_* variables, AMediaCodecCryptoInfo, and the answers of a device
+// with no DRM scheme (AMediaCrypto, AMediaDrm). AMediaCodec, AMediaExtractor and
+// AMediaDataSource are ndk_media_codec.cpp's, on the decoders, encoders and demuxer
+// Java's MediaCodec and MediaExtractor use; AMediaMuxer is ndk_media_muxer.cpp's.
 //
 // AMediaFormat is a map of typed values and is whole. Ten of the 56 most
 // installed apps with native code import libmediandk; all of it once went to the
@@ -18,6 +19,7 @@
 #include "native_media.h"
 #include "native_media_format.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -35,7 +37,7 @@ namespace winapk::host {
 namespace {
 
 // media_status_t (NdkMediaError.h).
-constexpr int kMediaOk = 0, kErrInvalidParameter = -10004;
+constexpr int kMediaOk = 0, kErrInvalidObject = -10003, kErrInvalidParameter = -10004;
 
 // ---- AMediaFormat ---------------------------------------------------------------------
 // (MediaFormat and FormatValue are native_media_format.h's: the codec and the extractor make them too.)
@@ -159,6 +161,96 @@ WINAPK_GUEST_ABI void AMediaFormat_setRect(MediaFormat* f, const char* name, int
     if (FormatValue* v = slot(f, name, FormatValue::kRect)) v->rect[0] = l, v->rect[1] = t, v->rect[2] = r, v->rect[3] = b;
 }
 
+// ---- AMediaCodecCryptoInfo, AMediaCrypto, AMediaDrm -----------------------------------
+// A crypto info is plain data (what an extractor's getSampleCryptoInfo and
+// queueSecureInputBuffer pass around), so it is whole. No DRM scheme is installed:
+// isCryptoSchemeSupported says no to every UUID (Widevine and ClearKey included), so an
+// app takes its clear path or reports that the content cannot play; creating one is null.
+struct CryptoInfo {
+    int mode = 0;
+    uint8_t key[16] = {}, iv[16] = {};
+    std::vector<size_t> clear, encrypted;
+    int32_t pattern[2] = {};  // cryptoinfo_pattern_t: encryptBlocks, skipBlocks
+};
+WINAPK_GUEST_ABI CryptoInfo* AMediaCodecCryptoInfo_new(int subsamples, const uint8_t* key, const uint8_t* iv,
+                                                       int mode, const size_t* clear, const size_t* encrypted) {
+    if (subsamples < 0) return nullptr;
+    auto* c = new CryptoInfo;
+    c->mode = mode;
+    if (key) std::memcpy(c->key, key, 16);
+    if (iv) std::memcpy(c->iv, iv, 16);
+    c->clear.assign(static_cast<size_t>(subsamples), 0);
+    c->encrypted.assign(static_cast<size_t>(subsamples), 0);
+    for (int i = 0; i < subsamples; ++i) {
+        if (clear) c->clear[static_cast<size_t>(i)] = clear[i];
+        if (encrypted) c->encrypted[static_cast<size_t>(i)] = encrypted[i];
+    }
+    return c;
+}
+WINAPK_GUEST_ABI int AMediaCodecCryptoInfo_delete(CryptoInfo* c) {
+    delete c;
+    return kMediaOk;
+}
+WINAPK_GUEST_ABI void AMediaCodecCryptoInfo_setPattern(CryptoInfo* c, const int32_t* pattern) {
+    if (c && pattern) c->pattern[0] = pattern[0], c->pattern[1] = pattern[1];
+}
+WINAPK_GUEST_ABI size_t AMediaCodecCryptoInfo_getNumSubSamples(CryptoInfo* c) { return c ? c->clear.size() : 0; }
+WINAPK_GUEST_ABI int AMediaCodecCryptoInfo_getKey(CryptoInfo* c, uint8_t* dst) {
+    if (!c) return kErrInvalidObject;
+    if (!dst) return kErrInvalidParameter;
+    std::memcpy(dst, c->key, 16);
+    return kMediaOk;
+}
+WINAPK_GUEST_ABI int AMediaCodecCryptoInfo_getIV(CryptoInfo* c, uint8_t* dst) {
+    if (!c) return kErrInvalidObject;
+    if (!dst) return kErrInvalidParameter;
+    std::memcpy(dst, c->iv, 16);
+    return kMediaOk;
+}
+WINAPK_GUEST_ABI int AMediaCodecCryptoInfo_getMode(CryptoInfo* c) { return c ? c->mode : kErrInvalidObject; }
+WINAPK_GUEST_ABI int AMediaCodecCryptoInfo_getClearBytes(CryptoInfo* c, size_t* dst) {
+    if (!c) return kErrInvalidObject;
+    if (!dst) return kErrInvalidParameter;
+    std::copy(c->clear.begin(), c->clear.end(), dst);
+    return kMediaOk;
+}
+WINAPK_GUEST_ABI int AMediaCodecCryptoInfo_getEncryptedBytes(CryptoInfo* c, size_t* dst) {
+    if (!c) return kErrInvalidObject;
+    if (!dst) return kErrInvalidParameter;
+    std::copy(c->encrypted.begin(), c->encrypted.end(), dst);
+    return kMediaOk;
+}
+
+void log_no_drm(const char* what) {
+    static std::mutex lock;
+    static std::vector<std::string> said;
+    std::lock_guard<std::mutex> hold(lock);
+    for (const auto& s : said)
+        if (s == what) return;
+    said.emplace_back(what);
+    std::fprintf(stderr, "[win.apk] %s: no DRM scheme is installed\n", what);
+    std::fflush(stderr);
+}
+WINAPK_GUEST_ABI bool AMediaCrypto_isCryptoSchemeSupported(const uint8_t*) {
+    log_no_drm("AMediaCrypto_isCryptoSchemeSupported");
+    return false;
+}
+WINAPK_GUEST_ABI bool AMediaCrypto_requiresSecureDecoderComponent(const char*) { return false; }
+WINAPK_GUEST_ABI void* AMediaCrypto_new(const uint8_t*, const void*, size_t) {
+    log_no_drm("AMediaCrypto_new");
+    return nullptr;
+}
+WINAPK_GUEST_ABI void AMediaCrypto_delete(void*) {}
+WINAPK_GUEST_ABI bool AMediaDrm_isCryptoSchemeSupported(const uint8_t*, const char*) {
+    log_no_drm("AMediaDrm_isCryptoSchemeSupported");
+    return false;
+}
+WINAPK_GUEST_ABI void* AMediaDrm_createByUUID(const uint8_t*) {
+    log_no_drm("AMediaDrm_createByUUID");
+    return nullptr;
+}
+WINAPK_GUEST_ABI void AMediaDrm_release(void*) {}
+
 struct Function {
     const char* name;
     void* fn;
@@ -176,6 +268,15 @@ const Function kFunctions[] = {
     WINAPK_MEDIA(AMediaFormat_getString), WINAPK_MEDIA(AMediaFormat_setString),
     WINAPK_MEDIA(AMediaFormat_getBuffer), WINAPK_MEDIA(AMediaFormat_setBuffer),
     WINAPK_MEDIA(AMediaFormat_getRect), WINAPK_MEDIA(AMediaFormat_setRect),
+    WINAPK_MEDIA(AMediaCodecCryptoInfo_new), WINAPK_MEDIA(AMediaCodecCryptoInfo_delete),
+    WINAPK_MEDIA(AMediaCodecCryptoInfo_setPattern), WINAPK_MEDIA(AMediaCodecCryptoInfo_getNumSubSamples),
+    WINAPK_MEDIA(AMediaCodecCryptoInfo_getKey), WINAPK_MEDIA(AMediaCodecCryptoInfo_getIV),
+    WINAPK_MEDIA(AMediaCodecCryptoInfo_getMode), WINAPK_MEDIA(AMediaCodecCryptoInfo_getClearBytes),
+    WINAPK_MEDIA(AMediaCodecCryptoInfo_getEncryptedBytes),
+    WINAPK_MEDIA(AMediaCrypto_isCryptoSchemeSupported), WINAPK_MEDIA(AMediaCrypto_requiresSecureDecoderComponent),
+    WINAPK_MEDIA(AMediaCrypto_new), WINAPK_MEDIA(AMediaCrypto_delete),
+    WINAPK_MEDIA(AMediaDrm_isCryptoSchemeSupported), WINAPK_MEDIA(AMediaDrm_createByUUID),
+    WINAPK_MEDIA(AMediaDrm_release),
 };
 
 struct FormatKey {
@@ -335,6 +436,7 @@ FormatKey kFormatKeys[] = {
 void* native_media_resolve(const char* name) {
     if (std::strncmp(name, "AMedia", 6) == 0) {
         if (void* fn = ndk_media_codec_resolve(name)) return fn;
+        if (void* fn = ndk_media_muxer_resolve(name)) return fn;
         for (const Function& f : kFunctions) {
             if (std::strcmp(name, f.name) == 0) return f.fn;
         }
