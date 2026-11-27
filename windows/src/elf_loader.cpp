@@ -189,7 +189,8 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
     }
 
     std::unique_ptr<ElfImage> img(new ElfImage());
-    img->path_ = path;
+    img->path_ = options.name.empty() ? path : options.name;
+    img->source_ = path;
     img->options_ = options;
     img->machine_ = eh.e_machine;
     for (int i = 0; i < eh.e_phnum; ++i) {
@@ -783,7 +784,11 @@ void ElfImage::register_arm64_code() {
     // (still unrelocated here, as winapk-aot read it).
     arm64_lo_ = code_lo;
     arm64_hi_ = code_hi;
-    arm64::aot_load(path_.u8string().c_str(), bias_, text_hash, code_lo, code_hi);
+    std::string aot_name = path_.u8string();
+    if (source_ != path_) {
+        aot_name = source_.u8string() + "!" + std::to_string(options_.file_offset) + "!" + path_.filename().u8string();
+    }
+    arm64::aot_load(aot_name.c_str(), bias_, text_hash, code_lo, code_hi);
 }
 
 // DT_INIT_ARRAY entries are called as fn(argc, argv, envp); DT_INIT,

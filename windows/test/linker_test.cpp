@@ -228,6 +228,42 @@ struct DlextInfo {
 };
 constexpr uint64_t kReserved = 0x1, kReservedHint = 0x2, kWriteRelro = 0x4, kLibraryFd = 0x10, kLibraryFdOffset = 0x20;
 using DlopenExtFn = void*(WINAPK_GUEST_ABI*)(const char*, int, const void*);
+
+// A zip ("an APK") at `path` holding `elf` stored, uncompressed, as `entry`, its data at offset 8192 as an
+// APK's page-aligned library is. Only what a zip reader looks at is filled in (no CRC).
+bool write_stored_zip(const std::string& path, const std::string& entry, const std::string& elf) {
+    std::string z;
+    auto u16 = [&](uint32_t v) { z.push_back(static_cast<char>(v)), z.push_back(static_cast<char>(v >> 8)); };
+    auto u32 = [&](uint32_t v) { u16(v & 0xffff), u16(v >> 16); };
+    const uint32_t local = 8192 - 30 - static_cast<uint32_t>(entry.size());
+    z.assign(local, '\0');
+    u32(0x04034b50), u16(10), u16(0), u16(0), u16(0), u16(0), u32(0);
+    u32(static_cast<uint32_t>(elf.size())), u32(static_cast<uint32_t>(elf.size()));
+    u16(static_cast<uint32_t>(entry.size())), u16(0);
+    z += entry;
+    z += elf;
+    const uint32_t cd = static_cast<uint32_t>(z.size());
+    u32(0x02014b50), u16(20), u16(10), u16(0), u16(0), u16(0), u16(0), u32(0);
+    u32(static_cast<uint32_t>(elf.size())), u32(static_cast<uint32_t>(elf.size()));
+    u16(static_cast<uint32_t>(entry.size())), u16(0), u16(0), u16(0), u16(0), u32(0), u32(local);
+    z += entry;
+    const uint32_t cd_size = static_cast<uint32_t>(z.size()) - cd;
+    u32(0x06054b50), u16(0), u16(0), u16(1), u16(1), u32(cd_size), u32(cd), u16(0);
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const bool ok = std::fwrite(z.data(), 1, z.size(), f) == z.size();
+    return std::fclose(f) == 0 && ok;
+}
+
+std::string read_whole(const std::string& path) {
+    std::string out;
+    if (FILE* f = std::fopen(path.c_str(), "rb")) {
+        char buf[4096];
+        for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) out.append(buf, n);
+        std::fclose(f);
+    }
+    return out;
+}
 using DlerrorFn = char*(WINAPK_GUEST_ABI*)();
 
 void test_dlopen_ext(winapk::GuestLinker& linker, const char* dir) {
@@ -266,6 +302,13 @@ void test_dlopen_ext(winapk::GuestLinker& linker, const char* dir) {
           !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
               (e = last_error()).find("is not page-aligned: 100") != std::string::npos,
           e);
+    info.library_fd_offset = 1 << 20;
+    const long container_size = _lseek(fd, 0, SEEK_END);
+    _lseek(fd, 0, SEEK_SET);
+    const std::string past = "dlopen failed: file offset for the library \"libwinapk_link_dlext.so\" >= file size: " +
+                             std::to_string(1 << 20) + " >= " + std::to_string(container_size);
+    check("an offset at or past the file's end is refused with bionic's message",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) && (e = last_error()) == past, e);
     check("nothing was loaded by the refused calls", !loaded(linker, kName));
 
     // Too small a reserved range: an error with ANDROID_DLEXT_RESERVED_ADDRESS, anywhere with the hint.
@@ -284,6 +327,9 @@ void test_dlopen_ext(winapk::GuestLinker& linker, const char* dir) {
     const winapk::ElfImage* image = linker.image_containing(sum_fn);
     check("... with the hint it loads elsewhere, from the descriptor at the offset",
           sum_fn && image && image->base() != small && call(linker, hinted, "link_dlext_sum") == 42, last_error());
+    winapk::GuestLinker::AddrInfo where{};
+    check("... named as asked, not after the file it was read from",
+          sum_fn && linker.describe(sum_fn, &where) && std::string(where.file) == kName, sum_fn ? where.file : "");
     if (hinted) linker.close(hinted, &e);
     VirtualFree(small, 0, MEM_RELEASE);
     check("closed, it is unloaded", !loaded(linker, kName));
@@ -313,11 +359,44 @@ void test_dlopen_ext(winapk::GuestLinker& linker, const char* dir) {
         check("WRITE_RELRO wrote whole pages holding the relocated table",
               table && size > 0 && size % 4096 == 0 && bytes.find(pointers) != std::string::npos,
               std::to_string(size) + " bytes");
+        // Loaded already: the same library, and bionic writes no RELRO for one it does not link.
+        _chsize(relro, 0);
+        _lseek(relro, 0, SEEK_SET);
+        void* again = dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info);
+        check("WRITE_RELRO for a library loaded already writes nothing",
+              again == placed && _lseek(relro, 0, SEEK_END) == 0, last_error());
+        if (again) linker.close(again, &e);
         linker.close(placed, &e);
     }
     _close(relro);
     VirtualFree(range, 0, MEM_RELEASE);
     _close(fd);
+    check("closed, it is unloaded again", !loaded(linker, kName));
+
+    // From a stored entry of an APK: named "<apk>!/<entry>", as bionic names a library it loads from inside one.
+    const std::string elf = read_whole(std::string(dir) + "\\" + kName);
+    const std::string apk = std::string(dir) + "\\dlext.apk";
+    const std::string entry = "lib/x86_64/libwinapk_link_dlext.so";
+    check("write an APK holding the library", !elf.empty() && write_stored_zip(apk, entry, elf));
+    const int apk_fd = _open(apk.c_str(), _O_RDONLY | _O_BINARY);
+    info = DlextInfo{};
+    info.flags = kLibraryFd | kLibraryFdOffset;
+    info.library_fd = apk_fd;
+    info.library_fd_offset = 8192;
+    void* from_apk = apk_fd >= 0 ? dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) : nullptr;
+    void* fn = from_apk ? linker.lookup(from_apk, "link_dlext_sum", nullptr, &e) : nullptr;
+    where = {};
+    // The APK as the descriptor's file is named (under Wine, a Z: path for the Linux one given).
+    const std::string want = "\\dlext.apk!/" + entry;
+    auto ends_with = [](const std::string& s, const std::string& end) {
+        return s.size() >= end.size() && s.compare(s.size() - end.size(), end.size(), end) == 0;
+    };
+    check("a library read from an APK's stored entry is named <apk>!/<entry>",
+          fn && call(linker, from_apk, "link_dlext_sum") == 42 && linker.describe(fn, &where) &&
+              ends_with(where.file, want),
+          fn ? where.file : last_error());
+    if (from_apk) linker.close(from_apk, &e);
+    if (apk_fd >= 0) _close(apk_fd);
 }
 
 int main(int argc, char** argv) {
