@@ -9,6 +9,7 @@
 #include "winapk/elf_tls.h"
 #include "winapk/fs_tls_patch.h"
 #include "winapk/guest_abi.h"
+#include "winapk/long_path.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -41,21 +42,8 @@ std::string hex(uint64_t v) {
 }
 
 // A library's path as the file call takes it: near MAX_PATH by its long-path form (an app's
-// native libraries sit under android/data/app/~~<id>/<package>-<id>/lib/<abi>, past 260
-// characters with a long user name or package where Windows' long-path policy is off).
-std::filesystem::path open_path(const std::filesystem::path& path) {
-    const std::wstring w = path.wstring();
-    if (w.size() < MAX_PATH - 12 || w.rfind(L"\\\\?\\", 0) == 0) return path;
-    const DWORD n = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
-    if (n == 0) return path;
-    std::wstring full(n, L'\0');
-    const DWORD m = GetFullPathNameW(w.c_str(), n, &full[0], nullptr);
-    if (m == 0 || m >= n) return path;
-    full.resize(m);
-    if (full.rfind(L"\\\\?\\", 0) == 0) return full;
-    if (full.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + full.substr(2);
-    return L"\\\\?\\" + full;
-}
+// native libraries sit under android/data/app/~~<id>/<package>-<id>/lib/<abi>, long_path.h).
+std::filesystem::path open_path(const std::filesystem::path& path) { return long_path(path.wstring()); }
 
 // Reads the ELF file that starts `offset` bytes into `path`: the whole file
 // when the offset is 0, else (an ELF inside an APK) as far as its headers and

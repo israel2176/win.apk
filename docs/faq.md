@@ -42,8 +42,8 @@ will refuse to run or will limit what they do.
 
 **Do games work?**
 Many do: games on OpenGL ES (libGDX, SDL, most engines) draw through ANGLE,
-and Xbox controllers work. Games that need Vulkan or tilt
-sensors do not yet. A touchscreen gives
+and Xbox controllers work, and Vulkan is there, new and not yet tried with
+many games. Games that need tilt sensors do not work yet. A touchscreen gives
 an app every finger, and Ctrl+wheel (or a pinch on the touchpad) is a
 two-finger pinch; other multi-finger gestures cannot be made with a mouse.
 

@@ -221,6 +221,10 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   `com.android.vending:background`, which `Application.getProcessName()`
   answers), the host's `ApplicationInfo` and configuration, then
   the task manager launches the first activity.
+- `ActivityClientService` (`IActivityClientController`) answers
+  `finishActivityAffinity` too (`Activity.finishAffinity`): the activity and
+  those under it in the task with the same task affinity, finished with
+  `RESULT_CANCELED`, as `ActivityRecord.finishIfSameAffinity` does.
 - `ActivityTaskService` (`IActivityTaskManager`): `startActivity` resolved by
   the host, `START_INTENT_NOT_RESOLVED` when nothing matches (so
   `Instrumentation` throws `ActivityNotFoundException` as on Android).
