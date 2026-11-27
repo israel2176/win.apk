@@ -1876,6 +1876,35 @@ static struct timespec in_ms(long ms) {
     return t;
 }
 
+int flock(int, int);
+
+// flock as Linux keeps it: one lock per open file, which a second call converts (MMKV takes a shared
+// lock, then upgrades it on the same descriptor: issue #198), and which another open file of the same
+// file conflicts with. LOCK_NB throughout, so a regression fails a check instead of hanging.
+static void test_flock(const char* dir) {
+    char path[512];
+    snprintf(path, sizeof path, "%s/flock.lock", dir);
+    int a = open(path, 01102, 0600);  // O_RDWR | O_CREAT | O_TRUNC
+    int b = open(path, 02, 0);        // O_RDWR: a second open file of it
+    check("flock: the files open", a >= 0 && b >= 0, why(a >= 0 && b >= 0));
+    check("flock: a shared lock", flock(a, 1 | 4) == 0, 0);
+    check("flock: the same lock again is no second lock", flock(a, 1 | 4) == 0, 0);
+    check("flock: another open file shares it", flock(b, 1 | 4) == 0, 0);
+    check("flock: an upgrade waits for the other's shared lock", flock(a, 2 | 4) == -1 && *__errno() == 11, 0);
+    check("flock: the other lets go", flock(b, 8) == 0, 0);
+    check("flock: the shared lock becomes exclusive on the same descriptor", flock(a, 2 | 4) == 0, 0);
+    check("flock: exclusive again is no second lock", flock(a, 2 | 4) == 0, 0);
+    check("flock: another open file cannot share an exclusive lock", flock(b, 1 | 4) == -1 && *__errno() == 11,
+          0);
+    check("flock: exclusive back to shared", flock(a, 1 | 4) == 0 && flock(b, 1 | 4) == 0, 0);
+    check("flock: one unlock ends a converted lock",
+          flock(b, 8) == 0 && flock(a, 8) == 0 && flock(b, 2 | 4) == 0 && flock(b, 8) == 0, 0);
+    check("flock: a lock goes with its descriptor's close", flock(a, 2 | 4) == 0 && close(a) == 0 &&
+                                                                  flock(b, 2 | 4) == 0,
+          0);
+    close(b);
+}
+
 static void test_missing_forms(const char* dir) {
     char b[512], path[512], other[512];
     struct stat st;
@@ -2002,8 +2031,9 @@ static void test_missing_forms(const char* dir) {
     // What Win.apk cannot do fails as Linux reports it (and says so once in the log).
     int pid = 0;
     char* argv[] = {"sh", 0};
-    check("posix_spawn answers ENOSYS", posix_spawn(&pid, "/system/bin/sh", 0, 0, argv, environ) == 38, 0);
-    check("execv returns -1 with ENOSYS", execv("/system/bin/sh", argv) == -1 && *__errno() == 38, 0);
+    // No shell here: a device's /system/bin/sh is a file that does not exist (src/bionic/process.cpp).
+    check("posix_spawn of the shell: ENOENT", posix_spawn(&pid, "/system/bin/sh", 0, 0, argv, environ) == 2, 0);
+    check("execv of the shell returns -1 with ENOENT", execv("/system/bin/sh", argv) == -1 && *__errno() == 2, 0);
     check("wait4 has no child: ECHILD", wait4(-1, 0, 0, 0) == -1 && *__errno() == 10, 0);
     int master = 0, slave = 0;
     check("openpty: ENOENT, there is no /dev/ptmx", openpty(&master, &slave, 0, 0, 0) == -1 && *__errno() == 2, 0);
@@ -2372,6 +2402,7 @@ EXPORT int bionic_test(const char* dir) {
     test_signal_delivery();
     test_sweep_gaps(dir);
     test_missing_forms(dir);
+    test_flock(dir);
     test_popular_imports(dir);
     return failures;
 }

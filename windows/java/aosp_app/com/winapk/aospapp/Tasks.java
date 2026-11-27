@@ -162,6 +162,29 @@ public final class Tasks {
         }
     }
 
+    /** ActivityClientController.finishActivityAffinity: `r` and the activities under it in the task, top
+     *  to bottom, until one of another task affinity (ActivityRecord.finishIfSameAffinity), each
+     *  finished as finishIfPossible does, with RESULT_CANCELED. Activity.finishAffinity calls it; with no
+     *  answer an app that closes itself so stayed open. */
+    void finishAffinity(Record r) {
+        String affinity = affinityOf(r);
+        for (int i = task.indexOf(r); i >= 0; i--) {
+            Record c = task.get(i);
+            if (!java.util.Objects.equals(affinityOf(c), affinity)) break;
+            finish(c, android.app.Activity.RESULT_CANCELED, null);
+        }
+    }
+
+    /** An activity's task affinity: its own, else the application's, else the package (the manifest's
+     *  defaults, as PackageParser fills ActivityInfo.taskAffinity). */
+    private static String affinityOf(Record r) {
+        if (r.info.taskAffinity != null) return r.info.taskAffinity;
+        if (r.info.applicationInfo != null && r.info.applicationInfo.taskAffinity != null) {
+            return r.info.applicationInfo.taskAffinity;
+        }
+        return r.info.packageName;
+    }
+
     /** The starts not launched yet: records waiting for the top to pause. */
     java.util.List<Intent> pendingStarts() {
         java.util.List<Intent> out = new ArrayList<>();

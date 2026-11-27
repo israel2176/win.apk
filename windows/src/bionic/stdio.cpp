@@ -397,9 +397,11 @@ WINAPK_GUEST_ABI int g_openat_2(int dirfd, const char* path, int flags) { return
 WINAPK_GUEST_ABI int g_creat(const char* path, unsigned mode) { return g_open(path, kOWrOnly | kOCreat | kOTrunc, mode); }
 // Pipes, eventfds, epoll and sockets are objects (fd.cpp); each descriptor
 // call checks for one first.
+void flock_forget(int fd);  // below, with flock
 WINAPK_GUEST_ABI int g_close(int fd) {
     if (fd_close(fd)) return 0;
     if (fd_is_host_std(fd)) return 0;  // the runtime's log stays open
+    flock_forget(fd);
     return _close(fd) < 0 ? fail_crt() : 0;
 }
 WINAPK_GUEST_ABI int64_t g_read(int fd, void* buf, size_t n) {
@@ -488,6 +490,7 @@ WINAPK_GUEST_ABI int g_dup2(int fd, int to) {
     // The guest's own 0-2 are the runtime's streams too: a file put there (a
     // /dev/null, a log file) would take the runtime's log with it.
     if (fd_is_host_std(to)) return to;
+    flock_forget(to);  // the file `to` named is closed
     return _dup2(fd, to) < 0 ? fail_crt() : to;
 }
 WINAPK_GUEST_ABI int g_dup3(int fd, int to, int) { return g_dup2(fd, to); }
@@ -696,20 +699,87 @@ WINAPK_GUEST_ABI int g_memfd_create(const char*, unsigned) {
 }
 
 // flock: LOCK_SH 1, LOCK_EX 2, LOCK_NB 4, LOCK_UN 8, on the whole file.
+//
+// Linux keeps one flock lock per open file: asking again for the mode held does nothing, and asking for
+// the other mode converts the lock ("the existing lock is first removed, and then a new lock is
+// established", flock(2)). Windows' LockFileEx stacks locks instead, and an exclusive request on a range
+// the same handle already holds waits for ever. MMKV's lock between processes takes a shared lock and
+// then upgrades it on the same descriptor: the main thread hung in MMKV.encodeLong in
+// Application.onCreate (issue #198). So the mode each handle holds is kept here, and a conversion
+// releases the lock before asking for the new one, as Linux does. The file's identity is kept with it:
+// a handle value Windows reuses for another file after a close starts with no lock.
+struct FlockHeld {
+    int mode = 0;  // 1 shared, 2 exclusive
+    DWORD volume = 0;
+    uint64_t index = 0;
+};
+std::mutex g_flock_lock;
+std::map<HANDLE, FlockHeld>& flock_held() {
+    static std::map<HANDLE, FlockHeld> held;
+    return held;
+}
+bool file_identity(HANDLE h, DWORD* volume, uint64_t* index) {
+    BY_HANDLE_FILE_INFORMATION info;
+    if (!GetFileInformationByHandle(h, &info)) return false;
+    *volume = info.dwVolumeSerialNumber;
+    *index = (static_cast<uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+    return true;
+}
+// The lock `h` holds now, and forgets one left by another file that had the same handle value.
+int flock_mode_locked(HANDLE h, DWORD volume, uint64_t index) {
+    auto& held = flock_held();
+    auto it = held.find(h);
+    if (it == held.end()) return 0;
+    if (it->second.volume != volume || it->second.index != index) {
+        held.erase(it);
+        return 0;
+    }
+    return it->second.mode;
+}
+// A descriptor's handle is closing: Windows drops its locks with it.
+void flock_forget(int fd) {
+    const HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
+    if (h == INVALID_HANDLE_VALUE) return;
+    std::lock_guard<std::mutex> hold(g_flock_lock);
+    flock_held().erase(h);
+}
 WINAPK_GUEST_ABI int g_flock(int fd, int op) {
     const HANDLE h = reinterpret_cast<HANDLE>(_get_osfhandle(fd));
     if (h == INVALID_HANDLE_VALUE) {
         *guest_errno() = kEBADF;
         return -1;
     }
+    const int want = (op & 8) ? 0 : (op & 2) ? 2 : (op & 1) ? 1 : -1;
+    if (want < 0) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
+    DWORD volume = 0;
+    uint64_t index = 0;
+    if (!file_identity(h, &volume, &index)) {
+        set_errno_from_win32(GetLastError());
+        return -1;
+    }
+    {
+        std::lock_guard<std::mutex> hold(g_flock_lock);
+        const int now = flock_mode_locked(h, volume, index);
+        if (now == want) return 0;
+        if (now != 0) {
+            OVERLAPPED at{};
+            UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &at);
+            flock_held().erase(h);
+        }
+        if (want == 0) return 0;
+    }
+    // Not under g_flock_lock: a blocking request waits for another descriptor or process to let go.
     OVERLAPPED at{};
-    if (op & 8) {
-        UnlockFileEx(h, 0, MAXDWORD, MAXDWORD, &at);
+    DWORD flags = want == 2 ? LOCKFILE_EXCLUSIVE_LOCK : 0;
+    if (op & 4) flags |= LOCKFILE_FAIL_IMMEDIATELY;
+    if (LockFileEx(h, flags, 0, MAXDWORD, MAXDWORD, &at)) {
+        std::lock_guard<std::mutex> hold(g_flock_lock);
+        flock_held()[h] = FlockHeld{want, volume, index};
         return 0;
     }
-    DWORD flags = (op & 2) ? LOCKFILE_EXCLUSIVE_LOCK : 0;
-    if (op & 4) flags |= LOCKFILE_FAIL_IMMEDIATELY;
-    if (LockFileEx(h, flags, 0, MAXDWORD, MAXDWORD, &at)) return 0;
     const DWORD e = GetLastError();
     if (e == ERROR_LOCK_VIOLATION || e == ERROR_IO_PENDING) {
         *guest_errno() = kEAGAIN;  // EWOULDBLOCK

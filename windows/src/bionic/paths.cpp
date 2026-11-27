@@ -446,6 +446,19 @@ std::wstring file_path(const char* p) {
     return L"\\\\?\\" + full;
 }
 
+std::wstring android_root() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_android_root;
+}
+std::string app_package() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_app_package;
+}
+std::wstring app_data_dir() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_app_data_dir;
+}
+
 }  // namespace winapk::bionic
 
 namespace winapk {

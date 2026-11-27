@@ -92,7 +92,7 @@ issue has none yet; please open one before working on it.
 | 5 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
 | 6 | Real sensors | PCs with an accelerometer cannot steer tilt games | |
 | 7 | Bluetooth: discovery, pairing, GATT server, profiles | Apps that pair devices themselves or act as a Bluetooth peripheral | |
-| 8 | Child processes (`fork`, `posix_spawn`, `exec`) | Browsers that run their engine in separate processes (Firefox family) end at start | [#117](https://github.com/israel2176/win.apk/issues/117) |
+| 8 | Child processes: `fork`, a component's own `android:process` without Google services, passing file descriptors | Browsers that run their engine in separate processes (Firefox family) end at start. An x86_64 program an app runs (`posix_spawn`, `exec`, `ProcessBuilder`) runs | [#117](https://github.com/israel2176/win.apk/issues/117) |
 
 ## The automated sweep
 
