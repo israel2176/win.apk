@@ -1,0 +1,187 @@
+# The reported apps (windows/test/compat/reported.txt): the Play apps users reported and fixes were
+# merged for, downloaded from APKPure with the staged apkeep (as the Google services setup's
+# Download runs it) and booted headless by sweep.py on the staged runtime of a branch's newest CI
+# build (.github/probe/stage.sh; main's by default). An app that was downloaded and does not draw
+# its first screen, after one more try, fails the run; one APKPure does not serve is listed as not
+# downloaded. By hand (Actions > Reported apps > Run workflow), and on a pull request that changes
+# the list or this file. Not part of ci.yml: it asks APKPure, and its apps are not pinned.
+name: Reported apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch whose newest CI build's runtime runs the apps (else main's)"
+        type: string
+        default: main
+      packages:
+        description: 'Only these packages, comma-separated (empty: all of reported.txt)'
+        type: string
+        default: ''
+  pull_request:
+    paths:
+      - windows/test/compat/reported.txt
+      - .github/workflows/reported.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: reported-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  REF: ${{ inputs.ref || 'main' }}
+  ONLY: ${{ inputs.packages }}
+  SHARDS: 4
+
+jobs:
+  check:
+    name: Reported apps (${{ matrix.shard }}/4)
+    runs-on: windows-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: The staged runtime (the ref's newest CI build, else main's)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/probe/stage.sh "$REF" stage
+      - name: Download this machine's apps from APKPure
+        timeout-minutes: 90
+        run: |
+          set -uo pipefail
+          apkeep="$PWD/stage/bin/tools/apkeep.exe"
+          mkdir -p apk-cache out
+          : > apps-local.txt
+          : > out/downloads-${{ matrix.shard }}.tsv
+          mapfile -t pkgs < <(sed 's/#.*//' windows/test/compat/reported.txt | awk 'NF {print $1}')
+          if [ -n "$ONLY" ]; then
+            IFS=',' read -ra want <<< "$ONLY"
+            keep=()
+            for p in "${pkgs[@]}"; do for w in "${want[@]}"; do [ "$p" = "$(echo "$w" | xargs)" ] && keep+=("$p"); done; done
+            pkgs=("${keep[@]}")
+          fi
+          # What code an app file carries: x86_64, other ABIs only, or none (a bundle's splits by name).
+          abi_of() {
+            python -I -c '
+          import sys, zipfile
+          n = zipfile.ZipFile(sys.argv[1]).namelist()
+          x = any(s.startswith("lib/x86_64/") or "config.x86_64" in s for s in n)
+          o = any(s.startswith("lib/") or "config.arm" in s or "config.x86." in s for s in n)
+          print("x86_64" if x else ("other" if o else "none"))' "$1"
+          }
+          # As the launcher's setup_fetch: three tries, each into an empty folder.
+          fetch() {  # <package> <arch> -> the file's path, or nothing
+            local dir="$RUNNER_TEMP/dl/$1-$2" f=""
+            for attempt in 1 2 3; do
+              [ "$attempt" = 1 ] || sleep $([ "$attempt" = 2 ] && echo 5 || echo 20)
+              rm -rf "$dir" && mkdir -p "$dir"
+              (cd "$dir" && timeout 900 "$apkeep" -a "$1" -d apk-pure \
+                -o "acknowledge_dangers=true,arch=$2,sdk=34" "$(cygpath -w "$dir")") > /dev/null 2>&1 || true
+              f=$(find "$dir" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' -o -name '*.apkm' -o -name '*.apks' \) \
+                -size +0 | head -n 1)
+              [ -n "$f" ] && break
+            done
+            echo "$f"
+          }
+          i=0
+          for pkg in "${pkgs[@]}"; do
+            i=$((i + 1))
+            [ $(( (i - 1) % SHARDS + 1 )) = "${{ matrix.shard }}" ] || continue
+            echo "::group::$pkg"
+            f="$(fetch "$pkg" x86_64)" abi=""
+            [ -z "$f" ] || abi="$(abi_of "$f")"
+            if [ "$abi" = other ]; then
+              # APKPure served another ABI's build: the arm64 one runs translated.
+              f2="$(fetch "$pkg" arm64-v8a)"
+              if [ -n "$f2" ]; then f="$f2"; abi="arm64 ($(abi_of "$f2"))"; fi
+            fi
+            if [ -z "$f" ]; then
+              echo "$pkg: not on APKPure"
+              printf '%s\t%s\t%s\n' "$pkg" "-" "not downloaded" >> out/downloads-${{ matrix.shard }}.tsv
+              echo "::warning::$pkg: APKPure gave no file"
+              echo "::endgroup::"
+              continue
+            fi
+            name="$pkg@download.${f##*.}"
+            mv "$f" "apk-cache/$name"
+            echo "$pkg 0 $name" >> apps-local.txt
+            ver=$(basename "$f")
+            printf '%s\t%s\t%s\n' "$pkg" "$ver" "$abi" >> out/downloads-${{ matrix.shard }}.tsv
+            ls -l "apk-cache/$name"
+            sha256sum "apk-cache/$name"
+            echo "::endgroup::"
+          done
+          cat out/downloads-${{ matrix.shard }}.tsv
+      - name: Boot them headless
+        shell: pwsh
+        run: |
+          if (-not (Get-Content apps-local.txt)) { "nothing downloaded on this machine"; exit 0 }
+          # As the smoke test: one framework archive shared by the apps, as a user's data folder has it.
+          $env:WINAPK_CDS_DIR = "$PWD\cds"
+          ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
+          if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50; exit 1 }
+          python windows/test/compat/sweep.py --runtime stage --apps apps-local.txt `
+            --apks apk-cache --out out --frames 150 --timeout 300 --require-drew
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reported-${{ matrix.shard }}
+          path: |
+            out/report.json
+            out/report.md
+            out/downloads-*.tsv
+            out/logs/
+            out/frames/
+
+  report:
+    name: Reported apps, the report
+    needs: check
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: reported-*
+          path: shards
+      - name: Merge the machines' reports
+        run: |
+          dirs=()
+          for d in shards/reported-*; do [ -f "$d/report.json" ] && dirs+=("$d"); done
+          if [ "${#dirs[@]}" -gt 0 ]; then python3 windows/test/compat/sweep.py --merge "${dirs[@]}" --out reported; fi
+          mkdir -p reported
+          cat shards/reported-*/downloads-*.tsv > reported/downloads.tsv 2> /dev/null || true
+          {
+            echo "## Reported apps on ${REF}'s build"
+            echo
+            echo "| Package | Status | Downloaded as | Code |"
+            echo "|---|---|---|---|"
+            while IFS=$'\t' read -r pkg file abi; do
+              status=$(python3 -I -c 'import json,sys
+          try: rs = json.load(open("reported/report.json"))
+          except Exception: rs = []
+          rs = rs.get("apps", rs) if isinstance(rs, dict) else rs
+          print(next((r["status"] for r in rs if r.get("package") == sys.argv[1]), "not run"))' "$pkg")
+              [ "$abi" = "not downloaded" ] && status="not on APKPure"
+              echo "| $pkg | $status | $file | $abi |"
+            done < reported/downloads.tsv
+            echo
+            [ -f reported/report.md ] && cat reported/report.md
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reported
+          path: reported/
+      - name: The result
+        run: |
+          [ "${{ needs.check.result }}" = success ] || { echo "::error::an app that was downloaded did not draw (see the summary)"; exit 1; }

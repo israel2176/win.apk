@@ -1759,6 +1759,7 @@ start; those throw alike on both sides, and only a difference counts.
 |---|---|---|
 | `.github/workflows/ci.yml` | Pull requests touching `windows/` or `runtime/`; by hand; a push to `main` (build only, and the UI gate's caches) | The pipeline below |
 | `.github/workflows/ui-sweep.yml` | By hand only: an F-Droid package or an APK URL, and a branch | The screens sweep of one app, Android's side on Ubuntu and Win.apk's on Windows, with pictures ([The UI gate](#the-ui-gate-only-closer-to-android)) |
+| `.github/workflows/reported.yml` | By hand (a branch, optionally some packages), and on a pull request that changes it or `windows/test/compat/reported.txt` | The Play apps users reported and fixes were merged for, downloaded from APKPure with the staged apkeep and booted headless by `sweep.py` on the branch's newest CI build; fails when a downloaded one does not draw |
 | `.github/workflows/windows-release.yml` | By hand only, with a tag such as `v1.0.0`, and whether it is a pre-release (not by default) | Builds with `-DWINAPK_VERSION=<tag>`, stages, packages `Win.apk-windows-x64.zip` with the JRE from `bake_jre.sh` and `package/README.txt`, smoke-tests the package (boots an APK headless), builds `Win.apk-Setup.exe` with Inno Setup, and publishes both as a GitHub release (or pre-release) with `package/RELEASE_NOTES.md` as the notes |
 
 `ci.yml`'s jobs, in the order they can start:
