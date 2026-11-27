@@ -437,6 +437,19 @@ std::wstring mapped_path(const char* p) {
 // long-path policy (off on most PCs) every such file call failed.
 std::wstring file_path(const char* p) { return long_path(host_path(p)); }
 
+std::wstring android_root() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_android_root;
+}
+std::string app_package() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_app_package;
+}
+std::wstring app_data_dir() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_app_data_dir;
+}
+
 }  // namespace winapk::bionic
 
 namespace winapk {

@@ -45,6 +45,7 @@ add_library(winapk_loader STATIC
   src/bionic/looper.cpp
   src/bionic/zlib.cpp
   src/bionic/setjmp.cpp
+  src/bionic/process.cpp
   src/abi_thunk.cpp
   src/linker.cpp
   src/arm64/arm64_cpu.cpp
@@ -108,6 +109,12 @@ endif()
 
 add_executable(winapk-elfrun tools/elfrun_main.cpp)
 target_link_libraries(winapk-elfrun PRIVATE winapk_loader)
+
+# posix_spawn, waitpid and kill on a child running test/guest/exec_guest.c: the test answers --exec
+# (host/exec_main.cpp) as winapk-runtime does, the program the shim starts again for a child.
+add_executable(winapk-exec-test test/exec_test.cpp host/exec_main.cpp)
+target_include_directories(winapk-exec-test PRIVATE host)
+target_link_libraries(winapk-exec-test PRIVATE winapk_loader)
 
 add_executable(winapk-thunk-test test/thunk_test.cpp)
 target_link_libraries(winapk-thunk-test PRIVATE winapk_loader)
@@ -228,6 +235,7 @@ target_include_directories(winapk-aot PRIVATE include)
 if(MINGW)
   # One self-contained .exe: no libstdc++/libgcc/winpthread DLLs next to it.
   target_link_options(winapk-elfrun PRIVATE -static)
+  target_link_options(winapk-exec-test PRIVATE -static)
   target_link_options(winapk-thunk-test PRIVATE -static)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)
@@ -332,7 +340,7 @@ if(WINAPK_JNI_INCLUDE)
 
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
-  add_executable(winapk-runtime host/runtime_main.cpp host/host_natives.cpp host/native_log.cpp
+  add_executable(winapk-runtime host/runtime_main.cpp host/exec_main.cpp host/host_natives.cpp host/native_log.cpp
                               host/native_cocoa.cpp host/win32_window.cpp host/guest_libs.cpp host/java_io_open.cpp
                               host/text_input_model.cpp host/tsf_store.cpp host/tsf_session.cpp
                               host/input_pane.cpp host/native_text_input.cpp

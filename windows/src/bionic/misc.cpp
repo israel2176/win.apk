@@ -9,6 +9,7 @@
 
 #include "bionic_internal.h"
 
+#include "winapk/arm64_guest.h"
 #include "winapk/mini_bionic.h"
 
 #include <algorithm>
@@ -1349,6 +1350,7 @@ WINAPK_GUEST_ABI uint32_t g_getuid() { return 10100; }
 // a process-directed signal lands on whichever thread does not block it.
 // Other processes are not the app's to signal here.
 WINAPK_GUEST_ABI int g_kill(int pid, int sig) {
+    if (int r = 0; pid > 0 && child_kill(pid, sig, &r)) return r;
     if (pid != g_getpid() && pid != 0 && pid != -1) return *guest_errno() = kESRCH, -1;
     const int err = signal_send(0, sig);
     if (err) return *guest_errno() = err, -1;
@@ -1369,11 +1371,10 @@ WINAPK_GUEST_ABI int g_tkill(int tid, int sig) { return g_tgkill(-1, tid, sig); 
 // app.) Nothing is ever a child of the app, so waitpid has nothing to wait
 // for: ECHILD, as on Linux for a process with no children.
 //
-// TODO(child processes): an app that runs part of itself in processes it
-// starts (Gecko's content and GPU processes: Fennec, issue #117; a terminal's
-// shell) cannot work until guest code can start a second runtime process.
-// Until then the failure is said once in the app's log, so a start that ends
-// here does not look like a crash of ours.
+// An app that starts a program does so with posix_spawn or vfork and exec;
+// those start it as a process of its own (process.cpp). A fork that would go on
+// running the app's own code in a copy cannot be had; the failure is said once
+// in the app's log, so a start that ends here does not look like a crash of ours.
 WINAPK_GUEST_ABI int g_fork() {
     static std::atomic<bool> said{false};
     if (!said.exchange(true)) {
@@ -1383,31 +1384,17 @@ WINAPK_GUEST_ABI int g_fork() {
     }
     return *guest_errno() = kENOSYS, -1;
 }
-WINAPK_GUEST_ABI int g_waitpid(int, int*, int) { return *guest_errno() = kECHILD, -1; }
-// The rest of the family, for the same reasons. Missing, each answered 0 through the loader's fallback:
-// posix_spawn "started" a process with whatever was in *pid, wait4 "reaped" process 0, and clone, like
-// fork, told its caller it was the child.
+// waitpid, wait4 and the rest of the family, posix_spawn and the exec family: the children an app
+// starts, process.cpp. clone, like fork, would have told its caller it was the child.
 void note_no_child(const char* call) {
     static std::atomic<bool> said{false};
-    say_once(said, call, "the app tried to start a child process, which Win.apk does not support yet; the call "
-                         "fails with ENOSYS");
-}
-// execve and its relatives return only to fail. (No argument is read, so one function serves the
-// variadic execl forms too.)
-WINAPK_GUEST_ABI int g_exec() {
-    note_no_child("exec()");
-    return *guest_errno() = kENOSYS, -1;
-}
-// posix_spawn and posix_spawnp answer the error itself.
-WINAPK_GUEST_ABI int g_posix_spawn() {
-    note_no_child("posix_spawn()");
-    return kENOSYS;
+    say_once(said, call, "the app tried to copy its process, which Windows cannot do; the call fails with ENOSYS "
+                         "(posix_spawn and exec start a program)");
 }
 WINAPK_GUEST_ABI int g_clone() {
     note_no_child("clone()");
     return *guest_errno() = kENOSYS, -1;
 }
-WINAPK_GUEST_ABI int g_wait() { return *guest_errno() = kECHILD, -1; }  // wait, wait3, wait4, waitid
 
 // True when `pid` names this process to the scheduling calls: 0, its pid, or
 // one of its threads (Linux's per-thread ids; here Windows thread ids).
@@ -1860,8 +1847,14 @@ WINAPK_GUEST_ABI int g_getopt_long_only(int argc, char* const* argv, const char*
 }
 
 // ---- process exit -------------------------------------------------------------------------
+// --exec (mini_bionic_program_mode): the process is one Android program an app started, its
+// stderr the app's pipe, which must get the program's own bytes and nothing of ours.
+std::atomic<bool> g_program_mode{false};
+
 [[noreturn]] WINAPK_GUEST_ABI void g_exit(int code) {
-    std::fprintf(stderr, "[win.apk] guest called exit(%d)\n", code);
+    if (!g_program_mode) {
+        std::fprintf(stderr, "[win.apk] guest called exit(%d)\n", code);
+    }
     std::fflush(stderr);
     mini_bionic_run_atexit();
     std::fflush(nullptr);
@@ -1869,10 +1862,29 @@ WINAPK_GUEST_ABI int g_getopt_long_only(int argc, char* const* argv, const char*
     std::abort();
 }
 [[noreturn]] WINAPK_GUEST_ABI void g__exit(int code) {
-    std::fprintf(stderr, "[win.apk] guest called _exit(%d)\n", code);
-    std::fflush(stderr);
+    if (!g_program_mode) std::fprintf(stderr, "[win.apk] guest called _exit(%d)\n", code);
+    std::fflush(nullptr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     std::abort();
+}
+
+// A dynamic executable's start (crtbegin's _start calls it with the stack the kernel made: argc,
+// argv, envp, auxv): the loader has run the program's constructors already, as bionic's linker
+// does before jumping to the entry point, so what is left is main and exit with what it returns.
+// The environment main gets is the shim's (the spawner's variables over Android's defaults), the
+// same `environ` getenv reads.
+using GuestMain = int(WINAPK_GUEST_ABI*)(int, char**, char**);
+[[noreturn]] WINAPK_GUEST_ABI void g___libc_init(void* raw_args, void*, GuestMain slingshot, const void*) {
+    auto* words = static_cast<uintptr_t*>(raw_args);
+    const int argc = static_cast<int>(words[0]);
+    char** argv = reinterpret_cast<char**>(words + 1);
+    auto fn = reinterpret_cast<GuestMain>(arm64::host_callable(reinterpret_cast<void*>(slingshot)));
+    char** envp;
+    {
+        std::lock_guard<std::mutex> hold(g_env_lock);
+        envp = g_environ;
+    }
+    g_exit(fn(argc, argv, envp));
 }
 WINAPK_GUEST_ABI int g_atexit(void (*)()) { return 0; }  // never run: an app's process never exits normally
 
@@ -2797,22 +2809,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("tkill", g_tkill),
     WINAPK_SHIM("fork", g_fork),
     WINAPK_SHIM("vfork", g_fork),
-    WINAPK_SHIM("waitpid", g_waitpid),
-    WINAPK_SHIM("wait", g_wait),
-    WINAPK_SHIM("wait3", g_wait),
-    WINAPK_SHIM("wait4", g_wait),
-    WINAPK_SHIM("waitid", g_wait),
     WINAPK_SHIM("clone", g_clone),
-    WINAPK_SHIM("posix_spawn", g_posix_spawn),
-    WINAPK_SHIM("posix_spawnp", g_posix_spawn),
-    WINAPK_SHIM("execve", g_exec),
-    WINAPK_SHIM("execv", g_exec),
-    WINAPK_SHIM("execvp", g_exec),
-    WINAPK_SHIM("execvpe", g_exec),
-    WINAPK_SHIM("execl", g_exec),
-    WINAPK_SHIM("execlp", g_exec),
-    WINAPK_SHIM("execle", g_exec),
-    WINAPK_SHIM("fexecve", g_exec),
     WINAPK_SHIM("mremap", g_mremap),
     WINAPK_SHIM("shmget", g_sysv_shm),
     WINAPK_SHIM("shmat", g_sysv_shm),
@@ -2897,6 +2894,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("optreset", __mingw_optreset),
     WINAPK_SHIM("exit", g_exit),
     WINAPK_SHIM("_exit", g__exit),
+    WINAPK_SHIM("__libc_init", g___libc_init),
     WINAPK_SHIM("_Exit", g__exit),
     WINAPK_SHIM("quick_exit", g__exit),  // returned to its caller, which the compiler knows it never does
     WINAPK_SHIM("atexit", g_atexit),
@@ -2979,10 +2977,24 @@ int bionic_unsetenv(const char* name) {
     return 0;
 }
 
+void mini_bionic_program_mode(const std::vector<std::string>& env) {
+    bionic::g_program_mode = true;
+    for (const std::string& kv : env) {
+        const size_t eq = kv.find('=');
+        if (eq == std::string::npos || eq == 0) continue;
+        bionic_setenv(kv.substr(0, eq).c_str(), kv.substr(eq + 1).c_str(), 1);
+    }
+}
+
 }  // namespace winapk
 
 namespace winapk::bionic {
 ShimTable misc_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
+
+char** guest_environ() {
+    std::lock_guard<std::mutex> hold(g_env_lock);
+    return g_environ;
+}
 
 void say_once(std::atomic<bool>& said, const char* call, const char* what) {
     if (said.exchange(true)) return;
