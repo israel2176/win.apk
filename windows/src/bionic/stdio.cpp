@@ -12,6 +12,7 @@
 
 #include "bionic_internal.h"
 #include "winapk/linker.h"
+#include "winapk/long_path.h"
 #include "winapk/mini_bionic.h"
 
 #include <algorithm>
@@ -262,9 +263,7 @@ bool fd_host_path(int fd, std::wstring* out) {
     }
     // "\\?\C:\dir" or "\\?\UNC\server\share\dir": the prefix goes, because
     // under it a '/' in the guest's part of a joined path is no separator.
-    out->assign(buf, n);
-    if (out->compare(0, 8, L"\\\\?\\UNC\\") == 0) out->replace(0, 8, L"\\\\");
-    else if (out->compare(0, 4, L"\\\\?\\") == 0) out->erase(0, 4);
+    *out = plain_path(std::wstring(buf, n));
     return true;
 }
 
@@ -987,7 +986,9 @@ WINAPK_GUEST_ABI char* g_realpath(const char* path, char* out) {
         set_errno_from_win32(GetLastError());
         return nullptr;
     }
-    if (GetFileAttributesW(full) == INVALID_FILE_ATTRIBUTES) {
+    // Whether it exists by its long-path form: past MAX_PATH (an app's deep data files) the plain
+    // one is "not found" without Windows' long-path policy, and an existing file failed ENOENT.
+    if (GetFileAttributesW(long_path(full).c_str()) == INVALID_FILE_ATTRIBUTES) {
         set_errno_from_win32(GetLastError());
         return nullptr;
     }
@@ -1323,9 +1324,9 @@ std::wstring final_path_of_handle(HANDLE h) {
     wchar_t buf[2048];
     const DWORD n = GetFinalPathNameByHandleW(h, buf, 2048, FILE_NAME_NORMALIZED);
     if (n == 0 || n >= 2048) return {};
-    std::wstring p(buf, n);
-    if (p.rfind(L"\\\\?\\", 0) == 0) p.erase(0, 4);
-    return p;
+    // "\\?\C:\x" is "C:\x" and "\\?\UNC\server\share\x" is "\\server\share\x": with only the
+    // four characters gone a file on a share read back as "UNC\server\...", a relative path.
+    return plain_path(std::wstring(buf, n));
 }
 // The link target as a host path, or empty with errno set.
 std::wstring link_target(const char* path) {

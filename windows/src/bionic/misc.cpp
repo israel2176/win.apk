@@ -9,6 +9,7 @@
 
 #include "bionic_internal.h"
 
+#include "winapk/arm64_guest.h"
 #include "winapk/mini_bionic.h"
 
 #include <algorithm>
@@ -116,50 +117,37 @@ WINAPK_GUEST_ABI double g_difftime(int64_t end, int64_t start) {
 }
 WINAPK_GUEST_ABI glong g_clock() { return thread_cpu_ns(nullptr, true) / 1000; }  // CLOCKS_PER_SEC 1000000
 
-// Sleeps `ns`; returns the nanoseconds left when a signal's handler cut the
-// sleep short (Linux's nanosleep fails with EINTR then, whatever SA_RESTART
-// says), else 0.
+// Sleeps `ns`. A signal sent to the thread meanwhile runs its handler and ends the sleep early,
+// as Linux's sleeps end with EINTR whatever SA_RESTART says: the time not slept is returned,
+// 0 when the whole sleep was slept.
 int64_t sleep_ns(int64_t ns) {
     if (ns <= 0) return 0;
-    // A high-resolution waitable timer where Windows has one; a timed wait otherwise.
+    // A high-resolution waitable timer where Windows has one; Sleep otherwise.
     static const bool high_res = [] {
         HANDLE t = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /*HIGH_RESOLUTION*/, TIMER_ALL_ACCESS);
         if (t) CloseHandle(t);
         return t != nullptr;
     }();
-    SignalableSleep sleep(SignalableSleep::kEvent);
-    HANDLE signal_event = static_cast<HANDLE>(sleep.event());
-    const ULONGLONG start = GetTickCount64();
+    const int64_t start = monotonic_ns();
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, high_res ? 0x00000002 : 0, TIMER_ALL_ACCESS);
-    const DWORD ms = static_cast<DWORD>(std::min<int64_t>((ns + 999999) / 1000000, INFINITE - 1));
-    if (timer) {
-        LARGE_INTEGER due;
-        due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
-        SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+    if (!timer) {
+        Sleep(static_cast<DWORD>((ns + 999999) / 1000000));
+        return 0;
     }
-    for (;;) {
-        HANDLE waits[2] = {timer, signal_event};
-        DWORD r;
-        if (timer && signal_event) r = WaitForMultipleObjects(2, waits, FALSE, INFINITE);
-        else if (timer) r = WaitForSingleObject(timer, INFINITE);
-        else if (signal_event) r = WaitForSingleObject(signal_event, ms) == WAIT_OBJECT_0 ? WAIT_OBJECT_0 + 1 : WAIT_OBJECT_0;
-        else r = (Sleep(ms), WAIT_OBJECT_0);
-        if (r != WAIT_OBJECT_0 + 1) break;  // the time is up
-        if (sleep.interrupted() != SignalableSleep::kNotInterrupted) {
-            if (timer) CloseHandle(timer);
-            const int64_t slept = static_cast<int64_t>(GetTickCount64() - start) * 1000000;
-            return std::max<int64_t>(ns - slept, 1);
+    LARGE_INTEGER due;
+    due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
+    SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+    const HANDLE waits[2] = {timer, signal_wait_event()};
+    int64_t left = 0;
+    // The event may be left set by a signal the thread took elsewhere: then it sleeps on.
+    while (WaitForMultipleObjects(waits[1] ? 2 : 1, waits, FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
+        if (signal_take_posted() != WaitEnd::kNone) {
+            left = std::max<int64_t>(ns - (monotonic_ns() - start), 1);
+            break;
         }
-        ResetEvent(signal_event);  // set for a signal whose handler had already run
-        if (!timer) break;
     }
-    if (timer) CloseHandle(timer);
-    return 0;
-}
-void put_left(int64_t left, GuestTimespec* rem) {
-    if (!rem) return;
-    rem->tv_sec = left / 1000000000LL;
-    rem->tv_nsec = left % 1000000000LL;
+    CloseHandle(timer);
+    return left;
 }
 WINAPK_GUEST_ABI int g_nanosleep(const GuestTimespec* req, GuestTimespec* rem) {
     if (!req || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL) {
@@ -167,26 +155,34 @@ WINAPK_GUEST_ABI int g_nanosleep(const GuestTimespec* req, GuestTimespec* rem) {
         return -1;
     }
     const int64_t left = sleep_ns(req->tv_sec * 1000000000LL + req->tv_nsec);
-    put_left(left, rem);
-    if (left) return *guest_errno() = kEINTR, -1;
+    if (rem) {
+        rem->tv_sec = left / 1000000000LL;
+        rem->tv_nsec = left % 1000000000LL;
+    }
+    if (left) {
+        *guest_errno() = kEINTR;
+        return -1;
+    }
     return 0;
 }
 WINAPK_GUEST_ABI int g_clock_nanosleep(int clock, int flags, const GuestTimespec* req, GuestTimespec* rem) {
     if (flags & 1) {  // TIMER_ABSTIME
         GuestTimespec now;
         g_clock_gettime(clock, &now);
-        // Interrupted, an absolute sleep reports EINTR and nothing left (the deadline stands).
         return sleep_ns((req->tv_sec - now.tv_sec) * 1000000000LL + (req->tv_nsec - now.tv_nsec)) ? kEINTR : 0;
     }
     return g_nanosleep(req, rem) == 0 ? 0 : *guest_errno();
 }
 WINAPK_GUEST_ABI int g_usleep(uint32_t us) {
-    if (sleep_ns(static_cast<int64_t>(us) * 1000)) return *guest_errno() = kEINTR, -1;
+    if (sleep_ns(static_cast<int64_t>(us) * 1000)) {
+        *guest_errno() = kEINTR;
+        return -1;
+    }
     return 0;
 }
 WINAPK_GUEST_ABI unsigned g_sleep(unsigned s) {
-    // The seconds left when a handler cut it short, rounded up as Bionic's sleep does.
-    return static_cast<unsigned>((sleep_ns(static_cast<int64_t>(s) * 1000000000LL) + 999999999LL) / 1000000000LL);
+    const int64_t left = sleep_ns(static_cast<int64_t>(s) * 1000000000LL);
+    return static_cast<unsigned>((left + 999999999) / 1000000000LL);  // the seconds not slept
 }
 
 // struct tm is the same 9 ints on both sides, then Bionic adds tm_gmtoff (long)
@@ -1354,6 +1350,7 @@ WINAPK_GUEST_ABI uint32_t g_getuid() { return 10100; }
 // a process-directed signal lands on whichever thread does not block it.
 // Other processes are not the app's to signal here.
 WINAPK_GUEST_ABI int g_kill(int pid, int sig) {
+    if (int r = 0; pid > 0 && child_kill(pid, sig, &r)) return r;
     if (pid != g_getpid() && pid != 0 && pid != -1) return *guest_errno() = kESRCH, -1;
     const int err = signal_send(0, sig);
     if (err) return *guest_errno() = err, -1;
@@ -1374,11 +1371,10 @@ WINAPK_GUEST_ABI int g_tkill(int tid, int sig) { return g_tgkill(-1, tid, sig); 
 // app.) Nothing is ever a child of the app, so waitpid has nothing to wait
 // for: ECHILD, as on Linux for a process with no children.
 //
-// TODO(child processes): an app that runs part of itself in processes it
-// starts (Gecko's content and GPU processes: Fennec, issue #117; a terminal's
-// shell) cannot work until guest code can start a second runtime process.
-// Until then the failure is said once in the app's log, so a start that ends
-// here does not look like a crash of ours.
+// An app that starts a program does so with posix_spawn or vfork and exec;
+// those start it as a process of its own (process.cpp). A fork that would go on
+// running the app's own code in a copy cannot be had; the failure is said once
+// in the app's log, so a start that ends here does not look like a crash of ours.
 WINAPK_GUEST_ABI int g_fork() {
     static std::atomic<bool> said{false};
     if (!said.exchange(true)) {
@@ -1388,31 +1384,17 @@ WINAPK_GUEST_ABI int g_fork() {
     }
     return *guest_errno() = kENOSYS, -1;
 }
-WINAPK_GUEST_ABI int g_waitpid(int, int*, int) { return *guest_errno() = kECHILD, -1; }
-// The rest of the family, for the same reasons. Missing, each answered 0 through the loader's fallback:
-// posix_spawn "started" a process with whatever was in *pid, wait4 "reaped" process 0, and clone, like
-// fork, told its caller it was the child.
+// waitpid, wait4 and the rest of the family, posix_spawn and the exec family: the children an app
+// starts, process.cpp. clone, like fork, would have told its caller it was the child.
 void note_no_child(const char* call) {
     static std::atomic<bool> said{false};
-    say_once(said, call, "the app tried to start a child process, which Win.apk does not support yet; the call "
-                         "fails with ENOSYS");
-}
-// execve and its relatives return only to fail. (No argument is read, so one function serves the
-// variadic execl forms too.)
-WINAPK_GUEST_ABI int g_exec() {
-    note_no_child("exec()");
-    return *guest_errno() = kENOSYS, -1;
-}
-// posix_spawn and posix_spawnp answer the error itself.
-WINAPK_GUEST_ABI int g_posix_spawn() {
-    note_no_child("posix_spawn()");
-    return kENOSYS;
+    say_once(said, call, "the app tried to copy its process, which Windows cannot do; the call fails with ENOSYS "
+                         "(posix_spawn and exec start a program)");
 }
 WINAPK_GUEST_ABI int g_clone() {
     note_no_child("clone()");
     return *guest_errno() = kENOSYS, -1;
 }
-WINAPK_GUEST_ABI int g_wait() { return *guest_errno() = kECHILD, -1; }  // wait, wait3, wait4, waitid
 
 // True when `pid` names this process to the scheduling calls: 0, its pid, or
 // one of its threads (Linux's per-thread ids; here Windows thread ids).
@@ -1595,27 +1577,34 @@ int64_t guest_futex(uint32_t* uaddr, int op, uint32_t val, const GuestTimespec* 
             }
             ms = ns <= 0 ? 0 : static_cast<DWORD>((ns + 999999) / 1000000);
         }
-        // A signal's handler cuts the wait short: EINTR, or with SA_RESTART the wait goes on
-        // while the word is unchanged (signal(7)); a timed wait is never restarted.
-        const ULONGLONG start = GetTickCount64();
+        // A signal sent meanwhile ends the wait and its handler runs here; then the wait goes on
+        // (SA_RESTART) while the word is unchanged, or fails with EINTR.
+        const ULONGLONG deadline = ms == INFINITE ? 0 : GetTickCount64() + ms;
         for (;;) {
-            SignalableSleep sleep(SignalableSleep::kAddress, uaddr);
-            DWORD left = ms;
-            if (ms != INFINITE) {
-                const ULONGLONG spent = GetTickCount64() - start;
-                left = spent >= ms ? 0 : static_cast<DWORD>(ms - spent);
+            bool timed_out = false;
+            {
+                SignalWaitScope scope(uaddr);
+                timed_out = !scope.posted() && !WaitOnAddress(uaddr, &val, sizeof(val), ms) &&
+                            GetLastError() == ERROR_TIMEOUT;
             }
-            if (!WaitOnAddress(uaddr, &val, sizeof(val), left) && GetLastError() == ERROR_TIMEOUT) {
-                *guest_errno() = kETIMEDOUT;
-                return -1;
-            }
-            const SignalableSleep::Outcome outcome = sleep.interrupted();
-            if (outcome == SignalableSleep::kNotInterrupted) return 0;
-            if (outcome == SignalableSleep::kEintr || ts) {
+            const WaitEnd end = signal_take_posted();
+            if (end == WaitEnd::kInterrupted) {
                 *guest_errno() = kEINTR;
                 return -1;
             }
-            if (*reinterpret_cast<volatile uint32_t*>(uaddr) != val) return 0;
+            if (timed_out) {
+                *guest_errno() = kETIMEDOUT;
+                return -1;
+            }
+            if (end == WaitEnd::kNone || *reinterpret_cast<volatile uint32_t*>(uaddr) != val) return 0;
+            if (ms != INFINITE) {
+                const ULONGLONG now = GetTickCount64();
+                if (now >= deadline) {
+                    *guest_errno() = kETIMEDOUT;
+                    return -1;
+                }
+                ms = static_cast<DWORD>(deadline - now);
+            }
         }
     }
     if (cmd == 1 || cmd == 10) {  // FUTEX_WAKE, FUTEX_WAKE_BITSET
@@ -1651,7 +1640,7 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
         case 39: return g_getpid();
         case 200: return g_tkill(static_cast<int>(a), static_cast<int>(b));
         case 234: return g_tgkill(static_cast<int>(a), static_cast<int>(b), static_cast<int>(c));
-        case 24: SwitchToThread(); return 0;  // sched_yield
+        case 24: SwitchToThread(); signal_take_posted(); return 0;  // sched_yield
         case 204: return affinity_syscall(static_cast<int>(a), static_cast<size_t>(b), reinterpret_cast<void*>(c));
         case 318: return g_getrandom(reinterpret_cast<void*>(a), static_cast<size_t>(b), 0);
         case 228: return g_clock_gettime(static_cast<int>(a), reinterpret_cast<GuestTimespec*>(b));
@@ -1858,8 +1847,14 @@ WINAPK_GUEST_ABI int g_getopt_long_only(int argc, char* const* argv, const char*
 }
 
 // ---- process exit -------------------------------------------------------------------------
+// --exec (mini_bionic_program_mode): the process is one Android program an app started, its
+// stderr the app's pipe, which must get the program's own bytes and nothing of ours.
+std::atomic<bool> g_program_mode{false};
+
 [[noreturn]] WINAPK_GUEST_ABI void g_exit(int code) {
-    std::fprintf(stderr, "[win.apk] guest called exit(%d)\n", code);
+    if (!g_program_mode) {
+        std::fprintf(stderr, "[win.apk] guest called exit(%d)\n", code);
+    }
     std::fflush(stderr);
     mini_bionic_run_atexit();
     std::fflush(nullptr);
@@ -1867,10 +1862,29 @@ WINAPK_GUEST_ABI int g_getopt_long_only(int argc, char* const* argv, const char*
     std::abort();
 }
 [[noreturn]] WINAPK_GUEST_ABI void g__exit(int code) {
-    std::fprintf(stderr, "[win.apk] guest called _exit(%d)\n", code);
-    std::fflush(stderr);
+    if (!g_program_mode) std::fprintf(stderr, "[win.apk] guest called _exit(%d)\n", code);
+    std::fflush(nullptr);
     TerminateProcess(GetCurrentProcess(), static_cast<UINT>(code));
     std::abort();
+}
+
+// A dynamic executable's start (crtbegin's _start calls it with the stack the kernel made: argc,
+// argv, envp, auxv): the loader has run the program's constructors already, as bionic's linker
+// does before jumping to the entry point, so what is left is main and exit with what it returns.
+// The environment main gets is the shim's (the spawner's variables over Android's defaults), the
+// same `environ` getenv reads.
+using GuestMain = int(WINAPK_GUEST_ABI*)(int, char**, char**);
+[[noreturn]] WINAPK_GUEST_ABI void g___libc_init(void* raw_args, void*, GuestMain slingshot, const void*) {
+    auto* words = static_cast<uintptr_t*>(raw_args);
+    const int argc = static_cast<int>(words[0]);
+    char** argv = reinterpret_cast<char**>(words + 1);
+    auto fn = reinterpret_cast<GuestMain>(arm64::host_callable(reinterpret_cast<void*>(slingshot)));
+    char** envp;
+    {
+        std::lock_guard<std::mutex> hold(g_env_lock);
+        envp = g_environ;
+    }
+    g_exit(fn(argc, argv, envp));
 }
 WINAPK_GUEST_ABI int g_atexit(void (*)()) { return 0; }  // never run: an app's process never exits normally
 
@@ -2795,22 +2809,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("tkill", g_tkill),
     WINAPK_SHIM("fork", g_fork),
     WINAPK_SHIM("vfork", g_fork),
-    WINAPK_SHIM("waitpid", g_waitpid),
-    WINAPK_SHIM("wait", g_wait),
-    WINAPK_SHIM("wait3", g_wait),
-    WINAPK_SHIM("wait4", g_wait),
-    WINAPK_SHIM("waitid", g_wait),
     WINAPK_SHIM("clone", g_clone),
-    WINAPK_SHIM("posix_spawn", g_posix_spawn),
-    WINAPK_SHIM("posix_spawnp", g_posix_spawn),
-    WINAPK_SHIM("execve", g_exec),
-    WINAPK_SHIM("execv", g_exec),
-    WINAPK_SHIM("execvp", g_exec),
-    WINAPK_SHIM("execvpe", g_exec),
-    WINAPK_SHIM("execl", g_exec),
-    WINAPK_SHIM("execlp", g_exec),
-    WINAPK_SHIM("execle", g_exec),
-    WINAPK_SHIM("fexecve", g_exec),
     WINAPK_SHIM("mremap", g_mremap),
     WINAPK_SHIM("shmget", g_sysv_shm),
     WINAPK_SHIM("shmat", g_sysv_shm),
@@ -2895,6 +2894,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("optreset", __mingw_optreset),
     WINAPK_SHIM("exit", g_exit),
     WINAPK_SHIM("_exit", g__exit),
+    WINAPK_SHIM("__libc_init", g___libc_init),
     WINAPK_SHIM("_Exit", g__exit),
     WINAPK_SHIM("quick_exit", g__exit),  // returned to its caller, which the compiler knows it never does
     WINAPK_SHIM("atexit", g_atexit),
@@ -2977,10 +2977,24 @@ int bionic_unsetenv(const char* name) {
     return 0;
 }
 
+void mini_bionic_program_mode(const std::vector<std::string>& env) {
+    bionic::g_program_mode = true;
+    for (const std::string& kv : env) {
+        const size_t eq = kv.find('=');
+        if (eq == std::string::npos || eq == 0) continue;
+        bionic_setenv(kv.substr(0, eq).c_str(), kv.substr(eq + 1).c_str(), 1);
+    }
+}
+
 }  // namespace winapk
 
 namespace winapk::bionic {
 ShimTable misc_symbols() { return WINAPK_SHIM_TABLE(kSymbols); }
+
+char** guest_environ() {
+    std::lock_guard<std::mutex> hold(g_env_lock);
+    return g_environ;
+}
 
 void say_once(std::atomic<bool>& said, const char* call, const char* what) {
     if (said.exchange(true)) return;

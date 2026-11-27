@@ -4,6 +4,7 @@
 
 #include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
+#include "winapk/long_path.h"
 #include "winapk/mini_bionic.h"
 #include "winapk/process_image.h"
 
@@ -19,6 +20,8 @@
 // windows.h defines these; the library search below names a variable `near`.
 #undef near
 #undef far
+
+#include <windows.h>
 
 namespace winapk {
 
@@ -80,10 +83,19 @@ std::string machine_name(uint16_t machine) {
     }
 }
 
+// Whether `p` names a file, by its long-path form: an app's library directory passes MAX_PATH
+// with a long user name or package, and without Windows' long-path policy a plain lookup of
+// anything in it says "no such file" (long_path.h). The path the linker keeps (dladdr's name,
+// dl_iterate_phdr's, the messages) stays the plain one; ElfImage::map opens it the same way.
+bool is_file(const std::filesystem::path& p) {
+    const DWORD attrs = GetFileAttributesW(long_path(p.wstring()).c_str());
+    return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
+}
+
 std::string normalized(const std::filesystem::path& p) {
     std::error_code ec;
-    std::filesystem::path c = std::filesystem::weakly_canonical(p, ec);
-    return (ec ? p : c).lexically_normal().u8string();
+    std::filesystem::path c = std::filesystem::weakly_canonical(std::filesystem::path(long_path(p.wstring())), ec);
+    return std::filesystem::path(plain_path((ec ? p : c).wstring())).lexically_normal().u8string();
 }
 
 }  // namespace
@@ -131,22 +143,21 @@ GuestLibrary* GuestLinker::find_loaded(const std::string& name, uint16_t machine
     return nullptr;
 }
 
-std::filesystem::path GuestLinker::locate(const std::string& name, const std::filesystem::path& near) const {
-    std::error_code ec;
+std::filesystem::path GuestLinker::locate(const std::string& name, const std::filesystem::path& needer_dir) const {
     if (has_separator(name)) {
         std::filesystem::path p = guest_path(name);
-        return std::filesystem::is_regular_file(p, ec) ? p : std::filesystem::path();
+        return is_file(p) ? p : std::filesystem::path();
     }
     const std::filesystem::path file = utf8_path(name);
     for (const auto& dir : config_.search_paths) {
-        if (std::filesystem::is_regular_file(dir / file, ec)) return dir / file;
+        if (is_file(dir / file)) return dir / file;
     }
-    if (!near.empty() && std::filesystem::is_regular_file(near / file, ec)) return near / file;
+    if (!needer_dir.empty() && is_file(needer_dir / file)) return needer_dir / file;
     // An app's libraries find each other by bare name: on Android they share
     // the app namespace, whose search path is the app's library directory.
     for (const auto& l : libs_) {
         const std::filesystem::path dir = utf8_path(l->file).parent_path();
-        if (!dir.empty() && std::filesystem::is_regular_file(dir / file, ec)) return dir / file;
+        if (!dir.empty() && is_file(dir / file)) return dir / file;
     }
     return {};
 }
@@ -224,9 +235,10 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
     // yet, so on failure the new images are simply dropped.
     std::vector<std::unique_ptr<GuestLibrary>> fresh;
     auto map_one = [&](const std::string& want, const GuestLibrary* needed_by) -> GuestLibrary* {
-        const std::filesystem::path near = needed_by ? needed_by->path.parent_path() : std::filesystem::path();
+        const std::filesystem::path needer_dir = needed_by ? needed_by->path.parent_path() : std::filesystem::path();
         const bool placed_here = !needed_by && placement;
-        std::filesystem::path path = placed_here && !placement->file.empty() ? placement->file : locate(want, near);
+        std::filesystem::path path =
+            placed_here && !placement->file.empty() ? placement->file : locate(want, needer_dir);
         if (path.empty()) {
             *error = "library \"" + want + "\" not found";
             if (needed_by) *error += ": needed by " + needed_by->file;
@@ -253,10 +265,9 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
         // x86_64 directory) while one of the right ABI is next to the library
         // that needs it (an arm64 library an x86_64 app lacks, installed with
         // its arm64 dependencies in lib/arm64): that one.
-        if (needed_by && img->machine() != needed_by->image->machine() && !near.empty() && !has_separator(want)) {
-            std::error_code ec;
-            const std::filesystem::path beside = near / utf8_path(want);
-            if (beside != path && std::filesystem::is_regular_file(beside, ec)) {
+        if (needed_by && img->machine() != needed_by->image->machine() && !needer_dir.empty() && !has_separator(want)) {
+            const std::filesystem::path beside = needer_dir / utf8_path(want);
+            if (beside != path && is_file(beside)) {
                 std::string why_beside;
                 if (auto other = ElfImage::map(beside, &why_beside, config_.load)) {
                     if (other->machine() == needed_by->image->machine()) {
@@ -532,6 +543,18 @@ std::vector<const ElfImage*> GuestLinker::images() const {
     std::lock_guard<std::recursive_mutex> hold(lock_);
     std::vector<const ElfImage*> out;
     for (const auto& l : libs_) out.push_back(l->image.get());
+    return out;
+}
+
+std::vector<std::pair<uintptr_t, uintptr_t>> GuestLinker::x86_64_ranges() const {
+    std::lock_guard<std::recursive_mutex> hold(lock_);
+    std::vector<std::pair<uintptr_t, uintptr_t>> out;
+    for (const auto& l : libs_) {
+        const ElfImage* img = l->image.get();
+        if (!img || img->is_arm64()) continue;
+        const auto lo = reinterpret_cast<uintptr_t>(img->base());
+        out.emplace_back(lo, lo + img->mapped_size());
+    }
     return out;
 }
 
