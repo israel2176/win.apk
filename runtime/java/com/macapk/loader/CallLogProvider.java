@@ -112,6 +112,8 @@ public final class CallLogProvider extends ContentProvider {
     public boolean onCreate() {
         mDb = ContactsProvider.openDatabase("calllog.db");
         if (mDb == null) return false;
+        // As ContactsProvider's schema: no exclusive transaction at every start once current.
+        if (mDb.getVersion() >= SCHEMA_VERSION) return true;
         try {
             mDb.beginTransaction();
             try {
