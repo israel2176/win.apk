@@ -207,6 +207,10 @@ public final class ContactsProvider extends ContentProvider {
     }
 
     private static void createSchema(SQLiteDatabase db) {
+        // Every app's process opens this database at start: read the version first, so the
+        // exclusive transaction (which another starting process would wait on) is taken only
+        // when the tables are missing or older.
+        if (db.getVersion() >= SCHEMA_VERSION) return;
         db.beginTransaction();
         try {
             if (db.getVersion() < SCHEMA_VERSION) {
