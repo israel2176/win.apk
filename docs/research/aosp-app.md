@@ -217,7 +217,9 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   packageManager, launchIntent, onTaskEmpty)`: registers the services and
   attaches a new `ActivityThread` on the main looper's thread.
 - `ActivityManagerService` (`IActivityManager`): `attachApplication` calls
-  `bindApplication` with the host's `ApplicationInfo` and configuration, then
+  `bindApplication` with the process's own name (`Boot.processName()`, e.g.
+  `com.android.vending:background`, which `Application.getProcessName()`
+  answers), the host's `ApplicationInfo` and configuration, then
   the task manager launches the first activity.
 - `ActivityTaskService` (`IActivityTaskManager`): `startActivity` resolved by
   the host, `START_INTENT_NOT_RESOLVED` when nothing matches (so
@@ -237,6 +239,10 @@ closure of what they name that Win.apk lacks, bounded to AOSP's plumbing
   provider's `onSlicePinned`), grants, `hasSliceAccess` false. The
   `android.app.slice` package is AOSP's, taken with the other platform classes
   apps extend that Win.apk had none of (`aosp_app_take.sh`, `PLATFORM_TAKE`).
+- `SafetyCenterService` (`ISafetyCenterManager`, "safety_center"): what AOSP's
+  `SafetyCenterManager` asks, answered as a phone whose config disables Safety
+  Center: `isSafetyCenterEnabled` false, a source's data dropped, nothing to
+  read back. `android.safetycenter` is taken whole (`PLATFORM_TAKE`).
 - `Compat`: below. (`ApplicationStatics`, the four statics added to AOSP's
   `Application`, went at A4: the framework asks `com.macapk.loader.app.Apps`.)
 

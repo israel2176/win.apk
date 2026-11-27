@@ -198,13 +198,17 @@ public class ComponentInfo extends PackageItemInfo {
      *  above can fall through cleanly to the next. */
     private static CharSequence macapkLabelFromRes(android.content.pm.PackageManager pm, String pkg, int res,
             ApplicationInfo ai) {
-        try {
-            android.content.res.Resources r = android.content.res.Resources.getSystem();
-            if (r != null) {
-                String s = r.getString(res);
-                if (s != null && !s.isEmpty()) return s;
-            }
-        } catch (Throwable ignored) {}
+        // A framework id (package 0x01) only: an app's id is not in the system table, and looking it
+        // up there logged "No package ID 7f found" at every activity's start (PackageItemInfo.loadLabel).
+        if ((res >>> 24) == 0x01) {
+            try {
+                android.content.res.Resources r = android.content.res.Resources.getSystem();
+                if (r != null) {
+                    String s = r.getString(res);
+                    if (s != null && !s.isEmpty()) return s;
+                }
+            } catch (Throwable ignored) {}
+        }
         // AOSP's own way (PackageItemInfo.loadUnsafeLabel): pm.getText out of the package's
         // Resources. Win.apk's system Resources answer an app's id too, but AOSP's
         // (-Dwinapk.aosp.res=1) hold the framework's table only, as on a device.

@@ -50,18 +50,21 @@ struct RunEnd {
     bool clean = false;      // exit code 0
     unsigned long code = 0;  // the exit code (1 for a runtime that never started)
     enum Kind {
-        kQuiet,        // closed by the app or its user: nothing to say
+        kQuiet,        // closed by the app or its user: nothing to say, and a starting window still up goes
         kStopped,      // stopped from the launcher, or closed from the "isn't responding" dialog: nothing
                        // to say, and a splash still up goes
         kCrashed,      // the app crashed (app_exit.h's app_crashed): Android's crash dialog
-        kDidNotStart,  // over before its window came up
+        kDidNotStart,  // over with an error before its window came up
         kFailed,       // its window was up, and it exited with an error
     };
     Kind kind() const {
         if (stopped || code == kExitClosedNotResponding) return kStopped;
         if (app_crashed(code)) return kCrashed;
-        if (!was_ready) return kDidNotStart;
-        return clean ? kQuiet : kFailed;
+        // An app that ends itself with exit code 0 before it drew (a licence check that closes it, a
+        // System.exit in onCreate) is closed, not failed: on a phone its starting window goes and the
+        // user is back where they were, with no message (issue #208).
+        if (clean) return kQuiet;
+        return was_ready ? kFailed : kDidNotStart;
     }
 };
 

@@ -225,8 +225,9 @@ the app's own content takes its place, in the same window to the eye, as
 soon as it has drawn. A start that takes
 long says why under the icon: **Converting the app's code. This happens once.** when the
 app's code changed, or **Still starting** after twenty seconds. Closing the
-window, or Esc, cancels the start. If the app ends before it has drawn,
-or later with an error, the window turns into a short message
+window, or Esc, cancels the start. An app that closes itself before it has drawn
+(exit code 0: a license check, for one) just closes, as on a phone. If it ends with an
+error, before it has drawn or later, the window turns into a short message
 (**Wiz didn't start**, **Wiz stopped with an error**) with **Report a
 problem** under it, and **Close** and **Show log**; Esc or Enter closes it.
 
@@ -399,7 +400,7 @@ its own. Each setting takes effect the next time an app opens unless noted.
 | Apps | **App window size** | The size apps open at, in dp (density-independent pixels, as on a phone). **Auto** is 360 × 800 dp. Presets range from 320 × 480 to a 10-inch tablet. An app whose window you resized opens at its saved size |
 | Apps | **Default orientation** | Portrait or landscape, for every app that has no choice of its own. The default is landscape, the shape of a PC screen. Apps that require an orientation always open in it; an app's details page changes it for that app |
 | Apps | **Use my Windows folders** | On: apps' shared storage (Downloads, Pictures, Documents, Music, Movies) is your own Windows folders. Off: each is an empty folder of Win.apk's own, and your files stay where they are. See [Shared storage](#shared-storage) |
-| Apps | **Report Google Play as the installer** (on) | Apps you install are told Google Play installed them, as `adb install -i com.android.vending` does on a phone; some apps (banks such as bit and Bank Hapoalim) otherwise stop at "reinstall the app from the store". An app another store installed (F-Droid, Aurora) still names that store. Off: apps installed from Win.apk name no installer, as a sideloaded app. Takes effect the next time an app opens |
+| Apps | **Report Google Play as the installer** (on) | Apps you install are told Google Play installed them, as `adb install -i com.android.vending` does on a phone; some apps (banks such as bit and Bank Hapoalim) otherwise stop at "reinstall the app from the store". This holds for every app, whichever store installed it (Win.apk's Store, F-Droid, Aurora): some apps protected by Google Play close when another store installed them. Off: an app another store installed names that store, and the rest name no installer, as a sideloaded app. Takes effect the next time an app opens |
 | Apps | **Speed up ARM apps** (on) | Translates ARM code to your PC's code in the background, at low priority, so apps run faster. Off: no translation is started, one under way stops before its next part (and goes on where it was once this is on again), and translations already made are still used. See [ARM apps](arm-apps.md) |
 | Apps | **Desktop shortcut for new apps** | Every app gets a Start menu shortcut; this adds one on the desktop too |
 | Apps | **Open .apk, .apkm, .xapk and .apks files with Win.apk** | Makes Win.apk the default program for the four formats |

@@ -20,15 +20,20 @@ import java.util.Properties;
  * AOSP only allows that for the installer of record: with no record the
  * SecurityException made Play report the install as failed (INSTALL_ERROR 6200).
  *
- * The default (Win.apk): an app the user installed with no
- * record (from the library, an APK opened in Explorer) is reported as installed by
+ * What is reported (Win.apk): every app installed in Win.apk -- from the library, an APK
+ * opened in Explorer, Win.apk's Store or any other store -- is reported as installed by
  * Google Play, as `adb install -i com.android.vending` leaves it on a device. Apps
  * such as bit and Bank Hapoalim read getInstallSourceInfo's installing/initiating
- * package and stop at "reinstall from the store" when it names none. The
- * launcher's Settings > Apps > "Report Google Play as the installer"
- * (HKCU\Software\Win.apk PlayInstaller, absent = on) turns it off; the runtime
- * passes it as WINAPK_PLAY_INSTALLER (0 = off). A real record always wins, so an
- * app F-Droid or Aurora installed still names that store. Not defaulted: Play,
+ * package and stop at "reinstall from the store" when it names none, and Play's own
+ * integrity protection (pairip's LicenseClient) closes an app whose installer is not
+ * Play ("Local install check failed due to wrong installer": issue #208, an app
+ * Win.apk's Store installed). The launcher's Settings > Apps > "Report Google Play as
+ * the installer" (HKCU\Software\Win.apk PlayInstaller, absent = on) turns it off; the
+ * runtime passes it as WINAPK_PLAY_INSTALLER (0 = off), and then the record is
+ * reported, else none. Where Win.apk differs from a phone: a phone names the store
+ * that installed the app; here Play is named over the record while the setting is on.
+ * The record itself is kept and still decides what only the real installer may do
+ * (PackageManager.setApplicationCategoryHint). Not defaulted: Play,
  * Play services and the Services Framework themselves (system apps on a device,
  * which no store installed: the registry's denied set), any package this process
  * cannot see as installed (AOSP has no installer for it), and every app when
@@ -79,17 +84,18 @@ public final class InstallerOfRecord {
 
     /**
      * The installer PackageManager reports for `pkg` (getInstallerPackageName and every name of
-     * getInstallSourceInfo): the record when there is one, else Google Play
-     * for an app the user installed while the setting is on, else null. `installed`: `pkg` is the
-     * running app, or one the installed-apps registry has and the caller may see.
+     * getInstallSourceInfo): Google Play for every installed app while the setting is on, whichever
+     * store installed it; with it off (or no Play Store package reported) the record, else null.
+     * `installed`: `pkg` is the running app, or one the installed-apps registry has and the caller
+     * may see.
      */
     public static String reported(String pkg, boolean installed) {
-        String v = get(pkg);
-        if (v != null) return v;
-        if (!installed || pkg == null || pkg.isEmpty()) return null;
-        if (MacApkPackageManager.InstalledRegistry.denied(pkg)) return null;  // Play, Play services, GSF
-        if (!playDefaultOn() || !playPresent.getAsBoolean()) return null;
-        return PLAY;
+        if (installed && pkg != null && !pkg.isEmpty()
+                && !MacApkPackageManager.InstalledRegistry.denied(pkg)  // Play, Play services, GSF
+                && playDefaultOn() && playPresent.getAsBoolean()) {
+            return PLAY;
+        }
+        return get(pkg);
     }
 
     public static final String PLAY = "com.android.vending";

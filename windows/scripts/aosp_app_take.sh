@@ -24,7 +24,11 @@
 # windows/java/aosp_app SliceService). android.app.appsearch, android.net.wifi.aware and .rtt: whole
 # packages, as on a device; their managers are not handed out (getSystemService answers null).
 # MediaRoute2ProviderService: a media route provider's service, with the AIDL it is bound through.
-PLATFORM_TAKE='android/app/slice/.*|android/app/appsearch/.*|android/net/wifi/(aware|rtt)/.*'
+# android.safetycenter: the whole package (Google Play reports to it), with the two helpers of its
+# module its builders call (jarjar's Preconditions and SdkLevel); its manager is handed out over an
+# in-process ISafetyCenterManager with Safety Center off (windows/java/aosp_app SafetyCenterService).
+PLATFORM_TAKE='android/app/slice/.*|android/app/appsearch/.*|android/net/wifi/(aware|rtt)/.*|android/safetycenter/.*'
+PLATFORM_TAKE+='|android/permission/jarjar/com/android/(internal/util/Preconditions|modules/utils/build/SdkLevel)'
 PLATFORM_TAKE+='|android/media/(MediaRoute2ProviderService|MediaRoute2ProviderInfo|IMediaRoute2ProviderService'
 PLATFORM_TAKE+='|IMediaRoute2ProviderServiceCallback)([$].*)?'
 
