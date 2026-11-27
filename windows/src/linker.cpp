@@ -9,10 +9,13 @@
 #include "winapk/mini_bionic.h"
 #include "winapk/process_image.h"
 
+#include "bionic/bionic_internal.h"
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
 #include <intrin.h>
 #include <mutex>
 #include <unordered_set>
@@ -98,6 +101,82 @@ std::string normalized(const std::filesystem::path& p) {
     std::error_code ec;
     std::filesystem::path c = std::filesystem::weakly_canonical(std::filesystem::path(long_path(p.wstring())), ec);
     return std::filesystem::path(plain_path((ec ? p : c).wstring())).lexically_normal().u8string();
+}
+
+// The size of the file at `p`, or -1.
+int64_t file_size_of(const std::filesystem::path& p) {
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (!GetFileAttributesExW(long_path(p.wstring()).c_str(), GetFileExInfoStandard, &a)) return -1;
+    return static_cast<int64_t>(static_cast<uint64_t>(a.nFileSizeHigh) << 32 | a.nFileSizeLow);
+}
+
+uint32_t le16(const uint8_t* p) { return p[0] | p[1] << 8; }
+uint32_t le32(const uint8_t* p) { return le16(p) | static_cast<uint32_t>(le16(p + 2)) << 16; }
+
+// The name of the zip entry stored uncompressed whose data starts `offset`
+// bytes into `file` (an APK's "lib/<abi>/libx.so", which a library loader
+// hands to android_dlopen_ext as the APK's descriptor and that offset), or
+// "" when there is none: `file` is not a zip, or the offset is not an entry's.
+std::string stored_zip_entry_at(const std::filesystem::path& file, uint64_t offset) {
+    std::ifstream f(std::filesystem::path(long_path(file.wstring())), std::ios::binary | std::ios::ate);
+    if (!f) return {};
+    const uint64_t size = static_cast<uint64_t>(f.tellg());
+    // The end of central directory record: 22 bytes and a comment of up to 64 KiB.
+    const uint64_t tail_size = std::min<uint64_t>(size, 22 + 0xffff);
+    std::vector<uint8_t> tail(static_cast<size_t>(tail_size));
+    f.seekg(static_cast<std::streamoff>(size - tail_size));
+    if (tail.size() < 22 || !f.read(reinterpret_cast<char*>(tail.data()), static_cast<std::streamsize>(tail.size()))) {
+        return {};
+    }
+    size_t eocd = tail.size() - 22;
+    while (le32(&tail[eocd]) != 0x06054b50) {
+        if (eocd == 0) return {};
+        --eocd;
+    }
+    const uint64_t cd_size = le32(&tail[eocd + 12]), cd_offset = le32(&tail[eocd + 16]);
+    if (cd_offset > size || cd_size > size - cd_offset) return {};
+    std::vector<uint8_t> cd(static_cast<size_t>(cd_size));
+    f.seekg(static_cast<std::streamoff>(cd_offset));
+    if (!f.read(reinterpret_cast<char*>(cd.data()), static_cast<std::streamsize>(cd.size()))) return {};
+    for (size_t at = 0; at + 46 <= cd.size() && le32(&cd[at]) == 0x02014b50;) {
+        const uint32_t method = le16(&cd[at + 10]), name_len = le16(&cd[at + 28]);
+        const size_t next = at + 46 + name_len + le16(&cd[at + 30]) + le16(&cd[at + 32]);
+        if (next > cd.size()) break;
+        const uint64_t local = le32(&cd[at + 42]);
+        uint8_t lh[30];
+        if (method == 0 && local + sizeof(lh) <= size && f.seekg(static_cast<std::streamoff>(local)) &&
+            f.read(reinterpret_cast<char*>(lh), sizeof(lh)) && le32(lh) == 0x04034b50 &&
+            local + sizeof(lh) + le16(lh + 26) + le16(lh + 28) == offset) {
+            return std::string(reinterpret_cast<const char*>(&cd[at + 46]), name_len);
+        }
+        at = next;
+    }
+    return {};
+}
+
+// ANDROID_DLEXT_WRITE_RELRO: the library's GNU RELRO pages, relocated, written
+// to `fd` from its current position, as bionic's phdr_table_serialize_gnu_relro
+// writes them (each PT_GNU_RELRO segment from its first page to the end of
+// its last). Bionic then maps the file over those pages; here they stay the
+// library's own, which hold the same bytes.
+bool write_relro(const ElfImage& image, int fd, std::string* error) {
+    constexpr uintptr_t kPage = 4096;
+    for (const elf::Phdr& ph : image.phdrs()) {
+        if (ph.p_type != elf::kPtGnuRelro) continue;
+        const uintptr_t start = (image.load_bias() + ph.p_vaddr) & ~(kPage - 1);
+        const uintptr_t end = (image.load_bias() + ph.p_vaddr + ph.p_memsz + kPage - 1) & ~(kPage - 1);
+        const auto* p = reinterpret_cast<const uint8_t*>(start);
+        for (size_t left = end - start; left > 0;) {
+            const int64_t n = bionic::fd_write(fd, p, left);
+            if (n <= 0) {
+                *error = bionic::errno_text(*bionic::guest_errno());
+                return false;
+            }
+            p += n;
+            left -= static_cast<size_t>(n);
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -238,7 +317,21 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
     std::vector<std::unique_ptr<GuestLibrary>> fresh;
     auto map_one = [&](const std::string& want, const GuestLibrary* needed_by) -> GuestLibrary* {
         const std::filesystem::path needer_dir = needed_by ? needed_by->path.parent_path() : std::filesystem::path();
-        std::filesystem::path path = locate(want, needer_dir);
+        const bool placed_here = !needed_by && placement;
+        // A library read from a descriptor's file (android_dlopen_ext) is named
+        // as bionic names it; the file is only read.
+        const bool from_file = placed_here && !placement->file.empty();
+        if (from_file) {
+            const int64_t size = file_size_of(placement->file);
+            if (size >= 0 && placement->file_offset >= static_cast<uint64_t>(size)) {
+                char text[96];
+                std::snprintf(text, sizeof(text), " >= file size: %llu >= %lld",
+                              static_cast<unsigned long long>(placement->file_offset), static_cast<long long>(size));
+                *error = "file offset for the library \"" + want + "\"" + text;
+                return nullptr;
+            }
+        }
+        std::filesystem::path path = from_file ? placement->library_name : locate(want, needer_dir);
         if (path.empty()) {
             *error = "library \"" + want + "\" not found";
             if (needed_by) *error += ": needed by " + needed_by->file;
@@ -246,12 +339,18 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
         }
         std::string why;
         std::unique_ptr<ElfImage> img;
-        if (!needed_by && placement && placement->address) {
-            LoadOptions placed = config_.load;
+        if (placed_here) {
+            LoadOptions own = config_.load;
+            if (from_file) {
+                own.file_offset = placement->file_offset;
+                own.name = path;
+            }
+            LoadOptions placed = own;
             placed.reserved_address = placement->address;
             placed.reserved_size = placement->size;
-            img = ElfImage::map(path, &why, placed);
-            if (!img && placement->hint) img = ElfImage::map(path, &why, config_.load);
+            const std::filesystem::path& source = from_file ? placement->file : path;
+            img = ElfImage::map(source, &why, placement->address ? placed : own);
+            if (!img && placement->address && placement->hint) img = ElfImage::map(source, &why, own);
         } else {
             img = ElfImage::map(path, &why, config_.load);
         }
@@ -365,6 +464,15 @@ GuestLibrary* GuestLinker::open(const std::string& requested, int flags, std::st
         std::string why;
         if (!l->image->link(scope, &why, tls_scope)) {
             *error = "cannot link \"" + l->file + "\": " + why;
+            return nullptr;
+        }
+    }
+    // ANDROID_DLEXT_WRITE_RELRO, as bionic's link_image: the new root's RELRO,
+    // relocated, before any constructor runs; a failure drops the tree.
+    if (placement && placement->relro_fd >= 0) {
+        std::string why;
+        if (!write_relro(*root->image, placement->relro_fd, &why)) {
+            *error = "failed serializing GNU RELRO section for \"" + root->file + "\": " + why;
             return nullptr;
         }
     }
@@ -773,17 +881,45 @@ struct DlextInfo {
     int64_t library_fd_offset;
     void* library_namespace;
 };
-constexpr uint64_t kDlextReservedAddress = 0x1;
-constexpr uint64_t kDlextReservedAddressHint = 0x2;
+// android/dlext.h's flags.
+constexpr uint64_t kDlextReservedAddress = 0x1, kDlextReservedAddressHint = 0x2, kDlextWriteRelro = 0x4,
+                   kDlextUseRelro = 0x8, kDlextUseLibraryFd = 0x10, kDlextUseLibraryFdOffset = 0x20,
+                   kDlextForceLoad = 0x40, kDlextUseNamespace = 0x200, kDlextReservedAddressRecursive = 0x400;
+constexpr uint64_t kDlextValidFlags = kDlextReservedAddress | kDlextReservedAddressHint | kDlextWriteRelro |
+                                      kDlextUseRelro | kDlextUseLibraryFd | kDlextUseLibraryFdOffset |
+                                      kDlextForceLoad | kDlextUseNamespace | kDlextReservedAddressRecursive;
+constexpr uint64_t kPageSize = 4096;
 
-// Of the extinfo, the reserved address is honored (Chromium's linker loads
-// libchrome.so into a range it reserved, then reads it there). RELRO sharing
-// is skipped: the library keeps its own RELRO, which is still correct.
-// Namespaces and loading from a file descriptor are not supported.
+// The extinfo as bionic's do_dlopen takes it: the flags are checked first.
+// Honoured: the reserved address (Chromium's linker loads its library into a
+// range it reserved, then reads it there), loading from a file descriptor at
+// an offset (a library stored uncompressed in an APK), and writing the RELRO
+// pages to a file. ANDROID_DLEXT_USE_RELRO keeps the library's own RELRO,
+// whose bytes are the file's; there is one linker namespace, so a namespace
+// is checked and not used; FORCE_LOAD changes nothing more here. Unlike
+// bionic, ANDROID_DLEXT_RESERVED_ADDRESS_RECURSIVE places only the library
+// itself in the range, not its dependencies.
 WINAPK_GUEST_ABI void* g_android_dlopen_ext(const char* name, int flags, const void* extinfo) {
     const auto* info = static_cast<const DlextInfo*>(extinfo);
-    if (!info || !name || !(info->flags & (kDlextReservedAddress | kDlextReservedAddressHint))) {
-        return g_dlopen(name, flags);
+    if (!info || !name) return g_dlopen(name, flags);
+    char text[160];
+    if (info->flags & ~kDlextValidFlags) {
+        std::snprintf(text, sizeof(text), "invalid extended flags to android_dlopen_ext: 0x%llx",
+                      static_cast<unsigned long long>(info->flags));
+        set_dlerror("dlopen", text);
+        return nullptr;
+    }
+    if ((info->flags & kDlextUseLibraryFdOffset) && !(info->flags & kDlextUseLibraryFd)) {
+        std::snprintf(text, sizeof(text),
+                      "invalid extended flag combination (ANDROID_DLEXT_USE_LIBRARY_FD_OFFSET without "
+                      "ANDROID_DLEXT_USE_LIBRARY_FD): 0x%llx",
+                      static_cast<unsigned long long>(info->flags));
+        set_dlerror("dlopen", text);
+        return nullptr;
+    }
+    if ((info->flags & kDlextUseNamespace) && !info->library_namespace) {
+        set_dlerror("dlopen", "ANDROID_DLEXT_USE_NAMESPACE is set but extinfo->library_namespace is null");
+        return nullptr;
     }
     GuestLinker* linker = GuestLinker::process();
     if (!linker) {
@@ -791,12 +927,43 @@ WINAPK_GUEST_ABI void* g_android_dlopen_ext(const char* name, int flags, const v
         return nullptr;
     }
     GuestLinker::Placement placement;
-    placement.address = info->reserved_addr;
-    placement.size = info->reserved_size;
-    placement.hint = !(info->flags & kDlextReservedAddress);
+    if (info->flags & (kDlextReservedAddress | kDlextReservedAddressHint)) {
+        placement.address = info->reserved_addr;
+        placement.size = info->reserved_size;
+        placement.hint = !(info->flags & kDlextReservedAddress);
+    }
+    if (info->flags & kDlextUseLibraryFd) {
+        const int64_t offset = (info->flags & kDlextUseLibraryFdOffset) ? info->library_fd_offset : 0;
+        if (offset < 0 || offset % static_cast<int64_t>(kPageSize) != 0) {
+            std::snprintf(text, sizeof(text), "file offset for the library \"%s\" is %s: %lld", name,
+                          offset < 0 ? "negative" : "not page-aligned", static_cast<long long>(offset));
+            set_dlerror("dlopen", text);
+            return nullptr;
+        }
+        std::wstring host;
+        if (!bionic::host_path_of_fd(info->library_fd, &host)) {
+            std::snprintf(text, sizeof(text), "library \"%s\": file descriptor %d is not a file's", name,
+                          info->library_fd);
+            set_dlerror("dlopen", text);
+            return nullptr;
+        }
+        placement.file = std::filesystem::path(host);
+        placement.file_offset = static_cast<uint64_t>(offset);
+        // The library's name is not its container's: an entry stored in an
+        // APK is "<apk>!/<entry>", as bionic names a library it loads from
+        // inside an APK; anything else is the name asked for.
+        const std::string entry = offset != 0 ? stored_zip_entry_at(placement.file, placement.file_offset) : "";
+        if (!entry.empty()) {
+            placement.library_name = std::filesystem::u8path(placement.file.u8string() + "!/" + entry);
+        } else {
+            const std::string asked = android_library_name(name);
+            placement.library_name = has_separator(asked) ? guest_path(asked) : utf8_path(asked);
+        }
+    }
+    if (info->flags & kDlextWriteRelro) placement.relro_fd = info->relro_fd;
     std::string error;
     GuestLibrary* lib = linker->open(name, flags, &error, &placement);
-    if (!lib) set_dlerror("android_dlopen_ext", error);
+    if (!lib) set_dlerror("dlopen", error);
     return lib;
 }
 

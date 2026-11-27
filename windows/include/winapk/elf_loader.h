@@ -70,6 +70,15 @@ struct LoadOptions {
     // fit. The range stays the caller's: the image does not free it.
     void* reserved_address = nullptr;
     size_t reserved_size = 0;
+    // Where the ELF file starts in the file at `path` (android_dlopen_ext's
+    // ANDROID_DLEXT_USE_LIBRARY_FD_OFFSET: a library stored uncompressed in
+    // an APK). Only the ELF's own extent from there is read.
+    uint64_t file_offset = 0;
+    // The library's name when `path` is only the file it is read from (an
+    // APK it is stored in): what path() answers. Its arm64 translation's
+    // files are then named after `path`, the offset and this name's file
+    // name, beside `path`, so that two libraries of one file never share them.
+    std::filesystem::path name;
 };
 
 class ElfImage {
@@ -193,7 +202,8 @@ private:
     uint64_t init_ = 0, fini_ = 0;
     uint64_t init_array_ = 0, init_arraysz_ = 0, fini_array_ = 0, fini_arraysz_ = 0;
 
-    std::filesystem::path path_;
+    std::filesystem::path path_;    // the library's name (LoadOptions::name, else the file)
+    std::filesystem::path source_;  // the file it was read from
     LoadOptions options_;
     std::string soname_;
     std::vector<std::string> needed_;

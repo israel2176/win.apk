@@ -551,11 +551,17 @@ int64_t do_syscall(uint64_t nr, const uint64_t a[6]) {
             const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int)>("kill");
             return f(static_cast<int>(a[0]), static_cast<int>(a[1]));
         }
-        // tkill(tid, sig), tgkill(tgid, tid, sig): the threads are this
-        // process's own, and no signal is delivered on Windows (sigaction
-        // records handlers, it does not install them); signal 0, the check
-        // that a thread is alive, is the common use and is answered yes.
-        case 130: case 131: return 0;
+        // tkill(tid, sig), tgkill(tgid, tid, sig): the shim's, which deliver
+        // to the thread (signal.cpp) and answer signal 0, the check that a
+        // thread is alive, as Linux does.
+        case 130: {
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int)>("tkill");
+            return f(static_cast<int>(a[0]), static_cast<int>(a[1]));
+        }
+        case 131: {
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(int, int, int)>("tgkill");
+            return f(static_cast<int>(a[0]), static_cast<int>(a[1]), static_cast<int>(a[2]));
+        }
         case 56:  // openat(dirfd, path, flags, mode): relative to a directory descriptor too
             return a64_openat(static_cast<int>(a[0]), reinterpret_cast<const char*>(a[1]), static_cast<int>(a[2]),
                               static_cast<unsigned>(a[3]));
