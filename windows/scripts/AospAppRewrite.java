@@ -221,10 +221,9 @@ public class AospAppRewrite {
             "android/content/pm/InstrumentationInfo.nativeLibraryDir");
 
     /** Hidden fields Win.apk's classes lack whose value follows from what they have: a read becomes a
-     *  call of Compat's static of the same name, the object passed (StructStat.st_mtim, the
-     *  modification time SharedPreferencesImpl compares, from st_mtime and st_mtime_nsec). */
-    static final Set<String> FIELDS_TO_COMPAT = Set.of(
-            "android/system/StructStat.st_mtim");
+     *  call of Compat's static of the same name, the object passed. None now: StructStat has st_mtim,
+     *  which SharedPreferencesImpl compares, as AOSP has it. */
+    static final Set<String> FIELDS_TO_COMPAT = Set.of();
 
     /** ContextImpl's methods whose bodies become Win.apk's Context's: the lookups of system services
      *  (its managers are the host's; SystemServiceRegistry's fetchers are clients of system_server's),

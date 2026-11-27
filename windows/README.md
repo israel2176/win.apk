@@ -2356,6 +2356,12 @@ every such change is listed here:
   DEX). Not Windows-specific; worth offering upstream.
 - `runtime/java/android/system/Os.java`: `chmod` and `fchmod` (Key Mapper
   died at start on the missing method). Not Windows-specific.
+- `runtime/java/android/system/StructStat.java` + `Os.java`: `st_atim`,
+  `st_mtim` and `st_ctim` (`StructTimespec`, API 27) and AOSP's constructor
+  taking them; `stat`, `lstat` and `fstat` fill them, with the milliseconds
+  Windows keeps as nanoseconds (File Manager+ died on `NoSuchFieldError:
+  st_mtim`; AOSP's `SharedPreferencesImpl` reads the field itself now, no
+  longer through `Compat`). Not Windows-specific.
 - `runtime/java/com/macapk/loader/Boot.java` (`writeJavaProcMirror`,
   `writeProcCmdline`): the `/proc` mirror also writes
   `<android root>/proc/<pid>/cmdline`, the process name (the manifest's, `Boot.processName`: AOSP's

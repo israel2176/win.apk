@@ -3,8 +3,6 @@
 //   AOSP: libcore/luni/src/main/java/android/system/StructTimespec.java
 //         (android14-release), mirrored member for member (including the
 //         field-by-field hashCode AOSP writes by hand).
-// Our StructStat does not expose st_atim/st_mtim/st_ctim yet; the patch that
-// adds them on top of this class is in docs/fwgap-new-platform-classes_2026-09-26.md.
 package android.system;
 
 import libcore.util.Objects;
