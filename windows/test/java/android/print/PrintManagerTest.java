@@ -8,11 +8,16 @@
 //   - the document handed to the printer is what the adapter wrote, with the pages chosen picked out of a
 //     whole document; a failed job restarts on the same printer;
 //   - getPrintJobs lists the app's jobs; print() outside an activity throws, as AOSP's does;
+//   - the default printer looked up off the main thread; the printing activity destroyed mid-layout
+//     cancels the job, cancels the layout's CancellationSignal and drops the adapter (AOSP's
+//     PrintDocumentAdapterDelegate); a job past its print UI prints on;
 //   - Windows' settings in Android's terms: media sizes, orientation, colour, duplex, page ranges, and
 //     the app's attributes as hints for the dialog.
 // Prints PASS/FAIL per check and "ALL PASSED" at the end; exits 1 on a failure.
 package android.print;
 
+import android.app.Activity;
+import android.app.Application;
 import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Looper;
@@ -22,6 +27,8 @@ import com.macapk.loader.HostPrinting;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -53,6 +60,7 @@ public class PrintManagerTest {
     static final class FakeHost implements PrintSpooler.Host {
         final List<String> events = Collections.synchronizedList(new ArrayList<>());
         volatile int[] lastHints;
+        volatile boolean defaultsOnMain;
         volatile int lastPageCount;
         volatile String chooseAnswer = "chosen";     // chosen | cancelled | failed
         volatile int[] chosenRanges = {2, 3};
@@ -65,11 +73,13 @@ public class PrintManagerTest {
         final List<Long> released = Collections.synchronizedList(new ArrayList<>());
         int nextPrint = 1;
 
-        @Override public boolean defaults(int[] hints, String[] names, int[] numbers) {
+        @Override public boolean defaults(int[] hints, HostPrinting.DefaultsListener l) {
             lastHints = hints.clone();
-            names[0] = "Office";
-            names[1] = "A4";
-            System.arraycopy(a4(), 0, numbers, 0, numbers.length);
+            // Answered from a host thread, as native_printing.cpp's lookup is.
+            new Thread(() -> {
+                if (Thread.currentThread() == sMainThread) defaultsOnMain = true;
+                l.onDefaults(true, new String[] {"Office", "A4"}, a4());
+            }).start();
             return true;
         }
 
@@ -127,6 +137,11 @@ public class PrintManagerTest {
         volatile PrintAttributes lastNew, lastOld;
         volatile String failLayout;
         volatile boolean writeAll;
+        volatile boolean holdLayout;                 // the first layout is answered only by release()
+        volatile LayoutResultCallback heldLayout;
+        volatile CancellationSignal heldSignal;
+        volatile boolean signalCancelled;
+        final CountDownLatch layoutHeld = new CountDownLatch(1);
         final CountDownLatch finished = new CountDownLatch(1);
 
         void note(String s) {
@@ -142,6 +157,13 @@ public class PrintManagerTest {
                     + extras.getBoolean(PrintDocumentAdapter.EXTRA_PRINT_PREVIEW));
             lastOld = oldAttributes;
             lastNew = newAttributes;
+            if (holdLayout && oldAttributes == null) {
+                heldLayout = callback;
+                heldSignal = cancellationSignal;
+                cancellationSignal.setOnCancelListener(() -> signalCancelled = true);
+                layoutHeld.countDown();
+                return;
+            }
             if (failLayout != null) {
                 callback.onLayoutFailed(failLayout);
                 return;
@@ -186,6 +208,46 @@ public class PrintManagerTest {
         return PrintSpooler.create("Report", adapter, hint, null);
     }
 
+    static PrintDocumentInfo fourPages() {
+        return new PrintDocumentInfo.Builder("doc.pdf").setContentType(PrintDocumentInfo.CONTENT_TYPE_DOCUMENT)
+                .setPageCount(4).build();
+    }
+
+    /** Runs r on the main thread and waits for it. */
+    static void onMain(Runnable r) throws InterruptedException {
+        CountDownLatch done = new CountDownLatch(1);
+        new android.os.Handler(Looper.getMainLooper()).post(() -> {
+            try {
+                r.run();
+            } finally {
+                done.countDown();
+            }
+        });
+        done.await(5, TimeUnit.SECONDS);
+    }
+
+    /** An activity of an application, as ActivityThread attaches one (its mApplication). */
+    static Activity activityOf(Application app) throws Exception {
+        Activity activity = new Activity();
+        Field f = Activity.class.getDeclaredField("mApplication");
+        f.setAccessible(true);
+        f.set(activity, app);
+        return activity;
+    }
+
+    /** What Activity.performDestroy tells the application's callbacks. */
+    static void destroy(Application app, Activity activity) throws Exception {
+        Method m = Application.class.getDeclaredMethod("dispatchActivityDestroyed", Activity.class);
+        m.setAccessible(true);
+        m.invoke(app, activity);
+    }
+
+    static int callbacksOf(Application app) throws Exception {
+        Field f = Application.class.getDeclaredField("mActivityLifecycleCallbacks");
+        f.setAccessible(true);
+        return ((java.util.List<?>) f.get(app)).size();
+    }
+
     public static void main(String[] args) throws Exception {
         CountDownLatch ready = new CountDownLatch(1);
         Thread main = new Thread(() -> {
@@ -217,6 +279,7 @@ public class PrintManagerTest {
                 "start", "layout first preview=true", "layout again preview=false", "write [PageRange[1 - 2]]",
                 "finish")));
         check("every adapter call on the main thread", !a.offMain);
+        check("the default printer was looked up off the main thread", !host.defaultsOnMain);
         check("the dialog came between the two layouts and before printing",
                 host.events.equals(Arrays.asList("dialog", "print Report")));
         check("the dialog knew the page count", host.lastPageCount == 4);
@@ -317,6 +380,44 @@ public class PrintManagerTest {
         List<PrintJob> jobs = pm.getPrintJobs();
         check("getPrintJobs lists every job this app made", jobs.size() == 7);
         check("each in its current state", jobs.get(0).isCompleted() && jobs.get(2).isCancelled());
+
+        // 8b. The printing activity destroyed while the adapter lays out: the job is cancelled, the adapter
+        // dropped (a late answer is ignored, no onFinish) and the activity no longer watched.
+        Application app = new Application();
+        Activity activity = activityOf(app);
+        Adapter gone = new Adapter();
+        gone.holdLayout = true;
+        PrintJobInfo j8 = PrintSpooler.create("Report", gone, null, activity);
+        check("the printing activity is watched", callbacksOf(app) == 1);
+        gone.layoutHeld.await(5, TimeUnit.SECONDS);
+        onMain(() -> {
+            try {
+                destroy(app, activity);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+        PrintJobInfo dropped = waitFor(j8.getId(), PrintJobInfo.STATE_CANCELED);
+        check("the activity destroyed mid-layout cancels the job", dropped.getState() == PrintJobInfo.STATE_CANCELED);
+        int eventsBefore = host.events.size();
+        gone.heldLayout.onLayoutFinished(fourPages(), true);
+        onMain(() -> {});
+        onMain(() -> {});
+        check("and the adapter is never called again: " + gone.calls,
+                gone.calls.equals(Arrays.asList("start", "layout first preview=true")));
+        check("no dialog opens for it", host.events.size() == eventsBefore);
+        check("the layout in progress had its CancellationSignal cancelled", gone.signalCancelled);
+        check("the activity is no longer watched", callbacksOf(app) == 0);
+        check("the job stays cancelled", PrintSpooler.info(j8.getId()).getState() == PrintJobInfo.STATE_CANCELED);
+
+        // 8c. A job whose print UI is done is no longer the activity's: it prints on.
+        Application app2 = new Application();
+        Activity activity2 = activityOf(app2);
+        Adapter queued = new Adapter();
+        PrintJobInfo j9 = PrintSpooler.create("Report", queued, null, activity2);
+        PrintJobInfo printed = waitFor(j9.getId(), PrintJobInfo.STATE_COMPLETED);
+        check("a job from an activity completes", printed.getState() == PrintJobInfo.STATE_COMPLETED);
+        check("and stops watching the activity once the adapter's session ends", callbacksOf(app2) == 0);
 
         // 9. print() outside an activity.
         boolean threw = false;

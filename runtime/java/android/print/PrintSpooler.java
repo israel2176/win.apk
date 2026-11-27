@@ -17,13 +17,20 @@
 // What Windows' dialog cannot show is the document's preview: the first layout is made for it on a device
 // and is made here all the same, so an adapter sees the same calls. Cancelling the dialog cancels the
 // job, as backing out of the print UI does. A layout or write the adapter fails fails the job with the
-// adapter's message as its status, where a device would show the message in its print UI.
+// adapter's message as its status, where a device would show the message in its print UI. When the
+// activity that printed is destroyed before the print UI is done, the job is cancelled and the adapter
+// dropped, never called again (not onFinish either), as AOSP's PrintDocumentAdapterDelegate drops it; a
+// layout or write in progress then has its CancellationSignal cancelled, as the spooler cancels it.
 //
 // Every call into the adapter and every change to a job's state happen on the app's main thread, as the
-// spooler's arrive there; the adapter may answer its callbacks from any thread. Jobs are kept for the
-// process's life, as PrintManagerService keeps an app's print jobs for as long as the app runs.
+// spooler's arrive there; the adapter may answer its callbacks from any thread. Windows' printer calls
+// (the default printer's lookup, the dialog, printing) run on the host's threads, never the main one.
+// Jobs are kept for the process's life, as PrintManagerService keeps an app's print jobs for as long as
+// the app runs.
 package android.print;
 
+import android.app.Activity;
+import android.app.Application;
 import android.content.Context;
 import android.os.Bundle;
 import android.os.CancellationSignal;
@@ -49,7 +56,7 @@ final class PrintSpooler {
 
     /** The printers and the print dialog: Windows', or a test's stand-in (PrintManagerTest). */
     interface Host {
-        boolean defaults(int[] hints, String[] names, int[] numbers);
+        boolean defaults(int[] hints, HostPrinting.DefaultsListener listener);
         boolean choose(int pageCount, int[] hints, HostPrinting.ChooseListener listener);
         int print(long setup, String path, String jobName, int[] pages, HostPrinting.PrintListener listener);
         void cancel(int printId);
@@ -57,8 +64,8 @@ final class PrintSpooler {
     }
 
     static Host sHost = new Host() {
-        @Override public boolean defaults(int[] hints, String[] names, int[] numbers) {
-            return HostPrinting.defaults(hints, names, numbers);
+        @Override public boolean defaults(int[] hints, HostPrinting.DefaultsListener listener) {
+            return HostPrinting.defaults(hints, listener);
         }
         @Override public boolean choose(int pageCount, int[] hints, HostPrinting.ChooseListener listener) {
             return HostPrinting.choose(pageCount, hints, listener);
@@ -371,6 +378,10 @@ final class PrintSpooler {
         private int mSession;              // a start's number: a late callback of an earlier one is ignored
         private boolean mFinishCalled;
         private CancellationSignal mSignal;
+        private boolean mAdapterBusy;      // an onLayout or onWrite not answered yet
+        private boolean mDropped;          // the printing activity was destroyed: the adapter is never called
+        private Application mApp;          // where mWatch is registered
+        private Application.ActivityLifecycleCallbacks mWatch;
         private PrintAttributes mLaidOut;  // the attributes of the last layout
         private PrintDocumentInfo mDocInfo;
         private PageRange[] mRequested = PageRange.ALL_PAGES_ARRAY;
@@ -384,6 +395,9 @@ final class PrintSpooler {
             mAdapter = adapter;
             mHint = hint;
             mContext = context;
+            // Watched from print() on, as AOSP's delegate is made there: the activity may go before the
+            // print UI starts.
+            watchActivity();
         }
 
         private void setState(int state, CharSequence status) {
@@ -399,11 +413,14 @@ final class PrintSpooler {
         // -- the print UI's part --
 
         void start() {
+            if (mDropped) return;
             final int session = ++mSession;
             mFinishCalled = false;
             mSignal = new CancellationSignal();
+            mAdapterBusy = false;
             mLaidOut = null;
             mDocInfo = null;
+            watchActivity();
             try {
                 mAdapter.onStart();
             } catch (Throwable t) {
@@ -411,19 +428,75 @@ final class PrintSpooler {
                 return;
             }
             // The printer selected first: Windows' default, with the app's paper, orientation, colour and
-            // two-sided applied where it has them.
-            String[] names = new String[2];
-            int[] numbers = new int[HostPrinting.NUMBERS];
-            PrintAttributes first;
-            if (sHost.defaults(hintsOf(mHint), names, numbers)) {
-                first = attributesOf(names[1], numbers);
-                synchronized (this) {
-                    info.setPrinterName(names[0]);
+            // two-sided applied where it has them. Opening a printer can take seconds (a network one
+            // offline, longer), so it is looked up on a host thread and the first layout waits for it.
+            boolean asked = sHost.defaults(hintsOf(mHint), (found, names, numbers) -> onMain(session, () -> {
+                PrintAttributes first;
+                if (found && names != null && names.length >= 2 && numbers != null
+                        && numbers.length >= HostPrinting.NUMBERS) {
+                    first = attributesOf(names[1], numbers);
+                    synchronized (this) {
+                        info.setPrinterName(names[0]);
+                    }
+                } else {
+                    first = regionAttributes();
                 }
-            } else {
-                first = regionAttributes();
+                layout(session, first, true, () -> choose(session));
+            }));
+            if (!asked) layout(session, regionAttributes(), true, () -> choose(session));
+        }
+
+        // -- the printing activity's life (AOSP's PrintDocumentAdapterDelegate) --
+
+        private void watchActivity() {
+            if (mWatch != null || !(mContext instanceof Activity)) return;
+            final Activity activity = (Activity) mContext;
+            Application app = activity.getApplication();
+            if (app == null) return;
+            mWatch = new Application.ActivityLifecycleCallbacks() {
+                @Override public void onActivityCreated(Activity a, Bundle state) {}
+                @Override public void onActivityStarted(Activity a) {}
+                @Override public void onActivityResumed(Activity a) {}
+                @Override public void onActivityPaused(Activity a) {}
+                @Override public void onActivityStopped(Activity a) {}
+                @Override public void onActivitySaveInstanceState(Activity a, Bundle state) {}
+                @Override public void onActivityDestroyed(Activity a) {
+                    if (a == activity) activityDestroyed();
+                }
+            };
+            mApp = app;
+            app.registerActivityLifecycleCallbacks(mWatch);
+        }
+
+        private void unwatchActivity() {
+            if (mWatch == null) return;
+            mApp.unregisterActivityLifecycleCallbacks(mWatch);
+            mWatch = null;
+            mApp = null;
+        }
+
+        /** The printing activity is gone before the print UI was done: the adapter is dropped and the job
+         *  cancelled. A job already queued (the adapter's session over) prints on. */
+        private void activityDestroyed() {
+            unwatchActivity();
+            mDropped = true;
+            if (mFinishCalled) return;
+            // Late answers of the adapter, the default printer and the dialog belong to the old session.
+            ++mSession;
+            mFinishCalled = true;
+            if (mAdapterBusy) {
+                // The print UI's end cancels the layout or write in progress, as the spooler's
+                // RemotePrintDocument cancels its command; the adapter's answer is not waited for.
+                mAdapterBusy = false;
+                try {
+                    mSignal.cancel();
+                } catch (Throwable t) {
+                    logw("the adapter's cancellation threw", t);
+                }
             }
-            layout(session, first, true, () -> choose(session));
+            discardFile();
+            releaseSetup();
+            setState(PrintJobInfo.STATE_CANCELED, null);
         }
 
         private void layout(int session, PrintAttributes attributes, boolean preview, Runnable then) {
@@ -458,9 +531,10 @@ final class PrintSpooler {
                         if (settled[0]) return;
                         settled[0] = true;
                     }
-                    onMain(session, r);
+                    onMain(session, () -> adapterAnswered(r));
                 }
             };
+            mAdapterBusy = true;
             try {
                 mAdapter.onLayout(old, attributes, mSignal, cb, extras);
             } catch (Throwable t) {
@@ -468,8 +542,15 @@ final class PrintSpooler {
                     if (settled[0]) return;
                     settled[0] = true;
                 }
+                mAdapterBusy = false;
                 fail("onLayout threw: " + t, t);
             }
+        }
+
+        /** The adapter answered its layout or write (on the main thread, in its session). */
+        private void adapterAnswered(Runnable r) {
+            mAdapterBusy = false;
+            r.run();
         }
 
         private void choose(int session) {
@@ -535,9 +616,10 @@ final class PrintSpooler {
                         settled[0] = true;
                     }
                     closeQuietly(fd);
-                    onMain(session, r);
+                    onMain(session, () -> adapterAnswered(r));
                 }
             };
+            mAdapterBusy = true;
             try {
                 mAdapter.onWrite(mRequested, fd, mSignal, cb);
             } catch (Throwable t) {
@@ -545,6 +627,7 @@ final class PrintSpooler {
                     if (settled[0]) return;
                     settled[0] = true;
                 }
+                mAdapterBusy = false;
                 closeQuietly(fd);
                 fail("onWrite threw: " + t, t);
             }
@@ -593,15 +676,15 @@ final class PrintSpooler {
                     break;
                 case HostPrinting.COMPLETED:
                     mPrintId = 0;
-                    setState(PrintJobInfo.STATE_COMPLETED, null);
                     discardFile();
                     releaseSetup();
+                    setState(PrintJobInfo.STATE_COMPLETED, null);
                     break;
                 case HostPrinting.PRINT_CANCELLED:
                     mPrintId = 0;
-                    setState(PrintJobInfo.STATE_CANCELED, null);
                     discardFile();
                     releaseSetup();
+                    setState(PrintJobInfo.STATE_CANCELED, null);
                     break;
                 default:
                     // Kept: restart() prints the same document on the same printer again.
@@ -625,9 +708,9 @@ final class PrintSpooler {
                 sHost.cancel(mPrintId);
             } else if (state == PrintJobInfo.STATE_QUEUED || state == PrintJobInfo.STATE_STARTED
                     || state == PrintJobInfo.STATE_BLOCKED || state == PrintJobInfo.STATE_FAILED) {
-                setState(PrintJobInfo.STATE_CANCELED, null);
                 discardFile();
                 releaseSetup();
+                setState(PrintJobInfo.STATE_CANCELED, null);
             }
         }
 
@@ -641,7 +724,7 @@ final class PrintSpooler {
                 // The document is spooled: the printer is asked again, as the spooler queues it again.
                 setState(PrintJobInfo.STATE_QUEUED, null);
                 send();
-            } else {
+            } else if (!mDropped) {
                 // Failed before it was spooled: the print UI starts over.
                 setState(PrintJobInfo.STATE_CREATED, null);
                 start();
@@ -651,23 +734,25 @@ final class PrintSpooler {
         // -- endings --
 
         void fail(String why, Throwable t) {
-            setState(PrintJobInfo.STATE_FAILED, why);
             logw("print job \"" + info.getLabel() + "\" failed: " + why, t);
             discardFile();
             releaseSetup();
             finish();
+            setState(PrintJobInfo.STATE_FAILED, why);
         }
 
         private void cancelled() {
-            setState(PrintJobInfo.STATE_CANCELED, null);
             discardFile();
             releaseSetup();
             finish();
+            setState(PrintJobInfo.STATE_CANCELED, null);
         }
 
         private void finish() {
             if (mFinishCalled) return;
             mFinishCalled = true;
+            // The adapter's session is over: the activity's end no longer concerns the job.
+            unwatchActivity();
             try {
                 mAdapter.onFinish();
             } catch (Throwable t) {

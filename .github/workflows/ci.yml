@@ -714,10 +714,12 @@ jobs:
         run: |
           # A print job as Android's spooler drives the app's PrintDocumentAdapter (PrintSpooler), over a
           # stand-in for Windows' printers and Print dialog, on a plain JVM: the adapter's calls and the
-          # job's states in a device's order, the dialog cancelled, failures, restart, cancel, and
-          # Windows' paper, colour, duplex and page ranges in Android's terms.
+          # job's states in a device's order, the dialog cancelled, failures, restart, cancel, the printing
+          # activity destroyed, and Windows' paper, colour, duplex and page ranges in Android's terms.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
-          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          # AOSP's app, views and resources first, as every app's class path has them: the test makes an
+          # Activity and an Application (the printing activity destroyed mid-layout).
+          cp="$(cygpath -w stage/lib/aosp-app.jar);$(cygpath -w stage/lib/aosp-views.jar);$(cygpath -w stage/lib/aosp-resources.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/print-test windows/test/java/android/print/PrintManagerTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/print-test)" android.print.PrintManagerTest \
             | tee print-test.log

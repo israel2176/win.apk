@@ -5,15 +5,17 @@
 //   nativeDefaults  the default printer's paper, resolution, colour and duplex, with the app's
 //                   PrintAttributes applied where the printer has them: what the spooler lays the document
 //                   out for before the user has chosen, as Android's print UI lays it out for the printer
-//                   it selects first.
+//                   it selects first. Looked up on its own thread (opening a printer can take seconds, a
+//                   network one offline longer), answered through HostPrinting.onDefaults.
 //   nativeChoose    Windows' own Print dialog (PrintDlgEx) over the app's window, on its own thread: the
 //                   printer, its preferences (paper, orientation, colour, two-sided), copies and pages. The
 //                   answer goes back through HostPrinting.onChosen with a setup handle (the printer's name
 //                   and its DEVMODE) and what the choice means in Android's terms.
 //   nativePrint     the PDF the app wrote, printed on that setup on its own thread: each page rendered by
 //                   Windows.Data.Pdf (in Windows since 8.1; nothing to install) at the printer's resolution,
-//                   up to 600 dpi, in bands, drawn into the printer's device context with GDI, so that the
-//                   driver applies everything the user chose. Progress goes back through
+//                   up to 600 dpi, in bands (each an uncompressed BMP, read back by WIC), drawn into the
+//                   printer's device context with GDI, so that the driver applies everything the user
+//                   chose. Progress goes back through
 //                   HostPrinting.onPrintState: started, completed, failed (with why) or cancelled.
 //   nativeCancel    stops a print between bands; the document is aborted (AbortDoc), nothing half-printed is
 //                   left in the queue.
@@ -33,7 +35,9 @@
 #include <vector>
 
 #include <windows.h>
+#include <objbase.h>  // before commdlg.h: PrintDlgEx is declared only once COM's STDMETHOD is (WIN32_LEAN_AND_MEAN)
 #include <commdlg.h>
+#include <cderr.h>  // PDERR_*: windows.h leaves it out under WIN32_LEAN_AND_MEAN
 #include <inspectable.h>
 #include <objidl.h>
 #include <wincodec.h>
@@ -391,19 +395,31 @@ void apply_hints(Setup* s, const Hints& h) {
     }
 }
 
-jboolean JNICALL Printing_defaults(JNIEnv* env, jclass, jintArray hints, jobjectArray names, jintArray numbers) {
+// The default printer's settings, on a host thread: the spooler asks from the app's main thread, which
+// a printer that takes seconds to open must not hold.
+void defaults(Hints hints, jint id) {
     Setup s;
     std::wstring paper;
     int n[kNumbers] = {};
-    if (!names || !numbers || env->GetArrayLength(names) < 2 || env->GetArrayLength(numbers) < kNumbers) {
-        return JNI_FALSE;
-    }
-    if (!default_setup(&s)) return JNI_FALSE;
-    apply_hints(&s, hints_of(env, hints));
-    if (!describe(s, &paper, n)) return JNI_FALSE;
-    env->SetObjectArrayElement(names, 0, jstr(env, s.device));
-    env->SetObjectArrayElement(names, 1, jstr(env, paper));
-    env->SetIntArrayRegion(numbers, 0, kNumbers, reinterpret_cast<const jint*>(n));
+    const bool found = default_setup(&s) && (apply_hints(&s, hints), describe(s, &paper, n));
+    with_java([&](JNIEnv* env) {
+        jobjectArray names = nullptr;
+        jintArray numbers = nullptr;
+        if (found) {
+            names = env->NewObjectArray(2, env->FindClass("java/lang/String"), nullptr);
+            env->SetObjectArrayElement(names, 0, jstr(env, s.device));
+            env->SetObjectArrayElement(names, 1, jstr(env, paper));
+            numbers = env->NewIntArray(kNumbers);
+            env->SetIntArrayRegion(numbers, 0, kNumbers, reinterpret_cast<const jint*>(n));
+        }
+        jmethodID m = env->GetStaticMethodID(g_cls, "onDefaults", "(IZ[Ljava/lang/String;[I)V");
+        if (m) env->CallStaticVoidMethod(g_cls, m, id, found ? JNI_TRUE : JNI_FALSE, names, numbers);
+    });
+}
+
+jboolean JNICALL Printing_defaults(JNIEnv* env, jclass cls, jintArray hints, jint id) {
+    if (!remember_class(env, cls)) return JNI_FALSE;
+    std::thread(defaults, hints_of(env, hints), id).detach();
     return JNI_TRUE;
 }
 
@@ -471,6 +487,13 @@ void choose(int page_count, Hints hints, jint id) {
         }
         setup->copies = static_cast<int>(pd.nCopies ? pd.nCopies : 1);
         setup->collate = (pd.Flags & PD_COLLATE) != 0;
+        // The copies are printed here (print_sequence), so the driver is asked for one: a DEVMODE that
+        // still says the dialog's count would have the driver multiply them again.
+        if (setup->devmode.size() >= sizeof(DEVMODEW)) {
+            auto* dm = reinterpret_cast<DEVMODEW*>(setup->devmode.data());
+            dm->dmCopies = 1;
+            dm->dmFields &= ~static_cast<DWORD>(DM_COPIES | DM_COLLATE);
+        }
         result = kChosen;
     }
     if (pd.hDevMode) GlobalFree(pd.hDevMode);
@@ -596,6 +619,8 @@ HRESULT draw_band(HDC dc, IPdfPageAbi* page, double page_w, const PagePlacement&
     opts->put_BackgroundColor(ColorAbi{255, 255, 255, 255});
     // Paper is printed in the document's colours, never Windows' high-contrast theme.
     opts->put_IsIgnoringHighContrast(TRUE);
+    // An uncompressed BMP: nothing to deflate per band and inflate again (PNG is the default).
+    opts->put_BitmapEncoderId(CLSID_WICBmpEncoder);
     Ref<IUnknown> stream;
     hr = rt.instance(L"Windows.Storage.Streams.InMemoryRandomAccessStream", kIidRandomAccessStream,
                      reinterpret_cast<void**>(stream.put()));
@@ -608,13 +633,13 @@ HRESULT draw_band(HDC dc, IPdfPageAbi* page, double page_w, const PagePlacement&
     hr = action->GetResults();
     if (FAILED(hr)) return hr;
 
-    Ref<IStream> png;
-    hr = rt.istream_over(stream.p, IID_IStream, reinterpret_cast<void**>(png.put()));
+    Ref<IStream> bmp;
+    hr = rt.istream_over(stream.p, IID_IStream, reinterpret_cast<void**>(bmp.put()));
     if (FAILED(hr)) return hr;
     LARGE_INTEGER zero = {};
-    png->Seek(zero, STREAM_SEEK_SET, nullptr);
+    bmp->Seek(zero, STREAM_SEEK_SET, nullptr);
     Ref<IWICBitmapDecoder> decoder;
-    hr = wic->CreateDecoderFromStream(png.p, nullptr, WICDecodeMetadataCacheOnDemand, decoder.put());
+    hr = wic->CreateDecoderFromStream(bmp.p, nullptr, WICDecodeMetadataCacheOnDemand, decoder.put());
     if (FAILED(hr)) return hr;
     Ref<IWICBitmapFrameDecode> frame;
     hr = decoder->GetFrame(0, frame.put());
@@ -805,7 +830,7 @@ void JNICALL Printing_cancel(JNIEnv*, jclass, jint id) {
 constexpr const char* kCls = "com.macapk.loader.HostPrinting";
 
 const HostMethod kMethods[] = {
-    WINAPK_HOST_NATIVE(kCls, "nativeDefaults", "([I[Ljava/lang/String;[I)Z", Printing_defaults),
+    WINAPK_HOST_NATIVE(kCls, "nativeDefaults", "([II)Z", Printing_defaults),
     WINAPK_HOST_NATIVE(kCls, "nativeChoose", "(I[II)Z", Printing_choose),
     WINAPK_HOST_NATIVE(kCls, "nativePrint", "(JLjava/lang/String;Ljava/lang/String;[II)Z", Printing_print),
     WINAPK_HOST_NATIVE(kCls, "nativeCancel", "(I)V", Printing_cancel),
