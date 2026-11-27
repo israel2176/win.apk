@@ -58,6 +58,18 @@ EGLBoolean gl_turn_make_current(GlMakeCurrentFn fn, EGLDisplay dpy, EGLSurface d
 // eglReleaseThread through `fn`, in turn: this thread has nothing current afterwards.
 EGLBoolean gl_turn_release_thread(EGLBoolean(EGLAPIENTRY* fn)());
 
+// eglDestroyContext and eglDestroySurface through `fn`, in turn. Like a release, a destroy reaches the
+// renderer (the context's or surface's resources go, and the state manager's cache with them), so
+// afterwards no context's state is taken to be in the renderer: the next GL call of every thread
+// with a context current makes it current again. Without that, a thread that drew on while
+// another ended its context (released it, destroyed its surface and context) drew through the
+// emptied cache: StateManager11::updateState's access violation again, at the end of
+// winapk-gl-test's two GL threads, on whichever thread drew last.
+EGLBoolean gl_turn_destroy_context(EGLBoolean(EGLAPIENTRY* fn)(EGLDisplay, EGLContext), EGLDisplay dpy,
+                                   EGLContext ctx);
+EGLBoolean gl_turn_destroy_surface(EGLBoolean(EGLAPIENTRY* fn)(EGLDisplay, EGLSurface), EGLDisplay dpy,
+                                   EGLSurface surface);
+
 // Times a thread's context was made current again because another had taken its display: the test's
 // window on the turns (test/gl_turn_test.cpp, test/gl_test.cpp).
 unsigned long gl_turn_rebinds();

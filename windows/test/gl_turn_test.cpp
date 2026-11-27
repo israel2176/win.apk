@@ -47,7 +47,19 @@ EGLBoolean EGLAPIENTRY fake_make_current(EGLDisplay, EGLSurface draw, EGLSurface
     if (c != EGL_NO_CONTEXT) {
         g_renderer.store(c);  // StateManager11::onMakeCurrent: the renderer now holds c
         g_binds.fetch_add(1);
+    } else {
+        g_renderer.store(EGL_NO_CONTEXT);  // a release reaches the renderer: it holds no one's state
     }
+    return EGL_TRUE;
+}
+
+// A destroyed context or surface takes its resources out of the renderer, the cached state with them.
+EGLBoolean EGLAPIENTRY fake_destroy_context(EGLDisplay, EGLContext) {
+    g_renderer.store(EGL_NO_CONTEXT);
+    return EGL_TRUE;
+}
+EGLBoolean EGLAPIENTRY fake_destroy_surface(EGLDisplay, EGLSurface) {
+    g_renderer.store(EGL_NO_CONTEXT);
     return EGL_TRUE;
 }
 
@@ -165,6 +177,26 @@ int main() {
         on_thread([] { make_current(9); });
         draw_call();
         check("after eglReleaseThread no call re-binds", gl_turn_rebinds() == before);
+    });
+
+    // One thread ends its context (released, surface and context destroyed) while another draws on, as
+    // at the end of winapk-gl-test's two GL threads: the one drawing must have its own made current again.
+    on_thread([] {
+        make_current(10);
+        draw_call();
+        on_thread([] {
+            make_current(11);
+            winapk::host::gl_turn_make_current(fake_make_current, kDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE,
+                                               EGL_NO_CONTEXT);
+        });
+        check("after another thread's release, a draw runs with its own context's state", draw_call());
+        on_thread([] {
+            make_current(12);
+            winapk::host::gl_turn_destroy_surface(fake_destroy_surface, kDisplay, surface(12));
+        });
+        check("after another's surface is destroyed, likewise", draw_call());
+        on_thread([] { winapk::host::gl_turn_destroy_context(fake_destroy_context, kDisplay, ctx(12)); });
+        check("after another's context is destroyed, likewise", draw_call());
     });
 
     // Many threads, many calls: every call sees its own context, and none overlaps another.

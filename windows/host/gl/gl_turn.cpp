@@ -84,6 +84,9 @@ EGLBoolean gl_turn_make_current(GlMakeCurrentFn fn, EGLDisplay dpy, EGLSurface d
     if (!ok) return ok;  // EGL leaves the thread's binding as it was
     Current& cur = t_current;
     if (ctx == EGL_NO_CONTEXT) {
+        // A release reaches the renderer too (the context's unMakeCurrent): whatever it held is no
+        // longer taken to be any context's state.
+        holder(dpy) = EGL_NO_CONTEXT;
         cur = Current{};
     } else {
         cur.dpy = dpy;
@@ -97,8 +100,28 @@ EGLBoolean gl_turn_make_current(GlMakeCurrentFn fn, EGLDisplay dpy, EGLSurface d
 
 EGLBoolean gl_turn_release_thread(EGLBoolean(EGLAPIENTRY* fn)()) {
     std::lock_guard<std::recursive_mutex> hold(g_turn);
+    const EGLDisplay dpy = t_current.dpy;
     EGLBoolean ok = fn();
-    if (ok) t_current = Current{};
+    if (ok) {
+        if (dpy != EGL_NO_DISPLAY) holder(dpy) = EGL_NO_CONTEXT;
+        t_current = Current{};
+    }
+    return ok;
+}
+
+EGLBoolean gl_turn_destroy_context(EGLBoolean(EGLAPIENTRY* fn)(EGLDisplay, EGLContext), EGLDisplay dpy,
+                                   EGLContext ctx) {
+    std::lock_guard<std::recursive_mutex> hold(g_turn);
+    const EGLBoolean ok = fn(dpy, ctx);
+    holder(dpy) = EGL_NO_CONTEXT;
+    return ok;
+}
+
+EGLBoolean gl_turn_destroy_surface(EGLBoolean(EGLAPIENTRY* fn)(EGLDisplay, EGLSurface), EGLDisplay dpy,
+                                   EGLSurface surface) {
+    std::lock_guard<std::recursive_mutex> hold(g_turn);
+    const EGLBoolean ok = fn(dpy, surface);
+    holder(dpy) = EGL_NO_CONTEXT;
     return ok;
 }
 

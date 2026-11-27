@@ -50,7 +50,12 @@ SOURCES = [
 
 # The calls whose forwarder hands its function to gl_turn.h's own code instead of taking a plain
 # turn: what a thread has current is remembered there.
-TURN_CALLS = {"eglMakeCurrent": "gl_turn_make_current", "eglReleaseThread": "gl_turn_release_thread"}
+TURN_CALLS = {
+    "eglMakeCurrent": "gl_turn_make_current",
+    "eglReleaseThread": "gl_turn_release_thread",
+    "eglDestroyContext": "gl_turn_destroy_context",
+    "eglDestroySurface": "gl_turn_destroy_surface",
+}
 # The calls that take no turn: they read the thread's own EGL state or look a name up, and touch no
 # context's state and no device.
 NO_TURN = {

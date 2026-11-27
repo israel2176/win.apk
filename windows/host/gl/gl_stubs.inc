@@ -116,8 +116,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy, EGLContext c
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLContext ctx);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglDestroyContext", winapk::host::GlLib::Egl));
     if (!fn) return {};
-    winapk::host::GlTurn turn(false);
-    return fn(dpy, ctx);
+    return winapk::host::gl_turn_destroy_context(fn, dpy, ctx);
 }
 
 extern "C" EGLBoolean EGLAPIENTRY eglDestroyImage(EGLDisplay dpy, EGLImage image) {
@@ -132,8 +131,7 @@ extern "C" EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy, EGLSurface s
     using Fn = EGLBoolean(EGLAPIENTRY*)(EGLDisplay dpy, EGLSurface surface);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("eglDestroySurface", winapk::host::GlLib::Egl));
     if (!fn) return {};
-    winapk::host::GlTurn turn(false);
-    return fn(dpy, surface);
+    return winapk::host::gl_turn_destroy_surface(fn, dpy, surface);
 }
 
 extern "C" EGLBoolean EGLAPIENTRY eglDestroySync(EGLDisplay dpy, EGLSync sync) {
