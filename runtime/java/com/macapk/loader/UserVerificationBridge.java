@@ -8,7 +8,8 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Host user verification, not an Android biometric-strength certification.
- * Only the native OS reply can create authorization; Java cannot mark success. */
+ * Only the native OS reply can create authorization; Java cannot mark success.
+ * On Windows the host is Windows Hello (windows/host/native_user_verification.cpp). */
 public final class UserVerificationBridge {
     private UserVerificationBridge(){}
     public static final int STRONG=0x000f, WEAK=0x00ff, DEVICE_CREDENTIAL=0x8000;
@@ -22,7 +23,7 @@ public final class UserVerificationBridge {
     private static native long nativeLastAuthenticationTime(int mask);
     private static native void nativeBeginKeyOperation(Object spi);
     private static native boolean nativeConsumeAuthorization(Object spi,boolean perUse,int seconds,int mask);
-    public static boolean available(){try{return false;}catch(UnsatisfiedLinkError e){return false;}}
+    public static boolean available(){try{return nativeBound();}catch(UnsatisfiedLinkError e){return false;}}
     public static int canAuthenticate(int mask){return available()?nativeCanAuthenticate(mask):12;}
     public static long lastAuthenticationTime(int mask){return available()?nativeLastAuthenticationTime(mask):-1;}
     /** Revokes a previous operation's authorization. This never grants access. */

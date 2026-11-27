@@ -1,6 +1,7 @@
 // android.hardware.biometrics.BiometricManager -- queries whether the
-// device can do biometric auth. The opt-in LocalAuthentication bridge
-// queries real host capability and refuses to claim Android Class-3 strength. The Authenticators
+// device can do biometric auth. UserVerificationBridge asks the host (Windows
+// Hello: a fingerprint reader or face camera as the biometric, the Hello PIN
+// as the device credential). The Authenticators
 // flag constants must exist for callers (and androidx.biometric) to
 // compile. Values mirror AOSP.
 package android.hardware.biometrics;
@@ -37,15 +38,13 @@ public class BiometricManager {
      * there: it fires before the service is reached, so an app passing 0 or a
      * weak-biometric bit gets IllegalArgumentException on any device.
      *
-     * The answer is BIOMETRIC_NO_AUTHENTICATION, which is AOSP's OWN answer
-     * when it has no service to ask (:791-793). It is honest twice over here:
-     * we expose no biometric bridge, so no biometric authentication has ever
-     * happened in this process; and the macOS login that got the user to their
-     * desktop is not an Android device-credential unlock and must not be
-     * reported as one. An app uses this timestamp to decide whether a recent
-     * unlock is fresh enough to skip a re-auth -- reporting a time we did not
-     * observe would let it skip a check it wanted, which is exactly the
-     * credential bypass this project forbids.
+     * The answer is the host's: the last time Windows Hello verified the
+     * user for one of these authenticators in this process, as
+     * SystemClock.elapsedRealtime(), else BIOMETRIC_NO_AUTHENTICATION, AOSP's
+     * own answer when nothing has authenticated. The Windows sign-in that got
+     * the user to their desktop is not an Android unlock and is never
+     * reported as one: an app uses this time to skip a re-authentication it
+     * would otherwise ask for.
      */
     public long getLastAuthenticationTime(int authenticators) {
         if (authenticators == 0
@@ -89,8 +88,9 @@ public class BiometricManager {
         private CharSequence label() {
             if(com.macapk.loader.UserVerificationBridge.canAuthenticate(mAuthenticators)!=0)return null;
             if((mAuthenticators & Authenticators.BIOMETRIC_WEAK)==Authenticators.BIOMETRIC_WEAK
-                    && com.macapk.loader.UserVerificationBridge.canAuthenticate(Authenticators.BIOMETRIC_WEAK)==0)return "Use Touch ID";
-            return "Use Mac password";
+                    && com.macapk.loader.UserVerificationBridge.canAuthenticate(Authenticators.BIOMETRIC_WEAK)==0)
+                return (mAuthenticators & Authenticators.DEVICE_CREDENTIAL)!=0 ? "Use biometrics or screen lock" : "Use biometrics";
+            return "Use screen lock";
         }
     }
 

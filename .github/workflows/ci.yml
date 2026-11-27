@@ -455,6 +455,8 @@ jobs:
           ./build/winapk-aot-cache-test.exe "$(cygpath -w "$PWD/aot-cache-scratch")"
       - name: Run the translation stamp test (its line, what the loader refuses, when the worker has work)
         run: ./build/winapk-aot-stamp-test.exe
+      - name: Run the user verification test (Windows Hello's answers as BiometricManager and BiometricPrompt give them)
+        run: ./build/winapk-user-verification-test.exe
       - name: Run the host code test (which pages of a PE image an arm64 library may not mprotect)
         run: ./build/winapk-host-code-test.exe
       - name: Run the App Link sign-in window test (which navigation returns to the app)
