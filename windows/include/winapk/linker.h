@@ -43,8 +43,11 @@
 //     allocator; a few dozen bytes each), unreferenced.
 //
 // Not done yet:
-//   * linker namespaces and android_dlopen_ext's extinfo (loading from an fd
-//     or from inside the APK) are ignored.
+//   * linker namespaces: one; android_dlopen_ext's namespace is checked, not
+//     used. Its other extinfo (a reserved address, a library read from a file
+//     descriptor at an offset, the RELRO written out) is honoured, except
+//     that ANDROID_DLEXT_RESERVED_ADDRESS_RECURSIVE places only the library
+//     itself in the range, not its dependencies.
 
 #pragma once
 
@@ -55,6 +58,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace winapk {
@@ -100,11 +104,18 @@ public:
     // in the search paths. RTLD_NOLOAD and RTLD_GLOBAL are honored. On failure
     // returns nullptr and sets `error` to a bionic-style message.
     // `placement`, if given, applies to the library itself, not to its
-    // dependencies (android_dlopen_ext's reserved address).
+    // dependencies: android_dlopen_ext's reserved address, the file it is
+    // read from (ANDROID_DLEXT_USE_LIBRARY_FD, _OFFSET) instead of a search
+    // by name, and its RELRO written out (ANDROID_DLEXT_WRITE_RELRO) when it
+    // is newly loaded, after relocation and before its constructors.
     struct Placement {
         void* address = nullptr;
         size_t size = 0;
         bool hint = false;  // fall back to anywhere if the range is too small
+        std::filesystem::path file;  // empty: found by `name`; else only read from
+        uint64_t file_offset = 0;
+        std::filesystem::path library_name;  // with `file`: the library's (dladdr's, dl_iterate_phdr's)
+        int relro_fd = -1;                   // >= 0: ANDROID_DLEXT_WRITE_RELRO's file
     };
     GuestLibrary* open(const std::string& name, int flags, std::string* error,
                        const Placement* placement = nullptr);
@@ -137,6 +148,11 @@ public:
 
     // Loaded images in load order.
     std::vector<const ElfImage*> images() const;
+
+    // Where the loaded x86_64 images lie, [first, second), copied: for a caller that must tell
+    // guest code apart later while it may take no lock (signal.cpp, with another thread
+    // suspended that could hold this linker's).
+    std::vector<std::pair<uintptr_t, uintptr_t>> x86_64_ranges() const;
 
     // One loaded guest library as dl_iterate_phdr reports it.
     struct PhdrView {
@@ -173,7 +189,7 @@ private:
     void unload(GuestLibrary* root, const std::unordered_set<GuestLibrary*>& kept);
     static void on_thread_dtor_added(const void* dso);
     static void on_thread_dtor_removed(const void* dso);
-    std::filesystem::path locate(const std::string& name, const std::filesystem::path& near) const;
+    std::filesystem::path locate(const std::string& name, const std::filesystem::path& needer_dir) const;
     std::vector<GuestLibrary*> local_group(GuestLibrary* root) const;
     void* find_in(GuestLibrary* lib, const char* name) const;
     void* resolve_linker_owned(const char* name) const;

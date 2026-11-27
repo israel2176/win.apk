@@ -91,6 +91,40 @@ void signal_set_mask_of_current_thread(uint64_t mask);
 // thread one; once per thread, nothing if the guest set its own.
 void signal_altstack_for_current_thread();
 
+// A signal sent to a thread that sleeps in the shim (a futex word, a condition variable, a
+// semaphore, a descriptor's readiness, a sleep) interrupts the sleep, as Linux interrupts the
+// system call: the sender cannot run the handler there (the thread is in Windows' code, where it
+// may hold Windows' locks), so it posts the signal to the thread and wakes the wait; the thread
+// runs the handler when the wait returns, then the call goes on or fails as Linux's would
+// (signal.cpp). While a SignalWaitScope lives, a signal posted to the calling thread wakes the
+// wait with WakeByAddressAll(addr), or by calling `wake` when one is given; scopes nest (a handler
+// that waits), each putting back the one it replaced.
+class SignalWaitScope {
+public:
+    explicit SignalWaitScope(const void* addr, void (*wake)() = nullptr);
+    ~SignalWaitScope();
+    SignalWaitScope(const SignalWaitScope&) = delete;
+    SignalWaitScope& operator=(const SignalWaitScope&) = delete;
+    // A signal is posted already: the caller does not go to sleep.
+    bool posted() const;
+
+private:
+    void* post_;
+    const void* outer_addr_;
+    void (*outer_wake_)();
+};
+// What the signals that interrupted a wait mean for the call (Linux's ERESTARTSYS): none came, or
+// each handler that ran had SA_RESTART and the call goes on (a futex wait, sem_wait, a blocking
+// read), or one had not and the call fails with EINTR. poll, select, epoll_wait and the sleeps
+// fail with EINTR either way; a condition variable's wait returns as a spurious wake.
+enum class WaitEnd { kNone, kRestart, kInterrupted };
+// Runs the handlers of the signals posted to the calling thread (after a wait, outside its
+// SignalWaitScope; also at sched_yield and sigprocmask, where a thread holds nothing of Windows').
+WaitEnd signal_take_posted();
+// An auto-reset event that a signal posted to the calling thread sets: what a sleep that is not a
+// WaitOnAddress (nanosleep's timer) waits on besides its own handle.
+void* signal_wait_event();
+
 // pthread.cpp: the Windows thread id behind a guest pthread_t (0 if null).
 uint32_t thread_id_of(const void* pthread);
 
@@ -102,6 +136,9 @@ const char* errno_text(int linux_errno);
 // stdout and stderr.
 size_t file_write(void* guest_file, const char* data, size_t n);
 int64_t fd_write(int fd, const void* data, size_t n);
+// The host path of the file descriptor `fd` has open; false (errno set) for
+// a descriptor that is not a file's.
+bool host_path_of_fd(int fd, std::wstring* out);
 // The CRT FILE* behind a guest FILE* (the __sF entries are the standard streams).
 void* host_stream(void* guest_file);
 void* guest_stdout();
@@ -143,6 +180,11 @@ std::string android_path_of(const std::wstring& host_file);
 // stdio.cpp: /proc/self/maps as native code reads it (the guest libraries, the
 // process's program and linker, the app's APKs), for the file Java code opens.
 std::string proc_maps_file_text();
+
+// cpuinfo.cpp: when `guest_path` is /proc/cpuinfo or /sys/devices/system/cpu/{possible,
+// present,online}, writes this machine's text to `host`, the file host_path() mapped it to,
+// once per process (the kernel's files, which Windows has not got).
+void refresh_cpu_file(const char* guest_path, const std::wstring& host);
 
 // cacerts.cpp: the host directory that answers Android's system CA store
 // (/system/etc/security/cacerts), built from the roots Windows trusts on the

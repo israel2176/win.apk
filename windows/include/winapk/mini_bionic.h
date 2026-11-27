@@ -91,8 +91,8 @@ std::wstring android_file_name(std::wstring host_name);
 
 // The host file behind a /proc path that is a real file (/proc/meminfo,
 // /proc/self/cmdline and /proc/<pid>/cmdline, which Boot writes under
-// <android root>/proc), for java.io.FileReader's /proc hook; empty when there
-// is none.
+// <android root>/proc; /proc/cpuinfo, which the shim writes there), for
+// java.io.FileReader's /proc hook; empty when there is none.
 std::wstring android_proc_file(const char* path);
 
 // The calling thread's NDK looper (ALooper, src/bionic/looper.cpp), for Java's

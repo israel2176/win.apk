@@ -35,6 +35,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cwchar>
 #include <map>
 #include <optional>
 #include <string>
@@ -271,6 +272,117 @@ inline std::vector<InstallSet> group_install_sets(const std::vector<ApkPart>& pa
             set.splits.emplace_back(files[i]->file, name);
         }
         out.push_back(std::move(set));
+    }
+    return out;
+}
+
+
+// ---- which app a file is, before its install ----
+//
+// Android keys an app by its package: a file installs over the app of its package, whatever the file is called, and
+// never over another package's. The library names an app by its file (install_name), so two files called
+// app-release.apk of two packages would get one name. Before a file the user opened installs, winapk-runtime
+// --verify-apk reads its package and versionCode (as PackageInstallerActivity parses the APK before its question),
+// and place_install says where it goes. A file older than the installed app of its package is a downgrade, which
+// Android's installer refuses (INSTALL_FAILED_VERSION_DOWNGRADE); here the user is asked first, since what the newer
+// version saved may not work with the older one.
+
+struct FileIdentity {
+    std::wstring package;  // empty: the file could not be read; it installs as before, and its install says why
+    long long version = -1;  // versionCode; -1: unknown
+    std::wstring version_name;
+};
+
+struct LibraryApp {
+    std::wstring name, package;  // package empty: unknown (no <name>.package)
+    long long version = -1;
+};
+
+enum class Placement {
+    kNew,        // a new app, under `name`
+    kUpdate,     // over the app of its package (same or newer versionCode, or one of them unknown)
+    kDowngrade,  // over the app of its package, which is newer: only once the user agrees
+    kOtherApp,   // the name given was another package's app: a new app under a name of its own
+};
+
+struct PlaceResult {
+    std::wstring name;
+    Placement how = Placement::kNew;
+};
+
+// Library names are file names: Windows takes "App" and "app" for one.
+inline bool same_name(const std::wstring& a, const std::wstring& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        auto lower = [](wchar_t c) { return c >= L'A' && c <= L'Z' ? static_cast<wchar_t>(c - L'A' + L'a') : c; };
+        if (lower(a[i]) != lower(b[i])) return false;
+    }
+    return true;
+}
+
+// Where a file goes. `name` is install_name's (from the file's name); `taken` the names in use besides the library's
+// apps (installs queued). A package the library has keeps its app's name; a name that is another package's app is
+// not reused: the new app is named after its package, as a package-named file would be, or `name`_2, _3...
+inline PlaceResult place_install(const std::wstring& name, const FileIdentity& file,
+                                 const std::vector<LibraryApp>& library, const std::vector<std::wstring>& taken = {}) {
+    const LibraryApp* under_name = nullptr;
+    for (const LibraryApp& a : library) {
+        if (same_name(a.name, name)) under_name = &a;
+    }
+    if (file.package.empty()) return {name, under_name ? Placement::kUpdate : Placement::kNew};
+    for (const LibraryApp& a : library) {
+        if (a.package != file.package) continue;
+        const bool older = file.version >= 0 && a.version >= 0 && file.version < a.version;
+        return {a.name, older ? Placement::kDowngrade : Placement::kUpdate};
+    }
+    // Under that name, an app of unknown package is taken for this one, as before the package was asked.
+    if (!under_name || under_name->package.empty()) return {name, under_name ? Placement::kUpdate : Placement::kNew};
+    auto free = [&](const std::wstring& n) {
+        if (n.empty()) return false;
+        for (const LibraryApp& a : library) {
+            if (same_name(a.name, n)) return false;
+        }
+        for (const std::wstring& t : taken) {
+            if (same_name(t, n)) return false;
+        }
+        return true;
+    };
+    std::wstring pkg;  // a package is letters, digits, '_' and '.': a file name already; anything else is dropped
+    for (const wchar_t c : file.package) {
+        if ((c >= L'a' && c <= L'z') || (c >= L'A' && c <= L'Z') || (c >= L'0' && c <= L'9') || c == L'_' ||
+            c == L'.')
+            pkg += c;
+    }
+    while (!pkg.empty() && pkg.back() == L'.') pkg.pop_back();
+    if (free(pkg)) return {pkg, Placement::kOtherApp};
+    for (int n = 2;; ++n) {
+        const std::wstring candidate = name + L"_" + std::to_wstring(n);
+        if (free(candidate)) return {candidate, Placement::kOtherApp};
+    }
+}
+
+// The answer of winapk-runtime --verify-apk (com.winapk.tools.ApkCheck: "KEY\tvalue" lines) as a FileIdentity.
+inline FileIdentity parse_file_identity(const std::wstring& text) {
+    FileIdentity out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t end = text.find(L'\n', at);
+        if (end == std::wstring::npos) end = text.size();
+        std::wstring line = text.substr(at, end - at);
+        at = end + 1;
+        if (!line.empty() && line.back() == L'\r') line.pop_back();
+        const size_t tab = line.find(L'\t');
+        if (tab == std::wstring::npos) continue;
+        const std::wstring key = line.substr(0, tab), value = line.substr(tab + 1);
+        if (key == L"PACKAGE") {
+            out.package = value;
+        } else if (key == L"VERSIONNAME") {
+            out.version_name = value;
+        } else if (key == L"VERSIONCODE" && !value.empty()) {
+            wchar_t* stop = nullptr;
+            const long long v = std::wcstoll(value.c_str(), &stop, 10);
+            if (stop && !*stop && v >= 0) out.version = v;
+        }
     }
     return out;
 }

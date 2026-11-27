@@ -39,6 +39,7 @@ add_library(winapk_loader STATIC
   src/bionic/locale.cpp
   src/bionic/paths.cpp
   src/bionic/cacerts.cpp
+  src/bionic/cpuinfo.cpp
   src/bionic/fd.cpp
   src/bionic/socket.cpp
   src/bionic/looper.cpp
@@ -197,6 +198,11 @@ target_include_directories(winapk-machine-load-test PRIVATE host)
 # The toast an Android notification becomes and the clicks that come back (test/toast_xml_test.cpp).
 add_executable(winapk-toast-xml-test test/toast_xml_test.cpp)
 
+# Where a printed page goes on the printer's paper and the order of pages and copies
+# (host/print_layout.h). No printer. test/print_layout_test.cpp.
+add_executable(winapk-print-layout-test test/print_layout_test.cpp)
+target_include_directories(winapk-print-layout-test PRIVATE host)
+
 # When an app's presenting eglSwapBuffers returns (host/swap_pacing.h): producers of several
 # speeds on a simulated clock. No window. test/swap_pacing_test.cpp.
 add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
@@ -335,7 +341,7 @@ if(WINAPK_JNI_INCLUDE)
   # with libvpx's and dav1d's x86-64 SIMD (nasm); cmake/soft_codecs.cmake.
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/soft_codecs.cmake)
   set(WINAPK_SOFT_CODEC_SOURCES host/soft_codecs.cpp host/webm_demux.cpp host/yuv_convert.cpp)
-  set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser)
+  set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser winapk_mkvmuxer)
 
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
@@ -351,6 +357,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_wallpaper.cpp host/native_picker.cpp
                               host/native_gamepad.cpp
                               host/native_audio_input.cpp host/native_nsd.cpp host/native_volume.cpp host/native_photos.cpp
+                              host/native_printing.cpp
                               host/webview2_host.cpp host/native_browser_tab.cpp host/native_webview.cpp
                               host/native_camera.cpp host/native_radios.cpp host/native_bluetooth.cpp
                               host/native_location.cpp host/machine_load.cpp
@@ -362,7 +369,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/runtime.rc)
   target_link_libraries(winapk-runtime PRIVATE winapk_jni winapk_sqlite webpdecoder winapk_stb_vorbis windowscodecs
                         ole32 oleaut32 mf mfplat mfreadwrite mfuuid shlwapi advapi32 shell32 uuid wlanapi iphlpapi
-                        bthprops winmm bcrypt psapi winhttp crypt32)
+                        bthprops winmm bcrypt psapi winhttp crypt32 comdlg32 winspool)
   target_include_directories(winapk-runtime PRIVATE ${WINAPK_WEBP_DIR}/src)
   # WebView2 (host/webview2_host.h): the SDK's header to build against, from
   # scripts/fetch_webview2.sh; its WebView2Loader.dll is staged next to the
@@ -396,11 +403,13 @@ if(WINAPK_JNI_INCLUDE)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_gl_bridges.cmake
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_turn.cpp host/gl/gl_bridges.cpp
-                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp
+                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp host/vk/guest_vk.cpp
+                 host/native_vulkan.cpp
                  host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/ndk_camera.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp host/ndk_media_codec.cpp
+                 host/ndk_media_muxer.cpp host/webm_writer.cpp
                  host/native_activity.cpp
                  ${WINAPK_SOFT_CODEC_SOURCES}
                  ${WINAPK_GL_UPSTREAM})
@@ -461,9 +470,18 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
 
-  # libmediandk's AMediaExtractor, AMediaCodec and AMediaDataSource as an app's native code
-  # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.
+  # libvulkan as an app's native code calls it (test/vulkan_test.cpp), on the loader and driver
+  # beside it: run from the staged bin\, where SwiftShader stands in for a GPU.
+  add_executable(winapk-vulkan-test test/vulkan_test.cpp host/vk/guest_vk.cpp)
+  target_include_directories(winapk-vulkan-test PRIVATE host include third_party/khronos "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_options(winapk-vulkan-test PRIVATE -static)
+
+  # libmediandk's AMediaExtractor, AMediaCodec (decoders and encoders), AMediaDataSource and
+  # AMediaMuxer as an app's native code calls them (test/ndk_media_test.cpp), on test/video's MP4
+  # and WebM files.
   add_executable(winapk-ndk-media-test test/ndk_media_test.cpp host/native_media.cpp host/ndk_media_codec.cpp
+                 host/ndk_media_muxer.cpp host/webm_writer.cpp host/mp4_writer.cpp host/media_encode.cpp
                  host/video_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
   target_include_directories(winapk-ndk-media-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
                              "${WINAPK_JNI_INCLUDE}/win32")
@@ -471,6 +489,15 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-ndk-media-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid
                         shlwapi)
   target_link_options(winapk-ndk-media-test PRIVATE -static)
+
+  # AMediaMuxer's own checks (test/ndk_muxer_test.cpp): no Windows call, so CI runs them on Linux
+  # too (test/soft_codecs/CMakeLists.txt).
+  add_executable(winapk-ndk-muxer-test test/ndk_muxer_test.cpp host/ndk_media_muxer.cpp host/native_media.cpp
+                 host/webm_writer.cpp host/mp4_writer.cpp host/webm_demux.cpp)
+  target_include_directories(winapk-ndk-muxer-test PRIVATE host include)
+  target_include_directories(winapk-ndk-muxer-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-ndk-muxer-test PRIVATE winapk_mkvparser winapk_mkvmuxer)
+  target_link_options(winapk-ndk-muxer-test PRIVATE -static)
 
   # libcamera2ndk and AImageReader as an app's native code calls them (test/ndk_camera_test.cpp),
   # on a camera of the test's own: no webcam needed.

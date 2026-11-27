@@ -9,6 +9,7 @@
 #include "winapk/elf_tls.h"
 #include "winapk/fs_tls_patch.h"
 #include "winapk/guest_abi.h"
+#include "winapk/long_path.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -41,36 +42,60 @@ std::string hex(uint64_t v) {
 }
 
 // A library's path as the file call takes it: near MAX_PATH by its long-path form (an app's
-// native libraries sit under android/data/app/~~<id>/<package>-<id>/lib/<abi>, past 260
-// characters with a long user name or package where Windows' long-path policy is off).
-std::filesystem::path open_path(const std::filesystem::path& path) {
-    const std::wstring w = path.wstring();
-    if (w.size() < MAX_PATH - 12 || w.rfind(L"\\\\?\\", 0) == 0) return path;
-    const DWORD n = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
-    if (n == 0) return path;
-    std::wstring full(n, L'\0');
-    const DWORD m = GetFullPathNameW(w.c_str(), n, &full[0], nullptr);
-    if (m == 0 || m >= n) return path;
-    full.resize(m);
-    if (full.rfind(L"\\\\?\\", 0) == 0) return full;
-    if (full.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + full.substr(2);
-    return L"\\\\?\\" + full;
-}
+// native libraries sit under android/data/app/~~<id>/<package>-<id>/lib/<abi>, long_path.h).
+std::filesystem::path open_path(const std::filesystem::path& path) { return long_path(path.wstring()); }
 
-bool read_file(const std::filesystem::path& path, std::vector<uint8_t>* out, std::string* error) {
+// Reads the ELF file that starts `offset` bytes into `path`: the whole file
+// when the offset is 0, else (an ELF inside an APK) as far as its headers and
+// PT_LOAD segments reach, which is all map() reads.
+bool read_file(const std::filesystem::path& path, uint64_t offset, std::vector<uint8_t>* out, std::string* error) {
     std::ifstream f(open_path(path), std::ios::binary | std::ios::ate);
     if (!f) {
         *error = "cannot open " + path.string();
         return false;
     }
-    std::streamsize n = f.tellg();
-    if (n <= 0) {
+    const std::streamsize total = f.tellg();
+    if (total <= 0) {
         *error = "empty file " + path.string();
         return false;
     }
-    out->resize(static_cast<size_t>(n));
-    f.seekg(0);
-    if (!f.read(reinterpret_cast<char*>(out->data()), n)) {
+    if (offset >= static_cast<uint64_t>(total)) {
+        *error = "file offset " + std::to_string(offset) + " is past the end of " + path.string() + " (" +
+                 std::to_string(total) + " bytes)";
+        return false;
+    }
+    const uint64_t left = static_cast<uint64_t>(total) - offset;
+    uint64_t want = left;
+    if (offset != 0) {
+        Ehdr eh{};
+        f.seekg(static_cast<std::streamoff>(offset));
+        if (left < sizeof(eh) || !f.read(reinterpret_cast<char*>(&eh), sizeof(eh))) {
+            *error = "not an ELF file (too small)";
+            return false;
+        }
+        want = sizeof(eh);
+        if (eh.e_phentsize == sizeof(Phdr) && eh.e_phoff < left &&
+            static_cast<uint64_t>(eh.e_phnum) * sizeof(Phdr) <= left - eh.e_phoff) {
+            want = std::max<uint64_t>(want, eh.e_phoff + static_cast<uint64_t>(eh.e_phnum) * sizeof(Phdr));
+            std::vector<Phdr> ph(eh.e_phnum);
+            f.seekg(static_cast<std::streamoff>(offset + eh.e_phoff));
+            if (!ph.empty() && !f.read(reinterpret_cast<char*>(ph.data()),
+                                       static_cast<std::streamsize>(ph.size() * sizeof(Phdr)))) {
+                *error = "short read on " + path.string();
+                return false;
+            }
+            for (const Phdr& p : ph) {
+                if (p.p_type == kPtLoad && p.p_offset <= left && p.p_filesz <= left - p.p_offset) {
+                    want = std::max<uint64_t>(want, p.p_offset + p.p_filesz);
+                }
+            }
+        }
+        // A segment past the end is map()'s to report; what is there is read.
+        want = std::min(want, left);
+    }
+    out->resize(static_cast<size_t>(want));
+    f.seekg(static_cast<std::streamoff>(offset));
+    if (!f.read(reinterpret_cast<char*>(out->data()), static_cast<std::streamsize>(want))) {
         *error = "short read on " + path.string();
         return false;
     }
@@ -129,7 +154,7 @@ std::unique_ptr<ElfImage> ElfImage::load(const std::filesystem::path& path,
 std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::string* error,
                                         const LoadOptions& options) {
     std::vector<uint8_t> file;
-    if (!read_file(path, &file, error)) return nullptr;
+    if (!read_file(path, options.file_offset, &file, error)) return nullptr;
 
     if (file.size() < sizeof(Ehdr)) {
         *error = "not an ELF file (too small)";
@@ -164,7 +189,8 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
     }
 
     std::unique_ptr<ElfImage> img(new ElfImage());
-    img->path_ = path;
+    img->path_ = options.name.empty() ? path : options.name;
+    img->source_ = path;
     img->options_ = options;
     img->machine_ = eh.e_machine;
     for (int i = 0; i < eh.e_phnum; ++i) {
@@ -758,7 +784,11 @@ void ElfImage::register_arm64_code() {
     // (still unrelocated here, as winapk-aot read it).
     arm64_lo_ = code_lo;
     arm64_hi_ = code_hi;
-    arm64::aot_load(path_.u8string().c_str(), bias_, text_hash, code_lo, code_hi);
+    std::string aot_name = path_.u8string();
+    if (source_ != path_) {
+        aot_name = source_.u8string() + "!" + std::to_string(options_.file_offset) + "!" + path_.filename().u8string();
+    }
+    arm64::aot_load(aot_name.c_str(), bias_, text_hash, code_lo, code_hi);
 }
 
 // DT_INIT_ARRAY entries are called as fn(argc, argv, envp); DT_INIT,

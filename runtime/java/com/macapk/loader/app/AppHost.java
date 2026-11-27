@@ -61,6 +61,10 @@ public interface AppHost {
         public java.util.function.IntConsumer orientation;
         /** The window back to the user's rotation (the one the app was started in), freed. */
         public Runnable userOrientation;
+        /** Where the system keeps the app's task across the end of its process (apps\<name>\
+         *  task-state.parcel): the activity records and their saved state, as system_server keeps
+         *  them; the next process restores the task from it. Null: not kept. */
+        public java.io.File savedTask;
     }
 
     /** ActivityThread.main's work on the calling thread, the main looper's: the system services
@@ -80,6 +84,21 @@ public interface AppHost {
      *  once when nothing is resumed), then every activity stopped and destroyed from the top down.
      *  The latch counts down once the task is empty. */
     java.util.concurrent.CountDownLatch terminate(Runnable topPaused);
+
+    /** The Windows session is ending, which ends the process as the system ending kills it on a device
+     *  (ActivityTaskManagerService.shuttingDown): every resumed or paused activity is stopped, saving
+     *  its state, and nothing is destroyed; the task is kept for the app's next process. The latch
+     *  counts down once every one has stopped. */
+    default java.util.concurrent.CountDownLatch shutdown() {
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        done.countDown();
+        return done;
+    }
+
+    /** The framework's crash handler is about to end the process (an exception no one caught): the
+     *  task's top activity is not kept for the next process, as ActivityManagerService's
+     *  handleApplicationCrash finishes it. Returns once that is written, or after a short wait. */
+    default void processCrashed() {}
 
     /** The window was minimized: the task goes to the back (the resumed activity paused and
      *  stopped). */

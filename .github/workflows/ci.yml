@@ -3,7 +3,7 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
-#                                                       ├─ AOSP app layer: lifecycle, accessibility tree (Ubuntu, informational)
+#                                                       ├─ AOSP app layer: task restore; lifecycle, accessibility tree (Ubuntu, informational)
 #                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
@@ -150,6 +150,7 @@ jobs:
             ${{ runner.temp }}/guest/*.so
             ${{ runner.temp }}/guest/winapk_exec_guest
             ${{ runner.temp }}/guest/link/*.so
+            ${{ runner.temp }}/guest/link/dlext_container.bin
             ${{ runner.temp }}/guest/link/arm64/*.so
             ${{ runner.temp }}/guest/arm64/*.so
             ${{ runner.temp }}/guest/e2e/libwinapk_jni_guest.so
@@ -182,23 +183,31 @@ jobs:
           "$RUNNER_TEMP/launcher-state-test"
 
   codecs:
-    # The software codecs, the picture conversions and the WebM reader need no Windows call: their
-    # test also runs here under AddressSanitizer and UndefinedBehaviorSanitizer, on the same
-    # libraries cmake/soft_codecs.cmake builds for Windows (the Windows build runs it too).
+    # The software codecs, the picture conversions, the WebM reader and AMediaMuxer's writers need
+    # no Windows call: their tests also run here under AddressSanitizer and
+    # UndefinedBehaviorSanitizer, on the same libraries cmake/soft_codecs.cmake builds for Windows
+    # (the Windows build runs them too).
     name: Software codecs (Linux, ASan)
     needs: changes
     if: needs.changes.outputs.tests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nasm and ninja
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nasm ninja-build
+      - name: Install nasm, ninja and clang's sanitizer runtime
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nasm ninja-build clang libclang-rt-18-dev
       - name: Build
         run: |
           cmake -S windows/test/soft_codecs -B "$RUNNER_TEMP/codecs" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWINAPK_SANITIZE=ON
           cmake --build "$RUNNER_TEMP/codecs"
       - name: Run winapk-soft-codecs-test
         run: '"$RUNNER_TEMP/codecs/winapk-soft-codecs-test" windows/test/video'
+      - name: Build the NDK muxer test (clang, for its System V functions)
+        run: |
+          CC=clang CXX=clang++ cmake -S windows/test/soft_codecs -B "$RUNNER_TEMP/muxer" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DWINAPK_SANITIZE=ON
+          cmake --build "$RUNNER_TEMP/muxer" --target winapk-ndk-muxer-test
+      - name: Run winapk-ndk-muxer-test
+        run: '"$RUNNER_TEMP/muxer/winapk-ndk-muxer-test" windows/test/video "$RUNNER_TEMP"'
 
   build:
     name: Build (Windows x64)
@@ -495,6 +504,8 @@ jobs:
         run: ./build/winapk-video-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the NDK media test
         run: ./build/winapk-ndk-media-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK muxer test
+        run: ./build/winapk-ndk-muxer-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the NDK camera test
         run: ./build/winapk-ndk-camera-test.exe
       - name: Run the software codecs and WebM demuxer test
@@ -503,6 +514,8 @@ jobs:
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
       - name: Run the notification toast test
         run: ./build/winapk-toast-xml-test.exe
+      - name: Run the print layout test
+        run: ./build/winapk-print-layout-test.exe
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
       - name: Run the screen-reader model test (names, patterns, events, text units)
@@ -696,6 +709,20 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/nsd-test windows/test/java/android/net/nsd/NsdManagerTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/nsd-test)" android.net.nsd.NsdManagerTest
+      - name: Run the print job test
+        run: |
+          # A print job as Android's spooler drives the app's PrintDocumentAdapter (PrintSpooler), over a
+          # stand-in for Windows' printers and Print dialog, on a plain JVM: the adapter's calls and the
+          # job's states in a device's order, the dialog cancelled, failures, restart, cancel, the printing
+          # activity destroyed, and Windows' paper, colour, duplex and page ranges in Android's terms.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          # AOSP's app, views and resources first, as every app's class path has them: the test makes an
+          # Activity and an Application (the printing activity destroyed mid-layout).
+          cp="$(cygpath -w stage/lib/aosp-app.jar);$(cygpath -w stage/lib/aosp-views.jar);$(cygpath -w stage/lib/aosp-resources.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/print-test windows/test/java/android/print/PrintManagerTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/print-test)" android.print.PrintManagerTest \
+            | tee print-test.log
+          grep -q "ALL PASSED" print-test.log
       - name: Run the stream volumes test
         run: |
           # AudioManager's stream volumes as AOSP's AudioService keeps them (ranges, defaults, aliasing,
@@ -799,6 +826,22 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the contacts and call log providers test
+        run: |
+          # com.android.contacts and call_log (ContactsProvider, CallLogProvider) through an app's
+          # ContentResolver: denied without READ_/WRITE_CONTACTS and READ_/WRITE_CALL_LOG; a contact
+          # written by applyBatch and read as apps read it (Phone, Email, PhoneLookup, filters, lookup
+          # keys, entities, photo); joining, deleting; the call log's rules; observers; a second
+          # process's provider over the same database; an app's selection kept inside the provider's
+          # own clause and its projection checked, as AOSP's strict query builder and projection maps
+          # do. In winapk-runtime (--java-test): SQLite's natives.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/contacts-test windows/test/java/com/macapk/loader/ContactsProviderTest.java
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/contacts-test)" \
+            com.macapk.loader.ContactsProviderTest "$(cygpath -w "$RUNNER_TEMP/contacts")" | tee contacts-test.log
+          grep -q "ALL PASSED" contacts-test.log
       - name: Run the APK signature verification test
         run: |
           # com.macapk.loader.ApkVerification (apksig) on APKs the test signs
@@ -947,6 +990,13 @@ jobs:
           cp build/winapk-gl-test.exe stage/bin/
           ./stage/bin/winapk-gl-test.exe
           rm stage/bin/winapk-gl-test.exe
+      - name: Run the Vulkan test
+        run: |
+          # It needs the Vulkan loader and SwiftShader next to it, which staging put in stage/bin;
+          # the runner has no GPU driver with Vulkan, so the runtime falls back to SwiftShader.
+          cp build/winapk-vulkan-test.exe stage/bin/
+          ./stage/bin/winapk-vulkan-test.exe
+          rm stage/bin/winapk-vulkan-test.exe
       - name: Boot an APK headless
         run: |
           # F-Droid moves old versions to its archive, so try both.
@@ -1325,13 +1375,14 @@ jobs:
     # AOSP's own app layer (docs/research/aosp-app.md, step A1): lib/aosp-app.jar built over the
     # build's staged runtime with AOSP's resources and views, and AOSP 14's ActivityThread running an
     # Application and two activities through their lifecycle on a plain JVM, over the in-process
-    # activity manager (windows/test/aospapp). Informational, on Ubuntu: no host switch reads the
-    # jar yet; it fails nothing (continue-on-error) and says what it found in the summary.
-    name: AOSP app layer (informational)
+    # activity manager (windows/test/aospapp). On Ubuntu. The task kept across the end of the app's
+    # process (StateRestoreTest) fails the run: every app's process restores it. The lifecycle,
+    # magnifier and accessibility steps are informational (continue-on-error on each step) and say
+    # what they found in the summary.
+    name: AOSP app layer
     needs: [changes, build]
     if: >-
       !cancelled() && needs.build.result == 'success' && needs.changes.outputs.tests == 'true'
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -1359,7 +1410,10 @@ jobs:
       - name: AOSP's dependencies for Linux
         run: windows/test/aospgfx/fetch.sh thirdparty/aosp-gfx-linux linux
       # The lifecycle test, then the magnifier's (MagnifierTest: a window's child layers): one line each.
-      - name: The lifecycle and magnifier tests
+      - name: The lifecycle and magnifier tests (informational)
+        continue-on-error: true
+        env:
+          AOSPAPP_TESTS: lifecycle magnifier
         run: |
           set -o pipefail
           rc=0
@@ -1372,8 +1426,23 @@ jobs:
             echo "$(grep -E 'do not link' aospapp.log | head -n 1)"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
-      - name: The accessibility tree test
+      # The app's task across the end of its process (StateRestoreTest, one process per run): this
+      # step fails the run.
+      - name: The task restore test
         if: always()
+        env:
+          AOSPAPP_TESTS: restore
+        run: |
+          set -o pipefail
+          rc=0
+          windows/test/aospapp/run.sh stage thirdparty/aosp-gfx-linux aospapp-out build/java/android-framework.jar \
+            2>&1 | tee restore.log || rc=$?
+          echo "### Task restore: $(grep -E '^(ALL PASSED|FAILED)' restore.log | tail -n 1 | grep . || echo 'did not finish')" \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: The accessibility tree test (informational)
+        if: always()
+        continue-on-error: true
         run: |
           # What a screen reader is given of AOSP's views and what it can do with them
           # (HostAccessibility, com.winapk.aospviews.AccessibilityTree), in an activity this app
@@ -1391,6 +1460,7 @@ jobs:
           name: aosp-app
           path: |
             aospapp.log
+            restore.log
             a11y.log
             a11y-out/snapshot.txt
             stage/.build/aosp-app.links.txt

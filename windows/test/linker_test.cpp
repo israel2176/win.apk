@@ -28,6 +28,10 @@
 #include <cstring>
 #include <string>
 
+#include <fcntl.h>
+#include <io.h>
+#include <sys/stat.h>
+
 #include <windows.h>
 
 namespace {
@@ -187,7 +191,213 @@ int run_exit_child(const wchar_t* how, std::string* out) {
     return static_cast<int>(code);
 }
 
+// Copies <dir>/<file> into a fresh directory under the temporary folder whose path passes MAX_PATH (made through
+// the "\\?\" form, which has no limit) and returns the copy's plain UTF-8 path, or "" if that failed.
+std::string deep_copy(const char* dir, const char* file) {
+    wchar_t temp[MAX_PATH];
+    const DWORD n = GetTempPathW(MAX_PATH, temp);
+    if (n == 0 || n >= MAX_PATH) return {};
+    std::wstring path(temp, n);
+    if (path.back() == L'\\') path.pop_back();
+    path += L"\\winapk-linker-long-" + std::to_wstring(GetCurrentProcessId());
+    CreateDirectoryW((L"\\\\?\\" + path).c_str(), nullptr);
+    while (path.size() < MAX_PATH + 40) {
+        path += L"\\lib-directory-with-a-long-name-0123456789";
+        if (!CreateDirectoryW((L"\\\\?\\" + path).c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return {};
+    }
+    path += L"\\" + std::filesystem::u8path(file).wstring();
+    const std::wstring from = (std::filesystem::u8path(dir) / std::filesystem::u8path(file)).wstring();
+    if (!CopyFileW(from.c_str(), (L"\\\\?\\" + path).c_str(), FALSE)) return {};
+    return std::filesystem::path(path).u8string();
+}
+
 }  // namespace
+
+// android_dlopen_ext as guest code calls it (bionic's android/dlext.h, LP64): the flags checked as bionic
+// checks them; a library read from a file descriptor at a page-aligned offset (stored uncompressed in an
+// APK), into a range the caller reserved; its RELRO pages written to a file; a reserved range too small,
+// with and without the hint.
+struct DlextInfo {
+    uint64_t flags;
+    void* reserved_addr;
+    size_t reserved_size;
+    int relro_fd;
+    int library_fd;
+    int64_t library_fd_offset;
+    void* library_namespace;
+};
+constexpr uint64_t kReserved = 0x1, kReservedHint = 0x2, kWriteRelro = 0x4, kLibraryFd = 0x10, kLibraryFdOffset = 0x20;
+using DlopenExtFn = void*(WINAPK_GUEST_ABI*)(const char*, int, const void*);
+
+// A zip ("an APK") at `path` holding `elf` stored, uncompressed, as `entry`, its data at offset 8192 as an
+// APK's page-aligned library is. Only what a zip reader looks at is filled in (no CRC).
+bool write_stored_zip(const std::string& path, const std::string& entry, const std::string& elf) {
+    std::string z;
+    auto u16 = [&](uint32_t v) { z.push_back(static_cast<char>(v)), z.push_back(static_cast<char>(v >> 8)); };
+    auto u32 = [&](uint32_t v) { u16(v & 0xffff), u16(v >> 16); };
+    const uint32_t local = 8192 - 30 - static_cast<uint32_t>(entry.size());
+    z.assign(local, '\0');
+    u32(0x04034b50), u16(10), u16(0), u16(0), u16(0), u16(0), u32(0);
+    u32(static_cast<uint32_t>(elf.size())), u32(static_cast<uint32_t>(elf.size()));
+    u16(static_cast<uint32_t>(entry.size())), u16(0);
+    z += entry;
+    z += elf;
+    const uint32_t cd = static_cast<uint32_t>(z.size());
+    u32(0x02014b50), u16(20), u16(10), u16(0), u16(0), u16(0), u16(0), u32(0);
+    u32(static_cast<uint32_t>(elf.size())), u32(static_cast<uint32_t>(elf.size()));
+    u16(static_cast<uint32_t>(entry.size())), u16(0), u16(0), u16(0), u16(0), u32(0), u32(local);
+    z += entry;
+    const uint32_t cd_size = static_cast<uint32_t>(z.size()) - cd;
+    u32(0x06054b50), u16(0), u16(0), u16(1), u16(1), u32(cd_size), u32(cd), u16(0);
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f) return false;
+    const bool ok = std::fwrite(z.data(), 1, z.size(), f) == z.size();
+    return std::fclose(f) == 0 && ok;
+}
+
+std::string read_whole(const std::string& path) {
+    std::string out;
+    if (FILE* f = std::fopen(path.c_str(), "rb")) {
+        char buf[4096];
+        for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) out.append(buf, n);
+        std::fclose(f);
+    }
+    return out;
+}
+using DlerrorFn = char*(WINAPK_GUEST_ABI*)();
+
+void test_dlopen_ext(winapk::GuestLinker& linker, const char* dir) {
+    const auto dlopen_ext = reinterpret_cast<DlopenExtFn>(winapk::guest_libdl_resolve("android_dlopen_ext"));
+    const auto dlerror = reinterpret_cast<DlerrorFn>(winapk::guest_libdl_resolve("dlerror"));
+    if (!dlopen_ext || !dlerror) {
+        check("libdl has android_dlopen_ext and dlerror", false);
+        return;
+    }
+    auto last_error = [&] {
+        const char* e = dlerror();
+        return std::string(e ? e : "");
+    };
+    constexpr const char* kName = "libwinapk_link_dlext.so";
+    const std::string container = std::string(dir) + "\\dlext_container.bin";
+    const int fd = _open(container.c_str(), _O_RDONLY | _O_BINARY);
+    check("open the container file", fd >= 0, container);
+    if (fd < 0) return;
+
+    DlextInfo info{};
+    info.flags = 0x80;
+    std::string e;
+    check("an unknown flag is refused as bionic refuses it",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()) == "dlopen failed: invalid extended flags to android_dlopen_ext: 0x80",
+          e);
+    info.flags = kLibraryFdOffset;
+    check("USE_LIBRARY_FD_OFFSET without USE_LIBRARY_FD is refused",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()).find("invalid extended flag combination") != std::string::npos,
+          e);
+    info.flags = kLibraryFd | kLibraryFdOffset;
+    info.library_fd = fd;
+    info.library_fd_offset = 100;
+    check("an offset that is not page-aligned is refused",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()).find("is not page-aligned: 100") != std::string::npos,
+          e);
+    info.library_fd_offset = 1 << 20;
+    const long container_size = _lseek(fd, 0, SEEK_END);
+    _lseek(fd, 0, SEEK_SET);
+    const std::string past = "dlopen failed: file offset for the library \"libwinapk_link_dlext.so\" >= file size: " +
+                             std::to_string(1 << 20) + " >= " + std::to_string(container_size);
+    check("an offset at or past the file's end is refused with bionic's message",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) && (e = last_error()) == past, e);
+    check("nothing was loaded by the refused calls", !loaded(linker, kName));
+
+    // Too small a reserved range: an error with ANDROID_DLEXT_RESERVED_ADDRESS, anywhere with the hint.
+    void* small = VirtualAlloc(nullptr, 4096, MEM_RESERVE, PAGE_NOACCESS);
+    info.library_fd_offset = 8192;
+    info.flags = kReserved | kLibraryFd | kLibraryFdOffset;
+    info.reserved_addr = small;
+    info.reserved_size = 4096;
+    check("a reserved range too small fails",
+          !dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) &&
+              (e = last_error()).find("the reserved range has 4096") != std::string::npos,
+          e);
+    info.flags = kReservedHint | kLibraryFd | kLibraryFdOffset;
+    void* hinted = dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info);
+    void* sum_fn = hinted ? linker.lookup(hinted, "link_dlext_sum", nullptr, &e) : nullptr;
+    const winapk::ElfImage* image = linker.image_containing(sum_fn);
+    check("... with the hint it loads elsewhere, from the descriptor at the offset",
+          sum_fn && image && image->base() != small && call(linker, hinted, "link_dlext_sum") == 42, last_error());
+    winapk::GuestLinker::AddrInfo where{};
+    check("... named as asked, not after the file it was read from",
+          sum_fn && linker.describe(sum_fn, &where) && std::string(where.file) == kName, sum_fn ? where.file : "");
+    if (hinted) linker.close(hinted, &e);
+    VirtualFree(small, 0, MEM_RELEASE);
+    check("closed, it is unloaded", !loaded(linker, kName));
+
+    // Into a reserved range, its RELRO written to a file.
+    void* range = VirtualAlloc(nullptr, 1 << 20, MEM_RESERVE, PAGE_NOACCESS);
+    const std::string relro_path = std::string(dir) + "\\dlext_relro.bin";
+    const int relro = _open(relro_path.c_str(), _O_RDWR | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+    info.flags = kReserved | kLibraryFd | kLibraryFdOffset | kWriteRelro;
+    info.reserved_addr = range;
+    info.reserved_size = 1 << 20;
+    info.relro_fd = relro;
+    void* placed = dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info);
+    check("loaded from the descriptor into the reserved range", placed != nullptr, last_error());
+    if (placed) {
+        image = linker.image_containing(linker.lookup(placed, "link_dlext_sum", nullptr, &e));
+        check("... at the range's start", image && image->base() == range);
+        expect_eq("... linked, its constructor run", call(linker, placed, "link_dlext_sum"), 42);
+        const auto table_fn = reinterpret_cast<const void*(WINAPK_GUEST_ABI*)()>(
+            linker.lookup(placed, "link_dlext_table", nullptr, &e));
+        const auto* table = table_fn ? static_cast<const uintptr_t*>(table_fn()) : nullptr;
+        const long size = _lseek(relro, 0, SEEK_END);
+        std::string bytes(static_cast<size_t>(size > 0 ? size : 0), '\0');
+        _lseek(relro, 0, SEEK_SET);
+        if (size > 0) _read(relro, bytes.data(), static_cast<unsigned>(size));
+        const std::string pointers(reinterpret_cast<const char*>(table), table ? 2 * sizeof(uintptr_t) : 0);
+        check("WRITE_RELRO wrote whole pages holding the relocated table",
+              table && size > 0 && size % 4096 == 0 && bytes.find(pointers) != std::string::npos,
+              std::to_string(size) + " bytes");
+        // Loaded already: the same library, and bionic writes no RELRO for one it does not link.
+        _chsize(relro, 0);
+        _lseek(relro, 0, SEEK_SET);
+        void* again = dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info);
+        check("WRITE_RELRO for a library loaded already writes nothing",
+              again == placed && _lseek(relro, 0, SEEK_END) == 0, last_error());
+        if (again) linker.close(again, &e);
+        linker.close(placed, &e);
+    }
+    _close(relro);
+    VirtualFree(range, 0, MEM_RELEASE);
+    _close(fd);
+    check("closed, it is unloaded again", !loaded(linker, kName));
+
+    // From a stored entry of an APK: named "<apk>!/<entry>", as bionic names a library it loads from inside one.
+    const std::string elf = read_whole(std::string(dir) + "\\" + kName);
+    const std::string apk = std::string(dir) + "\\dlext.apk";
+    const std::string entry = "lib/x86_64/libwinapk_link_dlext.so";
+    check("write an APK holding the library", !elf.empty() && write_stored_zip(apk, entry, elf));
+    const int apk_fd = _open(apk.c_str(), _O_RDONLY | _O_BINARY);
+    info = DlextInfo{};
+    info.flags = kLibraryFd | kLibraryFdOffset;
+    info.library_fd = apk_fd;
+    info.library_fd_offset = 8192;
+    void* from_apk = apk_fd >= 0 ? dlopen_ext(kName, winapk::GuestLinker::kRtldNow, &info) : nullptr;
+    void* fn = from_apk ? linker.lookup(from_apk, "link_dlext_sum", nullptr, &e) : nullptr;
+    where = {};
+    // The APK as the descriptor's file is named (under Wine, a Z: path for the Linux one given).
+    const std::string want = "\\dlext.apk!/" + entry;
+    auto ends_with = [](const std::string& s, const std::string& end) {
+        return s.size() >= end.size() && s.compare(s.size() - end.size(), end.size(), end) == 0;
+    };
+    check("a library read from an APK's stored entry is named <apk>!/<entry>",
+          fn && call(linker, from_apk, "link_dlext_sum") == 42 && linker.describe(fn, &where) &&
+              ends_with(where.file, want),
+          fn ? where.file : last_error());
+    if (from_apk) linker.close(from_apk, &e);
+    if (apk_fd >= 0) _close(apk_fd);
+}
 
 int main(int argc, char** argv) {
     if (argc >= 3 && std::strcmp(argv[1], "--exit-child") == 0) return exit_child(std::strcmp(argv[2], "crt") == 0);
@@ -239,6 +449,23 @@ int main(int argc, char** argv) {
     check("an Android path is the library under the android root",
           loaded(linker, "/libwinapk_link_root.so") && !loaded(linker, "/libwinapk_link_none.so"));
     winapk::set_android_root("");
+
+    // A library past MAX_PATH (an app's lib/<abi> directory under a long user name or package): found, loaded and
+    // known again by its path, without Windows' long-path policy.
+    const std::string deep = deep_copy(argv[1], "libwinapk_link_plain.so");
+    check("a library under a path past MAX_PATH is copied there", !deep.empty());
+    if (!deep.empty()) {
+        error.clear();
+        void* distant = linker.open(deep.c_str(), winapk::GuestLinker::kRtldNow, &error);
+        check("dlopen of a library under a path past MAX_PATH", distant != nullptr, error);
+        if (distant) {
+            expect_eq("its code runs", call(linker, distant, "link_plain_strlen"), 3);
+            check("opening it again by that path returns the same handle",
+                  linker.open(deep.c_str(), 0, &error) == distant && linker.close(distant, &error) == 0);
+            linker.close(distant, &error);
+            check("closing it unloads it", !loaded(linker, deep.c_str()) && linker.images().size() == 3);
+        }
+    }
 
     check("RTLD_NOLOAD does not load the plugin", !loaded(linker, kPlugin));
     expect_eq("guest dlopen + dlsym", call(linker, root, "link_root_dlopen"), 81);
@@ -403,6 +630,8 @@ int main(int argc, char** argv) {
         linker.close(dep86, &error);  // the kRtldNoLoad reference
     }
     winapk::set_android_root("");
+
+    test_dlopen_ext(linker, argv[1]);
 
     std::printf("\n%s: %d failure(s)\n", g_failures ? "FAILED" : "OK", g_failures);
     return g_failures;

@@ -87,5 +87,7 @@ private:
 
 // ndk_media_codec.cpp's AMediaCodec_*, AMediaExtractor_* and AMediaDataSource_* by name; null for others.
 void* ndk_media_codec_resolve(const char* name);
+// ndk_media_muxer.cpp's AMediaMuxer_* by name; null for others.
+void* ndk_media_muxer_resolve(const char* name);
 
 }  // namespace winapk::host

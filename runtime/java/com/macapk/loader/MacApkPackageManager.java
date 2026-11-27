@@ -1443,6 +1443,15 @@ public final class MacApkPackageManager extends PackageManager {
             // know them. Additive, null for a package without any.
             fillSplitFields(ai, info, apk);
         }
+        // Win.apk: another installed package's APKs by their Android names too, as
+        // this package's own (makeAppInfo).
+        ApplicationInfo pai = info != null ? info.applicationInfo : null;
+        if (pai != null) {
+            pai.sourceDir             = InstalledSplits.androidPath(pai.sourceDir);
+            pai.publicSourceDir       = InstalledSplits.androidPath(pai.publicSourceDir);
+            pai.splitSourceDirs       = InstalledSplits.androidPaths(pai.splitSourceDirs);
+            pai.splitPublicSourceDirs = InstalledSplits.androidPaths(pai.splitPublicSourceDirs);
+        }
         return info;
     }
 
@@ -4027,15 +4036,17 @@ public final class MacApkPackageManager extends PackageManager {
         if (version <= 0 && FEATURE_CAMERA_FLASH_NAME.equals(name)) {
             has = CameraBridge.anyCameraHasTorch();
         }
-        // Guest Vulkan (Boot.noteGuestVulkan / bionic_shim_vulkan.cpp): an app
-        // that gets libvulkan.so also sees the features that announce it, with
-        // AOSP's version encodings -- vulkan.version is the VK_API_VERSION the
-        // driver supports (MoltenVK's ICD reports 1.2.0 = 0x402000), vulkan.level
-        // is the hardware level (0 = the baseline feature set). Same source as the
-        // shim, so the two answers cannot disagree.
-        if (!has && "1".equals(System.getProperty("macapk.guestVulkan"))) {
-            if ("android.hardware.vulkan.version".equals(name)) has = version <= 0x402000;
-            else if ("android.hardware.vulkan.level".equals(name)) has = version <= 0;
+        // Vulkan (HostVulkan, the libvulkan an app's native code gets): every app sees the
+        // features a device with that Vulkan announces, with AOSP's encodings --
+        // vulkan.version the API version (1.3 = 0x403000), vulkan.level the hardware level
+        // (0, the baseline feature set), vulkan.compute the compute level (0).
+        if (!has && name != null && name.startsWith("android.hardware.vulkan.")) {
+            int api = HostVulkan.apiVersion();
+            if (api > 0) {
+                if ("android.hardware.vulkan.version".equals(name)) has = version <= api;
+                else if ("android.hardware.vulkan.level".equals(name)
+                        || "android.hardware.vulkan.compute".equals(name)) has = version <= 0;
+            }
         }
         // v1.0.983: MACAPK_TRACE_DEVICEINFO -- the device-profile counterpart
         // of MACAPK_TRACE_ATTR/MACAPK_TRACE_DEFSTYLE. Added while auditing
@@ -4075,6 +4086,19 @@ public final class MacApkPackageManager extends PackageManager {
             android.content.pm.FeatureInfo fl = new android.content.pm.FeatureInfo();
             fl.name = FEATURE_CAMERA_FLASH_NAME;
             res.add(fl);
+        }
+        int vulkan = HostVulkan.apiVersion();
+        if (vulkan > 0) {
+            android.content.pm.FeatureInfo level = new android.content.pm.FeatureInfo();
+            level.name = "android.hardware.vulkan.level";
+            res.add(level);
+            android.content.pm.FeatureInfo compute = new android.content.pm.FeatureInfo();
+            compute.name = "android.hardware.vulkan.compute";
+            res.add(compute);
+            android.content.pm.FeatureInfo ver = new android.content.pm.FeatureInfo();
+            ver.name = "android.hardware.vulkan.version";
+            ver.version = vulkan;
+            res.add(ver);
         }
         android.content.pm.FeatureInfo gl = new android.content.pm.FeatureInfo();
         // Read the level off the SAME source ActivityManager reports through
@@ -4555,7 +4579,10 @@ public final class MacApkPackageManager extends PackageManager {
         // baseApkPath() additionally gives it the installed SHAPE; see its
         // header. publicSourceDir aliases it, which is AOSP's own answer for a
         // package that is not forward-locked (ApplicationInfo.java:853-858).
-        info.sourceDir        = baseApkPath();
+        // Win.apk: by its Android name, /data/app/~~<nonce>/<pkg>-<nonce>/base.apk,
+        // as a device reports it (InstalledSplits.androidPath); every reader an app
+        // has (java.io, java.nio, the shim's open) maps it to the installed file.
+        info.sourceDir        = InstalledSplits.androidPath(baseApkPath());
         info.publicSourceDir  = info.sourceDir;
         // MACAPK_DATADIR_DEVICE (EXPERIMENT): sourceDir is <appDir>/base.apk and appDir is the
         // macOS ".macapk/code/<pkg>_<ver>"; a guest (pairip) that reads sourceDir and dirnames it
@@ -4591,8 +4618,8 @@ public final class MacApkPackageManager extends PackageManager {
             SplitSet ss = installedSplits();
             if (ss != null) {
                 info.splitNames = ss.names.clone();
-                String[] dirs;
-                dirs = ss.paths.clone();
+                // By their Android names, as sourceDir.
+                String[] dirs = InstalledSplits.androidPaths(ss.paths);
                 info.splitSourceDirs       = dirs;
                 // AOSP hands one array object to both setters; equal contents
                 // is the observable part. Fresh arrays per call, so an app

@@ -50,6 +50,7 @@ HostMethods native_picker_methods();    // native_picker.cpp
 HostMethods native_gamepad_methods();   // native_gamepad.cpp
 HostMethods native_audio_input_methods(); // native_audio_input.cpp
 HostMethods native_nsd_methods();       // native_nsd.cpp
+HostMethods native_printing_methods();  // native_printing.cpp
 HostMethods native_volume_methods();    // native_volume.cpp
 HostMethods native_photos_methods();    // native_photos.cpp
 HostMethods native_gl_methods();        // gl/gl_bridges.cpp
@@ -57,6 +58,7 @@ HostMethods native_egl10_methods();     // gl/egl10_window.cpp
 HostMethods native_browser_tab_methods(); // native_browser_tab.cpp
 HostMethods native_webview_methods();   // native_webview.cpp
 HostMethods native_camera_methods();    // native_camera.cpp
+HostMethods native_vulkan_methods();    // native_vulkan.cpp
 HostMethods native_radios_methods();    // native_radios.cpp
 HostMethods native_bluetooth_methods(); // native_bluetooth.cpp
 HostMethods native_location_methods();  // native_location.cpp
