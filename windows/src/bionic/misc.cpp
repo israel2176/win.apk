@@ -1525,6 +1525,16 @@ WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) { return type == 6 ? 4096 :
 WINAPK_GUEST_ABI void g_arc4random_buf(void* buf, size_t n) {
     BCryptGenRandom(nullptr, static_cast<PUCHAR>(buf), static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
 }
+
+// Bionic's stack protector canary, set once per process (from the kernel's
+// AT_RANDOM bytes). Code built with -fstack-protector that imports it compares
+// every protected frame's copy with it; the zeroed block a missing variable
+// gets would make it a constant every process shares.
+uintptr_t g_stack_chk_guard = [] {
+    uintptr_t v = 0;
+    while (v == 0) g_arc4random_buf(&v, sizeof(v));
+    return v;
+}();
 WINAPK_GUEST_ABI uint32_t g_arc4random() {
     uint32_t v;
     g_arc4random_buf(&v, sizeof(v));
@@ -2864,6 +2874,7 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("getpagesize", g_getpagesize),
     WINAPK_SHIM("uname", g_uname),
     WINAPK_SHIM("getauxval", g_getauxval),
+    {"__stack_chk_guard", &g_stack_chk_guard},
     WINAPK_SHIM("arc4random", g_arc4random),
     WINAPK_SHIM("arc4random_buf", g_arc4random_buf),
     WINAPK_SHIM("arc4random_uniform", g_arc4random_uniform),
