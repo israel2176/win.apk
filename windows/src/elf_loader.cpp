@@ -799,7 +799,9 @@ void ElfImage::patch_x86_syscalls() {
     syscall_sites_patched_ =
         x86::patch_syscalls(ranges.data(), ranges.size(), entries.data(), entries.size(), &decoded);
     QueryPerformanceCounter(&t1);
-    // One line per library, at its load: what the scan cost and what it found.
+    // A line for a library with a SYSCALL, at its load: what the scan cost and what it found. A library with
+    // none says nothing: its stderr is the program's own (an --exec child's is the app's pipe or file).
+    if (syscall_sites_patched_ == 0) return;
     std::fprintf(stderr, "[win.apk] %s: SYSCALL scan %.1f ms, %zu instructions from %zu entries, %zu site(s)\n",
                  path_.filename().u8string().c_str(), 1000.0 * (t1.QuadPart - t0.QuadPart) / freq.QuadPart, decoded,
                  entries.size(), syscall_sites_patched_);

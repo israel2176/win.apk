@@ -77,7 +77,7 @@ An anonymous file (`memfd_create`) mapped `MAP_SHARED` with `PROT_EXEC` is
 a view of the file, as on Linux, so code written through a second, writable
 mapping of it runs.
 
-Each x86_64 library's scan logs one line at its load,
+Each x86_64 library in which the scan finds a `SYSCALL` logs one line at its load (a library with none logs nothing),
 `[win.apk] <library>: SYSCALL scan <ms> ms, <n> instructions from <n> entries, <n> site(s)`.
 Which addresses were decoded is one bit per byte of the code, so the scan
 needs an eighth of the code's size and time linear in it.
