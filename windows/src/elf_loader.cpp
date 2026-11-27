@@ -733,9 +733,11 @@ bool ElfImage::apply_irelative(std::string* error) {
         uint64_t* where = at<uint64_t>(irelative_slots_[i]);
         // The slot sits in a writable segment (GOT / data); RELRO is sealed later.
         if (is_arm64()) {
-            // bionic passes (AT_HWCAP | _IFUNC_ARG_HWCAP, &arg); no optional
-            // CPU features are reported, so resolvers pick their plain code.
-            const uint64_t args[2] = {uint64_t{1} << 62, 0};
+            // bionic passes (AT_HWCAP | _IFUNC_ARG_HWCAP, &arg), arg an __ifunc_arg_t
+            // {size, AT_HWCAP, AT_HWCAP2}: the features getauxval reports to arm64
+            // code (arm64::kHwcap), so resolvers pick the code the engines run.
+            static const uint64_t ifunc_arg[3] = {sizeof ifunc_arg, arm64::kHwcap, arm64::kHwcap2};
+            const uint64_t args[2] = {arm64::kHwcap | (uint64_t{1} << 62), reinterpret_cast<uint64_t>(ifunc_arg)};
             *where = arm64::call(reinterpret_cast<const void*>(bias_ + irelative_addends_[i]), args, 2);
         } else {
             auto resolver = reinterpret_cast<GuestIRelativeResolver>(bias_ + irelative_addends_[i]);
@@ -790,7 +792,17 @@ void ElfImage::patch_x86_syscalls() {
         const uint8_t type = st_type(syms[i].st_info);
         if (syms[i].st_shndx != kShnUndef && (type == kSttFunc || type == kSttGnuIfunc)) vaddr(syms[i].st_value);
     }
-    syscall_sites_patched_ = x86::patch_syscalls(ranges.data(), ranges.size(), entries.data(), entries.size());
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+    size_t decoded = 0;
+    syscall_sites_patched_ =
+        x86::patch_syscalls(ranges.data(), ranges.size(), entries.data(), entries.size(), &decoded);
+    QueryPerformanceCounter(&t1);
+    // One line per library, at its load: what the scan cost and what it found.
+    std::fprintf(stderr, "[win.apk] %s: SYSCALL scan %.1f ms, %zu instructions from %zu entries, %zu site(s)\n",
+                 path_.filename().u8string().c_str(), 1000.0 * (t1.QuadPart - t0.QuadPart) / freq.QuadPart, decoded,
+                 entries.size(), syscall_sites_patched_);
 }
 
 void ElfImage::register_arm64_code() {

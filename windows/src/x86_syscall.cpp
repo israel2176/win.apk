@@ -84,7 +84,7 @@ constexpr LibcCall kLibcCalls[] = {
     {263, "unlinkat", false},     {264, "renameat", false},      {265, "linkat", false},
     {266, "symlinkat", false},    {267, "readlinkat", true},     {268, "fchmodat", false},
     {269, "faccessat", false},    {271, "ppoll", false},         {280, "utimensat", false},
-    {281, "epoll_pwait", false},  {283, "timerfd_create", false}, {284, "eventfd", false},
+    {281, "epoll_pwait", false},  {283, "timerfd_create", false},
     {285, "fallocate", false},    {286, "timerfd_settime", false}, {287, "timerfd_gettime", false},
     {288, "accept4", false},      {290, "eventfd", false},       {291, "epoll_create1", false},
     {292, "dup3", false},         {293, "pipe2", false},         {294, "inotify_init1", false},
@@ -112,7 +112,9 @@ const LibcCall* libc_call(int64_t nr) {
     return nullptr;
 }
 
-bool special(int64_t nr) { return nr == 60 || nr == 79 || nr == 140 || nr == 230 || nr == 231 || nr == 309; }
+bool special(int64_t nr) {
+    return nr == 60 || nr == 79 || nr == 140 || nr == 230 || nr == 231 || nr == 284 || nr == 309;
+}
 
 bool known(int64_t nr) {
     for (uint16_t n : kShimSyscalls) {
@@ -154,6 +156,10 @@ int64_t other_syscall(int64_t nr, const int64_t a[6]) {
             if (err == 0) return 0;
             *guest_errno() = err;
             return -1;
+        }
+        case 284: {  // eventfd(initval): no flags argument (eventfd2, 290, has one); rsi is whatever it held
+            const auto f = shim<int(WINAPK_GUEST_ABI*)(unsigned, int)>("eventfd");
+            return f(static_cast<unsigned>(a[0]), 0);
         }
         case 309: {  // getcpu(cpu, node, cache)
             PROCESSOR_NUMBER pn{};
@@ -438,23 +444,37 @@ bool decode(const uint8_t* p, size_t avail, Insn* d) {
 
 // Every instruction reachable from the entries through fall-through and direct
 // jumps, calls and branches, inside the ranges. Collects the SYSCALL sites and
-// the pages decoded.
+// the pages decoded. Which addresses have been decoded is one bit per byte of
+// the span the ranges cover (an eighth of the code's size): each byte starts
+// at most one decode, so the walk ends without a budget, in time linear in the
+// code.
 class Walk {
 public:
-    Walk(const CodeRange* ranges, size_t n) : ranges_(ranges, ranges + n) {}
+    Walk(const CodeRange* ranges, size_t n) : ranges_(ranges, ranges + n) {
+        if (ranges_.empty()) return;
+        base_ = ranges_[0].lo;
+        uintptr_t top = ranges_[0].hi;
+        for (const CodeRange& r : ranges_) {
+            base_ = std::min(base_, r.lo);
+            top = std::max(top, r.hi);
+        }
+        seen_.assign((top - base_ + 63) / 64, 0);
+        pages_.assign((top - (base_ & ~(kPage - 1)) + kPage - 1) / kPage, false);
+    }
 
     void from(uintptr_t entry) {
         work_.push_back(entry);
-        while (!work_.empty() && budget_ > 0) {
+        while (!work_.empty()) {
             uintptr_t pc = work_.back();
             work_.pop_back();
             for (;;) {
                 const CodeRange* r = range_of(pc);
-                if (!r || !seen_.insert(pc).second || --budget_ == 0) break;
+                if (!r || !first_visit(pc)) break;
                 Insn in;
                 if (!decode(reinterpret_cast<const uint8_t*>(pc), r->hi - pc, &in)) break;
-                pages_.insert(pc & ~(kPage - 1));
-                pages_.insert((pc + in.len - 1) & ~(kPage - 1));
+                ++instructions_;
+                pages_[page_index(pc)] = true;
+                pages_[page_index(pc + in.len - 1)] = true;
                 if (in.syscall) sites_.push_back(pc);
                 const uintptr_t next = pc + in.len;
                 const uintptr_t target = next + static_cast<uintptr_t>(in.rel);
@@ -470,7 +490,15 @@ public:
     }
 
     const std::vector<uintptr_t>& sites() const { return sites_; }
-    const std::set<uintptr_t>& pages() const { return pages_; }
+    size_t instructions() const { return instructions_; }
+    // The pages that hold a decoded byte.
+    std::vector<uintptr_t> pages() const {
+        std::vector<uintptr_t> out;
+        for (size_t i = 0; i < pages_.size(); ++i) {
+            if (pages_[i]) out.push_back((base_ & ~(kPage - 1)) + i * kPage);
+        }
+        return out;
+    }
 
 private:
     const CodeRange* range_of(uintptr_t pc) const {
@@ -479,13 +507,25 @@ private:
         }
         return nullptr;
     }
+    // pc lies in a range, so in the bitmap.
+    bool first_visit(uintptr_t pc) {
+        const uintptr_t i = pc - base_;
+        uint64_t& word = seen_[i / 64];
+        const uint64_t bit = uint64_t{1} << (i % 64);
+        if (word & bit) return false;
+        word |= bit;
+        return true;
+    }
+    // An instruction's last byte lies in its range too (decode reads no further).
+    size_t page_index(uintptr_t a) const { return (a - (base_ & ~(kPage - 1))) / kPage; }
 
     std::vector<CodeRange> ranges_;
+    uintptr_t base_ = 0;
+    std::vector<uint64_t> seen_;
+    std::vector<bool> pages_;
     std::vector<uintptr_t> work_;
-    std::unordered_set<uintptr_t> seen_;
     std::vector<uintptr_t> sites_;
-    std::set<uintptr_t> pages_;
-    size_t budget_ = size_t{16} << 20;  // instructions: far more than any library has
+    size_t instructions_ = 0;
 };
 
 // ---- the sites and the deferred pages ----------------------------------------------------
@@ -548,8 +588,8 @@ bool on_execute(uintptr_t rip) {
     Walk walk(&run, 1);
     walk.from(rip);
     patch_sites(walk.sites(), false);
-    std::set<uintptr_t> open = walk.pages();
-    open.insert(page);
+    std::vector<uintptr_t> open = walk.pages();
+    open.push_back(page);
     for (uintptr_t p : open) {
         auto it = g_pending.find(p);
         if (it == g_pending.end()) continue;
@@ -613,10 +653,12 @@ size_t instruction_length(const uint8_t* p, size_t avail) {
     return decode(p, avail, &in) ? in.len : 0;
 }
 
-size_t patch_syscalls(const CodeRange* ranges, size_t nranges, const uintptr_t* entries, size_t nentries) {
+size_t patch_syscalls(const CodeRange* ranges, size_t nranges, const uintptr_t* entries, size_t nentries,
+                      size_t* instructions) {
     activate();
     Walk walk(ranges, nranges);
     for (size_t i = 0; i < nentries; ++i) walk.from(entries[i]);
+    if (instructions) *instructions = walk.instructions();
     AcquireSRWLockExclusive(&g_lock);
     const size_t n = patch_sites(walk.sites(), true);
     ReleaseSRWLockExclusive(&g_lock);

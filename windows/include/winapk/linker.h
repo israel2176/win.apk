@@ -206,9 +206,18 @@ void* guest_libdl_resolve(const char* name);
 // The process's auxiliary vector, as the kernel hands it to app_process64 and
 // /proc/self/auxv holds it: (type, value) pairs of 64 bits each, AT_NULL last.
 // AT_PHDR, AT_BASE and AT_ENTRY name the program's and linker's images that
-// /proc/self/maps lists (process_image.h); AT_PAGESZ is 4096, AT_CLKTCK 100,
-// AT_HWCAP x86_64's (CPUID leaf 1's EDX), AT_RANDOM 16 random bytes made once,
-// AT_PLATFORM "x86_64", AT_EXECFN the program's path. getauxval answers from it.
-std::string process_auxv();
+// /proc/self/maps lists (process_image.h: an ELF header with no program
+// headers, so AT_PHNUM is 0 and AT_ENTRY is the image's base); AT_PAGESZ is
+// 4096, AT_CLKTCK 100, AT_RANDOM 16 random bytes made once, AT_EXECFN the
+// program's path; no AT_SYSINFO_EHDR, as there is no vDSO. The CPU is the
+// caller's: for x86_64 code AT_HWCAP is CPUID leaf 1's EDX and AT_PLATFORM
+// "x86_64"; for arm64 code (`arm64`) AT_HWCAP and AT_HWCAP2 are what the
+// translator implements (arm64::kHwcap, kHwcap2) and AT_PLATFORM "aarch64".
+// getauxval answers from it.
+std::string process_auxv(bool arm64 = false);
+
+// The value of `type` in an auxiliary vector made by process_auxv; false if it
+// has none (getauxval's ENOENT).
+bool auxv_value(const std::string& auxv, uint64_t type, uint64_t* value);
 
 }  // namespace winapk

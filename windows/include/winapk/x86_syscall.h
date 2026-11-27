@@ -62,9 +62,13 @@ struct CodeRange {
 // Decodes from each entry in `entries` that lies in one of `ranges`, following
 // direct branches within them, and turns every SYSCALL met into UD2, which the
 // handler then answers. The bytes must be writable. Returns the number of
-// sites changed. Installs the handler and marks the process as running x86_64
-// guest code, which is what makes exec_protection defer execution.
-size_t patch_syscalls(const CodeRange* ranges, size_t nranges, const uintptr_t* entries, size_t nentries);
+// sites changed, and in *instructions (when given) how many instructions were
+// decoded. Installs the handler and marks the process as running x86_64 guest
+// code, which is what makes exec_protection defer execution. Which addresses
+// were decoded is kept as one bit per byte of the ranges' span, so a walk
+// costs an eighth of the code's size in memory and time linear in it.
+size_t patch_syscalls(const CodeRange* ranges, size_t nranges, const uintptr_t* entries, size_t nentries,
+                      size_t* instructions = nullptr);
 
 // The protection the shim gives [addr, addr + len) for a guest's mmap or
 // mprotect asking for `prot` (Linux PROT_* bits): `prot` itself, or, while

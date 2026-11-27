@@ -109,6 +109,47 @@ EXPORT long syscall_runtime_code(void) {
     return 1;
 }
 
+// /proc/self/auxv, read by raw calls as a loader stub with no libc reads it: (type, value) pairs ending
+// in AT_NULL, AT_PAGESZ 4096, AT_RANDOM pointing at 16 readable bytes, AT_PLATFORM "x86_64", and every
+// value the one getauxval gives. One bit per check, so the test names a failure.
+unsigned long getauxval(unsigned long type);
+
+EXPORT long syscall_auxv(void) {
+    unsigned long v[128];
+    long fd = raw3(2, (long)"/proc/self/auxv", 0 /* O_RDONLY */, 0);
+    if (fd < 0) return -1;
+    long n = 0, r;
+    while (n < (long)sizeof v && (r = raw3(0, fd, (long)v + n, (long)sizeof v - n)) > 0) n += r;
+    raw3(3, fd, 0, 0);
+    if (n <= 0 || n % 16 != 0) return -2;
+    long pairs = n / 16, bits = 0;
+    if (v[2 * (pairs - 1)] == 0 && v[2 * (pairs - 1) + 1] == 0) bits |= 1;  // AT_NULL last
+    int mismatches = 0, pagesz = 0, random = 0, platform = 0;
+    for (long i = 0; i + 1 < pairs; ++i) {
+        const unsigned long type = v[2 * i], value = v[2 * i + 1];
+        if (type == 0) break;
+        if (getauxval(type) != value) ++mismatches;
+        if (type == 6 && value == 4096) pagesz = 1;  // AT_PAGESZ
+        if (type == 25 && value) {                    // AT_RANDOM: 16 bytes, readable
+            const volatile unsigned char* b = (const unsigned char*)value;
+            unsigned sum = 0;
+            for (int k = 0; k < 16; ++k) sum += b[k];
+            random = sum != 0;  // read without a fault, and filled (all 16 zero: one chance in 2^128)
+        }
+        if (type == 15 && value) {  // AT_PLATFORM
+            const char* p = (const char*)value;
+            platform = p[0] == 'x' && p[1] == '8' && p[2] == '6' && p[3] == '_' && p[4] == '6' && p[5] == '4' && !p[6];
+        }
+    }
+    if (mismatches == 0) bits |= 2;
+    if (pagesz) bits |= 4;
+    if (random) bits |= 8;
+    if (platform) bits |= 16;
+    *__errno() = 0;
+    if (getauxval(0x7fff) == 0 && *__errno() == 2) bits |= 32;  // a type it lacks: 0, ENOENT
+    return bits;
+}
+
 // Something for UPX to compress: it packs the executable segment and refuses a
 // library that would not shrink, so a few dozen small functions.
 #define FILL(n)                                                                    \

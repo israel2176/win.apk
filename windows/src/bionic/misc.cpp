@@ -1524,14 +1524,13 @@ WINAPK_GUEST_ABI int g_uname(GuestUtsname* u) {
     std::strcpy(u->domainname, "(none)");
     return 0;
 }
-// getauxval: the process's auxiliary vector (winapk::process_auxv, which /proc/self/auxv holds
-// too); 0 and ENOENT for a type it does not have, as bionic.
+// getauxval: the process's auxiliary vector as x86_64 code sees it (winapk::process_auxv, which
+// /proc/self/auxv holds too; an arm64 library's import binds to arm64_abi.cpp's); 0 and ENOENT for a
+// type it does not have, as bionic.
 WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) {
     static const std::string auxv = winapk::process_auxv();
-    const auto* v = reinterpret_cast<const uint64_t*>(auxv.data());
-    for (size_t i = 0; i + 1 < auxv.size() / 8 && v[i] != 0; i += 2) {
-        if (v[i] == type) return v[i + 1];
-    }
+    uint64_t v = 0;
+    if (winapk::auxv_value(auxv, type, &v)) return v;
     *guest_errno() = kENOENT;
     return 0;
 }

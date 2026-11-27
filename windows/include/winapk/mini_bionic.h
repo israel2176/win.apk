@@ -44,6 +44,13 @@ void guest_signals_install();
 // Called where a thread first runs guest code.
 void guest_signal_altstack_for_current_thread();
 
+// /proc/self/auxv (or /proc/thread-self/auxv, /proc/<pid>/auxv) for a caller
+// that is not x86_64 code: whether `path` names it, and a descriptor of the
+// vector an arm64 caller is given (winapk::process_auxv(true)), -1 with the
+// guest's errno set. The shim's own open and fopen give x86_64's.
+bool is_proc_auxv_path(const char* path);
+int open_proc_auxv(bool arm64);
+
 // fts_open for a caller whose struct stat is not x86_64's (an arm64 library):
 // `fill` writes each entry's fts_statp from the shim's x86_64 stat. `compar`
 // is the caller's comparator, callable as a System V function.

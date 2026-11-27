@@ -24,8 +24,8 @@ see something a phone would not show, that is listed below as a difference.
 |---|---|---|
 | The Java stub's `attachBaseContext` loads the protector's library | `System.loadLibrary` | Works (the loader picks the x86_64 build, else arm64) |
 | The library decrypts its own `.text`, `.dynstr` and symbols in its constructors, with `mprotect` | Plain `mprotect` | Works: `dlsym` reads the symbol tables as the constructors left them (`windows/PORTING.md`, "linker"); a stack-guard load in decrypted code is patched as it faults (`fs_tls_patch.h`) |
-| Raw system calls (`syscall` on x86_64, `svc #0` on arm64) instead of libc: `openat`/`read` of `/proc`, `mmap`/`mprotect`/`munmap`, `memfd_create`, `getpid` | The kernel answers | **arm64**: answered by the bridge (`arm64_abi.cpp`). **x86_64**: answered since this change (below). Before it, an x86_64 `SYSCALL` entered the Windows kernel with Linux's number |
-| `/proc/self/auxv`, `getauxval` | The kernel's auxiliary vector | **Since this change**: `/proc/self/auxv` exists and holds the vector `getauxval` answers from (`winapk::process_auxv`, `windows/src/linker.cpp`); before, the open failed and `getauxval` knew only `AT_PAGESZ` |
+| Raw system calls (`syscall` on x86_64, `svc #0` on arm64) instead of libc: `openat`/`read` of `/proc`, `mmap`/`mprotect`/`munmap`, `memfd_create`, `getpid` | The kernel answers | Works. **arm64**: answered by the bridge (`arm64_abi.cpp`). **x86_64**: each `SYSCALL` found is made `UD2` and answered by a handler (below) |
+| `/proc/self/auxv`, `getauxval` | The kernel's auxiliary vector | Works: `/proc/self/auxv` holds the vector `getauxval` answers from, with the caller's CPU (below) |
 | `/proc/self/maps`, `/system/bin/linker64`, `/system/bin/app_process64` | The process's mappings and files | Works: synthesized (`include/winapk/process_image.h`, `GuestLinker::proc_maps`), the guest libraries by their `/data/app/...` paths |
 | `ptrace(PTRACE_TRACEME)`, `/proc/self/status` `TracerPid` | Refused / 0 on a device with no debugger | Works as on a device |
 | The decrypted DEX goes to the runtime | ART: `DexFile`, `InMemoryDexClassLoader`, or ART's internal structures (`ArtMethod`, `DexFile` cookies, `libart.so` symbols found through `/proc/self/maps` and the file on disk) | **Public APIs work**: `DexClassLoader`, `PathClassLoader`, `InMemoryDexClassLoader`, `DexFile.loadDex`, `BaseDexClassLoader.addDexPath` convert the DEX to class files and load it. **ART's internals do not exist**: Win.apk runs Java on HotSpot, so there is no `libart.so`, no `ArtMethod` and no DEX cookie to fill in |
@@ -39,8 +39,7 @@ vectored exception handler answers the illegal instruction at those sites as
 the Linux kernel would: the result (`-errno` on failure) in `rax`, the return
 address in `rcx`, the flags in `r11`, `errno` untouched. The calls are the
 Bionic shim's functions under x86_64's numbering
-(`windows/src/x86_syscall.cpp`, the table also behind the shim's `syscall()`,
-which used to answer only 17 numbers). A number the shim does not have is
+(`windows/src/x86_syscall.cpp`, the table also behind the shim's `syscall()`). A number the shim does not have is
 `-ENOSYS` and one log line:
 `[win.apk] raw system call <n> (x86_64) at <address>: not implemented, -ENOSYS`.
 
@@ -60,6 +59,11 @@ How the instructions are found, without taking data for code:
   executable. Making the memory executable again after rewriting it starts
   that over. Processes with only arm64 libraries never take this path.
 
+Each x86_64 library's scan logs one line at its load,
+`[win.apk] <library>: SYSCALL scan <ms> ms, <n> instructions from <n> entries, <n> site(s)`.
+Which addresses were decoded is one bit per byte of the code, so the scan
+needs an eighth of the code's size and time linear in it.
+
 What differs from a device:
 
 - Code that reads its own instructions back (a checksum over `.text`) sees
@@ -70,17 +74,58 @@ What differs from a device:
   enters the Windows kernel.
 - Windows writes the exception record just below the stack pointer, where the
   System V ABI lets a leaf function keep up to 128 bytes (the red zone). A leaf
-  that keeps locals there across an inline `SYSCALL` loses them.
+  that keeps locals there across an inline `SYSCALL` loses them. Moving `rsp`
+  past the red zone before the fault would need the site's bytes rewritten as
+  a jump to a thunk of its own (a `call` would itself write its return
+  address into the red zone), placed within 2 GiB of each site, and it would
+  still leave out sites whose call number is not set by the instruction just
+  before them; not done.
 - Every raw call costs an exception (microseconds); libc's functions do not.
 
 Tested by `winapk-syscall-test` (`windows/test/x86_syscall_test.cpp`,
 `windows/test/guest/syscall_guest.c`): the decoder against known encodings,
 then raw calls from a constructor, the kernel's register and error
-conventions, raw `mmap`/`mprotect`/`munmap`, and code written at run time,
-across a page boundary, rewritten and made executable again. Under Wine a
+conventions, raw `mmap`/`mprotect`/`munmap`, code written at run time,
+across a page boundary, rewritten and made executable again, and
+`/proc/self/auxv`. Under Wine a
 `SYSCALL` that was not patched reaches the Linux kernel itself, so the test's
 `getpid` and `getuid` checks compare with the shim's answers (Windows' process
 id), which only a patched site gives.
+
+## The auxiliary vector (`winapk::process_auxv`)
+
+`/proc/self/auxv` (also `/proc/thread-self/auxv` and `/proc/<pid>/auxv`) and
+`getauxval` give the same vector: `AT_PAGESZ` 4096, `AT_CLKTCK` 100,
+`AT_PHDR`, `AT_PHENT`, `AT_PHNUM`, `AT_BASE`, `AT_ENTRY`, `AT_FLAGS`, the user
+and group ids, `AT_SECURE` 0, `AT_RANDOM` (16 random bytes, made once),
+`AT_HWCAP`, `AT_HWCAP2`, `AT_EXECFN` (`/system/bin/app_process64`),
+`AT_PLATFORM`, and `AT_NULL` last. `getauxval` of a type it lacks is 0 with
+`ENOENT`, as bionic's. The CPU entries are the caller's:
+
+- x86_64 code: `AT_HWCAP` is CPUID leaf 1's EDX, as Linux reports it,
+  `AT_HWCAP2` 0, `AT_PLATFORM` `x86_64`.
+- arm64 code (its `getauxval`, `open`, `openat` and `fopen` imports and its raw
+  `openat` bind to `arm64_abi.cpp`): `AT_HWCAP` `HWCAP_FP | HWCAP_ASIMD`,
+  `AT_HWCAP2` 0, `AT_PLATFORM` `aarch64` (`arm64::kHwcap`), what a phone with
+  no optional feature reports. The translator has no AES, PMULL or SHA
+  instructions, and CRC32 and the LSE atomics, which it executes, are not
+  claimed, so code choosing by them takes its plain ARMv8.0 path. An arm64
+  library's IFUNC resolvers are given the same bits.
+
+How it differs from a device:
+
+- `AT_PHDR`, `AT_BASE` and `AT_ENTRY` name the `app_process64` and `linker64`
+  images that `/proc/self/maps` lists, which are an ELF header with no program
+  headers (`include/winapk/process_image.h`): `AT_PHNUM` is 0, `AT_PHDR` the
+  byte after the header, and `AT_ENTRY` the image's base, where no code is.
+- There is no `AT_SYSINFO_EHDR`: Win.apk has no vDSO, and libc's clock
+  functions are the shim's.
+- No `AT_MINSIGSTKSZ` or `AT_HWCAP3`.
+
+Tested by `winapk-syscall-test` (x86_64: the file read by raw calls, `AT_NULL`
+last, `AT_PAGESZ`, `AT_RANDOM`'s 16 bytes, `AT_PLATFORM`, every value the same
+as `getauxval`'s) and `winapk-arm64-test` (arm64: the CPU entries, the file by
+raw `openat` and by `fopen`, the values `getauxval` gives).
 
 ## UPX-packed libraries
 

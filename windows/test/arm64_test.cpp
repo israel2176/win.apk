@@ -269,6 +269,12 @@ void run_bridge(winapk::GuestLinker& linker, const char* file) {
               raw2 == 65535, std::to_string(raw2));
         check("set_tid_address: the word is cleared when the thread ends", call0("arm64_set_tid_address") == 3,
               std::to_string(call0("arm64_set_tid_address")));
+        // The auxiliary vector arm64 code is given (arm64_abi.cpp): the translator's features and "aarch64",
+        // never the host's CPUID bits or "x86_64"; /proc/self/auxv the same by SVC and by fopen.
+        const int auxv = call0("arm64_auxv");
+        check("auxv for arm64 code: AT_HWCAP FP|ASIMD, AT_HWCAP2 0, AT_PLATFORM aarch64, AT_PAGESZ; "
+              "/proc/self/auxv by SVC and fopen, AT_NULL last, the values getauxval gives",
+              auxv == 127, std::to_string(auxv));
     }
 
     // Host code is not the guest's (arm64_abi.cpp, host_code.h): mprotect and MAP_FIXED over a host function's

@@ -2642,6 +2642,9 @@ void set_app_code(const char* base_apk) {
     if (!bionic::g_code_mapped) bionic::g_base_apk = std::move(w);  // once mapped, the lines stay
 }
 
+bool is_proc_auxv_path(const char* path) { return bionic::is_proc_auxv(path); }
+int open_proc_auxv(bool arm64) { return bionic::open_temp_with(process_auxv(arm64)); }
+
 void* fts_open_with_stat(char* const* argv, int options, void* compar, FtsStatFill fill) {
     return bionic::fts_open_impl(argv, options, reinterpret_cast<bionic::GuestFtsCompar>(compar), fill);
 }

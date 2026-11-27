@@ -2,6 +2,7 @@
 
 #include "winapk/linker.h"
 
+#include "winapk/arm64_guest.h"
 #include "winapk/elf_tls.h"
 #include "winapk/guest_abi.h"
 #include "winapk/long_path.h"
@@ -13,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <intrin.h>
+#include <mutex>
 #include <unordered_set>
 
 #include <windows.h>
@@ -645,49 +647,72 @@ std::string GuestLinker::proc_maps() const {
     return out;
 }
 
-std::string process_auxv() {
-    static const std::string text = [] {
-        enum : uint64_t {
-            kAtNull = 0, kAtPhdr = 3, kAtPhent = 4, kAtPhnum = 5, kAtPagesz = 6, kAtBase = 7, kAtFlags = 8,
-            kAtEntry = 9, kAtUid = 11, kAtEuid = 12, kAtGid = 13, kAtEgid = 14, kAtPlatform = 15, kAtHwcap = 16,
-            kAtClktck = 17, kAtSecure = 23, kAtRandom = 25, kAtHwcap2 = 26, kAtExecfn = 31,
-        };
-        static uint8_t random[16];
-        BCryptGenRandom(nullptr, random, sizeof random, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
-        static const char platform[] = "x86_64";
-        int cpu[4] = {};
-        __cpuid(cpu, 1);
-        using Id = unsigned(WINAPK_GUEST_ABI*)();
-        auto id = [](const char* name) -> uint64_t {
-            const auto fn = reinterpret_cast<Id>(mini_bionic_resolve(name));
-            return fn ? fn() : 0;
-        };
-        const auto& images = process_images();
-        const uint64_t program = images[0].at, linker = images[1].at;
-        const uint64_t pairs[][2] = {
-            {kAtHwcap, static_cast<uint32_t>(cpu[3])},
-            {kAtPagesz, 4096},
-            {kAtClktck, 100},
-            {kAtPhdr, program ? program + 64 : 0},  // the program header table follows the ELF header: none here
-            {kAtPhent, 56},
-            {kAtPhnum, 0},
-            {kAtBase, linker},
-            {kAtFlags, 0},
-            {kAtEntry, program},
-            {kAtUid, id("getuid")},
-            {kAtEuid, id("geteuid")},
-            {kAtGid, id("getgid")},
-            {kAtEgid, id("getegid")},
-            {kAtSecure, 0},
-            {kAtRandom, reinterpret_cast<uint64_t>(random)},
-            {kAtHwcap2, 0},
-            {kAtExecfn, reinterpret_cast<uint64_t>(kAppProcessPath)},
-            {kAtPlatform, reinterpret_cast<uint64_t>(platform)},
-            {kAtNull, 0},
-        };
-        return std::string(reinterpret_cast<const char*>(pairs), sizeof pairs);
-    }();
-    return text;
+namespace {
+
+// One process, one vector, but what the CPU and its platform are depends on whose code asks: an arm64
+// library runs on the translator, which has no x86_64 features and only the arm64 ones it implements.
+std::string make_auxv(bool arm64) {
+    enum : uint64_t {
+        kAtNull = 0, kAtPhdr = 3, kAtPhent = 4, kAtPhnum = 5, kAtPagesz = 6, kAtBase = 7, kAtFlags = 8,
+        kAtEntry = 9, kAtUid = 11, kAtEuid = 12, kAtGid = 13, kAtEgid = 14, kAtPlatform = 15, kAtHwcap = 16,
+        kAtClktck = 17, kAtSecure = 23, kAtRandom = 25, kAtHwcap2 = 26, kAtExecfn = 31,
+    };
+    // AT_RANDOM's bytes are the process's: the same 16 for either view.
+    static uint8_t random[16];
+    static std::once_flag once;
+    std::call_once(once, [] { BCryptGenRandom(nullptr, random, sizeof random, BCRYPT_USE_SYSTEM_PREFERRED_RNG); });
+    static const char x86_platform[] = "x86_64";
+    static const char arm64_platform[] = "aarch64";
+    int cpu[4] = {};
+    __cpuid(cpu, 1);
+    using Id = unsigned(WINAPK_GUEST_ABI*)();
+    auto id = [](const char* name) -> uint64_t {
+        const auto fn = reinterpret_cast<Id>(mini_bionic_resolve(name));
+        return fn ? fn() : 0;
+    };
+    const auto& images = process_images();
+    const uint64_t program = images[0].at, linker = images[1].at;
+    const uint64_t pairs[][2] = {
+        {kAtHwcap, arm64 ? arm64::kHwcap : static_cast<uint32_t>(cpu[3])},
+        {kAtPagesz, 4096},
+        {kAtClktck, 100},
+        {kAtPhdr, program ? program + 64 : 0},  // the program header table follows the ELF header: none here
+        {kAtPhent, 56},
+        {kAtPhnum, 0},
+        {kAtBase, linker},
+        {kAtFlags, 0},
+        {kAtEntry, program},
+        {kAtUid, id("getuid")},
+        {kAtEuid, id("geteuid")},
+        {kAtGid, id("getgid")},
+        {kAtEgid, id("getegid")},
+        {kAtSecure, 0},
+        {kAtRandom, reinterpret_cast<uint64_t>(random)},
+        {kAtHwcap2, arm64 ? arm64::kHwcap2 : 0},
+        {kAtExecfn, reinterpret_cast<uint64_t>(kAppProcessPath)},
+        {kAtPlatform, reinterpret_cast<uint64_t>(arm64 ? arm64_platform : x86_platform)},
+        {kAtNull, 0},
+    };
+    return std::string(reinterpret_cast<const char*>(pairs), sizeof pairs);
+}
+
+}  // namespace
+
+std::string process_auxv(bool arm64) {
+    static const std::string x86 = make_auxv(false);
+    static const std::string a64 = make_auxv(true);
+    return arm64 ? a64 : x86;
+}
+
+bool auxv_value(const std::string& auxv, uint64_t type, uint64_t* value) {
+    const size_t n = auxv.size() / sizeof(uint64_t);
+    for (size_t i = 0; i + 1 < n; i += 2) {
+        uint64_t pair[2];
+        std::memcpy(pair, auxv.data() + i * sizeof(uint64_t), sizeof pair);
+        if (pair[0] == 0) break;  // AT_NULL
+        if (pair[0] == type) return *value = pair[1], true;
+    }
+    return false;
 }
 
 bool GuestLinker::describe(const void* addr, AddrInfo* info) const {

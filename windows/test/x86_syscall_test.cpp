@@ -129,6 +129,14 @@ bool run_library(const char* path, unsigned* checksum) {
         const long r = fn ? fn() : -1000;
         check(name, r == 1, "returned " + std::to_string(r));
     }
+    // /proc/self/auxv by raw calls (guest/syscall_guest.c): one bit per check.
+    {
+        auto fn = reinterpret_cast<LongFn>(img->dlsym("syscall_auxv"));
+        const long r = fn ? fn() : -1000;
+        check("/proc/self/auxv: AT_NULL last, the values getauxval gives, AT_PAGESZ 4096, AT_RANDOM 16 readable "
+              "bytes, AT_PLATFORM x86_64; getauxval of a missing type 0 and ENOENT",
+              r == 63, std::to_string(r));
+    }
     auto sum = reinterpret_cast<ChecksumFn>(img->dlsym("syscall_checksum"));
     check("syscall_checksum exported", sum != nullptr);
     *checksum = sum ? sum(77) : 0;
