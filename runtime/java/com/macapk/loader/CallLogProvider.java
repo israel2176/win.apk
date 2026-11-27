@@ -13,8 +13,10 @@
 // names; calls, calls/<id> and calls/filter/<number> (PhoneNumberUtils.compare, as the
 // PHONE_NUMBERS_EQUAL function AOSP's query uses); the limit and offset query parameters;
 // voicemail rows (TYPE 4) left out of every query unless allow_voicemails=true, which needs
-// READ_VOICEMAIL as AOSP's VoicemailPermissions do, and refused on insert without it; an
-// unknown column refused ("Column 'x' is invalid"); LAST_MODIFIED set on every write;
+// READ_VOICEMAIL as AOSP's VoicemailPermissions do, and refused on insert without it, an
+// app's selection unable to reach them (ContactsProvider.andSelection: strict, as AOSP's
+// query builder); an unknown column refused ("Column 'x' is invalid" in values, "Invalid
+// column" in a projection); LAST_MODIFIED set on every write;
 // deleting by calls only (AOSP answers "Cannot delete that URL" to calls/<id>); every
 // change announced on CallLog.Calls.CONTENT_URI.
 package com.macapk.loader;
@@ -195,10 +197,8 @@ public final class CallLogProvider extends ContentProvider {
             w.append(w.length() == 0 ? "" : " AND ").append("(_id IN (")
                     .append(numberMatches(uri.getLastPathSegment())).append("))");
         }
-        if (selection != null && !selection.isEmpty()) {
-            w.append(w.length() == 0 ? "" : " AND ").append('(').append(selection).append(')');
-        }
-        return w.length() == 0 ? null : w.toString();
+        String all = ContactsProvider.andSelection(mDb, "calls", w.toString(), selection);
+        return all.isEmpty() ? null : all;
     }
 
     /** The calls whose number is the same as `number` (PHONE_NUMBERS_EQUAL). */
@@ -230,8 +230,8 @@ public final class CallLogProvider extends ContentProvider {
             String offset = uri.getQueryParameter(CallLog.Calls.OFFSET_PARAM_KEY);
             if (limit != null && !limit.matches("\\d+")) limit = null;
             if (limit != null && offset != null && offset.matches("\\d+")) limit = offset + "," + limit;
-            Cursor c = mDb.query("calls", projection, where, args.toArray(new String[0]), null, null,
-                    sortOrder, limit);
+            String[] columns = ContactsProvider.checkedProjection(mDb, "calls", projection);
+            Cursor c = mDb.query("calls", columns, where, args.toArray(new String[0]), null, null, sortOrder, limit);
             return ContactsProvider.copy(getContext(), c, CallLog.CONTENT_URI);
         }
     }

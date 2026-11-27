@@ -75,6 +75,47 @@ public final class ContactsProviderTest {
         }
     }
 
+    /** True when `r` is refused with an IllegalArgumentException, as AOSP's strict query builder
+     *  and projection maps refuse what an app may not ask. */
+    private static boolean invalid(Runnable r) {
+        try {
+            r.run();
+            return false;
+        } catch (IllegalArgumentException e) {
+            return true;
+        } catch (RuntimeException e) {
+            System.out.println("     (" + e + ")");
+            return false;
+        }
+    }
+
+    /** True when `r` is refused: as `invalid`, or with the SQLiteException AOSP's validateSql
+     *  throws for a selection that is not SQL. */
+    private static boolean refused(Runnable r) {
+        try {
+            r.run();
+            return false;
+        } catch (IllegalArgumentException | android.database.sqlite.SQLiteException e) {
+            return true;
+        }
+    }
+
+    /** The _ids `c` holds, `c` closed. */
+    private static Set<Long> ids(Cursor c) {
+        Set<Long> out = new HashSet<>();
+        if (c == null) return out;
+        try {
+            int at = c.getColumnIndexOrThrow("_id");
+            while (c.moveToNext()) out.add(c.getLong(at));
+        } finally {
+            c.close();
+        }
+        return out;
+    }
+
+    /** A selection that closes the provider's parenthesis and opens its own. */
+    private static final String ESCAPE = "1) OR (1";
+
     private static int count(Cursor c) {
         if (c == null) return -1;
         try { return c.getCount(); } finally { c.close(); }
@@ -217,6 +258,18 @@ public final class ContactsProviderTest {
         nick.put(ContactsContract.CommonDataKinds.Nickname.NAME, "Johnny");
         cr.insert(Data.CONTENT_URI, nick);
         check(count(cr.query(Contacts.CONTENT_URI, null, null, null, null)) == 2, "a raw contact is its own contact");
+        check(count(cr.query(ContentUris.withAppendedId(Contacts.CONTENT_URI, contactId), null, ESCAPE, null,
+                null)) == 1,
+              "contacts/<id> with a selection closing the provider's parenthesis: still one contact");
+        check(invalid(() -> cr.query(Contacts.CONTENT_URI, new String[]{"no_such_column"}, null, null, null)),
+              "an unknown projection column is refused");
+        check(invalid(() -> cr.query(Phone.CONTENT_URI,
+                new String[]{"(SELECT group_concat(data1) FROM data) AS x"}, null, null, null)),
+              "a subquery in the projection is refused");
+        check(refused(() -> cr.query(Contacts.CONTENT_URI, null, "1)) OR ((1", null, null)),
+              "a selection that does not compile on its own is refused");
+        check(invalid(() -> cr.query(Contacts.CONTENT_URI, null, "1) OR 1 --", null, null)),
+              "a selection ending in a comment that eats the provider's parenthesis is refused");
         ContentValues join = new ContentValues();
         join.put(ContactsContract.AggregationExceptions.TYPE, ContactsContract.AggregationExceptions.TYPE_KEEP_TOGETHER);
         join.put(ContactsContract.AggregationExceptions.RAW_CONTACT_ID1, raw);
@@ -231,6 +284,15 @@ public final class ContactsProviderTest {
         check("1".equals(first(cr.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, raw2),
                 new String[]{RawContacts.DELETED}, null, null, null), RawContacts.DELETED)),
               "an account's raw contact is marked deleted for its sync adapter");
+        check(!ids(cr.query(ContactsContract.RawContactsEntity.CONTENT_URI, null, ESCAPE, null, null)).contains(raw2)
+              && ids(cr.query(ContactsContract.RawContactsEntity.CONTENT_URI, null, ESCAPE, null, null)).contains(raw),
+              "a deleted raw contact stays out of the entities with a selection closing the provider's parenthesis");
+        ContentValues renamed = new ContentValues();
+        renamed.put(RawContacts.SYNC1, "touched");
+        cr.update(ContentUris.withAppendedId(RawContacts.CONTENT_URI, raw), renamed, ESCAPE, null);
+        check(first(cr.query(ContentUris.withAppendedId(RawContacts.CONTENT_URI, raw2), new String[]{RawContacts.SYNC1},
+                null, null, null), RawContacts.SYNC1) == null,
+              "raw_contacts/<id> update with a selection closing the provider's parenthesis writes that row only");
         cr.delete(ContentUris.withAppendedId(RawContacts.CONTENT_URI, raw2)
                 .buildUpon().appendQueryParameter(ContactsContract.CALLER_IS_SYNCADAPTER, "true").build(), null, null);
         check(count(cr.query(RawContacts.CONTENT_URI, null, null, null, null)) == 1, "the sync adapter's delete removes it");
@@ -295,11 +357,43 @@ public final class ContactsProviderTest {
         check(cr.delete(CallLog.Calls.CONTENT_URI, CallLog.Calls.TYPE + "=?",
                 new String[]{String.valueOf(CallLog.Calls.OUTGOING_TYPE)}) == 1
               && count(cr.query(CallLog.Calls.CONTENT_URI, null, null, null, null)) == 1, "delete by selection");
+        check(invalid(() -> cr.query(CallLog.Calls.CONTENT_URI, new String[]{"no_such_column"}, null, null, null)),
+              "call log: an unknown projection column is refused");
+
+        // ---- voicemail rows and a selection that tries to reach them --------------------------
+        Uri voicemails = CallLog.Calls.CONTENT_URI.buildUpon().appendQueryParameter("allow_voicemails", "true").build();
+        app.granted.add("com.android.voicemail.permission.ADD_VOICEMAIL");
+        ContentValues voicemail = new ContentValues();
+        voicemail.put(CallLog.Calls.NUMBER, "035550000");
+        voicemail.put(CallLog.Calls.TYPE, CallLog.Calls.VOICEMAIL_TYPE);
+        voicemail.put(CallLog.Calls.DATE, now + 2000);
+        Uri vmUri = cr.insert(voicemails, voicemail);
+        app.granted.remove("com.android.voicemail.permission.ADD_VOICEMAIL");
+        check(vmUri != null, "a voicemail inserted with ADD_VOICEMAIL and allow_voicemails");
+        check(count(cr.query(CallLog.Calls.CONTENT_URI, null, null, null, null)) == 1,
+              "voicemail rows left out without allow_voicemails");
+        check(count(cr.query(CallLog.Calls.CONTENT_URI, null, ESCAPE, null, null)) == 1,
+              "a selection closing the provider's parenthesis does not reach the voicemail row");
+        check(cr.update(CallLog.Calls.CONTENT_URI, renamedCall(), ESCAPE, null) == 1,
+              "nor does an update with it");
+        cr.delete(CallLog.Calls.CONTENT_URI, "0) OR (1", null);
+        app.granted.add("com.android.voicemail.permission.READ_VOICEMAIL");
+        check(count(cr.query(voicemails, null, null, null, null)) == 1
+              && "035550000".equals(first(cr.query(voicemails, new String[]{CallLog.Calls.NUMBER},
+                      CallLog.Calls._ID + "=?", new String[]{String.valueOf(ContentUris.parseId(vmUri))}, null),
+                      CallLog.Calls.NUMBER)),
+              "nor a delete with it: the voicemail row is still there");
 
         if (failures == 0) System.out.println("ALL PASSED");
         else System.out.println(failures + " FAILED");
         System.out.flush();
         System.exit(failures == 0 ? 0 : 1);
+    }
+
+    private static ContentValues renamedCall() {
+        ContentValues v = new ContentValues();
+        v.put(CallLog.Calls.CACHED_NAME, "renamed");
+        return v;
     }
 
     private static void deleteTree(File f) {

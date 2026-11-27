@@ -29,7 +29,10 @@
 // caller-id min match, for PhoneLookup). Queries run on views that join them under the
 // exact column names ContactsContract documents (view_data, view_contacts,
 // view_raw_contacts, view_raw_entities, view_contact_entities), so an app's own
-// selection, projection and sort order are SQLite's to evaluate, as on a device.
+// selection and sort order are SQLite's to evaluate, as on a device. As ContactsProvider2's
+// strict SQLiteQueryBuilder, a selection is compiled on its own and runs wrapped twice,
+// so it cannot reach past the provider's own clause (andSelection), and a projection
+// names the view's columns only (checkedProjection, its projection maps' check).
 // AOSP keeps mimetypes in a side table; here the data row holds the mimetype string, which
 // the views expose under the same name.
 //
@@ -67,6 +70,7 @@ import android.content.pm.ProviderInfo;
 import android.database.Cursor;
 import android.database.MatrixCursor;
 import android.database.sqlite.SQLiteDatabase;
+import android.database.sqlite.SQLiteException;
 import android.net.Uri;
 import android.os.ParcelFileDescriptor;
 import android.provider.ContactsContract;
@@ -78,10 +82,15 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class ContactsProvider extends ContentProvider {
     private static final String TAG = "ContactsProvider";
@@ -428,19 +437,70 @@ public final class ContactsProvider extends ContentProvider {
             if (q == null) throw new IllegalArgumentException("Unknown URI " + uri);
             long directory = longParam(uri, "directory", 0);
             if (directory != 0 && directory != 1) q.and("0");   // no other directory
-            String where = q.where.toString();
+            String[] columns = checkedProjection(mDb, q.view, projection);
+            String where = andSelection(mDb, q.view, q.where.toString(), selection);
             List<String> args = new ArrayList<>(q.args);
-            if (selection != null && !selection.isEmpty()) {
-                where = where.isEmpty() ? "(" + selection + ")" : where + " AND (" + selection + ")";
-                if (selectionArgs != null) args.addAll(Arrays.asList(selectionArgs));
+            if (selectionArgs != null && selection != null && !selection.isEmpty()) {
+                args.addAll(Arrays.asList(selectionArgs));
             }
             String limit = uri.getQueryParameter(ContactsContract.LIMIT_PARAM_KEY);
             if (limit != null && !limit.matches("\\d+")) limit = null;
             String order = sortOrder != null && !sortOrder.isEmpty() ? sortOrder : q.sort;
-            Cursor c = mDb.query(q.view, projection, where.isEmpty() ? null : where,
+            Cursor c = mDb.query(q.view, columns, where.isEmpty() ? null : where,
                     args.toArray(new String[0]), null, null, order, limit);
             return copy(getContext(), c, ContactsContract.AUTHORITY_URI);
         }
+    }
+
+    // ---- what an app's selection and projection may say ----------------------------------
+
+    /** `where`, the provider's own clause, ANDed with an app's `selection` as AOSP's
+     *  SQLiteQueryBuilder does in strict mode (setStrict(true), which ContactsProvider2 and
+     *  CallLogProvider set): the selection is compiled on its own first, wrapped once, and
+     *  runs wrapped twice, so a selection such as "1) OR (1" cannot close the provider's
+     *  parenthesis and escape its clause (voicemail, deleted rows, one contact's URI).
+     *  A selection that is not SQL fails with the SQLiteException validateSql throws on a
+     *  device; one that compiles wrapped once but not twice is one that would escape the
+     *  single wrap (a comment or a statement end eating the closing parenthesis), and is
+     *  refused. Empty when neither is given. */
+    static String andSelection(SQLiteDatabase db, String table, String where, String selection) {
+        if (where == null) where = "";
+        if (selection == null || selection.isEmpty()) return where;
+        db.validateSql("SELECT 1 FROM " + table + " WHERE (" + selection + ")", null);
+        try {
+            db.validateSql("SELECT 1 FROM " + table + " WHERE ((" + selection + "))", null);
+        } catch (SQLiteException e) {
+            throw new IllegalArgumentException("Invalid selection: " + selection);
+        }
+        String wrapped = "((" + selection + "))";
+        return where.isEmpty() ? wrapped : where + " AND " + wrapped;
+    }
+
+    /** The columns of each table and view the providers query, read from the schema once. */
+    private static final Map<String, Set<String>> sColumns = new ConcurrentHashMap<>();
+
+    /** AOSP SQLiteQueryBuilder's aggregate form of a mapped column ("COUNT(_id)"). */
+    private static final Pattern AGGREGATE =
+            Pattern.compile("(?i)(AVG|COUNT|MAX|MIN|SUM|TOTAL|GROUP_CONCAT)\\((.+)\\)");
+
+    /** An app's projection checked as ContactsProvider2's and CallLogProvider's projection
+     *  maps check it (SQLiteQueryBuilder.setStrictColumns): each entry is a column of the
+     *  table or view, or an aggregate of one; anything else, an expression or a subquery
+     *  included, is refused with AOSP's "Invalid column". */
+    static String[] checkedProjection(SQLiteDatabase db, String table, String[] projection) {
+        if (projection == null) return null;
+        Set<String> known = sColumns.computeIfAbsent(table, t -> {
+            try (Cursor c = db.rawQuery("SELECT * FROM " + t + " LIMIT 0", null)) {
+                return new HashSet<>(Arrays.asList(c.getColumnNames()));
+            }
+        });
+        for (String column : projection) {
+            if (column != null && known.contains(column)) continue;
+            Matcher m = column == null ? null : AGGREGATE.matcher(column);
+            if (m != null && m.matches() && known.contains(m.group(2))) continue;
+            throw new IllegalArgumentException("Invalid column " + column);
+        }
+        return projection;
     }
 
     /** The rows of `c` copied out and `c` closed, as the CursorWindow a provider's cursor
@@ -1268,11 +1328,10 @@ public final class ContactsProvider extends ContentProvider {
         if (q == null || !q.view.equals(view)) {
             throw new UnsupportedOperationException("Unknown uri: " + uri);
         }
-        String where = q.where.toString();
+        String where = andSelection(mDb, q.view, q.where.toString(), selection);
         List<String> args = new ArrayList<>(q.args);
-        if (selection != null && !selection.isEmpty()) {
-            where = where.isEmpty() ? "(" + selection + ")" : where + " AND (" + selection + ")";
-            if (selectionArgs != null) args.addAll(Arrays.asList(selectionArgs));
+        if (selectionArgs != null && selection != null && !selection.isEmpty()) {
+            args.addAll(Arrays.asList(selectionArgs));
         }
         return idsQuery("SELECT DISTINCT _id FROM " + q.view
                 + (where.isEmpty() ? "" : " WHERE " + where), args.toArray(new String[0]));
