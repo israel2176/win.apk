@@ -117,50 +117,72 @@ WINAPK_GUEST_ABI double g_difftime(int64_t end, int64_t start) {
 }
 WINAPK_GUEST_ABI glong g_clock() { return thread_cpu_ns(nullptr, true) / 1000; }  // CLOCKS_PER_SEC 1000000
 
-void sleep_ns(int64_t ns) {
-    if (ns <= 0) return;
+// Sleeps `ns`. A signal sent to the thread meanwhile runs its handler and ends the sleep early,
+// as Linux's sleeps end with EINTR whatever SA_RESTART says: the time not slept is returned,
+// 0 when the whole sleep was slept.
+int64_t sleep_ns(int64_t ns) {
+    if (ns <= 0) return 0;
     // A high-resolution waitable timer where Windows has one; Sleep otherwise.
     static const bool high_res = [] {
         HANDLE t = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /*HIGH_RESOLUTION*/, TIMER_ALL_ACCESS);
         if (t) CloseHandle(t);
         return t != nullptr;
     }();
+    const int64_t start = monotonic_ns();
     HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, high_res ? 0x00000002 : 0, TIMER_ALL_ACCESS);
     if (!timer) {
         Sleep(static_cast<DWORD>((ns + 999999) / 1000000));
-        return;
+        return 0;
     }
     LARGE_INTEGER due;
     due.QuadPart = -(ns / 100 > 0 ? ns / 100 : 1);
     SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
-    WaitForSingleObject(timer, INFINITE);
+    const HANDLE waits[2] = {timer, signal_wait_event()};
+    int64_t left = 0;
+    // The event may be left set by a signal the thread took elsewhere: then it sleeps on.
+    while (WaitForMultipleObjects(waits[1] ? 2 : 1, waits, FALSE, INFINITE) == WAIT_OBJECT_0 + 1) {
+        if (signal_take_posted() != WaitEnd::kNone) {
+            left = std::max<int64_t>(ns - (monotonic_ns() - start), 1);
+            break;
+        }
+    }
     CloseHandle(timer);
+    return left;
 }
 WINAPK_GUEST_ABI int g_nanosleep(const GuestTimespec* req, GuestTimespec* rem) {
     if (!req || req->tv_nsec < 0 || req->tv_nsec >= 1000000000LL) {
         *guest_errno() = kEINVAL;
         return -1;
     }
-    sleep_ns(req->tv_sec * 1000000000LL + req->tv_nsec);
-    if (rem) rem->tv_sec = rem->tv_nsec = 0;
+    const int64_t left = sleep_ns(req->tv_sec * 1000000000LL + req->tv_nsec);
+    if (rem) {
+        rem->tv_sec = left / 1000000000LL;
+        rem->tv_nsec = left % 1000000000LL;
+    }
+    if (left) {
+        *guest_errno() = kEINTR;
+        return -1;
+    }
     return 0;
 }
 WINAPK_GUEST_ABI int g_clock_nanosleep(int clock, int flags, const GuestTimespec* req, GuestTimespec* rem) {
     if (flags & 1) {  // TIMER_ABSTIME
         GuestTimespec now;
         g_clock_gettime(clock, &now);
-        sleep_ns((req->tv_sec - now.tv_sec) * 1000000000LL + (req->tv_nsec - now.tv_nsec));
-        return 0;
+        return sleep_ns((req->tv_sec - now.tv_sec) * 1000000000LL + (req->tv_nsec - now.tv_nsec)) ? kEINTR : 0;
     }
     return g_nanosleep(req, rem) == 0 ? 0 : *guest_errno();
 }
 WINAPK_GUEST_ABI int g_usleep(uint32_t us) {
-    sleep_ns(static_cast<int64_t>(us) * 1000);
+    if (sleep_ns(static_cast<int64_t>(us) * 1000)) {
+        *guest_errno() = kEINTR;
+        return -1;
+    }
     return 0;
 }
 WINAPK_GUEST_ABI unsigned g_sleep(unsigned s) {
-    sleep_ns(static_cast<int64_t>(s) * 1000000000LL);
-    return 0;
+    const int64_t left = sleep_ns(static_cast<int64_t>(s) * 1000000000LL);
+    return static_cast<unsigned>((left + 999999999) / 1000000000LL);  // the seconds not slept
 }
 
 // struct tm is the same 9 ints on both sides, then Bionic adds tm_gmtoff (long)
@@ -1555,11 +1577,35 @@ int64_t guest_futex(uint32_t* uaddr, int op, uint32_t val, const GuestTimespec* 
             }
             ms = ns <= 0 ? 0 : static_cast<DWORD>((ns + 999999) / 1000000);
         }
-        if (!WaitOnAddress(uaddr, &val, sizeof(val), ms) && GetLastError() == ERROR_TIMEOUT) {
-            *guest_errno() = kETIMEDOUT;
-            return -1;
+        // A signal sent meanwhile ends the wait and its handler runs here; then the wait goes on
+        // (SA_RESTART) while the word is unchanged, or fails with EINTR.
+        const ULONGLONG deadline = ms == INFINITE ? 0 : GetTickCount64() + ms;
+        for (;;) {
+            bool timed_out = false;
+            {
+                SignalWaitScope scope(uaddr);
+                timed_out = !scope.posted() && !WaitOnAddress(uaddr, &val, sizeof(val), ms) &&
+                            GetLastError() == ERROR_TIMEOUT;
+            }
+            const WaitEnd end = signal_take_posted();
+            if (end == WaitEnd::kInterrupted) {
+                *guest_errno() = kEINTR;
+                return -1;
+            }
+            if (timed_out) {
+                *guest_errno() = kETIMEDOUT;
+                return -1;
+            }
+            if (end == WaitEnd::kNone || *reinterpret_cast<volatile uint32_t*>(uaddr) != val) return 0;
+            if (ms != INFINITE) {
+                const ULONGLONG now = GetTickCount64();
+                if (now >= deadline) {
+                    *guest_errno() = kETIMEDOUT;
+                    return -1;
+                }
+                ms = static_cast<DWORD>(deadline - now);
+            }
         }
-        return 0;
     }
     if (cmd == 1 || cmd == 10) {  // FUTEX_WAKE, FUTEX_WAKE_BITSET
         if (val == 1) WakeByAddressSingle(uaddr);
@@ -1594,7 +1640,7 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
         case 39: return g_getpid();
         case 200: return g_tkill(static_cast<int>(a), static_cast<int>(b));
         case 234: return g_tgkill(static_cast<int>(a), static_cast<int>(b), static_cast<int>(c));
-        case 24: SwitchToThread(); return 0;  // sched_yield
+        case 24: SwitchToThread(); signal_take_posted(); return 0;  // sched_yield
         case 204: return affinity_syscall(static_cast<int>(a), static_cast<size_t>(b), reinterpret_cast<void*>(c));
         case 318: return g_getrandom(reinterpret_cast<void*>(a), static_cast<size_t>(b), 0);
         case 228: return g_clock_gettime(static_cast<int>(a), reinterpret_cast<GuestTimespec*>(b));
