@@ -1,10 +1,9 @@
 // android.print.PrintDocumentAdapter
 //
 // The abstract adapter an app implements to render its content into a print
-// document. Mac.apk has no print transport, so the adapter is never driven by
-// PrintManager.print, but the abstract type + the nested LayoutResultCallback /
-// WriteResultCallback + PrintDocumentInfo must resolve for the app's adapter
-// subclass to compile. Mirrors
+// document. PrintManager.print hands it to PrintSpooler, which calls it as
+// Android's print spooler does: onStart, onLayout, onWrite, onFinish, on the
+// main thread. Mirrors
 // frameworks/base/core/java/android/print/PrintDocumentAdapter.java.
 package android.print;
 

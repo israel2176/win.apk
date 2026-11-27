@@ -505,6 +505,8 @@ jobs:
         run: ./build/winapk-user-folders-test.exe "$(cygpath -w "$PWD")"
       - name: Run the notification toast test
         run: ./build/winapk-toast-xml-test.exe
+      - name: Run the print layout test
+        run: ./build/winapk-print-layout-test.exe
       - name: Run the window geometry test
         run: ./build/winapk-window-test.exe
       - name: Run the screen-reader model test (names, patterns, events, text units)
@@ -698,6 +700,20 @@ jobs:
           cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/nsd-test windows/test/java/android/net/nsd/NsdManagerTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/nsd-test)" android.net.nsd.NsdManagerTest
+      - name: Run the print job test
+        run: |
+          # A print job as Android's spooler drives the app's PrintDocumentAdapter (PrintSpooler), over a
+          # stand-in for Windows' printers and Print dialog, on a plain JVM: the adapter's calls and the
+          # job's states in a device's order, the dialog cancelled, failures, restart, cancel, the printing
+          # activity destroyed, and Windows' paper, colour, duplex and page ranges in Android's terms.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          # AOSP's app, views and resources first, as every app's class path has them: the test makes an
+          # Activity and an Application (the printing activity destroyed mid-layout).
+          cp="$(cygpath -w stage/lib/aosp-app.jar);$(cygpath -w stage/lib/aosp-views.jar);$(cygpath -w stage/lib/aosp-resources.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/print-test windows/test/java/android/print/PrintManagerTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/print-test)" android.print.PrintManagerTest \
+            | tee print-test.log
+          grep -q "ALL PASSED" print-test.log
       - name: Run the stream volumes test
         run: |
           # AudioManager's stream volumes as AOSP's AudioService keeps them (ranges, defaults, aliasing,
@@ -801,6 +817,22 @@ jobs:
           cp="$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-app.jar)"
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/perm-test windows/test/java/PermissionModelTest.java
           "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/perm-test)" PermissionModelTest
+      - name: Run the contacts and call log providers test
+        run: |
+          # com.android.contacts and call_log (ContactsProvider, CallLogProvider) through an app's
+          # ContentResolver: denied without READ_/WRITE_CONTACTS and READ_/WRITE_CALL_LOG; a contact
+          # written by applyBatch and read as apps read it (Phone, Email, PhoneLookup, filters, lookup
+          # keys, entities, photo); joining, deleting; the call log's rules; observers; a second
+          # process's provider over the same database; an app's selection kept inside the provider's
+          # own clause and its projection checked, as AOSP's strict query builder and projection maps
+          # do. In winapk-runtime (--java-test): SQLite's natives.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/contacts-test windows/test/java/com/macapk/loader/ContactsProviderTest.java
+          MACAPK_LOG_LEVEL=7 ./stage/bin/winapk-runtime.exe --data "$(cygpath -w "$PWD/jtdata")" \
+            --java-test "$(cygpath -w build/java/android-framework.jar);$(cygpath -w build/contacts-test)" \
+            com.macapk.loader.ContactsProviderTest "$(cygpath -w "$RUNNER_TEMP/contacts")" | tee contacts-test.log
+          grep -q "ALL PASSED" contacts-test.log
       - name: Run the APK signature verification test
         run: |
           # com.macapk.loader.ApkVerification (apksig) on APKs the test signs
