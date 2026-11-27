@@ -83,6 +83,41 @@ constexpr int kEPERM = 1, kENOENT = 2, kEINTR = 4, kEIO = 5, kEBADF = 9, kEAGAIN
 // thread) the way tgkill does: delivered now if it is this thread, injected
 // into the other one otherwise. Returns 0 or a Linux errno.
 int signal_send(uint32_t tid, int sig);
+// A sleep that a signal from another thread cuts short (signal.cpp). On Linux
+// a signal sent to a thread asleep in a system call runs the handler at once:
+// the sleep ends, then is restarted or fails with EINTR (signal(7)). Here the
+// handler is injected into the sleeping thread, and runs when its wait
+// returns; while one of these is alive, the sender also wakes the wait, so
+// the handler runs now and not when the wait would have ended by itself.
+// Construct it just before the wait; what interrupted() says after it is
+// whether a handler ran on this thread in between.
+class SignalableSleep {
+public:
+    enum Kind {
+        kAddress,      // WaitOnAddress(address): woken by WakeByAddressAll
+        kDescriptors,  // fd.cpp's waits: woken by fd_notify()
+        kEvent,        // a wait that includes event(): woken by SetEvent
+    };
+    enum Outcome { kNotInterrupted, kRestart, kEintr };
+    explicit SignalableSleep(Kind kind, const volatile void* address = nullptr);
+    ~SignalableSleep();
+    SignalableSleep(const SignalableSleep&) = delete;
+    SignalableSleep& operator=(const SignalableSleep&) = delete;
+    // For kEvent: the thread's own event, reset, to wait on beside the sleep;
+    // null when the thread could not get one (the sleep is then not cut short).
+    void* event() const { return event_; }
+    // Whether a handler ran since construction, and if so whether the last
+    // one had SA_RESTART (kRestart) or not (kEintr).
+    Outcome interrupted() const;
+
+private:
+    void* slot_ = nullptr;
+    void* event_ = nullptr;
+    int saved_kind_ = 0;
+    const volatile void* saved_address_ = nullptr;
+    uint64_t handlers_before_ = 0;
+};
+
 // The calling thread's blocked set, for sigsetjmp/siglongjmp (setjmp.cpp).
 uint64_t signal_mask_of_current_thread();
 void signal_set_mask_of_current_thread(uint64_t mask);

@@ -39,10 +39,15 @@ std::atomic<int32_t>* word(void* p, size_t index) {
 }
 
 // Waits while *w == expected, up to ms (INFINITE for no limit). Returns false
-// on timeout.
-bool futex_wait(std::atomic<int32_t>* w, int32_t expected, DWORD ms) {
-    if (WaitOnAddress(w, &expected, sizeof(expected), ms)) return true;
-    return GetLastError() != ERROR_TIMEOUT;
+// on timeout. A signal sent to the thread cuts the wait short so that its
+// handler runs (a spurious wake-up, which every caller re-checks); `outcome`,
+// if given, says whether one did.
+bool futex_wait(std::atomic<int32_t>* w, int32_t expected, DWORD ms,
+                SignalableSleep::Outcome* outcome = nullptr) {
+    SignalableSleep sleep(SignalableSleep::kAddress, w);
+    const bool woke = WaitOnAddress(w, &expected, sizeof(expected), ms) || GetLastError() != ERROR_TIMEOUT;
+    if (outcome) *outcome = sleep.interrupted();
+    return woke;
 }
 void futex_wake_one(std::atomic<int32_t>* w) { WakeByAddressSingle(w); }
 void futex_wake_all(std::atomic<int32_t>* w) { WakeByAddressAll(w); }
@@ -717,7 +722,14 @@ int sem_wait_ms(void* s, const GuestTimespec* abstime, bool monotonic) {
             *guest_errno() = kETIMEDOUT;
             return -1;
         }
-        futex_wait(word(s, 0), 0, ms);
+        // Bionic's sem_wait fails with EINTR when a handler interrupted it (for apps targeting
+        // API 24 and up), whatever SA_RESTART says, as signal(7) lists it.
+        SignalableSleep::Outcome outcome = SignalableSleep::kNotInterrupted;
+        futex_wait(word(s, 0), 0, ms, &outcome);
+        if (outcome != SignalableSleep::kNotInterrupted) {
+            *guest_errno() = kEINTR;
+            return -1;
+        }
     }
 }
 WINAPK_GUEST_ABI int g_sem_wait(void* s) { return sem_wait_ms(s, nullptr, false); }

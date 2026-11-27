@@ -73,7 +73,10 @@ std::atomic<uint32_t> g_generation{0};
 
 // Waits until fd_notify() is called or `ms` pass (INFINITE allowed), whichever
 // comes first, given the generation the caller saw before checking.
+// A signal sent to the thread ends the wait too, so that its handler runs;
+// a blocked read or write then goes on waiting, as with SA_RESTART.
 void wait_for_change(uint32_t seen, DWORD ms) {
+    SignalableSleep sleep(SignalableSleep::kDescriptors);
     uint32_t expected = seen;
     WaitOnAddress(&g_generation, &expected, sizeof(expected), ms);
 }
@@ -623,7 +626,9 @@ short check(int fd, short events, WaitPlan* plan) {
 using GuestPollFd = PollFd;
 
 // The common wait: re-checks the descriptors until one is ready or the
-// timeout (ms, -1 = forever) passes. Returns how many are ready.
+// timeout (ms, -1 = forever) passes. Returns how many are ready, or -1 with
+// EINTR when a signal's handler ran during the wait: Linux never restarts
+// poll, select or epoll_wait, whatever SA_RESTART says (signal(7)).
 template <typename Check>
 int wait_ready(int timeout_ms, Check check_all) {
     const uint64_t deadline = timeout_ms < 0 ? UINT64_MAX : now_ms() + static_cast<uint64_t>(timeout_ms);
@@ -632,7 +637,12 @@ int wait_ready(int timeout_ms, Check check_all) {
     // it is something WSAPoll sees and the check does not, and the wait falls
     // back to a re-check every 5 ms rather than turn in place.
     int woke_for_nothing = 0;
+    SignalableSleep sleep(SignalableSleep::kDescriptors);
     for (;;) {
+        if (sleep.interrupted() != SignalableSleep::kNotInterrupted) {
+            *guest_errno() = kEINTR;
+            return -1;
+        }
         const uint32_t seen = g_generation.load();
         WaitPlan plan;
         const int n = check_all(&plan);
