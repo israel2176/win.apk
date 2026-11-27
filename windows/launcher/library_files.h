@@ -15,7 +15,8 @@
 // is installed, or puts them back when it is not; a cut-off update is put back the same way at the next
 // start (recover_interrupted_installs). The bundle becomes links last of all, so a start that finds a
 // bundle with its install made from it does that step again (keep_installed), which is also how a library
-// from before this layout moves to it.
+// from before this layout moves to it. A removal takes the entries out first (<entry>.removed), so that one a
+// running process holds stops it with nothing of the app gone, and deletes them last.
 //
 // std::filesystem only: no Windows call and no lock, so that test/launcher_state_test.cpp drives these on
 // real files (launcher_main.cpp holds the app's InstallClaim around them).
@@ -27,6 +28,7 @@
 #include <filesystem>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace winapk::launcher {
@@ -46,20 +48,19 @@ inline bool is_bundle_file(const lib_fs::path& p) {
     return e == L".apkm" || e == L".xapk" || e == L".apks";
 }
 
-// The library's entries of app `name`: <name>.apk, a bundle <name>.apkm / .xapk / .apks, the <name>.splits
-// folder. With `previous`, those an update set aside instead (<entry>.previous).
-inline std::vector<lib_fs::path> app_entries(const lib_fs::path& library, const std::wstring& name, bool previous) {
+// The library's entries of app `name` renamed with `suffix` (none: as they are): <name>.apk, a bundle
+// <name>.apkm / .xapk / .apks, the <name>.splits folder, each followed by the suffix.
+inline std::vector<lib_fs::path> app_entries_with(const lib_fs::path& library, const std::wstring& name,
+                                                  const std::wstring& suffix) {
     static const wchar_t* const kKinds[] = {L".apk", L".apkm", L".xapk", L".apks", L".splits"};
-    static const std::wstring kPrevious = L".previous";
-    const std::wstring want = lower_ascii(name);
+    const std::wstring want = lower_ascii(name), tail = lower_ascii(suffix);
     std::vector<lib_fs::path> out;
     std::error_code ec;
     for (lib_fs::directory_iterator it(library, ec), end; !ec && it != end; it.increment(ec)) {
         std::wstring f = lower_ascii(it->path().filename().wstring());
-        if (previous) {
-            if (f.size() <= kPrevious.size() || f.compare(f.size() - kPrevious.size(), kPrevious.size(), kPrevious))
-                continue;
-            f.resize(f.size() - kPrevious.size());
+        if (!tail.empty()) {
+            if (f.size() <= tail.size() || f.compare(f.size() - tail.size(), tail.size(), tail)) continue;
+            f.resize(f.size() - tail.size());
         }
         for (const wchar_t* k : kKinds) {
             if (f == want + k) {
@@ -69,6 +70,65 @@ inline std::vector<lib_fs::path> app_entries(const lib_fs::path& library, const 
         }
     }
     return out;
+}
+
+// The library's entries of app `name`. With `previous`, those an update set aside instead (<entry>.previous).
+inline std::vector<lib_fs::path> app_entries(const lib_fs::path& library, const std::wstring& name, bool previous) {
+    return app_entries_with(library, name, previous ? L".previous" : L"");
+}
+
+// What a removal renames the app's entries to (take_out), which nothing reads as an app.
+inline const wchar_t* const kRemovedSuffix = L".removed";
+
+// The first step of removing app `name`: each of its entries renamed to <entry>.removed. Windows will not rename a
+// file a process holds open without sharing its deletion (the app's runtime, still running), so this is the step
+// that can fail, and it comes before anything else of the app goes: false then, with every entry renamed back, and
+// the app whole in the library. Once it is true the removal goes on (drop_taken_out).
+// `rename` is lib_fs::rename's (from, to, error_code) form; the test passes one that fails as a held file does.
+template <typename Rename>
+inline bool take_out(const lib_fs::path& library, const std::wstring& name, Rename rename) {
+    std::error_code ec;
+    std::vector<std::pair<lib_fs::path, lib_fs::path>> done;
+    for (const lib_fs::path& p : app_entries(library, name, false)) {
+        lib_fs::path out = p;
+        out += kRemovedSuffix;
+        lib_fs::remove_all(out, ec);  // a removal's that could not finish
+        ec.clear();
+        rename(p, out, ec);
+        if (ec) {
+            for (auto it = done.rbegin(); it != done.rend(); ++it) lib_fs::rename(it->second, it->first, ec);
+            return false;
+        }
+        done.emplace_back(p, out);
+    }
+    return true;
+}
+inline bool take_out(const lib_fs::path& library, const std::wstring& name) {
+    return take_out(library, name, [](const lib_fs::path& from, const lib_fs::path& to, std::error_code& ec) {
+        lib_fs::rename(from, to, ec);
+    });
+}
+
+// The removal's last step: the entries taken out deleted. True when none is left; one that could not be deleted is
+// tried again at the next start (drop_all_taken_out), and is never an app meanwhile.
+inline bool drop_taken_out(const lib_fs::path& library, const std::wstring& name) {
+    std::error_code ec;
+    bool all = true;
+    for (const lib_fs::path& p : app_entries_with(library, name, kRemovedSuffix)) {
+        lib_fs::remove_all(p, ec);
+        all = all && !ec;
+    }
+    return all;
+}
+
+// At a start: whatever a removal could not delete before (<entry>.removed of any app).
+inline void drop_all_taken_out(const lib_fs::path& library) {
+    std::error_code ec;
+    std::vector<lib_fs::path> left;
+    for (lib_fs::directory_iterator it(library, ec), end; !ec && it != end; it.increment(ec)) {
+        if (lower_ascii(it->path().extension().wstring()) == kRemovedSuffix) left.push_back(it->path());
+    }
+    for (const lib_fs::path& p : left) lib_fs::remove_all(p, ec);
 }
 
 // Before an install of `name` from another file: each entry of the app's copy renamed to <entry>.previous.

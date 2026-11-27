@@ -40,7 +40,11 @@ public final class NativeApkAssets {
         boolean system = (flags & ApkAssets.PROPERTY_SYSTEM) != 0;
         boolean overlay = (flags & PROPERTY_OVERLAY) != 0;
         boolean sharedLib = (flags & ApkAssets.PROPERTY_DYNAMIC) != 0;
-        String key = path + "|" + system + "|" + overlay + "|" + sharedLib;
+        // An installed APK by either of its names: the loader opens the app's set by the host
+        // path it was started with (AospRes.openAssets), AOSP's ResourcesManager by
+        // ApplicationInfo.sourceDir, its Android name; one file, one table.
+        String key = com.macapk.loader.InstalledSplits.androidPath(path) + "|" + system + "|" + overlay + "|"
+                + sharedLib;
         synchronized (LOADED) {
             Long have = LOADED.get(key);
             if (have != null) return have;

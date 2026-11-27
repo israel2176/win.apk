@@ -55,6 +55,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace winapk {
@@ -138,6 +139,11 @@ public:
     // Loaded images in load order.
     std::vector<const ElfImage*> images() const;
 
+    // Where the loaded x86_64 images lie, [first, second), copied: for a caller that must tell
+    // guest code apart later while it may take no lock (signal.cpp, with another thread
+    // suspended that could hold this linker's).
+    std::vector<std::pair<uintptr_t, uintptr_t>> x86_64_ranges() const;
+
     // One loaded guest library as dl_iterate_phdr reports it.
     struct PhdrView {
         uintptr_t bias;
@@ -173,7 +179,7 @@ private:
     void unload(GuestLibrary* root, const std::unordered_set<GuestLibrary*>& kept);
     static void on_thread_dtor_added(const void* dso);
     static void on_thread_dtor_removed(const void* dso);
-    std::filesystem::path locate(const std::string& name, const std::filesystem::path& near) const;
+    std::filesystem::path locate(const std::string& name, const std::filesystem::path& needer_dir) const;
     std::vector<GuestLibrary*> local_group(GuestLibrary* root) const;
     void* find_in(GuestLibrary* lib, const char* name) const;
     void* resolve_linker_owned(const char* name) const;

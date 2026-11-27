@@ -103,10 +103,17 @@ Installs run one at a time, in a small install window:
   log, in the window) and **Copy details** (the reason, Win.apk's version and
   the end of the log, for a bug report).
 
-Two apps with the same library name (the app's label) cannot coexist: a
-second install of the same app replaces the first and keeps the app's data.
+Before a file installs, Win.apk reads which app it is (its package and
+version), as a phone's package installer does, so an app is known by its
+package, not by its file's name: a file of an installed app replaces that app
+and keeps the app's data, whatever the file is called, and a file of another
+app never replaces an app whose file had the same name (two different
+`app-release.apk` files are two apps; the second is named after its package).
 To update an app, open or drop a newer file of it: there is no separate
-update button. An app open in a window has to be closed first; what runs of
+update button. A file older than the installed version asks first (**Replace
+... with an older version?**; Enter is **Cancel**), since what the app saved
+with the newer version may not work with the older one; **Cancel** keeps the
+installed version. An app open in a window has to be closed first; what runs of
 it with no window (started in the background for another app, with Google
 services on, and Google's own apps) is stopped for the update, as Android
 stops an app it updates.
@@ -259,7 +266,8 @@ the background at the first app install): a few seconds of one core at low
 priority, and about 40 MB in `%LOCALAPPDATA%\Win.apk\cds`.
 
 The library marks a running app with a green badge on its tile and counts
-them under its title. **Stop** in the tile's right-click menu, or on the
+them under its title, whether it was opened from the library or from its
+own shortcut (a start from a shortcut shows up within two seconds). **Stop** in the tile's right-click menu, or on the
 app's details page, closes the app at once, like Android's **Force stop**:
 the app is not told, so close its window instead when it has something to
 save.
@@ -309,9 +317,11 @@ listed in [Compatibility](APPS.md#what-works).
 An app runs once at a time. Starting it again (from a shortcut or the
 library) brings the running window to the front.
 
-Closing the library while an app is still running, or while an install is
-under way, only hides it: Win.apk stays until those finish, so it can still
-report an app that stops with an error.
+Closing the library while an app is still running, while an install is
+under way, or while Win.apk's update or the Store's app is downloading, only
+hides it: Win.apk stays until those finish, so it can still report an app
+that stops with an error, and the update's installer still runs once it is
+downloaded.
 
 When Win.apk ends (the library closed and no app open), everything it
 started in the background ends with it: the translation of ARM apps, the
@@ -774,11 +784,17 @@ nothing is started in the apps: no agent, no pipe.
   shared storage (`Android\data` and `Android\obb`) go too, as uninstalling
   does on a phone. Your own files in your Windows folders are never touched.
 - **Settings > Troubleshooting > Clear library** uninstalls every app of the
-  library and removes its shortcuts (app data is kept).
-- Uninstalling Win.apk (Windows Settings > Apps) removes the program, the
-  Start menu shortcuts, the `.apk` association and the app files' thumbnails, and keeps
-  `%LOCALAPPDATA%\Win.apk`. Delete that folder to remove the apps, their data,
-  the Store and the Google account.
+  library and removes its shortcuts (app data is kept). An app whose files are
+  in use (it is still running and could not be closed) is left whole, and the
+  library names it; close it and clear again. Removing one app works the same
+  way: it is removed whole or not at all.
+- Uninstalling Win.apk (Windows Settings > Apps) removes the program, its
+  Start menu shortcuts, the apps' shortcuts (in Start and on the desktop), the
+  app files' thumbnails, and the `.apk`, `.apkm`, `.xapk` and `.apks`
+  associations that still open Win.apk (one another program took since is
+  left to it). It keeps `%LOCALAPPDATA%\Win.apk`: installing Win.apk again
+  brings the apps back, with their shortcuts in Start. Delete that folder to
+  remove the apps, their data, the Store and the Google account.
 
 ## Where things are
 

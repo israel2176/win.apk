@@ -483,7 +483,7 @@ const std::unordered_map<std::string, void*>& all_symbols() {
                             bionic::stdio_symbols(), bionic::misc_symbols(), bionic::signal_symbols(),
                             bionic::locale_symbols(), bionic::fd_symbols(),
                             bionic::socket_symbols(), bionic::looper_symbols(),
-                            bionic::zlib_symbols(), bionic::setjmp_symbols()}) {
+                            bionic::zlib_symbols(), bionic::setjmp_symbols(), bionic::process_symbols()}) {
             add(t.symbols, t.count);
         }
         return m;
