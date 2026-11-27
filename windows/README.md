@@ -4066,6 +4066,14 @@ every such change is listed here:
   refuses it. Every request used to report `FAILURE_INTERNAL_ERROR`, which it still does without DNS-SD.
   `registerServiceInfoCallback` answers once (no later updates). `windows/test/java/android/net/nsd/
   NsdManagerTest.java` checks it over a stand-in for Windows' side.
+- `runtime/java/android/media/AudioManager.java`: the streams' volumes as AOSP's AudioService keeps them, one
+  per stream for the process (they were per `AudioManager` object, so a value set was lost at the next
+  `getSystemService`), in AOSP's ranges and defaults, with AOSP's aliasing for a device without telephony;
+  the media stream (and text to speech, accessibility) is Windows' default output device's volume and mute,
+  read and set through `com/macapk/loader/HostVolume.java` (new; `windows/host/native_volume.cpp`,
+  `IAudioEndpointVolume`), as an app sets a phone's media volume. `adjustStreamVolume`, `adjustVolume`,
+  `setStreamMute` and `isStreamMute` act on them (they did nothing); `isMusicActive` is whether an audio
+  session plays on the default output device.
 
 - `runtime/java/com/macapk/loader/HostNotifications.java`: a notification's actions are passed to the host
   as its buttons (`shownActions`: the shade's three, not contextual ones; a free-form `RemoteInput` as a text
