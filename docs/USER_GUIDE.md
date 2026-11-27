@@ -687,6 +687,14 @@ printers, TVs, media servers and other devices that announce themselves on
 the local network, and a service the app offers is announced under your PC's
 name (Windows 10 version 1809 or later).
 
+An app's **Print** opens Windows' own Print dialog over the app's window:
+choose the printer, its preferences (paper, orientation, colour, two-sided),
+the number of copies and the pages, and the app's document is printed on that
+printer, as a phone hands it to its print service. Cancelling the dialog
+cancels the print. There is no print preview, and pages go to the printer as
+pictures of up to 600 dpi. A printer that writes a file, such as Microsoft
+Print to PDF, asks where to save it.
+
 Apps use Windows' proxy, as a phone's apps use the one its Wi-Fi settings
 name: whatever **Windows Settings > Network & internet > Proxy** says (a
 proxy server and its exceptions, a setup script, or automatic detection)

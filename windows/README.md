@@ -312,6 +312,7 @@ Every test is a program built by CMake; `ci.yml` runs each of them on
 | `winapk-frame-times-test` | The frame-time record (`host/frame_times.h`): nearest-rank percentiles over its 50 us buckets, never above the exact max, a frame over 200 ms, the warm-up frames apart, and the `frame times` line logged at exit ([Frame time](#frame-time)) |
 | `winapk-machine-load-test` | The machine's load to the first frame (`host/machine_load.h`): the busy share from two system samples, this process's share of all processors, other processes' CPU time between two samples by image name (a reused pid or a process started since counts whole; this process, the idle process and names under 0.1 s left out), busiest first, and the `startup: machine ... busy` line, with no process list or no time passed |
 | `winapk-toast-xml-test` | The Windows notification an Android one becomes (`host/toast_xml.h`, no Windows call): no actions on a plain one; up to three buttons, a reply action's text field before them, named by its button, the label as placeholder; text escaped; the toast's and each button's click arguments parsed back to the key and the action, foreign ones refused |
+| `winapk-print-layout-test` | Where a printed PDF page goes on the printer's paper (`host/print_layout.h`, no Windows call): the sheet in mils with its unprintable edges as margins; a page laid out for the paper drawn one to one, shifted by the unprintable edge; a page of another size scaled to fit and centred; the picture no finer than 600 dpi; bands that cover every device row once within 32 MB each; collated and uncollated copies; pages past the end left out |
 | `winapk-swap-pacing-test` | When an app's presenting `eglSwapBuffers` returns (`host/swap_pacing.h`): a producer faster than the display at its rate (60, or 30 at swap interval 2), interval 0 never paced, a slower one never waits, the schedule keeps its phase and makes up nothing after a pause |
 | `winapk-webview-urls-test` | The app's `file:` URLs on WebView2 (`host/webview_file_urls.h`): `file:///X` (and `file://localhost/X`, `file:/X`) to the file origin `https://winapk-file.example/X` and back (query and fragment kept, host without case, its default port, a share and web URLs left alone, a look-alike host or another port not the origin); a `loadDataWithBaseURL` page's `file:///` references made the origin's where an attribute, a string or `url(` starts, not in its text; a base's request form; origins as a browser writes them (default ports dropped, user info, IPv6); who may read the origin: a `file:` page, the app's data page (`Origin: null`, or its web base), not a web page, a web frame in a `file:` page, nor another origin's CORS request; a `Range` header's one byte range (open end, suffix, cut to the body, 416 past it, the whole body for several ranges or junk) |
 | `winapk-applink-test` | The App Link sign-in window's decision (`host/applink_match.h`): the navigation that returns to the app is the `redirect_uri` without its query, exactly (scheme and host without case, a default port as none); another path, host, port, scheme, a subdomain, userinfo or the address inside a query is not |
@@ -4126,6 +4127,30 @@ every such change is listed here:
   refuses it. Every request used to report `FAILURE_INTERNAL_ERROR`, which it still does without DNS-SD.
   `registerServiceInfoCallback` answers once (no later updates). `windows/test/java/android/net/nsd/
   NsdManagerTest.java` checks it over a stand-in for Windows' side.
+- `runtime/java/android/print/PrintManager.java`, `PrintSpooler.java` (new), `PrintDocumentAdapter.java`
+  (comment): printing to Windows' printers. `print()` returns the job in `STATE_CREATED` and, as Android's print
+  spooler, drives the app's adapter on the main thread: `onStart`, `onLayout` for Windows' default printer with
+  the app's attributes applied (a preview's layout), Windows' own Print dialog over the app's window
+  (`com/macapk/loader/HostPrinting.java`, new; `windows/host/native_printing.cpp`, `PrintDlgEx`), `onLayout` again
+  for the printer, paper, orientation, colour and two-sided chosen (not a preview), `onWrite` for the pages
+  chosen into a spool file, then `STATE_QUEUED` and `onFinish`. The PDF is printed on its own thread: each page
+  rendered by Windows.Data.Pdf (looked up at run time) at the printer's resolution, at most 600 dpi, in bands
+  (`host/print_layout.h`), drawn into the printer's device context made from the dialog's DEVMODE, so the driver
+  applies the user's settings; `STATE_STARTED`, then `STATE_COMPLETED`, `STATE_FAILED` with the printer's words
+  (`restart()` prints the spooled document again) or `STATE_CANCELED` (the dialog cancelled, `PrintJob.cancel()`,
+  or the printing activity destroyed before the print UI was done: the adapter is then dropped, never called
+  again, and a layout or write in progress has its `CancellationSignal` cancelled, as AOSP's
+  `PrintDocumentAdapterDelegate` and spooler do). Windows' printer calls (the default printer's lookup, the
+  dialog, printing) run on host threads, never the app's main thread; the copies are printed by Win.apk, so the
+  driver's DEVMODE is set to one copy.
+  A whole document written where some pages were asked is cut to them, as AOSP's spooler does. `print()` throws
+  outside an activity, as AOSP's does (the manager gets the context's outer context, as `SystemServiceRegistry`
+  gives it). The job used to be saved to a file in the app's folder and reported completed. No preview is
+  shown, and a layout or write the adapter fails fails the job with its message as the status where a device
+  would show it. `windows/test/java/android/print/PrintManagerTest.java` checks the lifecycle over a stand-in for
+  Windows' side. The graphics DLL now has `android.graphics.pdf.PdfDocument` (`hwui_build/mods.sh`,
+  `patch_src.py`: `hwui/jni/pdf/PdfDocument.cpp` on Skia's PDF backend; `PdfEditor`, `PdfRenderer` stay out), which
+  `PrintedPdfDocument` and AndroidX's `PrintHelper` write with.
 - `runtime/java/android/media/AudioManager.java`: the streams' volumes as AOSP's AudioService keeps them, one
   per stream for the process (they were per `AudioManager` object, so a value set was lost at the next
   `getSystemService`), in AOSP's ranges and defaults, with AOSP's aliasing for a device without telephony;

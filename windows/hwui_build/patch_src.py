@@ -162,11 +162,20 @@ EDITS = [
      '                mRenderThread.getGrContext(), mHardwareBuffer, kTopLeft_GrSurfaceOrigin,\n'
      '                bufferColorSpace, nullptr, true);\n',
      '        mBufferSurface = nullptr;\n'),
+    # CI keeps the patched sources between builds (actions/cache on fetch.sh): a tree patched before
+    # PdfDocument was built has the three registrations replaced by this comment. Put them back, so
+    # the edit below applies to a cached tree as to a fresh one (0: only where it is there).
+    ('hwui/apex/jni_runtime.cpp',
+     '            // Win.apk: no PdfDocument, PdfEditor, PdfRenderer (libpdfium).\n',
+     '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
+     '            REG_JNI(register_android_graphics_pdf_PdfEditor),\n'
+     '            REG_JNI(register_android_graphics_pdf_PdfRenderer),\n', 0),
     ('hwui/apex/jni_runtime.cpp',
      '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
      '            REG_JNI(register_android_graphics_pdf_PdfEditor),\n'
      '            REG_JNI(register_android_graphics_pdf_PdfRenderer),\n',
-     '            // Win.apk: no PdfDocument, PdfEditor, PdfRenderer (libpdfium).\n'),
+     '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
+     '            // Win.apk: no PdfEditor, PdfRenderer (libpdfium).\n'),
     # The compositor (hwui_build/glue) posts to the render thread.
     ('hwui/renderthread/RenderThread.h',
      '    static bool hasInstance();\n    static RenderThread& getInstance();\n',
@@ -336,10 +345,14 @@ for root, dirs, files in os.walk(os.path.join(SRC, 'minikin')):
 bad = 0
 for e in EDITS:
     rel, old, new = e[:3]
-    times = e[3] if len(e) > 3 else 1  # how many times the text is there
+    times = e[3] if len(e) > 3 else 1  # how many times the text is there; 0: only if it is
     p = os.path.join(SRC, rel)
     s = open(p, encoding='utf-8').read()
     if new in s:
+        continue
+    if times == 0:
+        if old in s:
+            open(p, 'w', encoding='utf-8').write(s.replace(old, new))
         continue
     if s.count(old) != times:
         print('patch_src: %s: the text to replace is not there %d time(s): %r' % (rel, times, old[:60]))
