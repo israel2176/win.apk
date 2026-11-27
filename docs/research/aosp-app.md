@@ -493,6 +493,52 @@ those of the base, the service host and `--system` start, `--install-only`,
 is relaunched; on Linux the lifecycle and accessibility tests and the CI's
 plain-JVM framework tests pass.
 
+## The task across the end of its process
+
+On a device the task's ActivityRecords live in system_server, so a process
+killed while its task is behind, or by the system, leaves the records with
+their saved state, and the next process gets the task back. Before this,
+Win.apk's task manager lived and died with the app's process: the window's
+close destroyed every activity (`terminate`), the end of the Windows session
+ran that same close, and every start was a fresh one. `onSaveInstanceState`
+already ran before `onStop` (AOSP's `ActivityThread`, API 28+) and its Bundle
+reached `Tasks.stopped` through `ActivityClientController.activityStopped`,
+but it lived only in memory.
+
+- **What is kept:** `Tasks` writes `SavedTask` (`apps\<name>\task-state.parcel`,
+  named by `AppHost.Start.savedTask`, the system's own files, not the data the
+  app sees) whenever its records change: each record that
+  `ActivityRecord.handleAppDied` keeps (`haveState`: never launched, or
+  stopped with an icicle since its last resume; not finishing), with its
+  activity, intent, launch fields, result target, icicle and persistent state.
+  The Bundles and intent are marshalled each on their own (an intent with live
+  objects is kept as its filter; a Bundle with them is no saved state), the
+  file written whole and renamed into place, and only when it changed.
+- **Restore:** `AospApp.attached` restores the records, none launched, before
+  the process's first start. A launcher start, or a start of the root
+  activity, brings the task forward (`resumeTop`: the top's
+  `LaunchActivityItem` carries its saved Bundle); another start goes on top.
+  The rest are launched with theirs as they are revealed, with the results
+  sent to them (`realStart` of a record not launched).
+- **What drops it:** the window's close (`terminate`: the user dismissing the
+  task, as from recents), Back out of the root (the task empties), the
+  launcher's Stop (Force stop: `force_stop` deletes the file), an update (the
+  file names the version code and the APK's update time it was written for).
+- **What keeps it:** a kill (Task Manager, out of memory, a permission taken
+  away), a crash (Boot's handler calls `AppHost.processCrashed` first, which
+  drops the top as `finishTopCrashedActivities` does; a native fault runs no
+  Java, and its top, resumed, has no state anyway unless the task was
+  behind), and the end of the Windows session: `WM_ENDSESSION` runs
+  `AppHost.shutdown`, which stops every resumed or paused activity without
+  destroying it, as `ActivityTaskManagerService.shuttingDown` puts them to
+  sleep. Where Win.apk differs: Android drops the instance state at a reboot
+  (only `persistAcrossReboots` activities keep their persistent state);
+  Win.apk keeps it across a Windows restart, since the app's window was open
+  when Windows ended it. A crash repeated within a minute
+  (`AppErrors`' `onHandleAppCrash`, every activity removed) is not told apart.
+- **Tests:** `windows/test/aospapp/StateRestoreTest.java`, run by `run.sh` as
+  one process of the app per run over one state file.
+
 ## 5. Size, start and memory
 
 - **Disk.** `aosp-app.jar` 1.3 MB (1.25 MB in the installer, measured); the

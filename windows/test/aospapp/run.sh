@@ -2,7 +2,8 @@
 # AOSP 14's own activity lifecycle on a plain JVM (docs/research/aosp-app.md, step A1): builds
 # lib/aosp-app.jar over a staged runtime, the host library (plainjvm_host.cpp: the host natives and
 # the host's graphics redirect) and AospAppLifecycleTest.java, and runs it; then MagnifierTest.java (the
-# text magnifier's popup as a window's child layers) on the same harness.
+# text magnifier's popup as a window's child layers) on the same harness; then StateRestoreTest.java (the
+# task kept across the end of the app's process), one run per process.
 #
 #   windows/test/aospapp/run.sh <stage> <deps> [out] [full android-framework.jar]
 #
@@ -14,7 +15,8 @@
 # <deps> is the folder windows/test/aospgfx/fetch.sh <deps> linux fills (android-all 14,
 # Robolectric's native runtime for this platform, ICU's data); build_aosp_app.sh adds ASM. Linux; prints the
 # callbacks and ends with "ALL PASSED" (exit 0) or the first difference from Android's order, then the
-# magnifier's checks and its own "ALL PASSED" or "FAILED".
+# magnifier's checks and its own "ALL PASSED" or "FAILED", then each restore run's checks and a last
+# "ALL PASSED" or "FAILED: <run>".
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
@@ -40,7 +42,8 @@ L="$STAGE/lib"
 CP="$L/aosp-app.jar:$L/aosp-views.jar:$L/aosp-resources.jar:$L/aosp-graphics.jar:$L/android-framework.jar:$L/macapk-loader.jar"
 echo "== the test"
 rm -rf "$OUT/classes"
-"$JAVA_HOME/bin/javac" -nowarn -cp "$CP" -d "$OUT/classes" "$HERE/AospAppLifecycleTest.java" "$HERE/MagnifierTest.java"
+"$JAVA_HOME/bin/javac" -nowarn -cp "$CP" -d "$OUT/classes" "$HERE/AospAppLifecycleTest.java" "$HERE/MagnifierTest.java" \
+    "$HERE/StateRestoreTest.java"
 # As winapk-runtime starts an app's JVM: no verification of the app's and the framework's classes
 # (a class AOSP's reach only on a path not taken may name one Win.apk lacks), AOSP's graphics and
 # views on, the framework's resources and fonts from the stage, ICU's data from the native runtime's.
@@ -55,9 +58,37 @@ run_test() {
         -Dicu.data.path="$NR/icu/icudt68l.dat" -Dicu.locale.default=en-US \
         -Dandroid.icu.impl.ICUBinary.dataPath="$STAGE/bin/aosp/icu" \
         -Dwinapk.test.gfx.runtime="$RUNTIME" -Dwinapk.test.host="$OUT/libplainjvm_host.so" \
-        -cp "$CP:$OUT/classes" "$1"
+        -cp "$CP:$OUT/classes" "$@"
 }
 run_test AospAppLifecycleTest
 # The text magnifier's popup: child layers of a window, composed over it (MagnifierTest.java).
 echo "== the magnifier"
 run_test MagnifierTest
+# An app's task across the end of its process (StateRestoreTest.java): each run is one process of the
+# app, over one saved state. A kill, the session's end or a crash keeps the task; Back out of it, the
+# window's close (the task dismissed) and an update of the app drop it.
+echo "== the task across the process's end"
+STATE="$OUT/task-state.parcel"
+rm -f "$STATE"
+restore_runs() {
+    local step mode extra out
+    for step in "$@"; do
+        mode="${step%%:*}"
+        extra=""
+        [[ "$step" == *:* ]] && extra="${step#*:}"
+        out="$(run_test StateRestoreTest "$mode" "$STATE" $extra 2>&1)" || { echo "$out" | tail -n 40; echo "FAILED: $step"; exit 1; }
+        echo "$out" | grep -E '^(==|  )' || true
+        echo "$out" | grep -qE '^(ALL PASSED|KILLED)' || { echo "$out" | tail -n 40; echo "FAILED: $step did not finish"; exit 1; }
+    done
+}
+# Killed in the background: the task back on Detail; Back out of Root then drops it.
+restore_runs background expect-detail expect-fresh
+# Killed in front: only Root, stopped, comes back; the window's close drops the task.
+restore_runs foreground expect-root expect-fresh
+# The Windows session's end: Detail stopped, and back on the next start.
+restore_runs shutdown expect-detail
+# A crash with the task behind: its top is not kept.
+restore_runs crash expect-root
+# An update of the app between the two processes: nothing of the older version's task.
+restore_runs background expect-fresh:updated
+echo "ALL PASSED"

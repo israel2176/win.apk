@@ -1607,12 +1607,14 @@ LRESULT CALLBACK window_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             ShowWindow(hwnd, SW_HIDE);
             g_input->close_requested();
             return 0;
-        // Sign-out, shutdown, restart: Windows may end the process as soon as
-        // this returns, so the same close is waited for here. It ends the
+        // Sign-out, shutdown, restart: the system ending, not the user
+        // dismissing the app, so its activities are stopped and its task kept
+        // (native_cocoa.cpp, session_end_thread). Windows may end the process
+        // as soon as this returns, so that is waited for here; it ends the
         // process itself, well inside the 5 s Windows allows.
         case WM_ENDSESSION:
             if (wp) {
-                g_input->close_requested();
+                g_input->session_ending();
                 Sleep(INFINITE);
             }
             return 0;
