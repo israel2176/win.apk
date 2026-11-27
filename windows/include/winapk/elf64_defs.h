@@ -47,6 +47,22 @@ struct Ehdr {
     Half e_shstrndx;
 };
 
+// Section headers: optional at run time; read only for .symtab's function symbols.
+struct Shdr {
+    Word sh_name;
+    Word sh_type;
+    Xword sh_flags;
+    Addr sh_addr;
+    Off sh_offset;
+    Xword sh_size;
+    Word sh_link;
+    Word sh_info;
+    Xword sh_addralign;
+    Xword sh_entsize;
+};
+
+constexpr Word kShtSymtab = 2;
+
 struct Phdr {
     Word p_type;
     Word p_flags;
@@ -114,6 +130,8 @@ constexpr uint8_t kStbLocal = 0;
 constexpr uint8_t kStbGlobal = 1;
 constexpr uint8_t kStbWeak = 2;
 constexpr uint8_t kSttObject = 1;
+constexpr uint8_t kSttFunc = 2;
+constexpr uint8_t kSttGnuIfunc = 10;
 constexpr uint8_t kSttTls = 6;
 
 inline uint8_t st_bind(uint8_t info) { return info >> 4; }

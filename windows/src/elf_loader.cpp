@@ -10,6 +10,7 @@
 #include "winapk/fs_tls_patch.h"
 #include "winapk/guest_abi.h"
 #include "winapk/long_path.h"
+#include "winapk/x86_syscall.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -230,6 +231,29 @@ std::unique_ptr<ElfImage> ElfImage::map(const std::filesystem::path& path, std::
         return nullptr;
     }
 
+    // Entry points for the x86_64 SYSCALL scan beyond the dynamic section's: e_entry and the
+    // function symbols of .symtab. Section headers are optional and a packer may scramble them, so
+    // anything out of bounds is skipped, never an error.
+    if (eh.e_entry) img->code_entries_.push_back(eh.e_entry);
+    if (eh.e_machine == kEmX86_64 && eh.e_shoff && eh.e_shentsize == sizeof(Shdr) && eh.e_shoff <= file.size() &&
+        static_cast<uint64_t>(eh.e_shnum) * sizeof(Shdr) <= file.size() - eh.e_shoff) {
+        for (int i = 0; i < eh.e_shnum; ++i) {
+            Shdr sh;
+            std::memcpy(&sh, file.data() + eh.e_shoff + i * sizeof(Shdr), sizeof(sh));
+            if (sh.sh_type != kShtSymtab || sh.sh_entsize != sizeof(Sym) || sh.sh_offset > file.size() ||
+                sh.sh_size > file.size() - sh.sh_offset) {
+                continue;
+            }
+            for (uint64_t off = sh.sh_offset; off + sizeof(Sym) <= sh.sh_offset + sh.sh_size; off += sizeof(Sym)) {
+                Sym sym;
+                std::memcpy(&sym, file.data() + off, sizeof(sym));
+                if (sym.st_shndx != kShnUndef && st_type(sym.st_info) == kSttFunc && sym.st_value) {
+                    img->code_entries_.push_back(sym.st_value);
+                }
+            }
+        }
+    }
+
     if (!img->map_segments(file, error)) return nullptr;
     if (!img->read_dynamic(error)) return nullptr;
     if (img->has_tls_) {
@@ -267,6 +291,7 @@ bool ElfImage::link(const SymbolResolver& resolve, std::string* error,
                     const TlsSymbolResolver& resolve_tls) {
     if (linked_) return true;
     if (!apply_relocations(resolve, resolve_tls, error)) return false;
+    if (!is_arm64()) patch_x86_syscalls();  // the init arrays are relocated, the text still writable
     if (!protect_segments(error)) return false;
     if (!apply_irelative(error)) return false;
     seal_relro();
@@ -288,6 +313,7 @@ ElfImage::~ElfImage() {
     // Its translation goes with it: other code mapped here later is not this.
     if (!arm64_code_.empty()) arm64::aot_unload(arm64_lo_, arm64_hi_);
     if (tls_module_) tls_unregister_module(tls_module_);
+    if (mem_ && !is_arm64()) x86::forget(mem_, size_);
     if (mem_ && owns_mem_) VirtualFree(mem_, 0, MEM_RELEASE);
 }
 
@@ -745,9 +771,11 @@ bool ElfImage::apply_irelative(std::string* error) {
         uint64_t* where = at<uint64_t>(irelative_slots_[i]);
         // The slot sits in a writable segment (GOT / data); RELRO is sealed later.
         if (is_arm64()) {
-            // bionic passes (AT_HWCAP | _IFUNC_ARG_HWCAP, &arg); no optional
-            // CPU features are reported, so resolvers pick their plain code.
-            const uint64_t args[2] = {uint64_t{1} << 62, 0};
+            // bionic passes (AT_HWCAP | _IFUNC_ARG_HWCAP, &arg), arg an __ifunc_arg_t
+            // {size, AT_HWCAP, AT_HWCAP2}: the features getauxval reports to arm64
+            // code (arm64::kHwcap), so resolvers pick the code the engines run.
+            static const uint64_t ifunc_arg[3] = {sizeof ifunc_arg, arm64::kHwcap, arm64::kHwcap2};
+            const uint64_t args[2] = {arm64::kHwcap | (uint64_t{1} << 62), reinterpret_cast<uint64_t>(ifunc_arg)};
             *where = arm64::call(reinterpret_cast<const void*>(bias_ + irelative_addends_[i]), args, 2);
         } else {
             auto resolver = reinterpret_cast<GuestIRelativeResolver>(bias_ + irelative_addends_[i]);
@@ -767,6 +795,54 @@ void ElfImage::seal_relro() {
     if (end <= start || !in_image(start, end - start)) return;
     DWORD old;
     VirtualProtect(at<uint8_t>(start), end - start, PAGE_READONLY, &old);
+}
+
+// Raw system calls in x86_64 code (x86_syscall.h): decoded from every entry point the library
+// names, as a device's kernel would take them from anywhere in it.
+void ElfImage::patch_x86_syscalls() {
+    std::vector<x86::CodeRange> ranges;
+    for (const Segment& s : loads_) {
+        if ((s.flags & kPfX) && s.memsz && in_image(s.vaddr, s.memsz)) {
+            const uintptr_t lo = bias_ + s.vaddr;
+            ranges.push_back({lo, lo + s.memsz});
+        }
+    }
+    if (ranges.empty()) return;
+    std::vector<uintptr_t> entries;
+    auto vaddr = [&](uint64_t v) {
+        if (v && in_image(v, 1)) entries.push_back(bias_ + v);
+    };
+    // Relocated already: absolute addresses.
+    auto array = [&](uint64_t at_vaddr, uint64_t bytes) {
+        if (!at_vaddr || !in_image(at_vaddr, bytes)) return;
+        const uint64_t* a = at<const uint64_t>(at_vaddr);
+        for (uint64_t i = 0; i < bytes / sizeof(uint64_t); ++i) {
+            if (a[i] >= bias_ + lo_vaddr_ && a[i] < bias_ + hi_vaddr_) entries.push_back(a[i]);
+        }
+    };
+    vaddr(init_);
+    vaddr(fini_);
+    array(init_array_, init_arraysz_);
+    array(fini_array_, fini_arraysz_);
+    for (uint64_t v : code_entries_) vaddr(v);
+    const Sym* syms = at<const Sym>(symtab_);
+    for (size_t i = 1; i < nsyms_; ++i) {
+        const uint8_t type = st_type(syms[i].st_info);
+        if (syms[i].st_shndx != kShnUndef && (type == kSttFunc || type == kSttGnuIfunc)) vaddr(syms[i].st_value);
+    }
+    LARGE_INTEGER freq, t0, t1;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&t0);
+    size_t decoded = 0;
+    syscall_sites_patched_ =
+        x86::patch_syscalls(ranges.data(), ranges.size(), entries.data(), entries.size(), &decoded);
+    QueryPerformanceCounter(&t1);
+    // A line for a library with a SYSCALL, at its load: what the scan cost and what it found. A library with
+    // none says nothing: its stderr is the program's own (an --exec child's is the app's pipe or file).
+    if (syscall_sites_patched_ == 0) return;
+    std::fprintf(stderr, "[win.apk] %s: SYSCALL scan %.1f ms, %zu instructions from %zu entries, %zu site(s)\n",
+                 path_.filename().u8string().c_str(), 1000.0 * (t1.QuadPart - t0.QuadPart) / freq.QuadPart, decoded,
+                 entries.size(), syscall_sites_patched_);
 }
 
 void ElfImage::register_arm64_code() {

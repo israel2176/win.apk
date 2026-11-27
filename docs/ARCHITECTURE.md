@@ -254,6 +254,14 @@ what compiled code actually does:
   down (`RtlDllShutdownInProgress`) or the C runtime's `exit()` has begun.
   Realm's destructor called JNI on a thread the JVM had detached there and
   the process hung.
+- **Raw system calls in x86_64 code** (`x86_syscall.cpp`): a `SYSCALL`
+  instruction would enter the Windows kernel with Linux's number, so the
+  loader decodes each x86_64 library from its entry points and turns every
+  `SYSCALL` it meets into `UD2`, which a vectored handler answers as the
+  Linux kernel would, through the shim (the table behind `syscall()` too).
+  Code the guest makes executable later (a packer's decrypted text, an
+  unpacked stage) runs only after its first run faulted and was scanned the
+  same way. What this does not cover: `docs/research/packers.md`.
 - **The stack-protector patch** (`fs_tls_patch.cpp`): Bionic's stack guard is
   read with `mov rax, fs:[0x28]`. The loader rewrites the segment prefix so
   the instruction reads `gs:[0x28]` instead, which on x64 Windows is
@@ -278,7 +286,7 @@ functions, every one declared with the System V calling convention
 | `pthread.cpp` | Mutexes, condition variables, rwlocks, once, keys and threads on `WaitOnAddress`, over Bionic's struct layouts; cleanup handlers (`pthread_exit` runs the pending ones); semaphores |
 | `stdio.cpp`, `fd.cpp` | One file-descriptor table shared with Java (`NativeOs`): files, `stat` in Bionic's layout, directories, `FILE`, hard links; Bionic's `fts` over the same calls (it never changes directory: always `FTS_NOCHDIR`); `popen` and `system`, which find no shell to run (the command exits 127, as when `/system/bin/sh` cannot be run); pipes, eventfd and epoll; named pipes (`mkfifo`: a marker file `stat` reports as a FIFO, opened as the process's one pipe buffer for that path); `poll`, `select`, `epoll_wait`. A wait sleeps until something it waits for changes: pipes, eventfds and the like wake it through one readiness counter (`WaitOnAddress`); a wait that includes sockets sleeps in `WSAPoll` on them plus a loopback datagram socket of its own that the counter's changes send a byte to; an armed timerfd shortens the sleep to its expiry. Nothing is polled on a period. epoll's `EPOLLET` is edge-triggered (an event once when it appears, again after a new edge: more written to a pipe or eventfd, a socket read that took bytes, a send that would have blocked, `EPOLL_CTL_MOD`), `EPOLLONESHOT` reports once until `EPOLL_CTL_MOD`, and an interest goes when its descriptor closes |
 | `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo`; `getifaddrs`, `if_nametoindex`, `if_indextoname` and `if_nameindex` over one list of the adapters that are up (Linux-shaped names, Windows' interface indexes). Socket options: the ones Winsock has are mapped, among them multicast membership in all its forms (`ip_mreq`, `ip_mreqn`, `MCAST_JOIN_GROUP` and the other RFC 3678 requests), `SO_LINGER`, `SO_REUSEPORT` on datagram sockets (Windows' `SO_REUSEADDR`), the TCP keep-alive times, `TCP_USER_TIMEOUT`, path-MTU discovery as "don't fragment"; options that only tune (`SO_PRIORITY`, `TCP_QUICKACK`, `IP_RECVTOS`...) succeed with one log line each; any other fails with `ENOPROTOOPT`, so code that asks for a feature (`UDP_SEGMENT`) takes its fallback |
-| `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline` and an open writes its `status` and its `maps` (the text native code reads, `GuestLinker::proc_maps`: the process's `app_process64` and `linker64`, then the guest libraries); `/system/bin/app_process64`, `/system/bin/linker64` and `/apex/com.android.runtime/bin/linker64` are files with the process's ELF header, x86_64's, and there is no 32-bit `/system/bin/linker`, as on a 64-bit-only device (`include/winapk/process_image.h`; app packers choose their loader's build by them); the characters of an Android file name that Windows forbids, stored as U+F000 + the character as WSL does |
+| `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline` and an open writes its `status` and its `maps` (the text native code reads, `GuestLinker::proc_maps`: the process's `app_process64` and `linker64`, then the guest libraries); `/proc/self/auxv` is the auxiliary vector `getauxval` answers from (`winapk::process_auxv`), with the caller's CPU: x86_64's, or for arm64 code the translator's features and `aarch64` (`arm64_abi.cpp`; `docs/research/packers.md`); `/system/bin/app_process64`, `/system/bin/linker64` and `/apex/com.android.runtime/bin/linker64` are files with the process's ELF header, x86_64's, and there is no 32-bit `/system/bin/linker`, as on a 64-bit-only device (`include/winapk/process_image.h`; app packers choose their loader's build by them); the characters of an Android file name that Windows forbids, stored as U+F000 + the character as WSL does |
 | `looper.cpp` | The NDK's `ALooper` |
 | `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy); `mprotect`, `munmap` and `madvise(MADV_DONTNEED)` go region by region (`VirtualQuery`), as a range may hold reserved and committed pages of several allocations: opening a reserved page commits it, `PROT_NONE` leaves a reserved one as it is and keeps a committed one's contents, `MADV_DONTNEED` decommits and commits again in a mapping made here, system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied; `process.cpp` starts programs), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
 | `process.cpp` | Child processes: `posix_spawn`/`posix_spawnp` with their file actions, the `exec` family (the program runs as a new Windows process, the caller waits for it and ends with its status, as an exec replaces the process), `waitpid`/`wait`/`wait3`/`wait4`/`waitid` and `kill` on a child. A program is an x86_64 Android ELF executable, run by `winapk-runtime.exe --exec` (the spawning program started again, `host/exec_main.cpp`) on the same guest linker and shim, with the parent's Android paths and the environment it gave; its stdin, stdout and stderr are the parent's descriptors (a shim pipe or socket pumped through a Windows pipe). `fork` stays `ENOSYS`, an arm64 program or a script `ENOEXEC`, a missing one `ENOENT` (there is no `/system/bin/sh`). Java's `ProcessBuilder` on such a file goes the same way (`jdk.internal.util.WinApkExec` in the java.base overlay) |
@@ -1153,8 +1161,9 @@ the change refused from anyone but the launcher.
    which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
-8. Closing the window (`WM_CLOSE`; `WM_ENDSESSION` at sign-out or shutdown)
-   hides it at once and runs upstream's close path on a thread of its own
+8. Closing the window (`WM_CLOSE`) is the user dismissing the task, as a
+   task swiped from recents: its saved state (below) is deleted. It
+   hides the window at once and runs upstream's close path on a thread of its own
    (`native_cocoa.cpp`, `close_thread`): `ActivityHost.macapkTerminate` has
    the task manager remove the task (the top paused first, then `onStop` and
    `onDestroy` for every activity from the top down), and waits up to two
@@ -1165,7 +1174,29 @@ the change refused from anyone but the launcher.
    `close: the app did not answer in time; ended` (a watchdog thread that
    uses no Java ends it half a second after the two); a second close request
    ends it at once, and the launcher's Stop ends the process from outside
-   with no lifecycle, as Force stop does. `SharedPreferences.apply()` writes
+   with no lifecycle, as Force stop does, and deletes the task's saved state.
+   The end of the Windows session (`WM_ENDSESSION`) is the system ending,
+   not a dismissal (`session_end_thread`, `ActivityHost.macapkShutdown`):
+   every resumed or paused activity is stopped, saving its state, nothing is
+   destroyed (ActivityTaskManagerService.shuttingDown), and the run log says
+   `close: the session ends; the app was stopped in <n> ms, its task kept`.
+   The task outlives its process as it does in system_server: the task
+   manager (`Tasks`) writes each change of its records to
+   `apps\<name>\task-state.parcel` (`SavedTask`: a marshalled Parcel of each
+   record's activity, intent, result target, icicle and persistent state,
+   sealed with DPAPI, `com.macapk.loader.DataProtection`),
+   keeping the records `ActivityRecord.handleAppDied` keeps (never launched,
+   or stopped with saved state since its last resume; not finishing). The
+   next process of the app restores them before its first start: the top is
+   relaunched with its saved Bundle (`LaunchActivityItem`'s state), the ones
+   under it as they are revealed, with results to the restored records; a
+   launcher start, or a start of the root activity, only brings the task
+   forward, another start goes on top of it. A crash the framework's handler
+   reports drops the top first (`AppHost.processCrashed`,
+   `finishTopCrashedActivities`); Back out of the root empties the task and
+   deletes the file; the launcher deletes it at Stop (once the process has
+   ended) and at an install or update's commit; a file of another version
+   code or APK update time, or one that does not open, is dropped. `SharedPreferences.apply()` writes
    the file before it returns, so nothing is queued at that point. Minimizing
    the window is the task going to the back
    (`ActivityHost.macapkHostMinimized`: `onPause`, `onStop`); restoring it
@@ -1204,7 +1235,7 @@ default; `--data` moves it for a direct run):
 | Path | What |
 |---|---|
 | `library\<name>.apk`, `.splits\`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. The `.apk` is the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update renames the app's files aside and copies the new file in, so none is written in place); an app that came as a bundle (`.apkm`, `.xapk`, `.apks`) also has `<name>.splits\split_*.apk`, hard links to its installed splits. A bundle is in the library only while it installs: its members cannot be links, so keeping it took its size twice (a 191 MB Waze `.xapk` took about 380 MB). What goes with it is what was never installed: its `manifest.json` and icon, a bundletool set's whole-app alternatives |
-| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
+| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off); `task-state.parcel`, the app's task kept across the end of its process (`SavedTask`: the activity records and their saved state, sealed with DPAPI), deleted when the user closes the window, backs out of the task or stops the app, and when the app is installed again or updated |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `data\data\com.android.providers.contacts\databases\` (`contacts2.db` and `calllog.db`: the contacts and the call log every app shares, and `cache\photos\` the contacts' photos as files apps open), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `gms-tokens.log` (the Google token service), `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store-app\` | The Store's app: `installed.sha256` (the SHA-256 of the release asset installed, for the daily check), and `apk-store.apk` while it downloads or waits to be installed. An older install's `store\` (F-Droid's catalog) is removed at start |

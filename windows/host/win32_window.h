@@ -78,10 +78,14 @@ public:
     // Where the focused field's caret is, under its line, for the input
     // method's candidate window. False when the app has no such field.
     virtual bool caret(float* /*x*/, float* /*y*/, float /*view_w*/, float /*view_h*/) { return false; }
-    // The user closed the window, which is hidden already, or the Windows
-    // session is ending: the app is taken through its lifecycle and the
-    // process ends, within a bounded time; a second call ends it at once.
+    // The user closed the window, which is hidden already: the app's task is
+    // dismissed (every activity destroyed) and the process ends, within a
+    // bounded time; a second call ends it at once.
     virtual void close_requested() = 0;
+    // The Windows session is ending: every activity is stopped (its state
+    // saved, the task kept for the next start) and the process ends, within
+    // the same bounds. A close already under way ends at once.
+    virtual void session_ending() { close_requested(); }
     // The user minimized the window: on a device, the app's task went to the
     // back. Also called when the app minimized it itself (moveTaskToBack).
     virtual void minimized() {}
