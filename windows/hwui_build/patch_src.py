@@ -166,7 +166,8 @@ EDITS = [
      '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
      '            REG_JNI(register_android_graphics_pdf_PdfEditor),\n'
      '            REG_JNI(register_android_graphics_pdf_PdfRenderer),\n',
-     '            // Win.apk: no PdfDocument, PdfEditor, PdfRenderer (libpdfium).\n'),
+     '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
+     '            // Win.apk: no PdfEditor, PdfRenderer (libpdfium).\n'),
     # The compositor (hwui_build/glue) posts to the render thread.
     ('hwui/renderthread/RenderThread.h',
      '    static bool hasInstance();\n    static RenderThread& getInstance();\n',
