@@ -72,6 +72,21 @@ ANGLE_GLES1_EXT = {
     "glGetTexGenfvOES", "glGetTexGenivOES", "glGetTexGenxvOES",
 }
 
+# The calls whose forwarder hands its function to gl_turn.h's own code instead of taking a plain
+# turn: what a thread has current is remembered there.
+TURN_CALLS = {
+    "eglMakeCurrent": "gl_turn_make_current",
+    "eglReleaseThread": "gl_turn_release_thread",
+    "eglDestroyContext": "gl_turn_destroy_context",
+    "eglDestroySurface": "gl_turn_destroy_surface",
+}
+# The calls that take no turn: they read the thread's own EGL state or look a name up, and touch no
+# context's state and no device.
+NO_TURN = {
+    "eglGetError", "eglGetProcAddress", "eglGetCurrentContext", "eglGetCurrentDisplay", "eglGetCurrentSurface",
+    "eglQueryAPI", "eglBindAPI", "eglGetDisplay", "eglGetPlatformDisplay", "eglQueryString",
+}
+
 # Types of a function pointer one side would call. A guest's callback is
 # System V code that ANGLE would call with the Microsoft convention, and a
 # pointer ANGLE hands back is Microsoft code a guest would call as System V,
@@ -326,15 +341,28 @@ def main():
         sig = params if params else "void"
         fail = "" if ret == "void" else " {}"
         call = ("" if ret == "void" else "return ") + "fn(" + args + ");"
+        # Each call takes the display's turn (gl_turn.h); the few with their own code there say
+        # what they changed.
+        if name in TURN_CALLS:
+            body = [f"    return winapk::host::{TURN_CALLS[name]}(fn{', ' + args if args else ''});"]
+        elif name in NO_TURN:
+            body = [f"    {call}"]
+        else:
+            body = [f"    winapk::host::GlTurn turn({'false' if lib == 'egl' else 'true'});", f"    {call}"]
         out += [
             f'extern "C" {ret} {entry} {name}({sig}) {{',
             f"    using Fn = {ret}({entry}*)({sig});",
             f'    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("{name}", winapk::host::GlLib::{"Egl" if lib == "egl" else "Gles"}));',
             f"    if (!fn) return{fail};",
-            f"    {call}",
+        ] + body + [
             "}",
             "",
         ]
+    # By name, for code that looks GL up at run time (upstream's GLES 3 bindings, gl_bridges.cpp):
+    # it gets the forwarder, which takes the turn, not ANGLE's function. Sorted, for gl_stub().
+    out += ["#define WINAPK_GL_STUB_SYMBOLS \\"]
+    out += [f'    {{"{n}", reinterpret_cast<void*>(&{n})}}, \\' for n in sorted(seen)]
+    out += ["", ""]
     with open(OUT, "w", newline="\n") as f:
         f.write("\n".join(out))
     print(f"[gen_gl_stubs] {len(seen)} functions -> {os.path.relpath(OUT)}")

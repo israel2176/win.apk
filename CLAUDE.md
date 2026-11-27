@@ -158,7 +158,12 @@ page's Permissions rows, which stop a running app on revoke), single instance
   `x86_64-w64-mingw32-g++-posix -std=c++17 -Wall -Wextra -Wno-missing-field-initializers -DUNICODE -D_UNICODE -D_WIN32_WINNT=0x0A00 -municode -mwindows -static windows/launcher/launcher_main.cpp l.res -o Win.apk.exe -lcomctl32 -lshell32 -lole32 -luuid -lgdiplus -ldwmapi -luxtheme -lgdi32 -lwinhttp -lbcrypt -lcrypt32 -lwintrust -lversion`.
 - Looking at the UI: `apt-get install wine64 xvfb xdotool`; Wine is in
   `/usr/lib/wine` (`wine64`). Run under `Xvfb :9`, screenshot with
-  `import -window root`. Wine lacks Segoe fonts, so icon glyphs show as boxes.
+  `import -window root`. In a cloud container Wine 9 aborts at once
+  (`free(): invalid pointer`) while `/run/user/<uid>` is missing: run
+  `mkdir -p /run/user/0 && chmod 700 /run/user/0` first. Start Wine (even
+  `winepath`) with `DISPLAY` set, or the wineserver it leaves has no display
+  and ANGLE then finds no D3D11 renderer ("Could not create DXGI factory").
+  Wine lacks Segoe fonts, so icon glyphs show as boxes.
   For the README screenshots (`docs/images/`), stand-in fonts were dropped into
   the prefix's `C:\windows\Fonts`: Open Sans instanced and renamed "Segoe UI" /
   "Segoe UI Semibold" (fontTools), and a "Segoe Fluent Icons" built from

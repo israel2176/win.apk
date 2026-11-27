@@ -52,8 +52,8 @@ final class HucsConnection extends HttpsURLConnection {
     @Override public int getConnectTimeout() { return f.d.getConnectTimeout(); }
     @Override public void setReadTimeout(int t) { f.d.setReadTimeout(t); }
     @Override public int getReadTimeout() { return f.d.getReadTimeout(); }
-    @Override public void setDoInput(boolean b) { f.d.setDoInput(b); }
-    @Override public boolean getDoInput() { return f.d.getDoInput(); }
+    @Override public void setDoInput(boolean b) { f.setDoInput(b); }
+    @Override public boolean getDoInput() { return f.doInput; }
     @Override public void setDoOutput(boolean b) { f.d.setDoOutput(b); }
     @Override public boolean getDoOutput() { return f.d.getDoOutput(); }
     @Override public void setAllowUserInteraction(boolean b) { f.d.setAllowUserInteraction(b); }
@@ -74,7 +74,7 @@ final class HucsConnection extends HttpsURLConnection {
     // ---- response side: response() first (marks the request sent; follows only a streamed body's 300-303) ----
     @Override public int getResponseCode() throws IOException { f.response(); return f.d.getResponseCode(); }
     @Override public String getResponseMessage() throws IOException { f.response(); return f.d.getResponseMessage(); }
-    @Override public InputStream getInputStream() throws IOException { f.response(); return f.d.getInputStream(); }
+    @Override public InputStream getInputStream() throws IOException { f.checkDoInput(); f.response(); return f.d.getInputStream(); }
     @Override public InputStream getErrorStream() { f.response(); return f.d.getErrorStream(); }
     @Override public String getHeaderField(String k) { f.response(); return f.d.getHeaderField(k); }
     @Override public String getHeaderField(int n) { f.response(); return f.d.getHeaderField(n); }

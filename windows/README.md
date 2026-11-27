@@ -1235,8 +1235,15 @@ to the Linux plain-JVM tests (`test/aospgfx`, `test/aospviews`,
   view (the SurfaceViews' native window) is no GL, a black frame until a producer draws. It was a
   pbuffer of the host's on that display, which a resize remade beside the app's GL threads
   whenever it came between Flutter's destroying its window surface and making the new one; City
-  Car crashed in the Direct3D driver from its own GL just after such a resize. Two of an app's own contexts that share nothing, on two threads,
-  still meet on one device; on a phone the driver keeps them apart.
+  Car crashed in the Direct3D driver from its own GL just after such a resize. The app's own GL threads share that display, and so its one renderer, which
+  holds the state of the context made current last on any thread
+  (`StateManager11`): every GL and EGL call through the runtime's forwarders
+  (`gl_stubs.inc`: the GLES bindings, EGL10/EGL14, native code) takes the
+  display's turn (`host/gl/gl_turn.h`), one call at a time, and a thread whose
+  context another one displaced has it made current again first. Without it a
+  thread drew with another's state: Telegram's welcome screen beside a second
+  GL view, an access violation in `StateManager11::updateState` (issue #195).
+  `winapk-gl-turn-test`, and `winapk-gl-test`'s two GL threads on real ANGLE.
   A `GLSurfaceView` is AOSP's: its renderer runs on its own GLThread, which
   makes an EGL window surface on the view's holder (the host's window surface
   on the SurfaceView, read back at each swap), as does an app's own copy of
@@ -2960,7 +2967,11 @@ every such change is listed here:
   `getStackTrace()` starts with `dalvik.system.VMStack.getThreadStackTrace`,
   as on Android, so code that reads its caller at a fixed index finds it (a
   bank's security library read index 3 of a three-frame trace, its native
-  side went on with a null object and the process crashed).
+  side went on with a null object and the process crashed). A thread that asks
+  for a stack size gets ART's: the request plus 1 MB and ART's overflow reserve,
+  rounded to a page (`FixStackSize`), not the request alone; an app's executor
+  asking for a small stack overflowed in its first class load (ColorNote, issue
+  #180). Zero is still the VM's default.
 - `runtime/java/android/graphics/Bitmap.java`: the host images are
   `transient`, so reflection over a model that holds a Bitmap (Gson) does not
   walk into `java.awt.image`.
@@ -3099,7 +3110,10 @@ every such change is listed here:
   JDK's own `User-Agent`/`Host` not; setting a field after that throws. The
   JDK lowers its connected flag on `disconnect()` after an error answer and
   then answers with its whole header list, the request line as a key whose
-  value is null: Dynatrace (bit) took an NPE on it.
+  value is null: Dynatrace (bit) took an NPE on it. `setDoInput(false)` is kept
+  on the wrapper, the JDK's connection stays at true: OkHttp answers the status
+  and headers then and refuses only `getInputStream()`, where the JDK's
+  `getResponseCode()` threw `ProtocolException` (ColorNote, issue #180).
   `windows/test/java/com/macapk/net/HttpRequestPropertiesTest.java` (CI: "Run
   the HttpURLConnection request properties test").
 - `runtime/net_spi/com/macapk/net/SniSocketFactory.java` (new),
