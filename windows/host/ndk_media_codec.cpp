@@ -1,12 +1,14 @@
-// ndk_media_codec.cpp -- libmediandk's AMediaCodec (decoders), AMediaExtractor and
-// AMediaDataSource for an app's native code, on what Java's MediaCodec and MediaExtractor
+// ndk_media_codec.cpp -- libmediandk's AMediaCodec (decoders and encoders), AMediaExtractor
+// and AMediaDataSource for an app's native code, on what Java's MediaCodec and MediaExtractor
 // use: video_decode.h's Decoder (Media Foundation's decoder MFTs, else the built-in VP8, VP9
 // and AV1 decoders), AudioDecoder (AAC, MP3, Opus) and Demuxer (MP4 and the rest through Media
-// Foundation, WebM and Matroska through mkvparser). No JVM is involved.
+// Foundation, WebM and Matroska through mkvparser), media_encode.h's VideoEncoder (H.264) and
+// AudioEncoder (AAC). No JVM is involved.
 //
 // The codec keeps NdkMediaCodec.h's contract:
-//  - its name is MediaCodecList's ("OMX.macapk.dec.<mime>"), so createCodecByName takes what
-//    the Java list names and nothing else, as a device answers only its own codecs' names;
+//  - its name is MediaCodecList's ("OMX.macapk.dec.<mime>", "OMX.macapk.enc.<mime>"), so
+//    createCodecByName takes what the Java list names and nothing else, as a device answers
+//    only its own codecs' names;
 //  - eight input buffers of KEY_MAX_INPUT_SIZE (else what Java's MediaCodec sizes), eight
 //    output buffers; INFO_OUTPUT_FORMAT_CHANGED before the first output buffer and before any
 //    buffer of a new size; an empty buffer with BUFFER_FLAG_END_OF_STREAM after the last;
@@ -19,16 +21,23 @@
 //    queued before the first access unit;
 //  - setAsyncNotifyCallback: the callbacks run on a thread of the codec's own, in order, with
 //    no lock held, and dequeueInputBuffer / dequeueOutputBuffer are then refused.
-// Decoding is synchronous: queueInputBuffer decodes the access unit, so an output buffer is
-// ready as soon as the decoder gives a picture back; nothing is ever waited for, and a
+// An encoder (createEncoderByType "video/avc" or "audio/mp4a-latm", configured with
+// AMEDIACODEC_CONFIGURE_FLAG_ENCODE) keeps the same buffers and order, as Android's encoders give
+// them: input buffers of one picture (KEY_COLOR_FORMAT 19, I420; 21 or 0x7f420888, NV12: the
+// layouts Java's MediaCodec takes here) or of 16-bit PCM; INFO_OUTPUT_FORMAT_CHANGED with the
+// codec data in csd-0 (and csd-1: H.264's SPS and PPS) first, then that codec data as a
+// BUFFER_FLAG_CODEC_CONFIG buffer, then the frames, the key ones with BUFFER_FLAG_KEY_FRAME,
+// then the empty end-of-stream buffer. setParameters takes "request-sync" and "video-bitrate".
+// Coding is synchronous: queueInputBuffer decodes or encodes the access unit, so an output
+// buffer is ready as soon as the codec gives one back; nothing is ever waited for, and a
 // timeout passed to dequeue* only bounds a wait there is no need for.
 //
-// What differs from a device: there is no encoder (createEncoderByType is null, as for a type
-// a device has no encoder of: the Java MediaCodec's H.264 and AAC encoders are not ported
-// here), no secure decoder (queueSecureInputBuffer refuses), no AMediaCrypto, and an input
-// surface cannot be made. An extractor reads a file, a URL, a descriptor or a data source;
-// a descriptor's range and a data source are first copied to a temporary file the demuxer
-// reads, removed with the extractor.
+// What differs from a device: the encoders are H.264 and AAC only, where Windows has Media
+// Foundation's (createEncoderByType is null otherwise, as for a type a device has no encoder
+// of); no input surface can be made for an encoder (configure refuses COLOR_FormatSurface);
+// no secure decoder (queueSecureInputBuffer refuses) and no AMediaCrypto. An extractor reads
+// a file, a URL, a descriptor or a data source; a descriptor's range and a data source are
+// first copied to a temporary file the demuxer reads, removed with the extractor.
 
 #include "native_media_format.h"
 
@@ -49,6 +58,7 @@
 #include <thread>
 #include <vector>
 
+#include "media_encode.h"
 #include "native_window.h"
 #include "video_decode.h"
 #include "winapk/arm64_guest.h"
@@ -67,9 +77,11 @@ constexpr int kOk = 0, kErrMalformed = -10001, kErrUnsupported = -10002,
               kErrEndOfStream = -10006, kErrIo = -10007;
 // NdkMediaCodec.h.
 constexpr int64_t kTryAgainLater = -1, kFormatChanged = -2;
-constexpr uint32_t kFlagCodecConfig = 2, kFlagEndOfStream = 4;
+constexpr uint32_t kFlagKeyFrame = 1, kFlagCodecConfig = 2, kFlagEndOfStream = 4;
 constexpr uint32_t kConfigureEncode = 1;
-constexpr int kColorI420 = 19, kColorP010 = 54;
+// MediaCodecInfo.CodecCapabilities' color formats.
+constexpr int kColorI420 = 19, kColorNv12 = 21, kColorP010 = 54, kColorSurface = 0x7f000789,
+              kColorFlexible = 0x7f420888;
 constexpr int kInBuffers = 8, kOutBuffers = 8, kInCapMin = 1 << 16, kInCapMax = 32 << 20;
 
 struct BufferInfo {  // AMediaCodecBufferInfo
@@ -105,6 +117,7 @@ bool video_decodes(const std::string& mime) {
     return std::find(mimes.begin(), mimes.end(), mime) != mimes.end();
 }
 constexpr const char kNamePrefix[] = "OMX.macapk.dec.";  // MediaCodecList.java's
+constexpr const char kEncoderPrefix[] = "OMX.macapk.enc.";
 
 // Android's marked Opus csd (its OpusHeader.cpp), as Java's MediaCodec packs it for the decoder:
 // "AOPUSHDR", "AOPUSDLY", "AOPUSPRL", each with an 8-byte little-endian length and its body.
@@ -143,6 +156,17 @@ struct Codec {
     std::unique_ptr<vd::AudioDecoder> adec;
     bool input_eos = false;
 
+    // An encoder's.
+    bool encoder = false;
+    std::unique_ptr<vd::VideoEncoder> venc;
+    std::unique_ptr<vd::AudioEncoder> aenc;
+    vd::VideoEncoderConfig venc_config;
+    vd::Pixels pixels = vd::Pixels::kNv12;
+    int bitrate = 0;
+    bool force_key = false;
+    int64_t last_in_pts = INT64_MIN, last_out_pts = 0;
+    bool format_announced = false;  // the output format with the codec data went out
+
     size_t in_capacity = kInCapMin;
     std::vector<std::vector<uint8_t>> in;
     std::deque<int> in_free;
@@ -153,6 +177,7 @@ struct Codec {
         std::vector<int16_t> pcm;
         int64_t pts = 0;
         uint32_t flags = 0;
+        std::vector<uint8_t> coded;  // an encoder's output
     };
     std::deque<Pending> pending;
     struct Out {
@@ -285,6 +310,41 @@ std::shared_ptr<MediaFormat> audio_format(int rate, int channels) {
     return fmt;
 }
 
+// An encoder's output format: what it was configured with, and the codec data `config` holds
+// (H.264's SPS and PPS, each behind its start code, as csd-0 and csd-1; AAC's
+// AudioSpecificConfig as csd-0).
+std::shared_ptr<MediaFormat> encoder_format(Codec* c, const std::vector<uint8_t>* config) {
+    auto fmt = std::make_shared<MediaFormat>();
+    fmt->set_string("mime", c->mime);
+    if (c->video) {
+        fmt->set_int32("width", c->width);
+        fmt->set_int32("height", c->height);
+        fmt->set_int32("frame-rate", std::max(1, static_cast<int>(c->venc_config.frame_rate + 0.5)));
+    } else {
+        fmt->set_int32("sample-rate", c->sample_rate);
+        fmt->set_int32("channel-count", c->channels);
+        fmt->set_int32("aac-profile", 2);  // MediaCodecInfo.CodecProfileLevel.AACObjectLC
+    }
+    if (c->bitrate > 0) fmt->set_int32("bitrate", c->bitrate);
+    if (config && !config->empty()) {
+        const std::vector<uint8_t>& b = *config;
+        size_t second = 0;
+        for (size_t i = 4; c->video && i + 4 <= b.size(); ++i) {
+            if (b[i] == 0 && b[i + 1] == 0 && b[i + 2] == 0 && b[i + 3] == 1) {
+                second = i;
+                break;
+            }
+        }
+        if (second) {
+            fmt->set_buffer("csd-0", std::vector<uint8_t>(b.begin(), b.begin() + static_cast<long>(second)));
+            fmt->set_buffer("csd-1", std::vector<uint8_t>(b.begin() + static_cast<long>(second), b.end()));
+        } else {
+            fmt->set_buffer("csd-0", b);
+        }
+    }
+    return fmt;
+}
+
 // Under the lock: moves decoded outputs into free output buffers, announcing a new format first.
 void pump(Codec* c) {
     while (!c->pending.empty()) {
@@ -304,7 +364,17 @@ void pump(Codec* c) {
         o.frame.reset();
         o.data.clear();
         o.info = BufferInfo{0, 0, p.pts, p.flags};
-        if (p.frame) {
+        if (c->encoder) {
+            if (!c->format_announced && (!p.coded.empty() || (p.flags & kFlagEndOfStream))) {
+                // Before the codec data, the format that carries it, as Android's encoders announce it.
+                c->format_announced = true;
+                auto fmt = encoder_format(c, (p.flags & kFlagCodecConfig) ? &p.coded : nullptr);
+                c->ready.push_back({kFormatChanged, fmt});
+                post(c, {Codec::Event::kFormat, 0, {}, fmt});
+            }
+            o.data = std::move(p.coded);
+            o.info.size = static_cast<int32_t>(o.data.size());
+        } else if (p.frame) {
             if (p.frame->width != c->out_a || p.frame->height != c->out_b) {
                 c->out_a = p.frame->width, c->out_b = p.frame->height;
                 auto fmt = video_format(c, *p.frame);
@@ -388,20 +458,155 @@ Codec* create_decoder(const std::string& mime) {
     return c;
 }
 
+// The encoders Java's MediaCodec has here, where Windows has them (media_encode.h).
+Codec* create_encoder(const std::string& mime) {
+    const bool video = mime == "video/avc";
+    if (!(video ? vd::video_encoder_available() : mime == "audio/mp4a-latm" && vd::audio_encoder_available())) {
+        log_once("AMediaCodec: no encoder for", mime);
+        return nullptr;
+    }
+    auto* c = new Codec;
+    c->mime = mime;
+    c->name = kEncoderPrefix + mime;
+    c->video = video;
+    c->encoder = true;
+    return c;
+}
+
 WINAPK_GUEST_ABI Codec* AMediaCodec_createDecoderByType(const char* mime) {
     return mime ? create_decoder(mime) : nullptr;
 }
 WINAPK_GUEST_ABI Codec* AMediaCodec_createEncoderByType(const char* mime) {
-    log_once("AMediaCodec_createEncoderByType: no encoder here for native code; null as for a type with none",
-             mime ? mime : "");
-    return nullptr;
+    return mime ? create_encoder(mime) : nullptr;
 }
 WINAPK_GUEST_ABI Codec* AMediaCodec_createCodecByName(const char* name) {
-    if (!name || std::strncmp(name, kNamePrefix, sizeof(kNamePrefix) - 1) != 0) {
-        log_once("AMediaCodec_createCodecByName: no codec of that name", name ? name : "");
-        return nullptr;
+    if (name && std::strncmp(name, kNamePrefix, sizeof(kNamePrefix) - 1) == 0)
+        return create_decoder(name + sizeof(kNamePrefix) - 1);
+    if (name && std::strncmp(name, kEncoderPrefix, sizeof(kEncoderPrefix) - 1) == 0)
+        return create_encoder(name + sizeof(kEncoderPrefix) - 1);
+    log_once("AMediaCodec_createCodecByName: no codec of that name", name ? name : "");
+    return nullptr;
+}
+
+// Under the lock: the encoder opened (again) from what configure stored.
+bool open_encoder(Codec* c) {
+    c->venc.reset();
+    c->aenc.reset();
+    if (c->video) c->venc = vd::VideoEncoder::open(c->venc_config);
+    else c->aenc = vd::AudioEncoder::open(c->sample_rate, c->channels, c->bitrate);
+    return c->venc || c->aenc;
+}
+
+// A number MediaFormat may hold as an int32 or as a float (KEY_FRAME_RATE, KEY_I_FRAME_INTERVAL).
+double number_of(MediaFormat* f, const char* key, double otherwise) {
+    int32_t v = 0;
+    if (f->int32(key, &v)) return v;
+    std::lock_guard<std::mutex> hold(f->lock);
+    auto it = f->values.find(key);
+    if (it != f->values.end() && (it->second.kind == FormatValue::kFloat || it->second.kind == FormatValue::kDouble))
+        return it->second.d;
+    return otherwise;
+}
+
+// configure for an encoder: what MediaCodec.java's configureEncoder takes, and the encoder opened.
+int configure_encoder(Codec* c, MediaFormat* format) {
+    int32_t v = 0;
+    c->bitrate = format->int32("bitrate", &v) ? v : 0;
+    if (c->video) {
+        c->width = format->int32("width", &v) ? v : 0;
+        c->height = format->int32("height", &v) ? v : 0;
+        if (c->width < 16 || c->height < 16 || (c->width & 1) || (c->height & 1)) {
+            log_once("AMediaCodec_configure: an H.264 encoder takes an even size of 16 or more, not",
+                     std::to_string(c->width) + "x" + std::to_string(c->height));
+            return kErrUnsupported;
+        }
+        const int color = format->int32("color-format", &v) ? v : 0;
+        if (color == kColorSurface) {
+            log_once("AMediaCodec_configure: no input surface for an encoder", c->mime);
+            return kErrUnsupported;
+        }
+        if (color != kColorI420 && color != kColorNv12 && color != kColorFlexible) {
+            log_once("AMediaCodec_configure: an encoder input color format not taken", std::to_string(color));
+            return kErrUnsupported;
+        }
+        c->pixels = color == kColorI420 ? vd::Pixels::kI420 : vd::Pixels::kNv12;
+        vd::VideoEncoderConfig& e = c->venc_config;
+        e = vd::VideoEncoderConfig{};
+        e.width = c->width;
+        e.height = c->height;
+        e.bitrate = c->bitrate;
+        e.frame_rate = number_of(format, "frame-rate", 30);
+        e.key_interval_s = number_of(format, "i-frame-interval", 1);
+        e.profile = format->int32("profile", &v) ? v : 0;
+        // Constrained baseline (0x10000) and constrained high (0x80000) are baseline and high to the encoder.
+        if (e.profile == 0x10000) e.profile = 1;
+        if (e.profile == 0x80000) e.profile = 8;
+        e.bitrate_mode = format->int32("bitrate-mode", &v) ? v : 1;
+        c->in_capacity = static_cast<size_t>(c->width) * c->height * 3 / 2;
+    } else {
+        c->sample_rate = format->int32("sample-rate", &v) ? v : 0;
+        c->channels = format->int32("channel-count", &v) ? v : 0;
+        if ((c->sample_rate != 44100 && c->sample_rate != 48000) || c->channels < 1 || c->channels > 2) {
+            log_once("AMediaCodec_configure: the AAC encoder takes 44100 or 48000 Hz, mono or stereo, not",
+                     std::to_string(c->sample_rate) + " Hz, " + std::to_string(c->channels) + " channel(s)");
+            return kErrUnsupported;
+        }
+        c->in_capacity = kInCapMin;
     }
-    return create_decoder(name + sizeof(kNamePrefix) - 1);
+    if (format->int32("max-input-size", &v) && v > 0)
+        c->in_capacity = std::max(c->in_capacity, static_cast<size_t>(std::min(v, kInCapMax)));
+    if (!open_encoder(c)) {
+        log_once("AMediaCodec_configure: the encoder refused the format", c->mime);
+        return kErrUnsupported;
+    }
+    c->output_format = encoder_format(c, nullptr);
+    return kOk;
+}
+
+// Under the lock: what the encoder has ready, pending in order.
+void drain_encoder(Codec* c) {
+    vd::Encoded e;
+    while (c->venc ? c->venc->poll(&e) : c->aenc && c->aenc->poll(&e)) {
+        uint32_t flags = 0;
+        if (e.key) flags |= kFlagKeyFrame;
+        if (e.config) flags |= kFlagCodecConfig;
+        else c->last_out_pts = e.pts_us;
+        Codec::Pending p;
+        p.coded = std::move(e.data);
+        p.pts = e.pts_us;
+        p.flags = flags;
+        c->pending.push_back(std::move(p));
+        e = vd::Encoded{};
+    }
+}
+
+// Under the lock: one input buffer into the encoder (or none, with eos).
+int encode(Codec* c, const uint8_t* data, size_t size, int64_t pts, bool eos) {
+    bool ok = true;
+    if (size) {
+        if (c->venc) {
+            // Presentation times must rise: a producer's clock that repeats is nudged, as MediaCodec.java does.
+            if (pts <= c->last_in_pts) pts = c->last_in_pts + 1;
+            c->last_in_pts = pts;
+            const bool key = c->force_key;
+            c->force_key = false;
+            ok = c->venc->encode(data, size, c->pixels, pts, key);
+        } else if (c->aenc) {
+            ok = c->aenc->encode(reinterpret_cast<const int16_t*>(data), size / 2, pts);
+        }
+    }
+    if (eos) {
+        if (c->venc) c->venc->finish();
+        if (c->aenc) c->aenc->finish();
+    }
+    drain_encoder(c);
+    if (eos) {
+        Codec::Pending end;
+        end.pts = c->last_out_pts;
+        end.flags = kFlagEndOfStream;
+        c->pending.push_back(std::move(end));
+    }
+    return ok ? kOk : kErrMalformed;
 }
 WINAPK_GUEST_ABI int AMediaCodec_delete(Codec* c) {
     if (!c) return kErrInvalidObject;
@@ -419,7 +624,8 @@ WINAPK_GUEST_ABI void AMediaCodec_releaseName(Codec*, char* name) { std::free(na
 WINAPK_GUEST_ABI int AMediaCodec_configure(Codec* c, MediaFormat* format, const void* surface, void* crypto,
                                            uint32_t flags) {
     if (!c) return kErrInvalidObject;
-    if (!format || (flags & kConfigureEncode)) return kErrInvalidParameter;
+    // A decoder is not configured to encode, nor an encoder to decode.
+    if (!format || ((flags & kConfigureEncode) != 0) != c->encoder) return kErrInvalidParameter;
     if (crypto) {
         log_once("AMediaCodec_configure: no secure decoder", c->mime);
         return kErrUnsupported;
@@ -427,6 +633,12 @@ WINAPK_GUEST_ABI int AMediaCodec_configure(Codec* c, MediaFormat* format, const 
     std::lock_guard<std::mutex> hold(c->lock);
     if (c->state != Codec::kCreated) return kErrInvalidOperation;
     c->input_format.copy_from(*format);
+    if (c->encoder) {
+        if (surface) return kErrInvalidParameter;  // an encoder's output is buffers
+        const int status = configure_encoder(c, format);
+        if (status == kOk) c->state = Codec::kConfigured;
+        return status;
+    }
     int32_t v = 0;
     c->width = format->int32("width", &v) ? v : 0;
     c->height = format->int32("height", &v) ? v : 0;
@@ -495,6 +707,11 @@ WINAPK_GUEST_ABI int AMediaCodec_start(Codec* c) {
     }
     reset_buffers(c);
     c->out_a = c->out_b = -1;
+    if (c->encoder && !c->venc && !c->aenc && !open_encoder(c)) return kErrUnsupported;
+    c->format_announced = false;
+    c->last_in_pts = INT64_MIN;
+    c->last_out_pts = 0;
+    c->force_key = false;
     c->state = Codec::kRunning;
     for (int i : c->in_free) post(c, {Codec::Event::kInput, i});
     return kOk;
@@ -511,6 +728,8 @@ WINAPK_GUEST_ABI int AMediaCodec_stop(Codec* c) {
     c->state = Codec::kCreated;
     c->vdec.reset();
     c->adec.reset();
+    c->venc.reset();
+    c->aenc.reset();
     c->csd0.clear();
     c->csd1.clear();
     return kOk;
@@ -522,6 +741,13 @@ WINAPK_GUEST_ABI int AMediaCodec_flush(Codec* c) {
     if (c->state != Codec::kRunning) return kErrInvalidOperation;
     if (c->vdec) c->vdec->flush();
     if (c->adec) c->adec->flush();
+    // An encoder starts over: what it holds is dropped, and its next frame is a key frame with
+    // its codec data before it again.
+    if (c->encoder && !open_encoder(c)) return kErrUnsupported;
+    if (c->encoder) {
+        c->format_announced = false;
+        c->last_in_pts = INT64_MIN;
+    }
     reset_buffers(c);
     c->out_a = c->out_b = -1;
     // Sync mode: every input buffer is free again. Async mode: none is offered until start().
@@ -554,19 +780,19 @@ int decode(Codec* c, const uint8_t* data, size_t size, int64_t pts, bool eos) {
             if (!eos) return kErrMalformed;
         }
         bool done = false;
-        while (auto f = c->vdec->poll(&done)) c->pending.push_back({f, {}, f->pts_us, 0});
+        while (auto f = c->vdec->poll(&done)) c->pending.push_back({f, {}, f->pts_us, 0, {}});
         if (eos) {
             while (!done) {
                 auto f = c->vdec->poll(&done);
                 if (!f) break;
-                c->pending.push_back({f, {}, f->pts_us, 0});
+                c->pending.push_back({f, {}, f->pts_us, 0, {}});
             }
-            c->pending.push_back({nullptr, {}, pts, kFlagEndOfStream});
+            c->pending.push_back({nullptr, {}, pts, kFlagEndOfStream, {}});
         }
     } else {
         std::vector<int16_t> pcm = c->adec->decode(size ? data : nullptr, size, eos);
-        if (!pcm.empty()) c->pending.push_back({nullptr, std::move(pcm), pts, 0});
-        if (eos) c->pending.push_back({nullptr, {}, pts, kFlagEndOfStream});
+        if (!pcm.empty()) c->pending.push_back({nullptr, std::move(pcm), pts, 0, {}});
+        if (eos) c->pending.push_back({nullptr, {}, pts, kFlagEndOfStream, {}});
     }
     return kOk;
 }
@@ -582,7 +808,10 @@ WINAPK_GUEST_ABI int AMediaCodec_queueInputBuffer(Codec* c, size_t index, int64_
     const uint8_t* data = c->in[index].data() + offset;
     const bool eos = (flags & kFlagEndOfStream) != 0;
     int status = kOk;
-    if (flags & kFlagCodecConfig) {
+    if (c->encoder) {
+        // Codec data has no meaning for an encoder's input: dropped.
+        status = encode(c, data, (flags & kFlagCodecConfig) ? 0 : size, static_cast<int64_t>(pts), eos);
+    } else if (flags & kFlagCodecConfig) {
         // Before the decoder opens these are its csd-0 and csd-1. After, they are dropped, as
         // Java's MediaCodec drops them: the decoder has its parameter sets, and new ones come in
         // band with the access units that use them.
@@ -596,7 +825,11 @@ WINAPK_GUEST_ABI int AMediaCodec_queueInputBuffer(Codec* c, size_t index, int64_
         status = decode(c, data, size, static_cast<int64_t>(pts), eos);
     }
     if (eos) c->input_eos = true;
-    if (status != kOk && status != kErrMalformed) {
+    if (status == kErrMalformed && c->encoder) {
+        // A picture shorter than a whole one, usually: Android's encoders report it as an error.
+        log_once("AMediaCodec: the encoder refused an input buffer", c->mime);
+        post(c, {Codec::Event::kError, 0, {}, nullptr, status});
+    } else if (status != kOk && status != kErrMalformed) {
         log_once("AMediaCodec: the decoder would not open", c->mime);
         post(c, {Codec::Event::kError, 0, {}, nullptr, status});
     }
@@ -605,7 +838,7 @@ WINAPK_GUEST_ABI int AMediaCodec_queueInputBuffer(Codec* c, size_t index, int64_
     c->in_free.push_back(static_cast<int>(index));
     if (!c->input_eos) post(c, {Codec::Event::kInput, static_cast<int32_t>(index)});
     // A unit the decoder refused is dropped, as a device's decoder drops a corrupt one and goes on.
-    return status == kErrMalformed ? kOk : status;
+    return status == kErrMalformed && !c->encoder ? kOk : status;
 }
 
 WINAPK_GUEST_ABI int AMediaCodec_queueSecureInputBuffer(Codec* c, size_t, int64_t, void*, uint64_t, uint32_t) {
@@ -696,9 +929,26 @@ WINAPK_GUEST_ABI int AMediaCodec_setOutputSurface(Codec* c, const void* surface)
     c->surface = surface;
     return kOk;
 }
-WINAPK_GUEST_ABI int AMediaCodec_setParameters(Codec* c, const MediaFormat*) { return c ? kOk : kErrInvalidObject; }
+// An encoder's "request-sync" (a key frame next) and "video-bitrate"; a decoder has none it uses.
+WINAPK_GUEST_ABI int AMediaCodec_setParameters(Codec* c, MediaFormat* params) {
+    if (!c) return kErrInvalidObject;
+    if (!params) return kErrInvalidParameter;
+    std::lock_guard<std::mutex> hold(c->lock);
+    if (!c->encoder || !c->video) return kOk;
+    {
+        std::lock_guard<std::mutex> look(params->lock);
+        if (params->values.count("request-sync")) c->force_key = true;
+    }
+    int32_t bps = 0;
+    if (params->int32("video-bitrate", &bps) && bps > 0) {
+        c->bitrate = bps;
+        c->venc_config.bitrate = bps;
+        if (c->venc) c->venc->set_bitrate(bps);
+    }
+    return kOk;
+}
 WINAPK_GUEST_ABI int AMediaCodec_signalEndOfInputStream(Codec* c) {
-    return c ? kErrInvalidOperation : kErrInvalidObject;  // a decoder has no input surface
+    return c ? kErrInvalidOperation : kErrInvalidObject;  // no codec here has an input surface
 }
 WINAPK_GUEST_ABI int AMediaCodec_createInputSurface(Codec* c, void** surface) {
     if (surface) *surface = nullptr;

@@ -71,8 +71,8 @@ taken by the main thread` מ-`Win.apk.InputTimeout`. אם זה קורה בכל �
 `MediaPlayer` או `VideoView` עדיין צריך את חבילות ה-Codec בשביל VP9 ו-AV1,
 ולא מתנגן מקובץ WebM. שידור שהשמע שלו Vorbis או FLAC מתנגן בלי קול
 באפליקציות ExoPlayer. הקוד המקורי של אפליקציה (`AMediaCodec`) מקבל את אותם
-מפענחים, אבל בלי מקודד: מקליט או ממיר מקורי לא ימצא מקודד ויגיד שהפורמט לא
-נתמך.
+מפענחים ואת אותם מקודדי H.264 ו-AAC; מקליט מקורי שמצייר את התמונות על משטח
+הקלט של מקודד לא ימצא אותו ויגיד שהפורמט לא נתמך.
 
 **תמונה מטלפון (HEIC) או תמונת AVIF לא מוצגת.** ‏Windows הוא שמפענח אותן:
 ‏HEIC/HEIF צריך את HEIF Image Extensions של Microsoft, ו-AVIF את AV1 Video

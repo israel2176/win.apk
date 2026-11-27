@@ -1,6 +1,7 @@
-// ndk_media_test.cpp -- winapk-ndk-media-test: libmediandk's AMediaExtractor, AMediaCodec and
-// AMediaDataSource (host/ndk_media_codec.cpp, host/native_media.cpp) without a JVM or a guest
-// library, called as guest code calls them: through the exported names, System V.
+// ndk_media_test.cpp -- winapk-ndk-media-test: libmediandk's AMediaExtractor, AMediaCodec,
+// AMediaDataSource and AMediaMuxer (host/ndk_media_codec.cpp, host/ndk_media_muxer.cpp,
+// host/native_media.cpp) without a JVM or a guest library, called as guest code calls them:
+// through the exported names, System V.
 //
 //   winapk-ndk-media-test <dir with color.mp4, color.webm>
 //
@@ -14,9 +15,19 @@
 // data source of the app's read like the file; the names are MediaCodecList's. A Windows
 // without Media Foundation's H.264 or AAC decoder skips those and says so.
 //
+// Then the encoders and the muxer, as an app records: 30 red-over-blue I420 pictures through
+// the H.264 encoder and a second of the tone through the AAC encoder (the output format with
+// its codec data first, the codec data as a CODEC_CONFIG buffer, a key frame first and one on
+// request, the end of stream), both written to an MP4 by AMediaMuxer through a descriptor, and
+// that file read back by AMediaExtractor and decoded; and color.webm's tracks copied by
+// AMediaExtractor into a new WebM by AMediaMuxer, decoded like the original. A Windows without
+// Media Foundation's encoders skips the first and says so (the muxer's own checks are
+// test/ndk_muxer_test.cpp's).
+//
 // The stand-ins: arm64::host_callable (no arm64 code), android_host_path (a host path is
 // itself) and the native window (a frame shown is counted).
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -31,6 +42,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <sys/types.h>
 #include <io.h>
 
 #include <windows.h>
@@ -145,10 +157,20 @@ struct Ndk {
     uint8_t*(GUEST* out_buf)(void*, size_t, size_t*) = fn<decltype(out_buf)>("AMediaCodec_getOutputBuffer");
     void*(GUEST* out_format)(void*) = fn<decltype(out_format)>("AMediaCodec_getOutputFormat");
     int(GUEST* release)(void*, size_t, bool) = fn<decltype(release)>("AMediaCodec_releaseOutputBuffer");
+    int(GUEST* set_params)(void*, void*) = fn<decltype(set_params)>("AMediaCodec_setParameters");
+
+    void*(GUEST* mux_new)(int, int) = fn<decltype(mux_new)>("AMediaMuxer_new");
+    int(GUEST* mux_delete)(void*) = fn<decltype(mux_delete)>("AMediaMuxer_delete");
+    ssize_t(GUEST* mux_add)(void*, void*) = fn<decltype(mux_add)>("AMediaMuxer_addTrack");
+    int(GUEST* mux_start)(void*) = fn<decltype(mux_start)>("AMediaMuxer_start");
+    int(GUEST* mux_write)(void*, size_t, const uint8_t*, const BufferInfo*) =
+        fn<decltype(mux_write)>("AMediaMuxer_writeSampleData");
+    int(GUEST* mux_stop)(void*) = fn<decltype(mux_stop)>("AMediaMuxer_stop");
 };
 
 constexpr int64_t kFormatChanged = -2;
-constexpr uint32_t kCodecConfig = 2, kEndOfStream = 4;
+constexpr uint32_t kKeyFrame = 1, kCodecConfig = 2, kEndOfStream = 4;
+constexpr int kMuxMpeg4 = 0, kMuxWebm = 1;
 
 std::string mime_of(const Ndk& n, void* format) {
     const char* m = nullptr;
@@ -609,6 +631,266 @@ void surface_checks(const Ndk& n, const std::string& path) {
     n.ex_delete(ex);
 }
 
+
+// ---- the encoders and the muxer --------------------------------------------------------------
+
+std::string temp_path(const char* prefix) {
+    char dir[MAX_PATH], tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, dir);
+    GetTempFileNameA(dir, prefix, 0, tmp);
+    return tmp;
+}
+
+// What an encoder gave: its output formats and buffers in order.
+struct Encoded {
+    bool opened = false, format_first = false, config_second = false, eos = false;
+    void* format = nullptr;  // the announced output format (the app deletes it)
+    std::vector<std::vector<uint8_t>> data;
+    std::vector<BufferInfo> info;
+};
+
+// Feeds `inputs` (each with its time) to a configured, started encoder and drains it.
+void run_encoder(const Ndk& n, void* codec, const std::vector<std::vector<uint8_t>>& inputs,
+                 const std::vector<int64_t>& times, int request_sync_at, Encoded* out) {
+    size_t next = 0;
+    bool input_done = false;
+    int outputs = 0;
+    for (int spins = 0; spins < 20000 && !out->eos; ++spins) {
+        if (!input_done) {
+            const int64_t i = n.dq_in(codec, 0);
+            if (i >= 0) {
+                size_t cap = 0;
+                uint8_t* buf = n.in_buf(codec, static_cast<size_t>(i), &cap);
+                if (next == inputs.size()) {
+                    n.queue(codec, static_cast<size_t>(i), 0, 0, 0, kEndOfStream);
+                    input_done = true;
+                } else {
+                    if (static_cast<int>(next) == request_sync_at) {
+                        void* p = n.format_new();
+                        n.set_int32(p, "request-sync", 0);
+                        n.set_params(codec, p);
+                        n.format_delete(p);
+                    }
+                    const std::vector<uint8_t>& in = inputs[next];
+                    const size_t size = std::min(cap, in.size());
+                    std::memcpy(buf, in.data(), size);
+                    n.queue(codec, static_cast<size_t>(i), 0, size, static_cast<uint64_t>(times[next]), 0);
+                    ++next;
+                }
+            }
+        }
+        BufferInfo info{};
+        const int64_t o = n.dq_out(codec, &info, 0);
+        if (o == kFormatChanged) {
+            if (outputs == 0) out->format_first = true;
+            if (out->format) n.format_delete(out->format);
+            out->format = n.out_format(codec);
+        } else if (o >= 0) {
+            if (outputs == 0) out->config_second = (info.flags & kCodecConfig) != 0;
+            ++outputs;
+            if (info.flags & kEndOfStream) out->eos = true;
+            size_t cap = 0;
+            const uint8_t* p = n.out_buf(codec, static_cast<size_t>(o), &cap);
+            if (info.size > 0 && p) {
+                out->data.emplace_back(p + info.offset, p + info.offset + info.size);
+                out->info.push_back(info);
+            }
+            n.release(codec, static_cast<size_t>(o), false);
+        }
+    }
+}
+
+// An I420 picture, red over blue (BT.601 limited, as red_over_blue reads it back).
+std::vector<uint8_t> red_over_blue_i420(int w, int h) {
+    std::vector<uint8_t> pic(static_cast<size_t>(w) * h * 3 / 2);
+    uint8_t* y = pic.data();
+    uint8_t* u = y + w * h;
+    uint8_t* v = u + (w / 2) * (h / 2);
+    for (int r = 0; r < h; ++r) std::memset(y + r * w, r < h / 2 ? 81 : 41, static_cast<size_t>(w));
+    for (int r = 0; r < h / 2; ++r) {
+        std::memset(u + r * (w / 2), r < h / 4 ? 90 : 240, static_cast<size_t>(w / 2));
+        std::memset(v + r * (w / 2), r < h / 4 ? 240 : 110, static_cast<size_t>(w / 2));
+    }
+    return pic;
+}
+
+Encoded encode_video(const Ndk& n, int w, int h, int frames) {
+    Encoded e;
+    void* codec = n.encoder("video/avc");
+    if (!codec) return e;
+    void* f = n.format_new();
+    n.set_string(f, "mime", "video/avc");
+    n.set_int32(f, "width", w);
+    n.set_int32(f, "height", h);
+    n.set_int32(f, "color-format", 19);  // COLOR_FormatYUV420Planar
+    n.set_int32(f, "bitrate", 500000);
+    n.set_int32(f, "frame-rate", 25);
+    n.set_int32(f, "i-frame-interval", 10);
+    check("H.264 encoder: a decoder's configure refused",
+          n.configure(codec, f, nullptr, nullptr, 0) != 0);
+    e.opened = n.configure(codec, f, nullptr, nullptr, 1 /* CONFIGURE_FLAG_ENCODE */) == 0 && n.start(codec) == 0;
+    n.format_delete(f);
+    if (e.opened) {
+        const std::vector<uint8_t> pic = red_over_blue_i420(w, h);
+        std::vector<std::vector<uint8_t>> inputs(static_cast<size_t>(frames), pic);
+        std::vector<int64_t> times;
+        for (int i = 0; i < frames; ++i) times.push_back(i * 40000ll);
+        run_encoder(n, codec, inputs, times, 20, &e);
+        n.stop(codec);
+    }
+    n.codec_delete(codec);
+    return e;
+}
+
+Encoded encode_audio(const Ndk& n, int rate) {
+    Encoded e;
+    void* codec = n.encoder("audio/mp4a-latm");
+    if (!codec) return e;
+    void* f = n.format_new();
+    n.set_string(f, "mime", "audio/mp4a-latm");
+    n.set_int32(f, "sample-rate", rate);
+    n.set_int32(f, "channel-count", 1);
+    n.set_int32(f, "bitrate", 96000);
+    e.opened = n.configure(codec, f, nullptr, nullptr, 1) == 0 && n.start(codec) == 0;
+    n.format_delete(f);
+    if (e.opened) {
+        std::vector<std::vector<uint8_t>> inputs;
+        std::vector<int64_t> times;
+        for (int chunk = 0; chunk < 10; ++chunk) {  // a second, in tenths
+            std::vector<uint8_t> pcm(static_cast<size_t>(rate / 10) * 2);
+            for (int i = 0; i < rate / 10; ++i) {
+                const auto s = static_cast<int16_t>(12000 * std::sin(2 * 3.14159265358979 * 440 * (chunk * (rate / 10) + i) / rate));
+                pcm[static_cast<size_t>(i) * 2] = static_cast<uint8_t>(s & 0xff);
+                pcm[static_cast<size_t>(i) * 2 + 1] = static_cast<uint8_t>((s >> 8) & 0xff);
+            }
+            inputs.push_back(std::move(pcm));
+            times.push_back(chunk * 100000ll);
+        }
+        run_encoder(n, codec, inputs, times, -1, &e);
+        n.stop(codec);
+    }
+    n.codec_delete(codec);
+    return e;
+}
+
+bool has_buffer(const Ndk& n, void* format, const char* key) {
+    void* data = nullptr;
+    size_t size = 0;
+    return format && n.get_buffer(format, key, &data, &size) && size > 0;
+}
+
+void encoder_checks(const Ndk& n) {
+    std::printf("the encoders and AMediaMuxer: H.264 and AAC into an MP4\n");
+    void* probe = n.encoder("video/avc");
+    if (!probe) {
+        std::printf("  [SKIP] no H.264 encoder on this Windows (Media Foundation)\n");
+        return;
+    }
+    char* name = nullptr;
+    check("named as MediaCodecList names it", n.get_name(probe, &name) == 0 && name &&
+                                                  std::string(name) == "OMX.macapk.enc.video/avc",
+          name ? name : "none");
+    if (name) n.release_name(probe, name);
+    n.codec_delete(probe);
+    void* by_name = n.by_name("OMX.macapk.enc.video/avc");
+    check("an encoder by MediaCodecList's name", by_name != nullptr);
+    if (by_name) n.codec_delete(by_name);
+
+    const int w = 320, h = 240, frames = 30;
+    Encoded v = encode_video(n, w, h, frames);
+    check("H.264: configured with FLAG_ENCODE and started", v.opened);
+    check("H.264: the output format first, with the SPS and the PPS",
+          v.format_first && has_buffer(n, v.format, "csd-0") && has_buffer(n, v.format, "csd-1"));
+    check("H.264: then the codec data as a CODEC_CONFIG buffer", v.config_second);
+    int pictures = 0, keys = 0;
+    bool first_key = false, key_on_request = false;
+    for (size_t i = 0; i < v.info.size(); ++i) {
+        if (v.info[i].flags & kCodecConfig) continue;
+        if (pictures == 0) first_key = (v.info[i].flags & kKeyFrame) != 0;
+        if (v.info[i].presentationTimeUs == 20 * 40000) key_on_request = (v.info[i].flags & kKeyFrame) != 0;
+        keys += (v.info[i].flags & kKeyFrame) ? 1 : 0;
+        ++pictures;
+    }
+    check("H.264: 30 access units, a key frame first", pictures == frames && first_key, std::to_string(pictures));
+    check("H.264: a key frame on request-sync", key_on_request, std::to_string(keys) + " key frames");
+    check("H.264: end of stream", v.eos);
+
+    const int rate = 44100;
+    Encoded a = encode_audio(n, rate);
+    if (!a.opened) std::printf("  [SKIP] no AAC encoder on this Windows (Media Foundation)\n");
+    else {
+        check("AAC: the output format first, with the AudioSpecificConfig", a.format_first && has_buffer(n, a.format, "csd-0"));
+        check("AAC: about 43 frames and the end of stream", a.info.size() >= 40 && a.info.size() <= 48 && a.eos,
+              std::to_string(a.info.size()));
+    }
+
+    // The app's own descriptor, as MediaMuxer's FileDescriptor; the muxer writes through a duplicate.
+    const std::string mp4 = temp_path("mux");
+    const int fd = _open(mp4.c_str(), _O_RDWR | _O_CREAT | _O_TRUNC | _O_BINARY, 0644);
+    void* m = n.mux_new(fd, kMuxMpeg4);
+    _close(fd);
+    const ssize_t vt = m && v.format ? n.mux_add(m, v.format) : -1;
+    const ssize_t at = m && a.format ? n.mux_add(m, a.format) : -1;
+    bool wrote = m && vt == 0 && (!a.opened || at == 1) && n.mux_start(m) == 0;
+    for (size_t i = 0; wrote && i < v.data.size(); ++i)
+        wrote = n.mux_write(m, 0, v.data[i].data(), &v.info[i]) == 0;
+    for (size_t i = 0; wrote && a.opened && i < a.data.size(); ++i)
+        wrote = n.mux_write(m, 1, a.data[i].data(), &a.info[i]) == 0;
+    wrote = wrote && n.mux_stop(m) == 0;
+    if (m) n.mux_delete(m);
+    check("AMediaMuxer writes both into an MP4", wrote);
+
+    Decoded back = decode_sync(n, mp4, "video/", false);
+    std::string detail;
+    check("the MP4's H.264 decodes: 30 pictures, red over blue",
+          back.opened && back.buffers == frames && back.width == w && back.height == h && red_over_blue(back, &detail) &&
+              back.eos,
+          std::to_string(back.buffers) + ", " + detail);
+    if (a.opened) {
+        const Decoded tone = decode_sync(n, mp4, "audio/", false);
+        if (tone.opened) check_audio("the MP4's AAC", tone, rate);
+    }
+    if (v.format) n.format_delete(v.format);
+    if (a.format) n.format_delete(a.format);
+    DeleteFileA(mp4.c_str());
+}
+
+// color.webm's tracks, copied by AMediaExtractor into a new WebM by AMediaMuxer.
+void remux_checks(const Ndk& n, const std::string& webm) {
+    std::printf("AMediaExtractor into AMediaMuxer: a WebM copied\n");
+    const std::string out = temp_path("mkv");
+    void* ex = n.ex_new();
+    n.ex_source(ex, webm.c_str());
+    const int fd = _open(out.c_str(), _O_RDWR | _O_CREAT | _O_TRUNC | _O_BINARY, 0644);
+    void* m = n.mux_new(fd, kMuxWebm);
+    _close(fd);
+    bool ok = m != nullptr && n.ex_tracks(ex) == 2;
+    for (size_t i = 0; ok && i < n.ex_tracks(ex); ++i) {
+        void* f = n.ex_track_format(ex, i);
+        ok = n.mux_add(m, f) == static_cast<ssize_t>(i);
+        n.format_delete(f);
+        n.ex_select(ex, i);
+    }
+    ok = ok && n.mux_start(m) == 0;
+    std::vector<uint8_t> buf(1 << 20);
+    int samples = 0;
+    while (ok) {
+        const int64_t size = n.ex_read(ex, buf.data(), buf.size());
+        if (size < 0) break;
+        const BufferInfo info{0, static_cast<int32_t>(size), n.ex_time(ex), (n.ex_flags(ex) & 1) ? kKeyFrame : 0u};
+        ok = n.mux_write(m, static_cast<size_t>(n.ex_track(ex)), buf.data(), &info) == 0;
+        ++samples;
+        n.ex_advance(ex);
+    }
+    ok = ok && n.mux_stop(m) == 0;
+    if (m) n.mux_delete(m);
+    n.ex_delete(ex);
+    check("every sample written", ok && samples > 25, std::to_string(samples));
+    check_video("the copy's VP9", decode_sync(n, out, "video/", false));
+    check_audio("the copy's Opus", decode_sync(n, out, "audio/", false), 48000);
+    DeleteFileA(out.c_str());
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -632,7 +914,8 @@ int main(int argc, char** argv) {
     check("by MediaCodecList's name", byname != nullptr);
     if (byname) n.codec_delete(byname);
     check("not by another device's name", n.by_name("c2.android.avc.decoder") == nullptr);
-    check("no encoder", n.encoder("video/avc") == nullptr);
+    check("no VP9 encoder", n.encoder("video/x-vnd.on2.vp9") == nullptr);
+    check("not a decoder's name for an encoder", n.by_name("OMX.macapk.enc.video/x-vnd.on2.vp9") == nullptr);
     check("no decoder for an unknown type", n.by_type("video/x-unknown") == nullptr);
 
     std::printf("WebM: VP9 and Opus\n");
@@ -643,6 +926,7 @@ int main(int argc, char** argv) {
     source_checks(n, webm);
     async_checks(n, webm);
     surface_checks(n, webm);
+    remux_checks(n, webm);
 
     std::printf("MP4: H.264 and AAC\n");
     void* avc = n.by_type("video/avc");
@@ -658,6 +942,7 @@ int main(int argc, char** argv) {
         else std::printf("  [SKIP] no AAC decoder on this Windows (Media Foundation)\n");
         source_checks(n, mp4);
         async_checks(n, mp4);
+        encoder_checks(n);
     }
 
     std::printf(g_failures ? "%d FAILED\n" : "ALL PASSED\n", g_failures);
