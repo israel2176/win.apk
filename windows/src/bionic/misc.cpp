@@ -682,12 +682,16 @@ struct SharedView {
 std::map<uintptr_t, SharedView> g_views;  // under g_maps_lock
 
 // A view of `len` bytes of the file `fd` has open, from `off`, or null to fall
-// back to a private copy: an exec or MAP_FIXED mapping, a descriptor without
+// back to a private copy: a private exec or a MAP_FIXED mapping, a descriptor without
 // a file, a range past the file's last page (Linux maps it and faults on
 // access; a section cannot be larger than the file without growing it), an
 // empty file (no section), or a read-only file asked for writing.
-void* map_shared_view(size_t len, int prot, int fd, int64_t off) {
-    if ((prot & 4) || off < 0 || fd_object(fd)) return nullptr;
+//
+// An executable MAP_SHARED view is made too when the file allows it (memfd_create's do): a JIT that maps
+// one anonymous file twice, writable and executable, writes code through the one and runs it through the
+// other, which a private copy would never show it. A private executable mapping stays a copy.
+void* map_shared_view(size_t len, int prot, int fd, int64_t off, bool shared) {
+    if (((prot & 4) && !shared) || off < 0 || fd_object(fd)) return nullptr;
     const intptr_t h = _get_osfhandle(fd);
     if (h == -1) return nullptr;
     const HANDLE file = reinterpret_cast<HANDLE>(h);
@@ -699,14 +703,17 @@ void* map_shared_view(size_t len, int prot, int fd, int64_t off) {
     GetSystemInfo(&si);
     const uint64_t base = static_cast<uint64_t>(off) & ~(static_cast<uint64_t>(si.dwAllocationGranularity) - 1);
     const size_t delta = static_cast<size_t>(static_cast<uint64_t>(off) - base);
-    const bool write = prot & 2;
-    // Size 0: the section is the file as it is now, so the file does not grow.
-    const HANDLE section = CreateFileMappingW(file, nullptr, write ? PAGE_READWRITE : PAGE_READONLY, 0, 0, nullptr);
+    const bool write = prot & 2, exec = prot & 4;
+    // Size 0: the section is the file as it is now, so the file does not grow. An executable section
+    // needs a file opened for execution; one that is not gets no view (and a copy instead).
+    const DWORD page = exec ? (write ? PAGE_EXECUTE_READWRITE : PAGE_EXECUTE_READ) : (write ? PAGE_READWRITE : PAGE_READONLY);
+    const HANDLE section = CreateFileMappingW(file, nullptr, page, 0, 0, nullptr);
     if (!section) return nullptr;
     // To the section's end when the range reaches into the last page: a view
     // covers whole pages, so its tail past the file reads as zeros, as on Linux.
     const bool to_end = static_cast<uint64_t>(off) + len > static_cast<uint64_t>(size.QuadPart);
-    void* view = MapViewOfFile(section, write ? FILE_MAP_WRITE : FILE_MAP_READ, static_cast<DWORD>(base >> 32),
+    const DWORD access = (write ? FILE_MAP_WRITE : FILE_MAP_READ) | (exec ? FILE_MAP_EXECUTE : 0);
+    void* view = MapViewOfFile(section, access, static_cast<DWORD>(base >> 32),
                                static_cast<DWORD>(base), to_end ? 0 : delta + len);
     CloseHandle(section);  // the view keeps the section alive
     if (!view) return nullptr;
@@ -927,7 +934,7 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     // reserved; a copy taken at mmap kept the new, empty file ("Invalid top
     // array size (ref: 128, array size: 0)").
     if (((flags & 3) == 1 || ((flags & 3) == 2 && !(prot & 2))) && !anonymous) {
-        if (void* v = fixed ? map_fixed_view(addr, len, prot, fd, off) : map_shared_view(len, prot, fd, off)) return v;
+        if (void* v = fixed ? map_fixed_view(addr, len, prot, fd, off) : map_shared_view(len, prot, fd, off, (flags & 3) == 1)) return v;
     }
     void* p = nullptr;
     if (fixed && map_in_place(addr, len, prot != 0 || !anonymous)) {

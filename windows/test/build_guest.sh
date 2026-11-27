@@ -112,6 +112,14 @@ PY
 # a constructor, in exported functions and in code written at run time.
 "$CC" "${COMMON[@]}" -Wl,-soname,libwinapk_syscall_guest.so \
     -o "$OUT/libwinapk_syscall_guest.so" "$HERE/guest/syscall_guest.c"
+# Its company: code written at run time as a JIT writes it, with no SYSCALL
+# (jit_guest.c), and ordinary compiled code with none either, which the loader
+# must leave byte for byte as in the file (arm64_isa.c built for x86_64,
+# without the stack protector, whose guard loads the loader rewrites).
+"$CC" "${COMMON[@]}" -Wl,-soname,libwinapk_jit_guest.so \
+    -o "$OUT/libwinapk_jit_guest.so" "$HERE/guest/jit_guest.c"
+"$CC" "${COMMON[@]}" -fno-stack-protector -Wl,-soname,libwinapk_plain_guest.so \
+    -o "$OUT/libwinapk_plain_guest.so" "$HERE/guest/arm64_isa.c"
 
 # The arm64 engines' test libraries (winapk-arm64-test).
 # arm64_isa.c three ways (the test compares each against the same code built
@@ -186,5 +194,5 @@ echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
 echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin,interpose,user,late,plain,packed,packed_sysv}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
-echo "[build_guest] $OUT/libwinapk_syscall_guest.so"
+echo "[build_guest] $OUT/libwinapk_{syscall,jit,plain}_guest.so"
 echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,flow,unload,rebased,patch_*,fuzz,bench}.so"

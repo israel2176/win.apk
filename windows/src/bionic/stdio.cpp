@@ -690,8 +690,10 @@ WINAPK_GUEST_ABI int g_memfd_create(const char*, unsigned) {
         set_errno_from_win32(GetLastError());
         return -1;
     }
-    HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                           nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+    // Executable too, as an anonymous file on Linux can be mapped PROT_EXEC (map_shared_view).
+    HANDLE h = CreateFileW(path, GENERIC_READ | GENERIC_WRITE | GENERIC_EXECUTE,
+                           FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
     if (h == INVALID_HANDLE_VALUE) {
         set_errno_from_win32(GetLastError());
         return -1;
