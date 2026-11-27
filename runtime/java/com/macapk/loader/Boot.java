@@ -1976,6 +1976,9 @@ public final class Boot {
         if (start.launch != null) {
             start.first = first;
             start.firstSender = firstSender;
+            // The task as system_server would keep it across this process's end: in the app's run
+            // files (apps\<name>\), which are the system's, not under the data the app sees.
+            if (appDir != null && !appDir.isEmpty()) start.savedTask = new File(appDir, "task-state.parcel");
         }
         final Intent laterUrlFinal = start.launch != null ? laterUrl : null;
         start.providers = appProviders(manifest, pm, ai, resources);
@@ -2322,6 +2325,14 @@ public final class Boot {
      *  process, now, whatever thread threw. Through the host's exit (its end-of-run lines, no
      *  Java shutdown, as SIGKILL runs none); halt if there is no host. */
     private static void crashExit() {
+        // handleApplicationCrash's part of the system's side first: the crashed top is not kept for
+        // the app's next process (AppHost.processCrashed).
+        try {
+            com.macapk.loader.app.AppHost h = com.macapk.loader.app.AppHost.get();
+            if (h != null && h.started()) h.processCrashed();
+        } catch (Throwable ignored) {
+            // the crash ends the process whatever happens here
+        }
         try {
             NativeCocoa.exitProcess(CRASH_EXIT, null);
         } catch (Throwable ignored) {
