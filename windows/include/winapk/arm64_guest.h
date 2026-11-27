@@ -130,6 +130,18 @@ void* guest_intrinsic(const char* name);
 // other name. Asked after guest_intrinsic.
 void* abi_override(const char* name);
 
+// The CPU features arm64 code is told of (getauxval's AT_HWCAP and AT_HWCAP2,
+// /proc/self/auxv, an IFUNC resolver's argument): floating point and Advanced
+// SIMD (HWCAP_FP, HWCAP_ASIMD), the base every arm64 Android device has, as a
+// phone with no optional feature reports it. The interpreter, which the JIT
+// and the translation fall back on, has no AES, PMULL or SHA instructions, so
+// those bits must stay clear. CRC32 and the LSE atomics it does execute, but
+// they are not claimed either: code that chooses by them (libgcc's and
+// compiler-rt's outline atomics, zlib's and Chromium's CRC paths) then takes
+// their plain ARMv8.0 path.
+constexpr uint64_t kHwcap = (uint64_t{1} << 0) | (uint64_t{1} << 1);
+constexpr uint64_t kHwcap2 = 0;
+
 // A raw Linux system call (SVC #0) from arm64 code: number `nr` (x8),
 // arguments x0-x5. False if it is not one the shim can answer; otherwise
 // *result is what the kernel would return (-errno on failure).
