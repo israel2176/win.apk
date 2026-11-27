@@ -708,11 +708,68 @@ final class WinNTFileSystem extends FileSystem {
                     return false;
                 }
             }
-            if (f1.exists()) noteRenameFailure(f1, f2, "not a file renamed onto a file");
+            if (f1.isDirectory()) return renameDirectory(f1, f2);
+            // rename(2) refuses a file onto a directory too (EISDIR).
+            if (f1.exists()) noteRenameFailure(f1, f2, "a file renamed onto a directory");
         } catch (Exception e) {
             noteRenameFailure(f1, f2, String.valueOf(e));
         }
         return false;
+    }
+
+    // Win.apk: rename(2) of a directory. It replaces an empty directory of the new name (and fails
+    // on a non-empty one, ENOTEMPTY, or on a file, ENOTDIR), which MoveFile never does. And it
+    // succeeds while files under the directory are open, which Windows refuses (a directory with an
+    // open handle beneath it cannot be renamed, whatever the handles share): Play services' Chimera
+    // extracts a module into app_chimera/m/s and renames that to m/<id> with the extracted APK
+    // still open or being scanned, so no module was ever installed ("Failed to rename module
+    // directory to final name"). The entries are then moved one by one, which open files allow
+    // (java.io's opens share deletion, java_io_open.cpp), into the new directory, and the old one
+    // removed: not one atomic step, as rename(2) is, but the same result; on a failure halfway the
+    // entries moved go back.
+    private boolean renameDirectory(File f1, File f2) {
+        String from = f1.getPath(), to = f2.getPath();
+        if (to.startsWith(from) && to.length() > from.length() && (to.charAt(from.length()) == '/'
+                || to.charAt(from.length()) == '\\')) {
+            noteRenameFailure(f1, f2, "a directory renamed into itself");   // EINVAL
+            return false;
+        }
+        if (f2.exists()) {
+            if (!f2.isDirectory()) {
+                noteRenameFailure(f1, f2, "a directory renamed onto a file");   // ENOTDIR
+                return false;
+            }
+            String[] inside = list(f2);
+            if (inside == null || inside.length > 0) {
+                noteRenameFailure(f1, f2, "a directory renamed onto a directory that is not empty");
+                return false;
+            }
+            if (!delete(f2)) {
+                noteRenameFailure(f1, f2, "the empty directory of the new name could not be removed");
+                return false;
+            }
+            if (rename0(host(f1), host(f2))) return true;
+        }
+        String[] names = list(f1);
+        if (names == null || !createDirectory(f2)) {
+            noteRenameFailure(f1, f2, "a directory Windows would not rename, and its new name not made");
+            return false;
+        }
+        java.util.List<String> moved = new java.util.ArrayList<>();
+        for (String name : names) {
+            if (rename(new File(f1, name), new File(f2, name))) {
+                moved.add(name);
+                continue;
+            }
+            for (String back : moved) rename(new File(f2, back), new File(f1, back));
+            delete(f2);
+            noteRenameFailure(f1, f2, "a directory Windows would not rename, and its entry " + name
+                              + " not moved");
+            return false;
+        }
+        // An open handle on the directory itself keeps it; the entries are all in the new one.
+        delete(f1);
+        return true;
     }
     private static native int winapkReplace(String from, String to);
 

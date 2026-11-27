@@ -109,6 +109,32 @@ public class FileShareDeleteTest {
             check(true, "a null name throws NullPointerException");
         }
 
+        // Play services' Chimera module: extracted into m/s, the directory renamed to m/<id> with
+        // the extracted file still open. rename(2) moves a directory whatever is open under it.
+        File staging = new File(dir, "s");
+        File module = new File(dir, "00000000");
+        check(new File(staging, "lib").mkdirs(), "the staging directory is made");
+        Files.writeString(new File(staging, "lib/inner.so").toPath(), "so");
+        try (FileOutputStream out = new FileOutputStream(new File(staging, "module.apk"))) {
+            out.write(bytes("apk"));
+            check(staging.renameTo(module), "a directory is renamed while a file under it is open");
+            out.write(bytes("!"));
+        }
+        check(!staging.exists() && Files.readString(new File(module, "module.apk").toPath()).equals("apk!")
+              && Files.readString(new File(module, "lib/inner.so").toPath()).equals("so"),
+              "the whole tree is under the new name, the open file's later writes too");
+
+        // rename(2) replaces an empty directory of the new name, and refuses one that is not empty.
+        File other = new File(dir, "other");
+        File empty = new File(dir, "empty");
+        check(other.mkdir() && empty.mkdir(), "two directories are made");
+        Files.writeString(new File(other, "a").toPath(), "a");
+        check(other.renameTo(empty), "a directory is renamed onto an empty directory");
+        check(!other.exists() && new File(empty, "a").isFile(), "the empty directory was replaced");
+        check(!empty.renameTo(module), "a directory is not renamed onto a directory that is not empty");
+        check(new File(empty, "a").isFile() && new File(module, "module.apk").isFile(),
+              "both directories are as they were");
+
         System.out.println(failures == 0 ? "FileShareDeleteTest: ALL PASSED" : "FileShareDeleteTest: " + failures + " failed");
         System.exit(failures == 0 ? 0 : 1);
     }
