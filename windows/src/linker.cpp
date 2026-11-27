@@ -14,9 +14,11 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
 #include <unordered_set>
 
 #include <windows.h>
+#include <bcrypt.h>
 // windows.h defines these; the library search below names a variable `near`.
 #undef near
 #undef far
@@ -647,6 +649,51 @@ std::string GuestLinker::proc_maps() const {
         }
     }
     return out;
+}
+
+std::string process_auxv() {
+    static const std::string text = [] {
+        enum : uint64_t {
+            kAtNull = 0, kAtPhdr = 3, kAtPhent = 4, kAtPhnum = 5, kAtPagesz = 6, kAtBase = 7, kAtFlags = 8,
+            kAtEntry = 9, kAtUid = 11, kAtEuid = 12, kAtGid = 13, kAtEgid = 14, kAtPlatform = 15, kAtHwcap = 16,
+            kAtClktck = 17, kAtSecure = 23, kAtRandom = 25, kAtHwcap2 = 26, kAtExecfn = 31,
+        };
+        static uint8_t random[16];
+        BCryptGenRandom(nullptr, random, sizeof random, BCRYPT_USE_SYSTEM_PREFERRED_RNG);
+        static const char platform[] = "x86_64";
+        int cpu[4] = {};
+        __cpuid(cpu, 1);
+        using Id = unsigned(WINAPK_GUEST_ABI*)();
+        auto id = [](const char* name) -> uint64_t {
+            const auto fn = reinterpret_cast<Id>(mini_bionic_resolve(name));
+            return fn ? fn() : 0;
+        };
+        const auto& images = process_images();
+        const uint64_t program = images[0].at, linker = images[1].at;
+        const uint64_t pairs[][2] = {
+            {kAtHwcap, static_cast<uint32_t>(cpu[3])},
+            {kAtPagesz, 4096},
+            {kAtClktck, 100},
+            {kAtPhdr, program ? program + 64 : 0},  // the program header table follows the ELF header: none here
+            {kAtPhent, 56},
+            {kAtPhnum, 0},
+            {kAtBase, linker},
+            {kAtFlags, 0},
+            {kAtEntry, program},
+            {kAtUid, id("getuid")},
+            {kAtEuid, id("geteuid")},
+            {kAtGid, id("getgid")},
+            {kAtEgid, id("getegid")},
+            {kAtSecure, 0},
+            {kAtRandom, reinterpret_cast<uint64_t>(random)},
+            {kAtHwcap2, 0},
+            {kAtExecfn, reinterpret_cast<uint64_t>(kAppProcessPath)},
+            {kAtPlatform, reinterpret_cast<uint64_t>(platform)},
+            {kAtNull, 0},
+        };
+        return std::string(reinterpret_cast<const char*>(pairs), sizeof pairs);
+    }();
+    return text;
 }
 
 bool GuestLinker::describe(const void* addr, AddrInfo* info) const {
