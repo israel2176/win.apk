@@ -125,14 +125,19 @@ jobs:
           cat out/downloads-${{ matrix.shard }}.tsv
       - name: Boot them headless
         shell: pwsh
+        env:
+          # The report quotes the apps' own exception texts (Hebrew, Chinese): print it as UTF-8, not cp1252.
+          PYTHONUTF8: '1'
         run: |
           if (-not (Get-Content apps-local.txt)) { "nothing downloaded on this machine"; exit 0 }
-          # As the smoke test: one framework archive shared by the apps, as a user's data folder has it.
+          # As the smoke test: one framework archive shared by the apps, as a user's data folder has it. 600
+          # frames (about 10 s), not the smoke test's 150: these apps go from a splash to their first real
+          # screen, and the last frame should be that screen, not the moment between the two.
           $env:WINAPK_CDS_DIR = "$PWD\cds"
           ./stage/bin/winapk-runtime.exe --cds-prepare --data "$PWD\cds-prepare"
           if ($LASTEXITCODE -ne 0) { Get-Content cds/dump.log -Tail 50; exit 1 }
           python windows/test/compat/sweep.py --runtime stage --apps apps-local.txt `
-            --apks apk-cache --out out --frames 150 --timeout 300 --require-drew
+            --apks apk-cache --out out --frames 600 --timeout 300 --require-drew
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()
