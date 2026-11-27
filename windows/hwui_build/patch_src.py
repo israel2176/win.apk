@@ -162,10 +162,13 @@ EDITS = [
      '                mRenderThread.getGrContext(), mHardwareBuffer, kTopLeft_GrSurfaceOrigin,\n'
      '                bufferColorSpace, nullptr, true);\n',
      '        mBufferSurface = nullptr;\n'),
+    # PdfDocument is built (printing writes with it); a source tree an older patch_src left without it
+    # (CI caches the patched tree) is changed from that edit.
     ('hwui/apex/jni_runtime.cpp',
-     '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
-     '            REG_JNI(register_android_graphics_pdf_PdfEditor),\n'
-     '            REG_JNI(register_android_graphics_pdf_PdfRenderer),\n',
+     ('            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
+      '            REG_JNI(register_android_graphics_pdf_PdfEditor),\n'
+      '            REG_JNI(register_android_graphics_pdf_PdfRenderer),\n',
+      '            // Win.apk: no PdfDocument, PdfEditor, PdfRenderer (libpdfium).\n'),
      '            REG_JNI(register_android_graphics_pdf_PdfDocument),\n'
      '            // Win.apk: no PdfEditor, PdfRenderer (libpdfium).\n'),
     # The compositor (hwui_build/glue) posts to the render thread.
@@ -342,6 +345,8 @@ for e in EDITS:
     s = open(p, encoding='utf-8').read()
     if new in s:
         continue
+    if isinstance(old, tuple):  # alternatives: the first that is there
+        old = next((o for o in old if s.count(o) == times), old[0])
     if s.count(old) != times:
         print('patch_src: %s: the text to replace is not there %d time(s): %r' % (rel, times, old[:60]))
         bad += 1

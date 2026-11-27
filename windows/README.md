@@ -4136,7 +4136,12 @@ every such change is listed here:
   rendered by Windows.Data.Pdf (looked up at run time) at the printer's resolution, at most 600 dpi, in bands
   (`host/print_layout.h`), drawn into the printer's device context made from the dialog's DEVMODE, so the driver
   applies the user's settings; `STATE_STARTED`, then `STATE_COMPLETED`, `STATE_FAILED` with the printer's words
-  (`restart()` prints the spooled document again) or `STATE_CANCELED` (the dialog cancelled, `PrintJob.cancel()`).
+  (`restart()` prints the spooled document again) or `STATE_CANCELED` (the dialog cancelled, `PrintJob.cancel()`,
+  or the printing activity destroyed before the print UI was done: the adapter is then dropped, never called
+  again, and a layout or write in progress has its `CancellationSignal` cancelled, as AOSP's
+  `PrintDocumentAdapterDelegate` and spooler do). Windows' printer calls (the default printer's lookup, the
+  dialog, printing) run on host threads, never the app's main thread; the copies are printed by Win.apk, so the
+  driver's DEVMODE is set to one copy.
   A whole document written where some pages were asked is cut to them, as AOSP's spooler does. `print()` throws
   outside an activity, as AOSP's does (the manager gets the context's outer context, as `SystemServiceRegistry`
   gives it). The job used to be saved to a file in the app's folder and reported completed. No preview is

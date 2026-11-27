@@ -1,7 +1,8 @@
 // HostPrinting -- Windows' printers (windows/host/native_printing.cpp), for android.print's spooler
 // (android.print.PrintSpooler): the default printer's settings, Windows' Print dialog over the app's window,
-// and a PDF printed on the printer the dialog chose. The dialog and the printing run on the host's own
-// threads; their answers come back through onChosen and onPrintState, on those threads.
+// and a PDF printed on the printer the dialog chose. The lookup, the dialog and the printing run on the
+// host's own threads (opening a printer can take seconds); their answers come back through onDefaults,
+// onChosen and onPrintState, on those threads.
 package com.macapk.loader;
 
 import java.util.HashMap;
@@ -19,6 +20,11 @@ public final class HostPrinting {
     /** onPrintState's states. */
     public static final int STARTED = 1, COMPLETED = 2, PRINT_FAILED = 3, PRINT_CANCELLED = 4;
 
+    public interface DefaultsListener {
+        /** found: names {printer, paper} and its NUMBERS settings; else there is no default printer. */
+        void onDefaults(boolean found, String[] names, int[] numbers);
+    }
+
     public interface ChooseListener {
         /** result CHOSEN: setup is the choice's handle, names {printer, paper}, numbers its settings
          *  (NUMBERS of them), ranges the pages chosen as 1-based inclusive pairs (empty: all). FAILED:
@@ -30,6 +36,7 @@ public final class HostPrinting {
         void onPrintState(int state, String status);
     }
 
+    private static final Map<Integer, DefaultsListener> sDefaults = new HashMap<>();
     private static final Map<Integer, ChooseListener> sChoosers = new HashMap<>();
     private static final Map<Integer, PrintListener> sPrints = new HashMap<>();
     private static int sNextId = 1;
@@ -38,14 +45,28 @@ public final class HostPrinting {
     // (DMPAPER_*), orientation (1 portrait, 2 landscape), colour (1 monochrome, 2 colour), duplex (1
     // one-sided, 2 long edge, 3 short edge); 0 for what the app did not say.
 
-    /** The default printer with the hints applied: names {printer, paper} and its NUMBERS settings; false
-     *  when there is none (or no host). */
-    public static boolean defaults(int[] hints, String[] names, int[] numbers) {
-        try {
-            return nativeDefaults(hints, names, numbers);
-        } catch (UnsatisfiedLinkError e) {
-            return false;
+    /** Looks the default printer up with the hints applied, on a host thread; false when it could not be
+     *  asked (no host), in which case the listener is never called. */
+    public static boolean defaults(int[] hints, DefaultsListener listener) {
+        int id;
+        synchronized (sChoosers) {
+            id = sNextId++;
         }
+        synchronized (sDefaults) {
+            sDefaults.put(id, listener);
+        }
+        boolean started;
+        try {
+            started = nativeDefaults(hints, id);
+        } catch (UnsatisfiedLinkError e) {
+            started = false;
+        }
+        if (!started) {
+            synchronized (sDefaults) {
+                sDefaults.remove(id);
+            }
+        }
+        return started;
     }
 
     /** Opens Windows' Print dialog on the default printer with the hints applied, for a document of
@@ -113,6 +134,14 @@ public final class HostPrinting {
 
     // ---- from the host's threads ----
 
+    static void onDefaults(int id, boolean found, String[] names, int[] numbers) {
+        DefaultsListener l;
+        synchronized (sDefaults) {
+            l = sDefaults.remove(id);
+        }
+        if (l != null) l.onDefaults(found, names, numbers);
+    }
+
     static void onChosen(int id, int result, long setup, String[] names, int[] numbers, int[] ranges) {
         ChooseListener l;
         synchronized (sChoosers) {
@@ -130,7 +159,7 @@ public final class HostPrinting {
         if (l != null) l.onPrintState(state, status);
     }
 
-    private static native boolean nativeDefaults(int[] hints, String[] names, int[] numbers);
+    private static native boolean nativeDefaults(int[] hints, int id);
     private static native boolean nativeChoose(int pageCount, int[] hints, int id);
     private static native boolean nativePrint(long setup, String path, String jobName, int[] pages, int id);
     private static native void nativeCancel(int id);
