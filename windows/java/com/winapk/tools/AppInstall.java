@@ -135,6 +135,7 @@ public final class AppInstall {
             System.exit(install(Paths.get(args[0]), Paths.get(args[1]), args[2], Paths.get(args[3])));
         } catch (IOException e) {
             System.err.println("[install] " + e);
+            for (StackTraceElement f : e.getStackTrace()) System.err.println("[install]   at " + f);
             System.exit(1);
         }
     }
@@ -578,8 +579,15 @@ public final class AppInstall {
                 // CRC is left as it is, so the same library in two of an app's APKs (or twice in one) is written
                 // once. On Windows a second write over the first can be refused while it is still being scanned.
                 if (!sameFile(target, z)) {
+                    boolean existed = Files.exists(target);
                     try (InputStream in = zip.getInputStream(z)) {
                         Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+                    } catch (IOException failure) {
+                        // Which APK and entry, and whether an earlier one had written the file: the bare
+                        // exception names only the target.
+                        throw new IOException(apk.getFileName() + "!" + name + " (" + z.getSize() + " bytes, "
+                                + (existed ? "over " + Files.size(target) + " bytes already there" : "a new file")
+                                + "): " + failure, failure);
                     }
                 }
                 n++;
