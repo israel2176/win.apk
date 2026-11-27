@@ -2179,6 +2179,8 @@ public final class SystemServer {
             log("bind " + caller + " -> " + target[0] + "/" + target[1] + " FAILED: " + t);
             reply.writeNoException();
             reply.writeInt(0);
+            // The component it resolved to, for the client's onBindingDied (SystemClient.bindRemote).
+            reply.writeTypedObject(new ComponentName(target[0], target[1]), 0);
         }
     }
 
