@@ -1,6 +1,7 @@
 // native_media.h -- libmediandk for an app's native code: AMediaFormat, the
-// AMEDIAFORMAT_KEY_* data symbols, and an AMediaCodec / AMediaExtractor that
-// answer "no codec" (native_media.cpp).
+// AMEDIAFORMAT_KEY_* data symbols and the crypto answers (native_media.cpp),
+// AMediaCodec, AMediaExtractor and AMediaDataSource (ndk_media_codec.cpp),
+// AMediaMuxer (ndk_media_muxer.cpp).
 
 #pragma once
 
