@@ -197,4 +197,12 @@ private:
 // android_dlopen_ext) for guest code, or nullptr.
 void* guest_libdl_resolve(const char* name);
 
+// The process's auxiliary vector, as the kernel hands it to app_process64 and
+// /proc/self/auxv holds it: (type, value) pairs of 64 bits each, AT_NULL last.
+// AT_PHDR, AT_BASE and AT_ENTRY name the program's and linker's images that
+// /proc/self/maps lists (process_image.h); AT_PAGESZ is 4096, AT_CLKTCK 100,
+// AT_HWCAP x86_64's (CPUID leaf 1's EDX), AT_RANDOM 16 random bytes made once,
+// AT_PLATFORM "x86_64", AT_EXECFN the program's path. getauxval answers from it.
+std::string process_auxv();
+
 }  // namespace winapk

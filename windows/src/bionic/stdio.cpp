@@ -108,13 +108,20 @@ public:
 // /proc/self/maps (and /proc/<our pid>/maps): synthesized from the guest
 // linker on every open, as the kernel does, into a delete-on-close temporary
 // file, so read, lseek, fstat and stdio all behave as on a regular file.
-bool is_proc_maps(const char* path) {
+bool is_proc_file(const char* path, const char* name) {
     if (!path) return false;
-    if (std::strcmp(path, "/proc/self/maps") == 0 || std::strcmp(path, "/proc/thread-self/maps") == 0) return true;
     char own[48];
-    std::snprintf(own, sizeof own, "/proc/%lu/maps", static_cast<unsigned long>(GetCurrentProcessId()));
+    for (const char* dir : {"/proc/self/", "/proc/thread-self/"}) {
+        std::snprintf(own, sizeof own, "%s%s", dir, name);
+        if (std::strcmp(path, own) == 0) return true;
+    }
+    std::snprintf(own, sizeof own, "/proc/%lu/%s", static_cast<unsigned long>(GetCurrentProcessId()), name);
     return std::strcmp(path, own) == 0;
 }
+// /proc/self/auxv: the auxiliary vector the kernel gave the process (winapk::process_auxv). A
+// self-unpacking library reads it before it has a libc (UPX's loader stub, for AT_PAGESZ).
+bool is_proc_auxv(const char* path) { return is_proc_file(path, "auxv"); }
+bool is_proc_maps(const char* path) { return is_proc_file(path, "maps") || is_proc_auxv(path); }
 
 // A delete-on-close temporary file holding `content`, as a CRT descriptor
 // positioned at 0; -1 with errno set.
@@ -359,7 +366,7 @@ WINAPK_GUEST_ABI int g_mknod(const char* path, unsigned mode, uint64_t) {
 // variadic int travels in the same register as a fixed one.
 WINAPK_GUEST_ABI int g_open(const char* path, int flags, unsigned mode) {
     if (is_random_device(path)) return fd_install(std::make_shared<RandomDevice>());
-    if (is_proc_maps(path)) return open_temp_with(proc_maps_text());
+    if (is_proc_maps(path)) return open_temp_with(is_proc_auxv(path) ? winapk::process_auxv() : proc_maps_text());
     const std::wstring w = file_path(path);
     if (is_fifo_marker(w)) return fifo_open(fifo_key(w), flags);
     // Linux opens a directory read-only without O_DIRECTORY too (O_PATH or
@@ -1943,7 +1950,7 @@ FILE* open_random_stream() {
 WINAPK_GUEST_ABI FILE* g_fopen(const char* path, const char* mode) {
     if (is_random_device(path)) return open_random_stream();
     if (is_proc_maps(path)) {
-        const int fd = open_temp_with(proc_maps_text());
+        const int fd = open_temp_with(is_proc_auxv(path) ? winapk::process_auxv() : proc_maps_text());
         if (fd < 0) return nullptr;
         FILE* f = _fdopen(fd, "rb");
         if (!f) {

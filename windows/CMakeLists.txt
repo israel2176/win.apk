@@ -29,6 +29,7 @@ add_library(winapk_loader STATIC
   src/elf_loader.cpp
   src/elf_tls.cpp
   src/fs_tls_patch.cpp
+  src/x86_syscall.cpp
   src/mini_bionic.cpp
   src/bionic/string.cpp
   src/bionic/printf.cpp
@@ -116,6 +117,11 @@ target_link_libraries(winapk-linker-test PRIVATE winapk_loader)
 
 add_executable(winapk-bionic-test test/bionic_test.cpp)
 target_link_libraries(winapk-bionic-test PRIVATE winapk_loader)
+
+# Raw system calls in x86_64 guest code (src/x86_syscall.cpp): the instruction
+# decoder, then test/guest/syscall_guest.c as built and packed with UPX.
+add_executable(winapk-syscall-test test/x86_syscall_test.cpp)
+target_link_libraries(winapk-syscall-test PRIVATE winapk_loader)
 
 # The guest path mapper (src/bionic/paths.cpp): Android paths -> host files,
 # test/paths_test.cpp. No guest library; the listing round trip makes its own
@@ -230,6 +236,7 @@ if(MINGW)
   target_link_options(winapk-thunk-test PRIVATE -static)
   target_link_options(winapk-linker-test PRIVATE -static)
   target_link_options(winapk-bionic-test PRIVATE -static)
+  target_link_options(winapk-syscall-test PRIVATE -static)
   target_link_options(winapk-crash-test PRIVATE -static -municode)
   target_link_options(winapk-arm64-test PRIVATE -static)
   target_link_options(winapk-aot-cache-test PRIVATE -static -municode)

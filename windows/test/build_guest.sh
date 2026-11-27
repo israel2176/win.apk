@@ -96,6 +96,11 @@ PY
 "$CC" "${COMMON[@]}" -fno-emulated-tls -Wl,-soname,libwinapk_bionic_guest.so \
     -o "$OUT/libwinapk_bionic_guest.so" "$HERE/guest/bionic_guest.c" -L"$STUBS" -Wl,--no-as-needed -lz
 
+# Raw system calls in x86_64 code (winapk-syscall-test): SYSCALL instructions in
+# a constructor, in exported functions and in code written at run time.
+"$CC" "${COMMON[@]}" -Wl,-soname,libwinapk_syscall_guest.so \
+    -o "$OUT/libwinapk_syscall_guest.so" "$HERE/guest/syscall_guest.c"
+
 # The arm64 engines' test libraries (winapk-arm64-test).
 # arm64_isa.c three ways (the test compares each against the same code built
 # for the host), and the bridge library against the Bionic shim. Atomics are
@@ -169,4 +174,5 @@ echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
 echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin,interpose,user,late,plain,packed,packed_sysv}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
+echo "[build_guest] $OUT/libwinapk_syscall_guest.so"
 echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,flow,unload,rebased,patch_*,fuzz,bench}.so"

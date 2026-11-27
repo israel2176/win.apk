@@ -432,6 +432,8 @@ jobs:
         run: ./build/winapk-elfrun.exe guest/libwinapk_poc_guest.so guest/libwinapk_poc_guest_packed.so
       - name: Run the guest linker test
         run: ./build/winapk-linker-test.exe guest/link
+      - name: Run the raw system call test (SYSCALL in x86_64 guest code)
+        run: ./build/winapk-syscall-test.exe guest/libwinapk_syscall_guest.so
       - name: Run the crash report test (a guest handler declines, a minidump is written)
         run: |
           mkdir -p crash-scratch

@@ -9,7 +9,9 @@
 
 #include "bionic_internal.h"
 
+#include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
+#include "winapk/x86_syscall.h"
 
 #include <algorithm>
 #include <cerrno>
@@ -854,6 +856,9 @@ int protect_range(void* addr, size_t len, int prot) {
         }
         p = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
     }
+    // x86_64 guest code asked to be executable runs only once its SYSCALL instructions are found
+    // (x86_syscall.h): until its first run it gets everything else it asked for.
+    prot = winapk::x86::exec_protection(addr, len, prot);
     const DWORD want = win_protect(prot);
     for (uintptr_t p = lo; p < hi;) {
         MEMORY_BASIC_INFORMATION mbi;
@@ -949,6 +954,7 @@ WINAPK_GUEST_ABI void* g_mmap(void* addr, size_t len, int prot, int flags, int f
     return p;
 }
 WINAPK_GUEST_ABI int g_munmap(void* addr, size_t len) {
+    winapk::x86::forget(addr, len);
     std::lock_guard<std::mutex> hold(g_maps_lock);
     const auto a = reinterpret_cast<uintptr_t>(addr);
     if (auto v = g_views.find(a); v != g_views.end()) {
@@ -1509,8 +1515,17 @@ WINAPK_GUEST_ABI int g_uname(GuestUtsname* u) {
     std::strcpy(u->domainname, "(none)");
     return 0;
 }
-// getauxval: AT_PAGESZ 6, AT_HWCAP 16, AT_HWCAP2 26; the rest is 0.
-WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) { return type == 6 ? 4096 : 0; }
+// getauxval: the process's auxiliary vector (winapk::process_auxv, which /proc/self/auxv holds
+// too); 0 and ENOENT for a type it does not have, as bionic.
+WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) {
+    static const std::string auxv = winapk::process_auxv();
+    const auto* v = reinterpret_cast<const uint64_t*>(auxv.data());
+    for (size_t i = 0; i + 1 < auxv.size() / 8 && v[i] != 0; i += 2) {
+        if (v[i] == type) return v[i + 1];
+    }
+    *guest_errno() = kENOENT;
+    return 0;
+}
 
 // ---- randomness ---------------------------------------------------------------------------
 WINAPK_GUEST_ABI void g_arc4random_buf(void* buf, size_t n) {
@@ -1616,9 +1631,12 @@ WINAPK_GUEST_ABI int64_t g_syscall(int64_t nr, int64_t a, int64_t b, int64_t c, 
             if (a == 0) return 0;
             *guest_errno() = kENOSYS;
             return -1;
-        default:
-            *guest_errno() = kENOSYS;
-            return -1;
+        default: {
+            // The rest by the shim's functions under x86_64's numbering (x86_syscall.cpp), which a raw
+            // SYSCALL instruction in guest code reaches as well.
+            const int64_t args[6] = {a, b, c, d, e, f};
+            return winapk::x86::other_syscall(nr, args);
+        }
     }
 }
 
