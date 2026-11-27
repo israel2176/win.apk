@@ -534,11 +534,17 @@ draws nothing on it, because ANGLE takes no lock between contexts that share
 nothing on one Direct3D 11 device. A window surface's frame is read back at
 the app's swap, on its thread, and becomes a layer under the app's windows
 (below); until a SurfaceView's producer has drawn, the render tick shows black
-in its place, as AOSP's SurfaceView shows its background layer. Vulkan is not
-implemented. The app's GL threads share one ANGLE display, whose Direct3D 11
-renderer holds one context's state at a time, so each GL call takes the
+in its place, as AOSP's SurfaceView shows its background layer.
+The app's GL threads share one ANGLE display, whose Direct3D 11 renderer holds one context's state at a time, so each GL call takes the
 display's turn (`host/gl/gl_turn.h`): one call at a time, and a context
 another thread displaced is made current again before its thread's next call.
+Vulkan (`host/vk/guest_vk.cpp`) reaches the screen as a GL window surface does: an app's native code calls the PC's
+Vulkan (the loader beside the runtime and the GPU's driver, or SwiftShader on a
+PC with none) through System V wrappers generated from `vulkan_core.h`
+(`tools/gen_vk_thunks.py`), each dispatching on the instance's or device's
+table; the window system is emulated, a swapchain being images of the device's
+own, and `vkQueuePresentKHR` copies the presented one back and shows it as the
+guest layer, paced like `eglSwapBuffers`.
 
 ### The view tree's frames
 
@@ -1284,7 +1290,7 @@ sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 
 ## What is not there
 
-As of this writing: the NDK media API, Vulkan, real sensor input,
+As of this writing: the NDK media API, real sensor input,
 signal delivery for faults in arm64 guest code and handlers in arm64
 libraries, POSIX timers, static ELF TLS, W^X thunk pools with unwind tables,
 code signing, 32-bit ARM,

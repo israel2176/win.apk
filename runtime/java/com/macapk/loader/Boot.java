@@ -1075,7 +1075,6 @@ public final class Boot {
         // This package's app uid (per package when the broker is on; AppUids).
         AppUids.setSelf(manifest.packageName, manifest.sharedUserId);
         bootClock("manifest parsed");
-        noteGuestVulkan(manifest);
         if (manifest.launchableActivity == null) {
             // A SERVICE HOST launches no activity (the broker started it to
             // answer a bind), so a package with no launcher -- Google Play
@@ -2544,24 +2543,6 @@ public final class Boot {
      *  questions after boot (e.g. an activity's android:process). */
     static Manifest macapkManifest() { return sManifest; }
 
-    /** MACAPK_GUEST_VULKAN (bionic_shim_vulkan.cpp): "auto" (default) gives an app
-     *  Vulkan when its manifest REQUIRES it (a required <uses-feature>
-     *  android.hardware.vulkan.version or .level -- Play installs such an app only
-     *  on a Vulkan device), "1" gives it to every app, "0" to none. The answer is
-     *  published as the system property macapk.guestVulkan, read by the shim's
-     *  dlopen("libvulkan.so") and by hasSystemFeature, so the two never disagree. */
-    private static void noteGuestVulkan(Manifest manifest) {
-        boolean on;
-        on = false;
-        for (Manifest.FeatureEntry e : manifest.reqFeatures) {
-            if (e.required && e.name != null
-                    && (e.name.equals("android.hardware.vulkan.version")
-                        || e.name.equals("android.hardware.vulkan.level"))) on = true;
-        }
-        System.setProperty("macapk.guestVulkan", on ? "1" : "0");
-        if (on) NativeLog.i(TAG, "guest Vulkan: on for this app (MoltenVK; MACAPK_GUEST_VULKAN="
-            + "auto" + ")");
-    }
     private static volatile String sApkPath;
     private static volatile String sAppThemeName;
     private static volatile boolean sNightApplied;

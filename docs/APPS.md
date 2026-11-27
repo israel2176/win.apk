@@ -32,7 +32,7 @@ keeping a copy.
 |---|:-:|---|---|---|
 | OpenGL ES | ✅ | GLES 1.1 to 3.2 and EGL 1.5, from Java (`GLSurfaceView`, libGDX, an app's own GL thread on EGL10 or EGL14, each drawing on its own thread as on Android) and from native code (SDL), on ANGLE over Direct3D 11; WARP or SwiftShader without a GPU | | `host/gl/` |
 | `NativeActivity` | ✅ | Games whose whole UI is native code get their window, input queue and configuration | | `native_activity.cpp` |
-| Vulkan | ❌ | | Not implemented | |
+| Vulkan | ⚠️ | Vulkan 1.0 to 1.3 for an app's native code on the PC's own driver (NVIDIA, AMD, Intel), or SwiftShader (Vulkan on the CPU, shipped) on a PC without one; every app sees `android.hardware.vulkan.*` as on a device with that Vulkan. The window system is Android's: `VK_KHR_android_surface` on the app's window, `VK_KHR_swapchain` with FIFO and MAILBOX, RGBA8 images | Checked by a unit test (on SwiftShader), not yet with a game. Each presented frame is copied back to the CPU and composed like an OpenGL ES frame, which costs time on large windows; no `AHardwareBuffer` import or export, shared presentable images, display timing or HDR metadata; surfaces report the identity transform; extensions the PC's driver lacks are not there either | `host/vk/` |
 | Pictures (`BitmapFactory`, `ImageDecoder`) | ✅ | PNG, JPEG, WebP, GIF, BMP and ICO by Android's own decoders; HEIF/HEIC (a phone's photos) and AVIF through Windows | HEIF needs Microsoft's HEIF Image Extensions, AVIF its AV1 Video Extension (Microsoft Store); without them such a picture does not open, as on a phone that cannot read it | `windows/java/aosp_gfx/` (`HostImageDecode`), `native_image.cpp` |
 | AudioTrack, SoundPool, MediaPlayer audio | ✅ | A WASAPI mixer; WAV, Ogg Vorbis, Ogg Opus (libopus), MP3, AAC and what Windows decodes | | `native_audio.cpp`, `audio_decode.cpp` |
 | AAudio | ⚠️ | Output, in write and callback modes | No AAudio input | `native_aaudio.cpp` |
@@ -87,7 +87,7 @@ issue has none yet; please open one before working on it.
 |---|---|---|---|
 | 1 | The NDK media API, Vorbis/FLAC in `MediaCodec`, WebM in `MediaPlayer` | Video from native code does not play; some streams play without sound | |
 | 2 | 32-bit ARM code (`armeabi-v7a`) | Apps that ship only 32-bit ARM libraries do not run at all | |
-| 3 | Vulkan | Games that need Vulkan do not draw | |
+| 3 | Vulkan | Untried with games; each frame is read back to the CPU (as OpenGL ES's are), so a Vulkan game is slower than on a phone of the same GPU | |
 | 4 | Multi-touch on real hardware | Touchscreen fingers, pen and the touchpad pinch are passed on as Android pointers, but are checked by unit tests only; with a mouse alone, Ctrl+wheel is the only two-finger gesture | |
 | 5 | Code signing | SmartScreen and some antivirus programs warn about the downloads | |
 | 6 | Real sensors | PCs with an accelerometer cannot steer tilt games | |

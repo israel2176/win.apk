@@ -947,6 +947,13 @@ jobs:
           cp build/winapk-gl-test.exe stage/bin/
           ./stage/bin/winapk-gl-test.exe
           rm stage/bin/winapk-gl-test.exe
+      - name: Run the Vulkan test
+        run: |
+          # It needs the Vulkan loader and SwiftShader next to it, which staging put in stage/bin;
+          # the runner has no GPU driver with Vulkan, so the runtime falls back to SwiftShader.
+          cp build/winapk-vulkan-test.exe stage/bin/
+          ./stage/bin/winapk-vulkan-test.exe
+          rm stage/bin/winapk-vulkan-test.exe
       - name: Boot an APK headless
         run: |
           # F-Droid moves old versions to its archive, so try both.

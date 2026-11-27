@@ -397,7 +397,8 @@ if(WINAPK_JNI_INCLUDE)
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_gl_bridges.cmake
     COMMENT "Extracting upstream's GL bindings")
   target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_turn.cpp host/gl/gl_bridges.cpp
-                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp
+                 host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp host/vk/guest_vk.cpp
+                 host/native_vulkan.cpp
                  host/native_window.cpp host/native_asset.cpp
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/ndk_camera.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
@@ -461,6 +462,13 @@ if(WINAPK_JNI_INCLUDE)
   target_include_directories(winapk-video-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
   target_link_libraries(winapk-video-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid shlwapi)
   target_link_options(winapk-video-test PRIVATE -static)
+
+  # libvulkan as an app's native code calls it (test/vulkan_test.cpp), on the loader and driver
+  # beside it: run from the staged bin\, where SwiftShader stands in for a GPU.
+  add_executable(winapk-vulkan-test test/vulkan_test.cpp host/vk/guest_vk.cpp)
+  target_include_directories(winapk-vulkan-test PRIVATE host include third_party/khronos "${WINAPK_JNI_INCLUDE}"
+                             "${WINAPK_JNI_INCLUDE}/win32")
+  target_link_options(winapk-vulkan-test PRIVATE -static)
 
   # libmediandk's AMediaExtractor, AMediaCodec and AMediaDataSource as an app's native code
   # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.
