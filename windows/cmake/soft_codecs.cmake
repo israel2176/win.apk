@@ -6,6 +6,7 @@
 #   winapk_dav1d     dav1d: AV1, 8 and 10/12-bit
 #   winapk_opus      libopus: Opus, decoded in float
 #   winapk_mkvparser libwebm's mkvparser: WebM and Matroska files
+#   winapk_mkvmuxer  libwebm's mkvmuxer: the WebM files AMediaMuxer writes (host/webm_writer.h)
 #
 # Each comes from its project's own release, checked against a pinned SHA-256 (libwebm, which
 # publishes no tarball, from its git tag, checked against the tag's commit), and is built the way
@@ -17,7 +18,7 @@
 #  - libopus from the source lists of its own makefiles (opus_sources.mk, celt_sources.mk,
 #    silk_sources.mk), float, without the deep-learning extensions; the encoder's files are
 #    compiled but nothing references them, so the static link leaves them out;
-#  - mkvparser.cc and mkvreader.cc alone.
+#  - mkvparser.cc and mkvreader.cc alone; mkvmuxer's three files.
 # The targets carry their public include directories; WINAPK_SOFT_CODEC_INCLUDES lists them too.
 # Works for a Windows build (MinGW clang) and for a Linux one (test/soft_codecs/CMakeLists.txt).
 
@@ -208,5 +209,9 @@ endif()
 add_library(winapk_mkvparser STATIC ${webm}/mkvparser/mkvparser.cc ${webm}/mkvparser/mkvreader.cc)
 target_include_directories(winapk_mkvparser SYSTEM PUBLIC ${webm})
 target_compile_options(winapk_mkvparser PRIVATE -O2 -w)
+add_library(winapk_mkvmuxer STATIC ${webm}/mkvmuxer/mkvmuxer.cc ${webm}/mkvmuxer/mkvmuxerutil.cc
+            ${webm}/mkvmuxer/mkvwriter.cc)
+target_include_directories(winapk_mkvmuxer SYSTEM PUBLIC ${webm})
+target_compile_options(winapk_mkvmuxer PRIVATE -O2 -w)
 
 set(WINAPK_SOFT_CODEC_INCLUDES ${vpx} ${dav1d}/include ${opus}/include ${webm})

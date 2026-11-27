@@ -182,23 +182,31 @@ jobs:
           "$RUNNER_TEMP/launcher-state-test"
 
   codecs:
-    # The software codecs, the picture conversions and the WebM reader need no Windows call: their
-    # test also runs here under AddressSanitizer and UndefinedBehaviorSanitizer, on the same
-    # libraries cmake/soft_codecs.cmake builds for Windows (the Windows build runs it too).
+    # The software codecs, the picture conversions, the WebM reader and AMediaMuxer's writers need
+    # no Windows call: their tests also run here under AddressSanitizer and
+    # UndefinedBehaviorSanitizer, on the same libraries cmake/soft_codecs.cmake builds for Windows
+    # (the Windows build runs them too).
     name: Software codecs (Linux, ASan)
     needs: changes
     if: needs.changes.outputs.tests == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nasm and ninja
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nasm ninja-build
+      - name: Install nasm, ninja and clang's sanitizer runtime
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends nasm ninja-build clang libclang-rt-18-dev
       - name: Build
         run: |
           cmake -S windows/test/soft_codecs -B "$RUNNER_TEMP/codecs" -G Ninja -DCMAKE_BUILD_TYPE=Release -DWINAPK_SANITIZE=ON
           cmake --build "$RUNNER_TEMP/codecs"
       - name: Run winapk-soft-codecs-test
         run: '"$RUNNER_TEMP/codecs/winapk-soft-codecs-test" windows/test/video'
+      - name: Build the NDK muxer test (clang, for its System V functions)
+        run: |
+          CC=clang CXX=clang++ cmake -S windows/test/soft_codecs -B "$RUNNER_TEMP/muxer" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DWINAPK_SANITIZE=ON
+          cmake --build "$RUNNER_TEMP/muxer" --target winapk-ndk-muxer-test
+      - name: Run winapk-ndk-muxer-test
+        run: '"$RUNNER_TEMP/muxer/winapk-ndk-muxer-test" windows/test/video "$RUNNER_TEMP"'
 
   build:
     name: Build (Windows x64)
@@ -497,6 +505,8 @@ jobs:
         run: ./build/winapk-video-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the NDK media test
         run: ./build/winapk-ndk-media-test.exe "$(cygpath -w "$PWD/windows/test/video")"
+      - name: Run the NDK muxer test
+        run: ./build/winapk-ndk-muxer-test.exe "$(cygpath -w "$PWD/windows/test/video")"
       - name: Run the NDK camera test
         run: ./build/winapk-ndk-camera-test.exe
       - name: Run the software codecs and WebM demuxer test

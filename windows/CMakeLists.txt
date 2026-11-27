@@ -348,7 +348,7 @@ if(WINAPK_JNI_INCLUDE)
   # with libvpx's and dav1d's x86-64 SIMD (nasm); cmake/soft_codecs.cmake.
   include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/soft_codecs.cmake)
   set(WINAPK_SOFT_CODEC_SOURCES host/soft_codecs.cpp host/webm_demux.cpp host/yuv_convert.cpp)
-  set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser)
+  set(WINAPK_SOFT_CODEC_LIBS winapk_vpx winapk_dav1d winapk_opus winapk_mkvparser winapk_mkvmuxer)
 
   # The host that runs an APK. Like winapk-jvm-run it loads jvm.dll at
   # runtime.
@@ -416,6 +416,7 @@ if(WINAPK_JNI_INCLUDE)
                  host/native_opensles.cpp host/native_aaudio.cpp host/native_media.cpp host/ndk_camera.cpp host/native_sensor.cpp
                  host/video_decode.cpp host/video_player.cpp host/native_media_video.cpp
                  host/media_encode.cpp host/mp4_writer.cpp host/native_media_codec.cpp host/ndk_media_codec.cpp
+                 host/ndk_media_muxer.cpp host/webm_writer.cpp
                  host/native_activity.cpp
                  ${WINAPK_SOFT_CODEC_SOURCES}
                  ${WINAPK_GL_UPSTREAM})
@@ -483,9 +484,11 @@ if(WINAPK_JNI_INCLUDE)
                              "${WINAPK_JNI_INCLUDE}/win32")
   target_link_options(winapk-vulkan-test PRIVATE -static)
 
-  # libmediandk's AMediaExtractor, AMediaCodec and AMediaDataSource as an app's native code
-  # calls them (test/ndk_media_test.cpp), on test/video's MP4 and WebM files.
+  # libmediandk's AMediaExtractor, AMediaCodec (decoders and encoders), AMediaDataSource and
+  # AMediaMuxer as an app's native code calls them (test/ndk_media_test.cpp), on test/video's MP4
+  # and WebM files.
   add_executable(winapk-ndk-media-test test/ndk_media_test.cpp host/native_media.cpp host/ndk_media_codec.cpp
+                 host/ndk_media_muxer.cpp host/webm_writer.cpp host/mp4_writer.cpp host/media_encode.cpp
                  host/video_decode.cpp ${WINAPK_SOFT_CODEC_SOURCES})
   target_include_directories(winapk-ndk-media-test PRIVATE host include "${WINAPK_JNI_INCLUDE}"
                              "${WINAPK_JNI_INCLUDE}/win32")
@@ -493,6 +496,15 @@ if(WINAPK_JNI_INCLUDE)
   target_link_libraries(winapk-ndk-media-test PRIVATE ${WINAPK_SOFT_CODEC_LIBS} ole32 mf mfplat mfreadwrite mfuuid
                         shlwapi)
   target_link_options(winapk-ndk-media-test PRIVATE -static)
+
+  # AMediaMuxer's own checks (test/ndk_muxer_test.cpp): no Windows call, so CI runs them on Linux
+  # too (test/soft_codecs/CMakeLists.txt).
+  add_executable(winapk-ndk-muxer-test test/ndk_muxer_test.cpp host/ndk_media_muxer.cpp host/native_media.cpp
+                 host/webm_writer.cpp host/mp4_writer.cpp host/webm_demux.cpp)
+  target_include_directories(winapk-ndk-muxer-test PRIVATE host include)
+  target_include_directories(winapk-ndk-muxer-test SYSTEM PRIVATE ${WINAPK_SOFT_CODEC_INCLUDES})
+  target_link_libraries(winapk-ndk-muxer-test PRIVATE winapk_mkvparser winapk_mkvmuxer)
+  target_link_options(winapk-ndk-muxer-test PRIVATE -static)
 
   # libcamera2ndk and AImageReader as an app's native code calls them (test/ndk_camera_test.cpp),
   # on a camera of the test's own: no webcam needed.
