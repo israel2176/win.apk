@@ -187,6 +187,26 @@ int run_exit_child(const wchar_t* how, std::string* out) {
     return static_cast<int>(code);
 }
 
+// Copies <dir>/<file> into a fresh directory under the temporary folder whose path passes MAX_PATH (made through
+// the "\\?\" form, which has no limit) and returns the copy's plain UTF-8 path, or "" if that failed.
+std::string deep_copy(const char* dir, const char* file) {
+    wchar_t temp[MAX_PATH];
+    const DWORD n = GetTempPathW(MAX_PATH, temp);
+    if (n == 0 || n >= MAX_PATH) return {};
+    std::wstring path(temp, n);
+    if (path.back() == L'\\') path.pop_back();
+    path += L"\\winapk-linker-long-" + std::to_wstring(GetCurrentProcessId());
+    CreateDirectoryW((L"\\\\?\\" + path).c_str(), nullptr);
+    while (path.size() < MAX_PATH + 40) {
+        path += L"\\lib-directory-with-a-long-name-0123456789";
+        if (!CreateDirectoryW((L"\\\\?\\" + path).c_str(), nullptr) && GetLastError() != ERROR_ALREADY_EXISTS) return {};
+    }
+    path += L"\\" + std::filesystem::u8path(file).wstring();
+    const std::wstring from = (std::filesystem::u8path(dir) / std::filesystem::u8path(file)).wstring();
+    if (!CopyFileW(from.c_str(), (L"\\\\?\\" + path).c_str(), FALSE)) return {};
+    return std::filesystem::path(path).u8string();
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -239,6 +259,23 @@ int main(int argc, char** argv) {
     check("an Android path is the library under the android root",
           loaded(linker, "/libwinapk_link_root.so") && !loaded(linker, "/libwinapk_link_none.so"));
     winapk::set_android_root("");
+
+    // A library past MAX_PATH (an app's lib/<abi> directory under a long user name or package): found, loaded and
+    // known again by its path, without Windows' long-path policy.
+    const std::string deep = deep_copy(argv[1], "libwinapk_link_plain.so");
+    check("a library under a path past MAX_PATH is copied there", !deep.empty());
+    if (!deep.empty()) {
+        error.clear();
+        void* distant = linker.open(deep.c_str(), winapk::GuestLinker::kRtldNow, &error);
+        check("dlopen of a library under a path past MAX_PATH", distant != nullptr, error);
+        if (distant) {
+            expect_eq("its code runs", call(linker, distant, "link_plain_strlen"), 3);
+            check("opening it again by that path returns the same handle",
+                  linker.open(deep.c_str(), 0, &error) == distant && linker.close(distant, &error) == 0);
+            linker.close(distant, &error);
+            check("closing it unloads it", !loaded(linker, deep.c_str()) && linker.images().size() == 3);
+        }
+    }
 
     check("RTLD_NOLOAD does not load the plugin", !loaded(linker, kPlugin));
     expect_eq("guest dlopen + dlsym", call(linker, root, "link_root_dlopen"), 81);

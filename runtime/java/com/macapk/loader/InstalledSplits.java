@@ -275,4 +275,65 @@ public final class InstalledSplits {
         }
         return sb.toString();
     }
+
+    // ---- Win.apk: the install tree by its Android name --------------------
+    //
+    // A device reports an installed APK as /data/app/~~<nonce>/<pkg>-<nonce>/
+    // base.apk, and native engines take a path that does not start with '/' for
+    // something else (Unity builds its data path from sourceDir). Win.apk
+    // installs into <android root>\data\app\..., which the host's path table
+    // maps "/data/app/..." to for native code (windows/src/bionic/paths.cpp)
+    // and for java.io and java.nio (the java.base overlay's WinApkPaths), so the
+    // Android name opens the same file everywhere an app can reach.
+
+    private static volatile String sDataAppRoot;  // canonical <android root>\data\app, "" when none
+
+    private static String dataAppRoot() {
+        String r = sDataAppRoot;
+        if (r != null) return r;
+        String root = System.getProperty("winapk.android.root");
+        r = "";
+        if (root != null && !root.isEmpty()) {
+            try {
+                r = new File(new File(new File(root), "data"), "app").getCanonicalPath();
+            } catch (java.io.IOException | RuntimeException e) {
+                r = "";
+            }
+        }
+        sDataAppRoot = r;
+        return r;
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> ANDROID_NAMES =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** The Android name ("/data/app/~~<nonce>/<pkg>-<nonce>/base.apk") of a
+     *  host file in the install tree; any other path, and any path on a host
+     *  without Android paths (no winapk.android.root), as it is. Canonical
+     *  forms are compared, so an 8.3 spelling of either side matches. */
+    public static String androidPath(String hostPath) {
+        if (hostPath == null || hostPath.isEmpty() || hostPath.startsWith("/")) return hostPath;
+        String root = dataAppRoot();
+        if (root.isEmpty()) return hostPath;
+        return ANDROID_NAMES.computeIfAbsent(hostPath, h -> {
+            try {
+                String f = new File(h).getCanonicalPath();
+                if (f.length() <= root.length() + 1 || !f.regionMatches(true, 0, root, 0, root.length())
+                        || (f.charAt(root.length()) != '\\' && f.charAt(root.length()) != '/')) {
+                    return h;
+                }
+                return "/data/app" + f.substring(root.length()).replace('\\', '/');
+            } catch (java.io.IOException | RuntimeException e) {
+                return h;
+            }
+        });
+    }
+
+    /** androidPath of each entry, in a new array; null stays null. */
+    public static String[] androidPaths(String[] hostPaths) {
+        if (hostPaths == null) return null;
+        String[] out = new String[hostPaths.length];
+        for (int i = 0; i < out.length; i++) out[i] = androidPath(hostPaths[i]);
+        return out;
+    }
 }

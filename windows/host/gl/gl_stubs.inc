@@ -531,6 +531,14 @@ extern "C" void GL_APIENTRY glBindFramebuffer(GLenum target, GLuint framebuffer)
     fn(target, framebuffer);
 }
 
+extern "C" void GL_APIENTRY glBindFramebufferOES(GLenum target, GLuint framebuffer) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLuint framebuffer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindFramebufferOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, framebuffer);
+}
+
 extern "C" void GL_APIENTRY glBindImageTexture(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format) {
     using Fn = void(GL_APIENTRY*)(GLuint unit, GLuint texture, GLint level, GLboolean layered, GLint layer, GLenum access, GLenum format);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindImageTexture", winapk::host::GlLib::Gles));
@@ -558,6 +566,14 @@ extern "C" void GL_APIENTRY glBindProgramPipelineEXT(GLuint pipeline) {
 extern "C" void GL_APIENTRY glBindRenderbuffer(GLenum target, GLuint renderbuffer) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint renderbuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindRenderbuffer", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, renderbuffer);
+}
+
+extern "C" void GL_APIENTRY glBindRenderbufferOES(GLenum target, GLuint renderbuffer) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLuint renderbuffer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glBindRenderbufferOES", winapk::host::GlLib::Gles));
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(target, renderbuffer);
@@ -894,6 +910,14 @@ extern "C" void GL_APIENTRY glBufferSubData(GLenum target, GLintptr offset, GLsi
 extern "C" GLenum GL_APIENTRY glCheckFramebufferStatus(GLenum target) {
     using Fn = GLenum(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCheckFramebufferStatus", winapk::host::GlLib::Gles));
+    if (!fn) return {};
+    winapk::host::GlTurn turn(true);
+    return fn(target);
+}
+
+extern "C" GLenum GL_APIENTRY glCheckFramebufferStatusOES(GLenum target) {
+    using Fn = GLenum(GL_APIENTRY*)(GLenum target);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCheckFramebufferStatusOES", winapk::host::GlLib::Gles));
     if (!fn) return {};
     winapk::host::GlTurn turn(true);
     return fn(target);
@@ -1475,6 +1499,14 @@ extern "C" void GL_APIENTRY glCullFace(GLenum mode) {
     fn(mode);
 }
 
+extern "C" void GL_APIENTRY glCurrentPaletteMatrixOES(GLuint matrixpaletteindex) {
+    using Fn = void(GL_APIENTRY*)(GLuint matrixpaletteindex);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glCurrentPaletteMatrixOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(matrixpaletteindex);
+}
+
 extern "C" void GL_APIENTRY glDebugMessageCallback(GLDEBUGPROC callback, const void *userParam) {
     using Fn = void(GL_APIENTRY*)(GLDEBUGPROC callback, const void *userParam);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDebugMessageCallback", winapk::host::GlLib::Gles));
@@ -1542,6 +1574,14 @@ extern "C" void GL_APIENTRY glDeleteFencesNV(GLsizei n, const GLuint *fences) {
 extern "C" void GL_APIENTRY glDeleteFramebuffers(GLsizei n, const GLuint *framebuffers) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *framebuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteFramebuffers", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(n, framebuffers);
+}
+
+extern "C" void GL_APIENTRY glDeleteFramebuffersOES(GLsizei n, const GLuint *framebuffers) {
+    using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *framebuffers);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteFramebuffersOES", winapk::host::GlLib::Gles));
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(n, framebuffers);
@@ -1622,6 +1662,14 @@ extern "C" void GL_APIENTRY glDeleteQueriesEXT(GLsizei n, const GLuint *ids) {
 extern "C" void GL_APIENTRY glDeleteRenderbuffers(GLsizei n, const GLuint *renderbuffers) {
     using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *renderbuffers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteRenderbuffers", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(n, renderbuffers);
+}
+
+extern "C" void GL_APIENTRY glDeleteRenderbuffersOES(GLsizei n, const GLuint *renderbuffers) {
+    using Fn = void(GL_APIENTRY*)(GLsizei n, const GLuint *renderbuffers);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDeleteRenderbuffersOES", winapk::host::GlLib::Gles));
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(n, renderbuffers);
@@ -2147,6 +2195,70 @@ extern "C" void GL_APIENTRY glDrawRangeElementsBaseVertexOES(GLenum mode, GLuint
     fn(mode, start, end, count, type, indices, basevertex);
 }
 
+extern "C" void GL_APIENTRY glDrawTexfOES(GLfloat x, GLfloat y, GLfloat z, GLfloat width, GLfloat height) {
+    using Fn = void(GL_APIENTRY*)(GLfloat x, GLfloat y, GLfloat z, GLfloat width, GLfloat height);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexfOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(x, y, z, width, height);
+}
+
+extern "C" void GL_APIENTRY glDrawTexfvOES(const GLfloat *coords) {
+    using Fn = void(GL_APIENTRY*)(const GLfloat *coords);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexfvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coords);
+}
+
+extern "C" void GL_APIENTRY glDrawTexiOES(GLint x, GLint y, GLint z, GLint width, GLint height) {
+    using Fn = void(GL_APIENTRY*)(GLint x, GLint y, GLint z, GLint width, GLint height);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexiOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(x, y, z, width, height);
+}
+
+extern "C" void GL_APIENTRY glDrawTexivOES(const GLint *coords) {
+    using Fn = void(GL_APIENTRY*)(const GLint *coords);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexivOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coords);
+}
+
+extern "C" void GL_APIENTRY glDrawTexsOES(GLshort x, GLshort y, GLshort z, GLshort width, GLshort height) {
+    using Fn = void(GL_APIENTRY*)(GLshort x, GLshort y, GLshort z, GLshort width, GLshort height);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexsOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(x, y, z, width, height);
+}
+
+extern "C" void GL_APIENTRY glDrawTexsvOES(const GLshort *coords) {
+    using Fn = void(GL_APIENTRY*)(const GLshort *coords);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexsvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coords);
+}
+
+extern "C" void GL_APIENTRY glDrawTexxOES(GLfixed x, GLfixed y, GLfixed z, GLfixed width, GLfixed height) {
+    using Fn = void(GL_APIENTRY*)(GLfixed x, GLfixed y, GLfixed z, GLfixed width, GLfixed height);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexxOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(x, y, z, width, height);
+}
+
+extern "C" void GL_APIENTRY glDrawTexxvOES(const GLfixed *coords) {
+    using Fn = void(GL_APIENTRY*)(const GLfixed *coords);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTexxvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coords);
+}
+
 extern "C" void GL_APIENTRY glDrawTransformFeedbackEXT(GLenum mode, GLuint id) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLuint id);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glDrawTransformFeedbackEXT", winapk::host::GlLib::Gles));
@@ -2643,6 +2755,14 @@ extern "C" void GL_APIENTRY glFramebufferRenderbuffer(GLenum target, GLenum atta
     fn(target, attachment, renderbuffertarget, renderbuffer);
 }
 
+extern "C" void GL_APIENTRY glFramebufferRenderbufferOES(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferRenderbufferOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, attachment, renderbuffertarget, renderbuffer);
+}
+
 extern "C" void GL_APIENTRY glFramebufferSampleLocationsfvNV(GLenum target, GLuint start, GLsizei count, const GLfloat *v) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLuint start, GLsizei count, const GLfloat *v);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferSampleLocationsfvNV", winapk::host::GlLib::Gles));
@@ -2697,6 +2817,14 @@ extern "C" void GL_APIENTRY glFramebufferTexture2DMultisampleIMG(GLenum target, 
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(target, attachment, textarget, texture, level, samples);
+}
+
+extern "C" void GL_APIENTRY glFramebufferTexture2DOES(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glFramebufferTexture2DOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, attachment, textarget, texture, level);
 }
 
 extern "C" void GL_APIENTRY glFramebufferTexture3DOES(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level, GLint zoffset) {
@@ -2811,6 +2939,14 @@ extern "C" void GL_APIENTRY glGenFramebuffers(GLsizei n, GLuint *framebuffers) {
     fn(n, framebuffers);
 }
 
+extern "C" void GL_APIENTRY glGenFramebuffersOES(GLsizei n, GLuint *framebuffers) {
+    using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *framebuffers);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenFramebuffersOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(n, framebuffers);
+}
+
 extern "C" GLuint GL_APIENTRY glGenPathsNV(GLsizei range) {
     using Fn = GLuint(GL_APIENTRY*)(GLsizei range);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenPathsNV", winapk::host::GlLib::Gles));
@@ -2867,6 +3003,14 @@ extern "C" void GL_APIENTRY glGenRenderbuffers(GLsizei n, GLuint *renderbuffers)
     fn(n, renderbuffers);
 }
 
+extern "C" void GL_APIENTRY glGenRenderbuffersOES(GLsizei n, GLuint *renderbuffers) {
+    using Fn = void(GL_APIENTRY*)(GLsizei n, GLuint *renderbuffers);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenRenderbuffersOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(n, renderbuffers);
+}
+
 extern "C" void GL_APIENTRY glGenSamplers(GLsizei count, GLuint *samplers) {
     using Fn = void(GL_APIENTRY*)(GLsizei count, GLuint *samplers);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenSamplers", winapk::host::GlLib::Gles));
@@ -2918,6 +3062,14 @@ extern "C" void GL_APIENTRY glGenVertexArraysOES(GLsizei n, GLuint *arrays) {
 extern "C" void GL_APIENTRY glGenerateMipmap(GLenum target) {
     using Fn = void(GL_APIENTRY*)(GLenum target);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenerateMipmap", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target);
+}
+
+extern "C" void GL_APIENTRY glGenerateMipmapOES(GLenum target) {
+    using Fn = void(GL_APIENTRY*)(GLenum target);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGenerateMipmapOES", winapk::host::GlLib::Gles));
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(target);
@@ -3230,6 +3382,14 @@ extern "C" void GL_APIENTRY glGetFragmentShadingRatesEXT(GLsizei samples, GLsize
 extern "C" void GL_APIENTRY glGetFramebufferAttachmentParameteriv(GLenum target, GLenum attachment, GLenum pname, GLint *params) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum pname, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferAttachmentParameteriv", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, attachment, pname, params);
+}
+
+extern "C" void GL_APIENTRY glGetFramebufferAttachmentParameterivOES(GLenum target, GLenum attachment, GLenum pname, GLint *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLenum attachment, GLenum pname, GLint *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetFramebufferAttachmentParameterivOES", winapk::host::GlLib::Gles));
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(target, attachment, pname, params);
@@ -4003,6 +4163,14 @@ extern "C" void GL_APIENTRY glGetRenderbufferParameteriv(GLenum target, GLenum p
     fn(target, pname, params);
 }
 
+extern "C" void GL_APIENTRY glGetRenderbufferParameterivOES(GLenum target, GLenum pname, GLint *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLint *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetRenderbufferParameterivOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, pname, params);
+}
+
 extern "C" void GL_APIENTRY glGetRenderbufferParameterivRobustANGLE(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params) {
     using Fn = void(GL_APIENTRY*)(GLenum target, GLenum pname, GLsizei bufSize, GLsizei *length, GLint *params);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetRenderbufferParameterivRobustANGLE", winapk::host::GlLib::Gles));
@@ -4233,6 +4401,30 @@ extern "C" void GL_APIENTRY glGetTexEnvxv(GLenum target, GLenum pname, GLfixed *
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(target, pname, params);
+}
+
+extern "C" void GL_APIENTRY glGetTexGenfvOES(GLenum coord, GLenum pname, GLfloat *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, GLfloat *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexGenfvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, params);
+}
+
+extern "C" void GL_APIENTRY glGetTexGenivOES(GLenum coord, GLenum pname, GLint *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, GLint *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexGenivOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, params);
+}
+
+extern "C" void GL_APIENTRY glGetTexGenxvOES(GLenum coord, GLenum pname, GLfixed *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, GLfixed *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glGetTexGenxvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, params);
 }
 
 extern "C" void GL_APIENTRY glGetTexImageANGLE(GLenum target, GLint level, GLenum format, GLenum type, void *pixels) {
@@ -4891,6 +5083,14 @@ extern "C" GLboolean GL_APIENTRY glIsFramebuffer(GLuint framebuffer) {
     return fn(framebuffer);
 }
 
+extern "C" GLboolean GL_APIENTRY glIsFramebufferOES(GLuint framebuffer) {
+    using Fn = GLboolean(GL_APIENTRY*)(GLuint framebuffer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsFramebufferOES", winapk::host::GlLib::Gles));
+    if (!fn) return {};
+    winapk::host::GlTurn turn(true);
+    return fn(framebuffer);
+}
+
 extern "C" GLboolean GL_APIENTRY glIsImageHandleResidentNV(GLuint64 handle) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint64 handle);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsImageHandleResidentNV", winapk::host::GlLib::Gles));
@@ -4974,6 +5174,14 @@ extern "C" GLboolean GL_APIENTRY glIsQueryEXT(GLuint id) {
 extern "C" GLboolean GL_APIENTRY glIsRenderbuffer(GLuint renderbuffer) {
     using Fn = GLboolean(GL_APIENTRY*)(GLuint renderbuffer);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsRenderbuffer", winapk::host::GlLib::Gles));
+    if (!fn) return {};
+    winapk::host::GlTurn turn(true);
+    return fn(renderbuffer);
+}
+
+extern "C" GLboolean GL_APIENTRY glIsRenderbufferOES(GLuint renderbuffer) {
+    using Fn = GLboolean(GL_APIENTRY*)(GLuint renderbuffer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glIsRenderbufferOES", winapk::host::GlLib::Gles));
     if (!fn) return {};
     winapk::host::GlTurn turn(true);
     return fn(renderbuffer);
@@ -5179,6 +5387,14 @@ extern "C" void GL_APIENTRY glLoadMatrixx(const GLfixed *m) {
     fn(m);
 }
 
+extern "C" void GL_APIENTRY glLoadPaletteFromModelViewMatrixOES(void) {
+    using Fn = void(GL_APIENTRY*)(void);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLoadPaletteFromModelViewMatrixOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn();
+}
+
 extern "C" void GL_APIENTRY glLogicOp(GLenum opcode) {
     using Fn = void(GL_APIENTRY*)(GLenum opcode);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glLogicOp", winapk::host::GlLib::Gles));
@@ -5297,6 +5513,14 @@ extern "C" void GL_APIENTRY glMatrixFrustumEXT(GLenum mode, GLdouble left, GLdou
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(mode, left, right, bottom, top, zNear, zFar);
+}
+
+extern "C" void GL_APIENTRY glMatrixIndexPointerOES(GLint size, GLenum type, GLsizei stride, const void *pointer) {
+    using Fn = void(GL_APIENTRY*)(GLint size, GLenum type, GLsizei stride, const void *pointer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glMatrixIndexPointerOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(size, type, stride, pointer);
 }
 
 extern "C" void GL_APIENTRY glMatrixLoad3x2fNV(GLenum matrixMode, const GLfloat *m) {
@@ -6963,6 +7187,14 @@ extern "C" void GL_APIENTRY glQueryCounterEXT(GLuint id, GLenum target) {
     fn(id, target);
 }
 
+extern "C" GLbitfield GL_APIENTRY glQueryMatrixxOES(GLfixed *mantissa, GLint *exponent) {
+    using Fn = GLbitfield(GL_APIENTRY*)(GLfixed *mantissa, GLint *exponent);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glQueryMatrixxOES", winapk::host::GlLib::Gles));
+    if (!fn) return {};
+    winapk::host::GlTurn turn(true);
+    return fn(mantissa, exponent);
+}
+
 extern "C" void GL_APIENTRY glRasterSamplesEXT(GLuint samples, GLboolean fixedsamplelocations) {
     using Fn = void(GL_APIENTRY*)(GLuint samples, GLboolean fixedsamplelocations);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRasterSamplesEXT", winapk::host::GlLib::Gles));
@@ -7129,6 +7361,14 @@ extern "C" void GL_APIENTRY glRenderbufferStorageMultisampleNV(GLenum target, GL
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(target, samples, internalformat, width, height);
+}
+
+extern "C" void GL_APIENTRY glRenderbufferStorageOES(GLenum target, GLenum internalformat, GLsizei width, GLsizei height) {
+    using Fn = void(GL_APIENTRY*)(GLenum target, GLenum internalformat, GLsizei width, GLsizei height);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glRenderbufferStorageOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(target, internalformat, width, height);
 }
 
 extern "C" void GL_APIENTRY glRequestExtensionANGLE(const GLchar *name) {
@@ -7817,6 +8057,54 @@ extern "C" void GL_APIENTRY glTexEstimateMotionRegionsQCOM(GLuint ref, GLuint ta
     if (!fn) return;
     winapk::host::GlTurn turn(true);
     fn(ref, target, output, mask);
+}
+
+extern "C" void GL_APIENTRY glTexGenfOES(GLenum coord, GLenum pname, GLfloat param) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, GLfloat param);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexGenfOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, param);
+}
+
+extern "C" void GL_APIENTRY glTexGenfvOES(GLenum coord, GLenum pname, const GLfloat *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, const GLfloat *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexGenfvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, params);
+}
+
+extern "C" void GL_APIENTRY glTexGeniOES(GLenum coord, GLenum pname, GLint param) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, GLint param);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexGeniOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, param);
+}
+
+extern "C" void GL_APIENTRY glTexGenivOES(GLenum coord, GLenum pname, const GLint *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, const GLint *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexGenivOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, params);
+}
+
+extern "C" void GL_APIENTRY glTexGenxOES(GLenum coord, GLenum pname, GLfixed param) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, GLfixed param);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexGenxOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, param);
+}
+
+extern "C" void GL_APIENTRY glTexGenxvOES(GLenum coord, GLenum pname, const GLfixed *params) {
+    using Fn = void(GL_APIENTRY*)(GLenum coord, GLenum pname, const GLfixed *params);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glTexGenxvOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(coord, pname, params);
 }
 
 extern "C" void GL_APIENTRY glTexImage2D(GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, GLint border, GLenum format, GLenum type, const void *pixels) {
@@ -9179,6 +9467,14 @@ extern "C" void GL_APIENTRY glWeightPathsNV(GLuint resultPath, GLsizei numPaths,
     fn(resultPath, numPaths, paths, weights);
 }
 
+extern "C" void GL_APIENTRY glWeightPointerOES(GLint size, GLenum type, GLsizei stride, const void *pointer) {
+    using Fn = void(GL_APIENTRY*)(GLint size, GLenum type, GLsizei stride, const void *pointer);
+    static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWeightPointerOES", winapk::host::GlLib::Gles));
+    if (!fn) return;
+    winapk::host::GlTurn turn(true);
+    fn(size, type, stride, pointer);
+}
+
 extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, const GLint *box) {
     using Fn = void(GL_APIENTRY*)(GLenum mode, GLsizei count, const GLint *box);
     static const Fn fn = reinterpret_cast<Fn>(winapk::host::gl_proc("glWindowRectanglesEXT", winapk::host::GlLib::Gles));
@@ -9256,10 +9552,12 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glBindFragDataLocationEXT", reinterpret_cast<void*>(&glBindFragDataLocationEXT)}, \
     {"glBindFragDataLocationIndexedEXT", reinterpret_cast<void*>(&glBindFragDataLocationIndexedEXT)}, \
     {"glBindFramebuffer", reinterpret_cast<void*>(&glBindFramebuffer)}, \
+    {"glBindFramebufferOES", reinterpret_cast<void*>(&glBindFramebufferOES)}, \
     {"glBindImageTexture", reinterpret_cast<void*>(&glBindImageTexture)}, \
     {"glBindProgramPipeline", reinterpret_cast<void*>(&glBindProgramPipeline)}, \
     {"glBindProgramPipelineEXT", reinterpret_cast<void*>(&glBindProgramPipelineEXT)}, \
     {"glBindRenderbuffer", reinterpret_cast<void*>(&glBindRenderbuffer)}, \
+    {"glBindRenderbufferOES", reinterpret_cast<void*>(&glBindRenderbufferOES)}, \
     {"glBindSampler", reinterpret_cast<void*>(&glBindSampler)}, \
     {"glBindShadingRateImageNV", reinterpret_cast<void*>(&glBindShadingRateImageNV)}, \
     {"glBindTexture", reinterpret_cast<void*>(&glBindTexture)}, \
@@ -9302,6 +9600,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glBufferStorageMemEXT", reinterpret_cast<void*>(&glBufferStorageMemEXT)}, \
     {"glBufferSubData", reinterpret_cast<void*>(&glBufferSubData)}, \
     {"glCheckFramebufferStatus", reinterpret_cast<void*>(&glCheckFramebufferStatus)}, \
+    {"glCheckFramebufferStatusOES", reinterpret_cast<void*>(&glCheckFramebufferStatusOES)}, \
     {"glClear", reinterpret_cast<void*>(&glClear)}, \
     {"glClearBufferfi", reinterpret_cast<void*>(&glClearBufferfi)}, \
     {"glClearBufferfv", reinterpret_cast<void*>(&glClearBufferfv)}, \
@@ -9374,6 +9673,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glCreateShaderProgramv", reinterpret_cast<void*>(&glCreateShaderProgramv)}, \
     {"glCreateShaderProgramvEXT", reinterpret_cast<void*>(&glCreateShaderProgramvEXT)}, \
     {"glCullFace", reinterpret_cast<void*>(&glCullFace)}, \
+    {"glCurrentPaletteMatrixOES", reinterpret_cast<void*>(&glCurrentPaletteMatrixOES)}, \
     {"glDebugMessageCallback", reinterpret_cast<void*>(&glDebugMessageCallback)}, \
     {"glDebugMessageCallbackKHR", reinterpret_cast<void*>(&glDebugMessageCallbackKHR)}, \
     {"glDebugMessageControl", reinterpret_cast<void*>(&glDebugMessageControl)}, \
@@ -9383,6 +9683,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glDeleteBuffers", reinterpret_cast<void*>(&glDeleteBuffers)}, \
     {"glDeleteFencesNV", reinterpret_cast<void*>(&glDeleteFencesNV)}, \
     {"glDeleteFramebuffers", reinterpret_cast<void*>(&glDeleteFramebuffers)}, \
+    {"glDeleteFramebuffersOES", reinterpret_cast<void*>(&glDeleteFramebuffersOES)}, \
     {"glDeleteMemoryObjectsEXT", reinterpret_cast<void*>(&glDeleteMemoryObjectsEXT)}, \
     {"glDeletePathsNV", reinterpret_cast<void*>(&glDeletePathsNV)}, \
     {"glDeletePerfMonitorsAMD", reinterpret_cast<void*>(&glDeletePerfMonitorsAMD)}, \
@@ -9393,6 +9694,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glDeleteQueries", reinterpret_cast<void*>(&glDeleteQueries)}, \
     {"glDeleteQueriesEXT", reinterpret_cast<void*>(&glDeleteQueriesEXT)}, \
     {"glDeleteRenderbuffers", reinterpret_cast<void*>(&glDeleteRenderbuffers)}, \
+    {"glDeleteRenderbuffersOES", reinterpret_cast<void*>(&glDeleteRenderbuffersOES)}, \
     {"glDeleteSamplers", reinterpret_cast<void*>(&glDeleteSamplers)}, \
     {"glDeleteSemaphoresEXT", reinterpret_cast<void*>(&glDeleteSemaphoresEXT)}, \
     {"glDeleteShader", reinterpret_cast<void*>(&glDeleteShader)}, \
@@ -9458,6 +9760,14 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glDrawRangeElementsBaseVertex", reinterpret_cast<void*>(&glDrawRangeElementsBaseVertex)}, \
     {"glDrawRangeElementsBaseVertexEXT", reinterpret_cast<void*>(&glDrawRangeElementsBaseVertexEXT)}, \
     {"glDrawRangeElementsBaseVertexOES", reinterpret_cast<void*>(&glDrawRangeElementsBaseVertexOES)}, \
+    {"glDrawTexfOES", reinterpret_cast<void*>(&glDrawTexfOES)}, \
+    {"glDrawTexfvOES", reinterpret_cast<void*>(&glDrawTexfvOES)}, \
+    {"glDrawTexiOES", reinterpret_cast<void*>(&glDrawTexiOES)}, \
+    {"glDrawTexivOES", reinterpret_cast<void*>(&glDrawTexivOES)}, \
+    {"glDrawTexsOES", reinterpret_cast<void*>(&glDrawTexsOES)}, \
+    {"glDrawTexsvOES", reinterpret_cast<void*>(&glDrawTexsvOES)}, \
+    {"glDrawTexxOES", reinterpret_cast<void*>(&glDrawTexxOES)}, \
+    {"glDrawTexxvOES", reinterpret_cast<void*>(&glDrawTexxvOES)}, \
     {"glDrawTransformFeedbackEXT", reinterpret_cast<void*>(&glDrawTransformFeedbackEXT)}, \
     {"glDrawTransformFeedbackInstancedEXT", reinterpret_cast<void*>(&glDrawTransformFeedbackInstancedEXT)}, \
     {"glDrawVkImageNV", reinterpret_cast<void*>(&glDrawVkImageNV)}, \
@@ -9520,6 +9830,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glFramebufferPixelLocalStorageRestoreANGLE", reinterpret_cast<void*>(&glFramebufferPixelLocalStorageRestoreANGLE)}, \
     {"glFramebufferPixelLocalStorageSizeEXT", reinterpret_cast<void*>(&glFramebufferPixelLocalStorageSizeEXT)}, \
     {"glFramebufferRenderbuffer", reinterpret_cast<void*>(&glFramebufferRenderbuffer)}, \
+    {"glFramebufferRenderbufferOES", reinterpret_cast<void*>(&glFramebufferRenderbufferOES)}, \
     {"glFramebufferSampleLocationsfvNV", reinterpret_cast<void*>(&glFramebufferSampleLocationsfvNV)}, \
     {"glFramebufferShadingRateEXT", reinterpret_cast<void*>(&glFramebufferShadingRateEXT)}, \
     {"glFramebufferTexture", reinterpret_cast<void*>(&glFramebufferTexture)}, \
@@ -9527,6 +9838,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glFramebufferTexture2DDownsampleIMG", reinterpret_cast<void*>(&glFramebufferTexture2DDownsampleIMG)}, \
     {"glFramebufferTexture2DMultisampleEXT", reinterpret_cast<void*>(&glFramebufferTexture2DMultisampleEXT)}, \
     {"glFramebufferTexture2DMultisampleIMG", reinterpret_cast<void*>(&glFramebufferTexture2DMultisampleIMG)}, \
+    {"glFramebufferTexture2DOES", reinterpret_cast<void*>(&glFramebufferTexture2DOES)}, \
     {"glFramebufferTexture3DOES", reinterpret_cast<void*>(&glFramebufferTexture3DOES)}, \
     {"glFramebufferTextureEXT", reinterpret_cast<void*>(&glFramebufferTextureEXT)}, \
     {"glFramebufferTextureLayer", reinterpret_cast<void*>(&glFramebufferTextureLayer)}, \
@@ -9541,6 +9853,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glGenBuffers", reinterpret_cast<void*>(&glGenBuffers)}, \
     {"glGenFencesNV", reinterpret_cast<void*>(&glGenFencesNV)}, \
     {"glGenFramebuffers", reinterpret_cast<void*>(&glGenFramebuffers)}, \
+    {"glGenFramebuffersOES", reinterpret_cast<void*>(&glGenFramebuffersOES)}, \
     {"glGenPathsNV", reinterpret_cast<void*>(&glGenPathsNV)}, \
     {"glGenPerfMonitorsAMD", reinterpret_cast<void*>(&glGenPerfMonitorsAMD)}, \
     {"glGenProgramPipelines", reinterpret_cast<void*>(&glGenProgramPipelines)}, \
@@ -9548,6 +9861,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glGenQueries", reinterpret_cast<void*>(&glGenQueries)}, \
     {"glGenQueriesEXT", reinterpret_cast<void*>(&glGenQueriesEXT)}, \
     {"glGenRenderbuffers", reinterpret_cast<void*>(&glGenRenderbuffers)}, \
+    {"glGenRenderbuffersOES", reinterpret_cast<void*>(&glGenRenderbuffersOES)}, \
     {"glGenSamplers", reinterpret_cast<void*>(&glGenSamplers)}, \
     {"glGenSemaphoresEXT", reinterpret_cast<void*>(&glGenSemaphoresEXT)}, \
     {"glGenTextures", reinterpret_cast<void*>(&glGenTextures)}, \
@@ -9555,6 +9869,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glGenVertexArrays", reinterpret_cast<void*>(&glGenVertexArrays)}, \
     {"glGenVertexArraysOES", reinterpret_cast<void*>(&glGenVertexArraysOES)}, \
     {"glGenerateMipmap", reinterpret_cast<void*>(&glGenerateMipmap)}, \
+    {"glGenerateMipmapOES", reinterpret_cast<void*>(&glGenerateMipmapOES)}, \
     {"glGetActiveAttrib", reinterpret_cast<void*>(&glGetActiveAttrib)}, \
     {"glGetActiveUniform", reinterpret_cast<void*>(&glGetActiveUniform)}, \
     {"glGetActiveUniformBlockName", reinterpret_cast<void*>(&glGetActiveUniformBlockName)}, \
@@ -9594,6 +9909,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glGetFragDataLocation", reinterpret_cast<void*>(&glGetFragDataLocation)}, \
     {"glGetFragmentShadingRatesEXT", reinterpret_cast<void*>(&glGetFragmentShadingRatesEXT)}, \
     {"glGetFramebufferAttachmentParameteriv", reinterpret_cast<void*>(&glGetFramebufferAttachmentParameteriv)}, \
+    {"glGetFramebufferAttachmentParameterivOES", reinterpret_cast<void*>(&glGetFramebufferAttachmentParameterivOES)}, \
     {"glGetFramebufferAttachmentParameterivRobustANGLE", reinterpret_cast<void*>(&glGetFramebufferAttachmentParameterivRobustANGLE)}, \
     {"glGetFramebufferParameteriv", reinterpret_cast<void*>(&glGetFramebufferParameteriv)}, \
     {"glGetFramebufferParameterivMESA", reinterpret_cast<void*>(&glGetFramebufferParameterivMESA)}, \
@@ -9690,6 +10006,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glGetQueryivRobustANGLE", reinterpret_cast<void*>(&glGetQueryivRobustANGLE)}, \
     {"glGetRenderbufferImageANGLE", reinterpret_cast<void*>(&glGetRenderbufferImageANGLE)}, \
     {"glGetRenderbufferParameteriv", reinterpret_cast<void*>(&glGetRenderbufferParameteriv)}, \
+    {"glGetRenderbufferParameterivOES", reinterpret_cast<void*>(&glGetRenderbufferParameterivOES)}, \
     {"glGetRenderbufferParameterivRobustANGLE", reinterpret_cast<void*>(&glGetRenderbufferParameterivRobustANGLE)}, \
     {"glGetSamplerParameterIiv", reinterpret_cast<void*>(&glGetSamplerParameterIiv)}, \
     {"glGetSamplerParameterIivEXT", reinterpret_cast<void*>(&glGetSamplerParameterIivEXT)}, \
@@ -9719,6 +10036,9 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glGetTexEnvfv", reinterpret_cast<void*>(&glGetTexEnvfv)}, \
     {"glGetTexEnviv", reinterpret_cast<void*>(&glGetTexEnviv)}, \
     {"glGetTexEnvxv", reinterpret_cast<void*>(&glGetTexEnvxv)}, \
+    {"glGetTexGenfvOES", reinterpret_cast<void*>(&glGetTexGenfvOES)}, \
+    {"glGetTexGenivOES", reinterpret_cast<void*>(&glGetTexGenivOES)}, \
+    {"glGetTexGenxvOES", reinterpret_cast<void*>(&glGetTexGenxvOES)}, \
     {"glGetTexImageANGLE", reinterpret_cast<void*>(&glGetTexImageANGLE)}, \
     {"glGetTexLevelParameterfv", reinterpret_cast<void*>(&glGetTexLevelParameterfv)}, \
     {"glGetTexLevelParameterfvANGLE", reinterpret_cast<void*>(&glGetTexLevelParameterfvANGLE)}, \
@@ -9801,6 +10121,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glIsEnablediOES", reinterpret_cast<void*>(&glIsEnablediOES)}, \
     {"glIsFenceNV", reinterpret_cast<void*>(&glIsFenceNV)}, \
     {"glIsFramebuffer", reinterpret_cast<void*>(&glIsFramebuffer)}, \
+    {"glIsFramebufferOES", reinterpret_cast<void*>(&glIsFramebufferOES)}, \
     {"glIsImageHandleResidentNV", reinterpret_cast<void*>(&glIsImageHandleResidentNV)}, \
     {"glIsMemoryObjectEXT", reinterpret_cast<void*>(&glIsMemoryObjectEXT)}, \
     {"glIsPathNV", reinterpret_cast<void*>(&glIsPathNV)}, \
@@ -9812,6 +10133,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glIsQuery", reinterpret_cast<void*>(&glIsQuery)}, \
     {"glIsQueryEXT", reinterpret_cast<void*>(&glIsQueryEXT)}, \
     {"glIsRenderbuffer", reinterpret_cast<void*>(&glIsRenderbuffer)}, \
+    {"glIsRenderbufferOES", reinterpret_cast<void*>(&glIsRenderbufferOES)}, \
     {"glIsSampler", reinterpret_cast<void*>(&glIsSampler)}, \
     {"glIsSemaphoreEXT", reinterpret_cast<void*>(&glIsSemaphoreEXT)}, \
     {"glIsShader", reinterpret_cast<void*>(&glIsShader)}, \
@@ -9837,6 +10159,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glLoadIdentity", reinterpret_cast<void*>(&glLoadIdentity)}, \
     {"glLoadMatrixf", reinterpret_cast<void*>(&glLoadMatrixf)}, \
     {"glLoadMatrixx", reinterpret_cast<void*>(&glLoadMatrixx)}, \
+    {"glLoadPaletteFromModelViewMatrixOES", reinterpret_cast<void*>(&glLoadPaletteFromModelViewMatrixOES)}, \
     {"glLogicOp", reinterpret_cast<void*>(&glLogicOp)}, \
     {"glLogicOpANGLE", reinterpret_cast<void*>(&glLogicOpANGLE)}, \
     {"glLoseContextCHROMIUM", reinterpret_cast<void*>(&glLoseContextCHROMIUM)}, \
@@ -9852,6 +10175,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glMaterialx", reinterpret_cast<void*>(&glMaterialx)}, \
     {"glMaterialxv", reinterpret_cast<void*>(&glMaterialxv)}, \
     {"glMatrixFrustumEXT", reinterpret_cast<void*>(&glMatrixFrustumEXT)}, \
+    {"glMatrixIndexPointerOES", reinterpret_cast<void*>(&glMatrixIndexPointerOES)}, \
     {"glMatrixLoad3x2fNV", reinterpret_cast<void*>(&glMatrixLoad3x2fNV)}, \
     {"glMatrixLoad3x3fNV", reinterpret_cast<void*>(&glMatrixLoad3x3fNV)}, \
     {"glMatrixLoadIdentityEXT", reinterpret_cast<void*>(&glMatrixLoadIdentityEXT)}, \
@@ -10060,6 +10384,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glPushGroupMarkerEXT", reinterpret_cast<void*>(&glPushGroupMarkerEXT)}, \
     {"glPushMatrix", reinterpret_cast<void*>(&glPushMatrix)}, \
     {"glQueryCounterEXT", reinterpret_cast<void*>(&glQueryCounterEXT)}, \
+    {"glQueryMatrixxOES", reinterpret_cast<void*>(&glQueryMatrixxOES)}, \
     {"glRasterSamplesEXT", reinterpret_cast<void*>(&glRasterSamplesEXT)}, \
     {"glReadBuffer", reinterpret_cast<void*>(&glReadBuffer)}, \
     {"glReadBufferIndexedEXT", reinterpret_cast<void*>(&glReadBufferIndexedEXT)}, \
@@ -10081,6 +10406,7 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glRenderbufferStorageMultisampleEXT", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleEXT)}, \
     {"glRenderbufferStorageMultisampleIMG", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleIMG)}, \
     {"glRenderbufferStorageMultisampleNV", reinterpret_cast<void*>(&glRenderbufferStorageMultisampleNV)}, \
+    {"glRenderbufferStorageOES", reinterpret_cast<void*>(&glRenderbufferStorageOES)}, \
     {"glRequestExtensionANGLE", reinterpret_cast<void*>(&glRequestExtensionANGLE)}, \
     {"glResetMemoryObjectParameterNV", reinterpret_cast<void*>(&glResetMemoryObjectParameterNV)}, \
     {"glResolveDepthValuesNV", reinterpret_cast<void*>(&glResolveDepthValuesNV)}, \
@@ -10167,6 +10493,12 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glTexEnvxv", reinterpret_cast<void*>(&glTexEnvxv)}, \
     {"glTexEstimateMotionQCOM", reinterpret_cast<void*>(&glTexEstimateMotionQCOM)}, \
     {"glTexEstimateMotionRegionsQCOM", reinterpret_cast<void*>(&glTexEstimateMotionRegionsQCOM)}, \
+    {"glTexGenfOES", reinterpret_cast<void*>(&glTexGenfOES)}, \
+    {"glTexGenfvOES", reinterpret_cast<void*>(&glTexGenfvOES)}, \
+    {"glTexGeniOES", reinterpret_cast<void*>(&glTexGeniOES)}, \
+    {"glTexGenivOES", reinterpret_cast<void*>(&glTexGenivOES)}, \
+    {"glTexGenxOES", reinterpret_cast<void*>(&glTexGenxOES)}, \
+    {"glTexGenxvOES", reinterpret_cast<void*>(&glTexGenxvOES)}, \
     {"glTexImage2D", reinterpret_cast<void*>(&glTexImage2D)}, \
     {"glTexImage2DExternalANGLE", reinterpret_cast<void*>(&glTexImage2DExternalANGLE)}, \
     {"glTexImage2DRobustANGLE", reinterpret_cast<void*>(&glTexImage2DRobustANGLE)}, \
@@ -10337,5 +10669,6 @@ extern "C" void GL_APIENTRY glWindowRectanglesEXT(GLenum mode, GLsizei count, co
     {"glWaitSyncAPPLE", reinterpret_cast<void*>(&glWaitSyncAPPLE)}, \
     {"glWaitVkSemaphoreNV", reinterpret_cast<void*>(&glWaitVkSemaphoreNV)}, \
     {"glWeightPathsNV", reinterpret_cast<void*>(&glWeightPathsNV)}, \
+    {"glWeightPointerOES", reinterpret_cast<void*>(&glWeightPointerOES)}, \
     {"glWindowRectanglesEXT", reinterpret_cast<void*>(&glWindowRectanglesEXT)}, \
 
