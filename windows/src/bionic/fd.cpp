@@ -72,10 +72,23 @@ std::unordered_map<int, std::shared_ptr<FdObject>> g_table;
 std::atomic<uint32_t> g_generation{0};
 
 // Waits until fd_notify() is called or `ms` pass (INFINITE allowed), whichever
-// comes first, given the generation the caller saw before checking.
-void wait_for_change(uint32_t seen, DWORD ms) {
+// comes first, given the generation the caller saw before checking. A signal
+// sent to the thread meanwhile ends the wait too; its handler runs here, and the
+// result says what that means for the call: a blocking read or write goes on
+// (SA_RESTART) or fails with EINTR, poll and its kind fail with EINTR.
+WaitEnd wait_for_change(uint32_t seen, DWORD ms) {
     uint32_t expected = seen;
-    WaitOnAddress(&g_generation, &expected, sizeof(expected), ms);
+    {
+        SignalWaitScope scope(&g_generation, &fd_notify);
+        if (!scope.posted()) WaitOnAddress(&g_generation, &expected, sizeof(expected), ms);
+    }
+    return signal_take_posted();
+}
+// A blocking read's or write's wait: false when a signal interrupted it (EINTR is set).
+bool wait_restartable(uint32_t seen, DWORD ms) {
+    if (wait_for_change(seen, ms) != WaitEnd::kInterrupted) return true;
+    *guest_errno() = kEINTR;
+    return false;
 }
 
 uint64_t now_ms() { return GetTickCount64(); }
@@ -119,7 +132,7 @@ public:
                 *guest_errno() = kEAGAIN;
                 return -1;
             }
-            wait_for_change(seen, INFINITE);
+            if (!wait_restartable(seen, INFINITE)) return -1;
         }
     }
     short ready(short events) override {
@@ -181,7 +194,10 @@ public:
                 *guest_errno() = kEAGAIN;
                 return -1;
             }
-            wait_for_change(seen, INFINITE);
+            if (!wait_restartable(seen, INFINITE)) {
+                if (done) break;
+                return -1;
+            }
         }
         return static_cast<int64_t>(done);
     }
@@ -244,7 +260,7 @@ public:
                 if (b_->writers == 0) return 0;  // end of file
             }
             if (nonblocking) return *guest_errno() = kEAGAIN, -1;
-            wait_for_change(seen, INFINITE);
+            if (!wait_restartable(seen, INFINITE)) return -1;
         }
     }
     int64_t write(const void* buf, size_t n) override {
@@ -273,7 +289,10 @@ public:
                 if (done) break;
                 return *guest_errno() = kEAGAIN, -1;
             }
-            wait_for_change(seen, INFINITE);
+            if (!wait_restartable(seen, INFINITE)) {
+                if (done) break;
+                return -1;
+            }
         }
         return static_cast<int64_t>(done);
     }
@@ -330,7 +349,7 @@ public:
                 *guest_errno() = kEAGAIN;
                 return -1;
             }
-            wait_for_change(seen, INFINITE);
+            if (!wait_restartable(seen, INFINITE)) return -1;
         }
     }
     int64_t write(const void* buf, size_t n) override {
@@ -414,7 +433,9 @@ public:
                 *guest_errno() = kEAGAIN;
                 return -1;
             }
-            wait_for_change(seen, wait_ns < 0 ? INFINITE : static_cast<DWORD>(wait_ns / 1000000 + 1));
+            if (!wait_restartable(seen, wait_ns < 0 ? INFINITE : static_cast<DWORD>(wait_ns / 1000000 + 1))) {
+                return -1;
+            }
         }
     }
     short ready(short events) override {
@@ -643,11 +664,20 @@ int wait_ready(int timeout_ms, Check check_all) {
         if (plan.timer_ms >= 0) wait = std::min<uint64_t>(wait, static_cast<uint64_t>(plan.timer_ms));
         if (plan.spin) wait = std::min<uint64_t>(wait, 5);
         if (plan.sockets.empty()) {
-            wait_for_change(seen, static_cast<DWORD>(wait));
+            if (wait_for_change(seen, static_cast<DWORD>(wait)) != WaitEnd::kNone) return *guest_errno() = kEINTR, -1;
             continue;
         }
-        const Slept slept = woke_for_nothing < 3 ? sleep_on_sockets(&plan, seen, static_cast<DWORD>(wait)) : kNoSleep;
-        if (slept == kNoSleep) wait_for_change(seen, static_cast<DWORD>(std::min<uint64_t>(wait, 5)));
+        Slept slept = kNoSleep;
+        if (woke_for_nothing < 3) {
+            SignalWaitScope scope(&g_generation, &fd_notify);  // fd_notify wakes WSAPoll's sleepers
+            if (!scope.posted()) slept = sleep_on_sockets(&plan, seen, static_cast<DWORD>(wait));
+            else slept = kSlept;
+        }
+        if (signal_take_posted() != WaitEnd::kNone) return *guest_errno() = kEINTR, -1;
+        if (slept == kNoSleep && wait_for_change(seen, static_cast<DWORD>(std::min<uint64_t>(wait, 5))) !=
+                                     WaitEnd::kNone) {
+            return *guest_errno() = kEINTR, -1;
+        }
         if (slept == kSocketWoke) ++woke_for_nothing;
         if (slept == kSlept) woke_for_nothing = 0;
     }

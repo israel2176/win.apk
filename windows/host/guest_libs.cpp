@@ -30,6 +30,7 @@
 #include "native_sensor.h"
 #include "native_opensles.h"
 #include "native_window.h"
+#include "vk/guest_vk.h"
 #include "stub_hits.h"
 
 namespace {
@@ -344,6 +345,7 @@ jstring JNICALL link_only(JNIEnv* env, jclass, jstring path) {
 void* resolve_system(const char* name) {
     if (void* p = winapk::mini_bionic_resolve(name)) return p;
     if (void* p = winapk::host::guest_gl_resolve(name)) return p;
+    if (void* p = winapk::host::guest_vk_resolve(name)) return p;
     if (void* p = winapk::host::native_window_resolve(name)) return p;
     if (void* p = winapk::host::native_asset_resolve(name)) return p;
     if (void* p = winapk::host::native_activity_resolve(name)) return p;
