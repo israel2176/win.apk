@@ -199,7 +199,7 @@ jobs:
           cmake --build "$RUNNER_TEMP/codecs"
       - name: Run winapk-soft-codecs-test
         run: '"$RUNNER_TEMP/codecs/winapk-soft-codecs-test" windows/test/video'
-      - name: Build the NDK muxer test (clang: System V functions)
+      - name: Build the NDK muxer test (clang, for its System V functions)
         run: |
           CC=clang CXX=clang++ cmake -S windows/test/soft_codecs -B "$RUNNER_TEMP/muxer" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release -DWINAPK_SANITIZE=ON
