@@ -24,6 +24,11 @@
 //   WINAPK_LINK_PACKED     libwinapk_link_packed.so      needs libc.so; DT_GNU_HASH
 //                          libwinapk_link_packed_sysv.so needs libc.so; DT_HASH, as the packer has
 //
+// and a library for android_dlopen_ext (loaded from a file descriptor at an
+// offset into a bigger file, into a reserved range, its RELRO written out):
+//
+//   WINAPK_LINK_DLEXT      libwinapk_link_dlext.so       no dependencies; a pointer table in its RELRO
+//
 // build_guest.sh links them against stub system libraries so the DT_NEEDED
 // entries look like an NDK build's. The cycle is real: base is linked against
 // a placeholder with mid's soname, then mid is linked against base.
@@ -274,6 +279,16 @@ __attribute__((constructor)) static void packed_init(void) {
 
 EXPORT int link_packed_state(void) { return g_state; }
 EXPORT int link_packed_secret(void) { return 42; }
+
+#elif defined(WINAPK_LINK_DLEXT)
+
+static int g_dlext_ctor;
+__attribute__((constructor)) static void dlext_init(void) { g_dlext_ctor = 1; }
+// Relocated pointers in read-only data: .data.rel.ro, under PT_GNU_RELRO.
+static int g_dlext_targets[2] = {20, 22};
+static int* const g_dlext_table[2] = {&g_dlext_targets[0], &g_dlext_targets[1]};
+EXPORT int link_dlext_sum(void) { return g_dlext_ctor ? *g_dlext_table[0] + *g_dlext_table[1] : -1; }
+EXPORT const void* link_dlext_table(void) { return g_dlext_table; }
 
 #elif defined(WINAPK_LINK_PLUGIN)
 
