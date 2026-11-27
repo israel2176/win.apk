@@ -85,7 +85,7 @@ jobs:
               [ "$attempt" = 1 ] || sleep $([ "$attempt" = 2 ] && echo 5 || echo 20)
               rm -rf "$dir" && mkdir -p "$dir"
               (cd "$dir" && timeout 900 "$apkeep" -a "$1" -d apk-pure \
-                -o "acknowledge_dangers=true,arch=$2,sdk=34" "$(cygpath -w "$dir")") > /dev/null 2>&1 || true
+                -o "acknowledge_dangers=true,arch=$2,sdk=34" "$(cygpath -w "$dir")") > "$dir.log" 2>&1 || true
               f=$(find "$dir" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' -o -name '*.apkm' -o -name '*.apks' \) \
                 -size +0 | head -n 1)
               [ -n "$f" ] && break
@@ -99,13 +99,14 @@ jobs:
             echo "::group::$pkg"
             f="$(fetch "$pkg" x86_64)" abi=""
             [ -z "$f" ] || abi="$(abi_of "$f")"
-            if [ "$abi" = other ]; then
-              # APKPure served another ABI's build: the arm64 one runs translated.
+            if [ -z "$f" ] || [ "$abi" = other ]; then
+              # No x86_64 build, or APKPure served another ABI's: the arm64 one runs translated.
               f2="$(fetch "$pkg" arm64-v8a)"
               if [ -n "$f2" ]; then f="$f2"; abi="arm64 ($(abi_of "$f2"))"; fi
             fi
             if [ -z "$f" ]; then
-              echo "$pkg: not on APKPure"
+              echo "$pkg: not on APKPure; apkeep said:"
+              tail -n 5 "$RUNNER_TEMP/dl/$pkg-arm64-v8a.log" 2> /dev/null || true
               printf '%s\t%s\t%s\n' "$pkg" "-" "not downloaded" >> out/downloads-${{ matrix.shard }}.tsv
               echo "::warning::$pkg: APKPure gave no file"
               echo "::endgroup::"
