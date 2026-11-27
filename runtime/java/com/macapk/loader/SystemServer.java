@@ -1165,7 +1165,6 @@ public final class SystemServer {
         ComponentName cn = intent.getComponent();
         for (Manifest.ActivityEntry r : pr.manifest.receivers.values()) {
             if (!r.enabled) continue;
-            if (admit != null && !admit.test(r)) continue;
             boolean match = false;
             if (cn != null) {
                 match = cn.getClassName().equals(r.name);
@@ -1177,7 +1176,11 @@ public final class SystemServer {
                     }
                 }
             }
-            if (match) out.add(processOf(pr, r.name));
+            // The permission is asked of the receivers the intent resolves to only, as BroadcastQueue
+            // checks the receivers queryIntentReceivers found: asked of every receiver, it logged a
+            // "Permission Denial" for each guarded receiver of every package at every broadcast
+            // (Play services' MODULE_CONFIGURATION_CHANGED against ProfileInstallReceiver's DUMP).
+            if (match && (admit == null || admit.test(r))) out.add(processOf(pr, r.name));
         }
         return out;
     }

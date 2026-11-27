@@ -2860,15 +2860,14 @@ public final class MacApkPackageManager extends PackageManager {
         // :469/:477 pass it on unchanged.
         final String resolvedType = macapkResolvedType(intent);
         ComponentName explicit = query.getComponent();
-        if (explicit != null) {
-            // computer.getReceiverInfo(comp, ...) (:425): null for a
-            // package that is not installed.
-            if (!packageName.equals(explicit.getPackageName())) return out;
-        } else {
-            // :466-477: a named package contributes ONLY its own receivers
-            // (pkg.getReceivers()); an absent one contributes nothing.
-            String want = query.getPackage();
-            if (want != null && !want.equals(packageName)) return out;
+        // Another installed package the system broker serves answers from its own manifest, as PMS
+        // answers for any installed package: Firebase finds Play services' com.google.iid.TOKEN_REQUEST
+        // receiver this way, and with none it logged "Failed to resolve IID implementation package" and
+        // fell back in every app (issue #208's logs).
+        String other = explicit != null ? explicit.getPackageName() : query.getPackage();
+        if (other != null && !other.equals(packageName)) {
+            MacApkPackageManager peer = SystemClient.pmFor(other);
+            return peer != null && peer != this ? peer.queryBroadcastReceivers(intent, flags) : out;
         }
         // MACAPK_PM_RESOLVE_ORDER: IntentResolver's order, which for receivers
         // is the DELIVERY order (Context.macapkDeliverToMatchingManifestReceivers
@@ -5741,10 +5740,16 @@ public final class MacApkPackageManager extends PackageManager {
         final String resolvedType = macapkResolvedType(intent);
         String want = null;
         try { want = query.getPackage(); } catch (Throwable ignored) {}
-        if (want != null && !want.equals(this.packageName)) return out;
         ComponentName explicit = null;
         try { explicit = query.getComponent(); } catch (Throwable ignored) {}
-        if (explicit != null && !this.packageName.equals(explicit.getPackageName())) return out;
+        // Another installed package the system broker serves: its own services, from its manifest
+        // (queryBroadcastReceivers says why); the stand-ins above are only for a package not installed.
+        String other = explicit != null ? explicit.getPackageName() : want;
+        if (other != null && !other.equals(this.packageName)) {
+            if (!out.isEmpty()) return out;
+            MacApkPackageManager peer = SystemClient.pmFor(other);
+            return peer != null && peer != this ? peer.queryIntentServices(intent, flags) : out;
+        }
         // MACAPK_PM_RESOLVE_ORDER: which filter is credited, the row fields and
         // the sort, as IntentResolver does them (see the gate). `want` non-null
         // is AOSP's per-package path (queryIntentServicesInternalBody :714-735).
