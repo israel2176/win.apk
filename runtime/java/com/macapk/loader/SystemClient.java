@@ -745,10 +745,9 @@ public final class SystemClient {
                 sys.transact(SystemServer.TX_BIND, d, r, 0);
                 r.readException();
                 ok = r.readInt() != 0;
-                if (ok) {
-                    name = r.readTypedObject(ComponentName.CREATOR);
-                    service = r.readStrongBinder();
-                }
+                // The component, also on a failure once it resolved (a broker of before had none).
+                if (r.dataAvail() > 0) name = r.readTypedObject(ComponentName.CREATOR);
+                if (ok) service = r.readStrongBinder();
             } catch (Throwable e) {
                 NativeLog.w(TAG, "remote bind " + fi + " failed: " + e);
             } finally { d.recycle(); r.recycle(); }
@@ -757,6 +756,17 @@ public final class SystemClient {
             if (!ok) {
                 sRemote.remove(conn);
                 NativeLog.w(TAG, "remote bind " + fi + " did not resolve");
+                // bindService already answered true, so the client waits for the connection. AMS
+                // brings a service down whose process did not start (or that failed to bind) and
+                // tells each connection connected(name, null, dead=true): LoadedApk's dispatcher
+                // calls onBindingDied, and the client gives up (Play services' clients fail their
+                // calls with an error). Without it a GmsClient waited forever, and an app that
+                // kept its splash screen until a location or Play services answer drew nothing
+                // (#213).
+                deliver.execute(() -> {
+                    try { conn.onBindingDied(fname != null ? fname : fi.getComponent()); }
+                    catch (Throwable ignored) {}
+                });
                 return;
             }
             if (service == null) {

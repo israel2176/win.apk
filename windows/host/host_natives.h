@@ -50,6 +50,7 @@ HostMethods native_picker_methods();    // native_picker.cpp
 HostMethods native_gamepad_methods();   // native_gamepad.cpp
 HostMethods native_audio_input_methods(); // native_audio_input.cpp
 HostMethods native_nsd_methods();       // native_nsd.cpp
+HostMethods native_volume_methods();    // native_volume.cpp
 HostMethods native_photos_methods();    // native_photos.cpp
 HostMethods native_gl_methods();        // gl/gl_bridges.cpp
 HostMethods native_egl10_methods();     // gl/egl10_window.cpp
