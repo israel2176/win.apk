@@ -354,10 +354,10 @@ void destroy_swapchain(Swapchain* sc) {
     if (!sc) return;
     const VkTable& t = sc->device->table;
     VkDevice dev = sc->device->handle;
-    if (sc->fence) {
-        t.vkWaitForFences(dev, 1, &sc->fence, VK_TRUE, UINT64_MAX);
-        t.vkDestroyFence(dev, sc->fence, nullptr);
-    }
+    // No wait: a present waits for its own copy and resets the fence (present_one), so nothing of
+    // the swapchain's is in flight here, and the fence, reset and never submitted again, would never
+    // signal (vkDestroySwapchainKHR hung at the app's teardown).
+    if (sc->fence) t.vkDestroyFence(dev, sc->fence, nullptr);
     for (auto& [family, c] : sc->commands) t.vkDestroyCommandPool(dev, c.first, nullptr);
     if (sc->mapped) t.vkUnmapMemory(dev, sc->readback_memory);
     if (sc->readback) t.vkDestroyBuffer(dev, sc->readback, nullptr);

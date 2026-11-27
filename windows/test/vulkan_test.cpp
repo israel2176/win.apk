@@ -126,6 +126,8 @@ std::string hex(uint32_t v) {
 }  // namespace
 
 int main() {
+    // Unbuffered: a hang or a crash in the driver must not keep the lines before it back.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     g_gipa = exported<GuestGipa>("vkGetInstanceProcAddr");
     g_gdpa = exported<GuestGdpa>("vkGetDeviceProcAddr");
 
