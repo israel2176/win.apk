@@ -1116,7 +1116,7 @@ public final class ProcessBuilder
 
         String dir = directory == null ? null : directory.toString();
 
-        // Win.apk: an Android program (an ELF executable, an app's own) runs under winapk-exec.exe,
+        // Win.apk: an Android program (an ELF executable, an app's own) runs under winapk-runtime.exe --exec,
         // and an Android path as the working directory is the host folder it names
         // (jdk.internal.util.WinApkExec). Nothing changes outside Win.apk's runtime.
         cmdarray = jdk.internal.util.WinApkExec.command(cmdarray, environment);

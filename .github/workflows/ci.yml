@@ -432,7 +432,7 @@ jobs:
       - name: Run the PoC checks
         run: ./build/winapk-elfrun.exe guest/libwinapk_poc_guest.so guest/libwinapk_poc_guest_packed.so
       - name: Run the child process test
-        # An Android program started by the shim's posix_spawn, run by winapk-exec.exe beside it.
+        # An Android program started by the shim's posix_spawn, run by the test itself started again with --exec.
         run: ./build/winapk-exec-test.exe guest/winapk_exec_guest
       - name: Run the guest linker test
         run: ./build/winapk-linker-test.exe guest/link
@@ -630,9 +630,9 @@ jobs:
             --add-exports java.base/jdk.internal.util=ALL-UNNAMED \
             -Dwinapk.android.root="$(cygpath -w "$RUNNER_TEMP")" \
             -cp "$(cygpath -w build/android-paths-test)" AndroidPathsTest
-      - name: Run the ProcessBuilder test (an Android program run by winapk-exec.exe)
+      - name: Run the ProcessBuilder test (an Android program run by winapk-runtime --exec)
         run: |
-          # ProcessBuilder on an app's ELF program goes through winapk-exec.exe beside the runtime
+          # ProcessBuilder on an app's ELF program goes through winapk-runtime.exe --exec
           # (java_base_patch: java/lang/ProcessBuilder.java + jdk.internal.util.WinApkExec); a Windows
           # program as it is; then the test's program run for real, its streams and exit status.
           export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"

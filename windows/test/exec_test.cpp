@@ -1,8 +1,9 @@
 // exec_test.cpp -- winapk-exec-test: an Android program started as a child process by the Bionic
-// shim's posix_spawn (src/bionic/process.cpp) and run by winapk-exec.exe (host/exec_main.cpp), as an
-// app's native code starts one: through the shim's exported functions, System V.
+// shim's posix_spawn (src/bionic/process.cpp) and run by this test started again with --exec
+// (host/exec_main.cpp, as winapk-runtime runs it), as an app's native code starts one: through the
+// shim's exported functions, System V.
 //
-//   winapk-exec-test <winapk_exec_guest>      (winapk-exec.exe beside this test)
+//   winapk-exec-test <winapk_exec_guest>
 //
 // The program (test/guest/exec_guest.c) prints its arguments and a variable, writes a line to
 // stderr, upper-cases stdin to stdout and exits with 7 (or "exit=N"). Checks: its stdout and stdin
@@ -22,6 +23,9 @@
 #include <vector>
 
 #include <windows.h>
+#include <shellapi.h>
+
+#include "exec_main.h"
 
 #include "winapk/guest_abi.h"
 #include "winapk/mini_bionic.h"
@@ -76,6 +80,13 @@ std::string read_all(const Shim& s, int fd) {
 }  // namespace
 
 int main(int argc, char** argv) {
+    // The children this test spawns are this program again (src/bionic/process.cpp), as an app's
+    // are winapk-runtime.exe again: it runs the guest program as winapk-runtime --exec does.
+    if (argc > 1 && std::strcmp(argv[1], "--exec") == 0) {
+        int wargc = 0;
+        wchar_t** wargv = CommandLineToArgvW(GetCommandLineW(), &wargc);
+        return winapk::host::exec_program_main(wargc - 2, wargv + 2);
+    }
     if (argc < 2) {
         std::fprintf(stderr, "usage: winapk-exec-test <winapk_exec_guest>\n");
         return 2;

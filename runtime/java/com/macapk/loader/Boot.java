@@ -164,7 +164,7 @@ public final class Boot {
         try {
             NativeCocoa.setAppData(packageName, hostDir.getAbsolutePath());
             // The same mapping for an Android program the app starts with ProcessBuilder
-            // (java.base overlay's jdk.internal.util.WinApkExec hands it to winapk-exec).
+            // (java.base overlay's jdk.internal.util.WinApkExec hands it to winapk-runtime --exec).
             System.setProperty("winapk.app.package", packageName);
             System.setProperty("winapk.app.data", hostDir.getAbsolutePath());
             return new File("/data/user/0/" + packageName);

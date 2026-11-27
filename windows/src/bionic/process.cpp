@@ -4,7 +4,7 @@
 // Windows cannot copy a running process, so fork, vfork and clone still fail with ENOSYS
 // (misc.cpp). What a child process here runs is an Android program, an ELF executable (an app's
 // own: a puzzle generator, a helper binary, a terminal's tools), started as its own Windows
-// process: winapk-exec.exe beside the runtime (host/exec_main.cpp) maps it with the same loader and
+// process: the runtime started again with --exec (host/exec_main.cpp) maps it with the same loader and
 // Bionic shim, with the parent's Android root and app data folder, and runs it from its entry
 // point. A path that is not an ELF executable fails as a kernel fails it: ENOENT for a file that
 // does not exist (a device's /system/bin/sh has none here), ENOEXEC for one that is not a program.
@@ -203,7 +203,7 @@ HANDLE handle_for(const Source& src, bool child_reads) {
     return dup;
 }
 
-// The program at `path` (UTF-8, Android's or a host path), and whether it is one winapk-exec runs:
+// The program at `path` (UTF-8, Android's or a host path), and whether it is one --exec runs:
 // 0, or the errno a kernel's execve would give.
 int check_program(const char* path, std::wstring* host) {
     if (!path || !*path) return kENOENT;
@@ -260,16 +260,11 @@ int resolve_program(const char* file, bool search, std::string* path, std::wstri
 // Starts the program: 0 and *pid, or an errno.
 int spawn(const std::string& path, const std::wstring& host, char* const* argv, char* const* envp,
           const FileActions* actions, int* pid) {
+    // The child is this program again (winapk-runtime.exe in an app), told to run the guest program
+    // instead (--exec, host/exec_main.cpp): no second copy of the loader on disk.
     wchar_t self[MAX_PATH * 2];
     const DWORD n = GetModuleFileNameW(nullptr, self, MAX_PATH * 2);
-    std::wstring exec(self, n);
-    exec.resize(exec.find_last_of(L"\\/") + 1);
-    exec += L"winapk-exec.exe";
-    if (GetFileAttributesW(exec.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        static std::atomic<bool> said{false};
-        say_once(said, "no winapk-exec.exe beside the runtime: an app's child process cannot start");
-        return kENOENT;
-    }
+    const std::wstring exec(self, n);
     // The child's standard streams after the file actions.
     Source src[3];
     for (int i = 0; i < 3; ++i) src[i].fd = i;
@@ -298,7 +293,7 @@ int spawn(const std::string& path, const std::wstring& host, char* const* argv, 
         SetHandleInformation(std_handles[i], HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
     }
     // The command line: the shim's mapping of Android's paths, the environment, the program, its argv.
-    std::wstring cmd = quote(exec) + L" --android-root " + quote(android_root());
+    std::wstring cmd = quote(exec) + L" --exec --android-root " + quote(android_root());
     if (!app_package().empty()) cmd += L" --app " + quote(wide(app_package())) + L" " + quote(app_data_dir());
     for (char* const* e = envp; e && *e; ++e) cmd += L" --env " + quote(wide(*e));
     cmd += L" -- " + quote(host);
@@ -396,7 +391,7 @@ WINAPK_GUEST_ABI int g_actions_adddup2(void** a, int fd, int newfd) {
     fa->actions.push_back({FileAction::kDup2, fd, newfd, 0, 0, {}});
     return 0;
 }
-// addchdir and addfchdir (API 34): the child starts where winapk-exec starts it; accepted.
+// addchdir and addfchdir (API 34): the child starts where --exec starts it; accepted.
 WINAPK_GUEST_ABI int g_actions_addchdir(void** a, const char*) { return actions_of(a) ? 0 : kEINVAL; }
 WINAPK_GUEST_ABI int g_actions_addfchdir(void** a, int) { return actions_of(a) ? 0 : kEINVAL; }
 

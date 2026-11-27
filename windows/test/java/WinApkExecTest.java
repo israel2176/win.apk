@@ -1,6 +1,6 @@
 // WinApkExecTest -- java.lang.ProcessBuilder in Win.apk's java.base overlay (jdk.internal.util
-// .WinApkExec): an Android program (an ELF executable) is started through winapk-exec.exe beside the
-// runtime, a Windows program as it is, and an Android working directory is the host folder.
+// .WinApkExec): an Android program (an ELF executable) is started through winapk-runtime.exe --exec,
+// a Windows program as it is, and an Android working directory is the host folder.
 //
 //   java --patch-module java.base=<lib/java_base_patch> --add-exports java.base/jdk.internal.util=ALL-UNNAMED
 //        -Dwinapk.android.root=<dir> -Dwinapk.runtime.exe=<build>\winapk-runtime.exe
@@ -29,7 +29,6 @@ public final class WinApkExecTest {
 
     public static void main(String[] args) throws Exception {
         String runtime = System.getProperty("winapk.runtime.exe");
-        File dir = new File(runtime).getParentFile();
         File elf = File.createTempFile("winapk-elf", ".bin");
         try (OutputStream o = new FileOutputStream(elf)) {
             o.write(new byte[] {0x7f, 'E', 'L', 'F', 2, 1, 1, 0});
@@ -45,8 +44,8 @@ public final class WinApkExecTest {
         env.put("WINAPK_EXEC_TEST", "set by the app");
         String[] cmd = jdk.internal.util.WinApkExec.command(new String[] {elf.getPath(), "a b", "c"}, env);
         List<String> c = Arrays.asList(cmd);
-        check("an ELF program goes through winapk-exec.exe",
-                cmd[0].equals(new File(dir, "winapk-exec.exe").getPath()), cmd[0]);
+        check("an ELF program goes through winapk-runtime.exe --exec",
+                cmd[0].equals(runtime) && cmd[1].equals("--exec"), cmd[0] + " " + cmd[1]);
         int dash = c.indexOf("--");
         check("the mapping and the app's data", c.contains("--android-root") && c.contains("--app")
                 && c.contains("com.example.app"), c);

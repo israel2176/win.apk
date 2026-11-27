@@ -1,12 +1,15 @@
-// exec_main.cpp -- winapk-exec.exe: one Android program (an x86_64 ELF executable) an app started as
-// a child process, run as a Windows process of its own.
+// exec_main.cpp -- --exec: one Android program (an x86_64 ELF executable) an app started as a child
+// process, run as a Windows process of its own.
 //
-//   winapk-exec --android-root <dir> [--app <package> <data dir>] [--env NAME=value]... -- <program> <argv...>
+//   winapk-runtime --exec --android-root <dir> [--app <package> <data dir>] [--env NAME=value]...
+//                  -- <program> <argv...>
 //
-// Started by the Bionic shim's posix_spawn and exec family (src/bionic/process.cpp) and by Java's
-// ProcessBuilder for a program file (the java.base overlay's jdk.internal.util.WinApkExec), with the
-// parent's mapping of Android's paths and the environment it gave. The program's standard streams
-// are this process's (the spawner hands them over).
+// The child is the spawning program started again with --exec (winapk-runtime.exe in an app, the test
+// in winapk-exec-test), so the loader is not shipped twice. Started by the Bionic shim's posix_spawn
+// and exec family (src/bionic/process.cpp) and by Java's ProcessBuilder for a program file (the
+// java.base overlay's jdk.internal.util.WinApkExec), with the parent's mapping of Android's paths
+// and the environment it gave. The program's standard streams are this process's (the spawner
+// hands them over). It runs on a thread with Linux's 8 MB main stack.
 //
 // The program is mapped by the same guest linker and Bionic shim an app's libraries are (its
 // DT_NEEDED libraries found beside it, as the app's native library directory has them), its
@@ -30,6 +33,7 @@
 #include <string>
 #include <vector>
 
+#include "exec_main.h"
 #include "winapk/abi_thunk.h"
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
@@ -115,9 +119,34 @@ namespace {
     winapk_exec_jump(entry, block);
 }
 
+struct Program {
+    std::filesystem::path path;
+    std::vector<std::string> args, env;
+};
+
+DWORD WINAPI program_thread(void* p) {
+    Program& prog = *static_cast<Program*>(p);
+    winapk::LinkerConfig config;
+    config.host = winapk::mini_bionic_resolve;
+    config.load.unresolved = missing_stub;
+    config.load.unresolved_object = missing_object;
+    config.search_paths.push_back(prog.path.parent_path());
+    static winapk::GuestLinker linker(config);  // lives as long as the process
+    std::string error;
+    winapk::GuestLibrary* lib = linker.open(utf8(prog.path.wstring()), winapk::GuestLinker::kRtldNow, &error);
+    if (!lib) cannot_link(prog.args[0], error.empty() ? "cannot load it" : error);
+    const winapk::ElfImage* image = winapk::GuestLinker::image_of(lib);
+    if (!image || image->is_arm64()) cannot_link(prog.args[0], "not an x86_64 program");
+    const uint64_t entry = entry_vaddr(prog.path);
+    if (!entry) cannot_link(prog.args[0], "no entry point");
+    // The environment main gets is the shim's own (__libc_init passes `environ`); the spawner's
+    // variables on the stack are what a program that walks past argv finds.
+    run(reinterpret_cast<void*>(image->load_bias() + entry), prog.args, prog.env);
+}
+
 }  // namespace
 
-int wmain(int argc, wchar_t** argv) {
+int winapk::host::exec_program_main(int argc, wchar_t** argv) {
     // The program's standard streams carry its bytes as they are: Android has no text mode, and the
     // CRT's would turn each '\n' it writes into "\r\n" and drop the '\r' of what it reads.
     _setmode(0, _O_BINARY);
@@ -125,7 +154,7 @@ int wmain(int argc, wchar_t** argv) {
     _setmode(2, _O_BINARY);
     std::wstring root, package, data_dir;
     std::vector<std::string> env;
-    int i = 1;
+    int i = 0;
     for (; i < argc; ++i) {
         const std::wstring a = argv[i];
         if (a == L"--") {
@@ -140,39 +169,28 @@ int wmain(int argc, wchar_t** argv) {
         } else if (a == L"--env" && i + 1 < argc) {
             env.push_back(utf8(argv[++i]));
         } else {
-            std::fprintf(stderr, "winapk-exec: unknown option %ls\n", argv[i]);
+            std::fprintf(stderr, "--exec: unknown option %ls\n", argv[i]);
             return 2;
         }
     }
     if (i >= argc) {
-        std::fprintf(stderr, "usage: winapk-exec --android-root <dir> [--app <package> <data dir>] [--env NAME=value]... "
+        std::fprintf(stderr, "usage: winapk-runtime --exec --android-root <dir> [--app <package> <data dir>] [--env NAME=value]... "
                              "-- <program> <argv...>\n");
         return 2;
     }
-    const std::filesystem::path program = argv[i++];
-    std::vector<std::string> args;
-    for (; i < argc; ++i) args.push_back(utf8(argv[i]));
-    if (args.empty()) args.push_back(utf8(program.wstring()));
+    static Program prog;
+    prog.path = argv[i++];
+    for (; i < argc; ++i) prog.args.push_back(utf8(argv[i]));
+    if (prog.args.empty()) prog.args.push_back(utf8(prog.path.wstring()));
+    prog.env = env;
 
     if (!root.empty()) winapk::set_android_root(utf8(root).c_str());
     if (!package.empty()) winapk::set_app_data(utf8(package).c_str(), utf8(data_dir).c_str());
     winapk::mini_bionic_program_mode(env);
 
-    winapk::LinkerConfig config;
-    config.host = winapk::mini_bionic_resolve;
-    config.load.unresolved = missing_stub;
-    config.load.unresolved_object = missing_object;
-    config.search_paths.push_back(program.parent_path());
-    static winapk::GuestLinker linker(config);  // lives as long as the process
-    std::string error;
-    winapk::GuestLibrary* lib = linker.open(utf8(program.wstring()), winapk::GuestLinker::kRtldNow, &error);
-    if (!lib) cannot_link(args[0], error.empty() ? "cannot load it" : error);
-    const winapk::ElfImage* image = winapk::GuestLinker::image_of(lib);
-    if (!image || image->is_arm64()) cannot_link(args[0], "not an x86_64 program");
-    const uint64_t entry = entry_vaddr(program);
-    if (!entry) cannot_link(args[0], "no entry point");
-
-    // The environment main gets is the shim's own (__libc_init passes `environ`); the spawner's
-    // variables on the stack are what a program that walks past argv finds.
-    run(reinterpret_cast<void*>(image->load_bias() + entry), args, env);
+    // Linux gives a program's main thread 8 MB of stack; this process's own may be smaller.
+    HANDLE t = CreateThread(nullptr, 8 << 20, program_thread, &prog, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);
+    if (!t) cannot_link(prog.args[0], "no thread for it");
+    WaitForSingleObject(t, INFINITE);  // the program ends the process (exit, or __libc_init's exit)
+    return 1;
 }

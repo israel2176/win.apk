@@ -1801,7 +1801,7 @@ WINAPK_GUEST_ABI int g_getopt_long_only(int argc, char* const* argv, const char*
 }
 
 // ---- process exit -------------------------------------------------------------------------
-// winapk-exec (mini_bionic_program_mode): the process is one Android program an app started, its
+// --exec (mini_bionic_program_mode): the process is one Android program an app started, its
 // stderr the app's pipe, which must get the program's own bytes and nothing of ours.
 std::atomic<bool> g_program_mode{false};
 

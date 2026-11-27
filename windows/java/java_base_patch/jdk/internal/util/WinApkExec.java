@@ -4,7 +4,7 @@
  * On a device, ProcessBuilder runs a file of the app's (a helper binary in its native library
  * directory: Simon Tatham's Puzzles generates its boards with libpuzzlesgen.so run as a program)
  * as a process. Here such a file is an Android ELF executable, which Windows cannot start: the
- * command becomes winapk-exec.exe (beside the runtime, windows/host/exec_main.cpp), which runs it
+ * command becomes winapk-runtime.exe --exec (windows/host/exec_main.cpp), which runs it
  * with the same loader, Bionic shim and Android paths as the app's native code, its argv as the app
  * gave it. A variable the app set or changed in the ProcessBuilder's environment is given to the
  * program over Android's defaults, as the shim's own posix_spawn gives it. An Android path as the
@@ -34,10 +34,9 @@ public final class WinApkExec {
         String prog = cmd[0];
         String host = WinApkPaths.isAndroid(prog) ? WinApkPaths.hostPath(prog) : prog;
         if (!isAndroidProgram(host)) return cmd;
-        int slash = Math.max(runtime.lastIndexOf('\\'), runtime.lastIndexOf('/'));
-        String exec = (slash >= 0 ? runtime.substring(0, slash + 1) : "") + "winapk-exec.exe";
         List<String> out = new ArrayList<>();
-        out.add(exec);
+        out.add(runtime);
+        out.add("--exec");
         out.add("--android-root");
         out.add(root);
         String pkg = System.getProperty("winapk.app.package");
