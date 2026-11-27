@@ -31,6 +31,9 @@ public class Os {
             s.st_mtime = a.lastModifiedTime().toMillis() / 1000L;
             s.st_ctime = a.creationTime().toMillis() / 1000L;
             s.st_atime = a.lastAccessTime().toMillis() / 1000L;
+            s.st_mtime_nsec = Math.floorMod(a.lastModifiedTime().toMillis(), 1000L) * 1_000_000L;
+            s.st_ctime_nsec = Math.floorMod(a.creationTime().toMillis(), 1000L) * 1_000_000L;
+            s.st_atime_nsec = Math.floorMod(a.lastAccessTime().toMillis(), 1000L) * 1_000_000L;
             // Approximate POSIX mode bits: dir=040000, regular=0100000,
             // symlink=0120000; rwx for owner from java.io.File.
             if (a.isSymbolicLink())            s.st_mode |= OsConstants.S_IFLNK;
@@ -39,7 +42,7 @@ public class Os {
             if (f.canRead())  s.st_mode |= 0400;
             if (f.canWrite()) s.st_mode |= 0200;
             if (f.canExecute()) s.st_mode |= 0100;
-            return s;
+            return s.times();
         } catch (java.nio.file.NoSuchFileException nse) {
             throw new ErrnoException("lstat", OsConstants.ENOENT);
         } catch (IOException ioe) {
@@ -58,9 +61,12 @@ public class Os {
             s.st_mtime = a.lastModifiedTime().toMillis() / 1000L;
             s.st_ctime = a.creationTime().toMillis() / 1000L;
             s.st_atime = a.lastAccessTime().toMillis() / 1000L;
+            s.st_mtime_nsec = Math.floorMod(a.lastModifiedTime().toMillis(), 1000L) * 1_000_000L;
+            s.st_ctime_nsec = Math.floorMod(a.creationTime().toMillis(), 1000L) * 1_000_000L;
+            s.st_atime_nsec = Math.floorMod(a.lastAccessTime().toMillis(), 1000L) * 1_000_000L;
             if (a.isDirectory())          s.st_mode |= OsConstants.S_IFDIR;
             else if (a.isRegularFile())   s.st_mode |= OsConstants.S_IFREG;
-            return s;
+            return s.times();
         } catch (java.nio.file.NoSuchFileException nse) {
             throw new ErrnoException("stat", OsConstants.ENOENT);
         } catch (IOException ioe) {
@@ -482,7 +488,7 @@ public class Os {
         s.st_dev = v[0]; s.st_ino = v[1]; s.st_mode = (int) v[2]; s.st_nlink = v[3];
         s.st_size = v[4]; s.st_atime = v[5]; s.st_mtime = v[6]; s.st_ctime = v[7];
         s.st_blksize = v[8]; s.st_blocks = v[9]; s.st_rdev = v[10];
-        return s;
+        return s.times();
     }
     public static void ftruncate(java.io.FileDescriptor fd, long length) throws ErrnoException {
         int r = com.macapk.loader.NativeOs.ftruncate(fdOf(fd), length);

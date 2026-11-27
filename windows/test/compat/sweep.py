@@ -13,7 +13,8 @@ machines share the corpus; --merge joins their report directories (report.json,
 logs, frames) into one report, as if one machine had run them all.
 --only-from takes the packages to run from a file (smoke.txt), and
 --require-drew makes the sweep a test: an app that does not draw is run once
-more, and if it still does not the exit code is 1.
+more (the first try's log kept as logs/<package>.1.log), and if it still does
+not the exit code is 1.
 
 For each app it runs winapk-runtime with WINAPK_HEADLESS=1 and a fresh data
 directory, waits for --frames presented frames (or the timeout), and keeps the
@@ -445,6 +446,11 @@ def main():
         if args.require_drew and r["status"] != "drew":
             # One more try tells a slow start on a busy machine from a break.
             print(f"[sweep] {pkg}: {r['status']}, trying once more", flush=True)
+            # The first try's log is kept as <pkg>.1.log: the second can stop somewhere else (a process the
+            # first left holding a file of the install), and the first one's end is what went wrong.
+            first = os.path.join(out, "logs", f"{pkg}.log")
+            if os.path.exists(first):
+                shutil.copyfile(first, os.path.join(out, "logs", f"{pkg}.1.log"))
             shutil.rmtree(os.path.join(out, "data", pkg), ignore_errors=True)
             r = run_app(pkg, apk, args, out)
             print(f"[sweep] {pkg}: {r['status']} in {r['seconds']} s", flush=True)

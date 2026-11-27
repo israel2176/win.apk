@@ -338,7 +338,7 @@ is never stopped.
   session now makes the host surface for the first application window and
   follows an activity window's SurfaceViews (GL frames under the windows).
 - **What a real app's start reached**, each answered as AOSP's would be:
-  BlockGuard's policies (none), `FileUtils.sync`, `StructStat.st_mtim`,
+  BlockGuard's policies (none), `FileUtils.sync`, `StructStat.st_mtim` (now a field of Win.apk's StructStat),
   `Activity.getDlWarning`, Android's typed XML for SharedPreferences' file
   (`Xml.newFastSerializer`, in the resources' rewrite), `startActivities`
   (SGT Puzzles), Up navigation (`navigateUpTo`, `shouldUpRecreateTask`), Back

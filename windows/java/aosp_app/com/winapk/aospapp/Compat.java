@@ -300,11 +300,6 @@ public final class Compat {
         }
     }
 
-    /** StructStat.st_mtim: the modification time as a timespec, from st_mtime (whole seconds). */
-    public static android.system.StructTimespec st_mtim(android.system.StructStat stat) {
-        return new android.system.StructTimespec(stat.st_mtime, 0);
-    }
-
     // ---- android.content.pm.PackageManager (hidden; the permission prompt) ----
 
     /** PackageManager.buildRequestPermissionsIntent: ACTION_REQUEST_PERMISSIONS with the names, for
