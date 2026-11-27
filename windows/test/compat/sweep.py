@@ -13,7 +13,10 @@ machines share the corpus; --merge joins their report directories (report.json,
 logs, frames) into one report, as if one machine had run them all.
 --only-from takes the packages to run from a file (smoke.txt), and
 --require-drew makes the sweep a test: an app that does not draw is run once
-more, and if it still does not the exit code is 1.
+more, with three times the frames (a game whose own GL thread draws its first
+frame late, on a busy machine with software rendering, has the time to), its
+first run's log kept as <package>.1.log; if it still does not draw the exit
+code is 1.
 
 For each app it runs winapk-runtime with WINAPK_HEADLESS=1 and a fresh data
 directory, waits for --frames presented frames (or the timeout), and keeps the
@@ -209,7 +212,7 @@ class MemoryWatch:
             self._k32.CloseHandle(self._ctypes.c_void_p(self._h))
 
 
-def run_app(pkg, apk, args, out):
+def run_app(pkg, apk, args, out, frames=None):
     log_path = os.path.join(out, "logs", f"{pkg}.log")
     frame_path = os.path.join(out, "frames", f"{pkg}.bmp")
     data_dir = os.path.join(out, "data", pkg)
@@ -225,7 +228,7 @@ def run_app(pkg, apk, args, out):
     if args.locales: env["WINAPK_LOCALES"] = args.locales  # the device's system languages, ranked
     if args.launcher: env["WINAPK_SHORT_DATA_DIR"] = "0"  # Wine's made-up 8.3 names do not find new files
     if args.launcher: env.setdefault("WINEDLLOVERRIDES", "iphlpapi=n,b")  # test/wine_iphlpapi.sh, run once before
-    env["WINAPK_HEADLESS_EXIT_AFTER_FRAMES"] = str(args.frames)
+    env["WINAPK_HEADLESS_EXIT_AFTER_FRAMES"] = str(frames or args.frames)
     env["WINAPK_HEADLESS_FRAME"] = win_path(frame_path, args.launcher)
     env.setdefault("WINEDEBUG", "-all")
     start = time.time()
@@ -443,10 +446,16 @@ def main():
               f"{len(r['exceptions'])} exceptions, {len(r['guest_missing'])} missing system functions, "
               f"{len(r['guest_load_failures'])} libraries not loaded", flush=True)
         if args.require_drew and r["status"] != "drew":
-            # One more try tells a slow start on a busy machine from a break.
-            print(f"[sweep] {pkg}: {r['status']}, trying once more", flush=True)
+            # One more try tells a slow start on a busy machine from a break. The frames counted are the
+            # window's, from its first; an app that draws into its own GL surface (a libGDX game) shows
+            # nothing of its own until its GL thread has loaded and compiled its shaders, which on the
+            # runners' software renderer, with the machine busy, can outlast the first budget. The second
+            # try waits three times as long; an app that never draws still fails it.
+            print(f"[sweep] {pkg}: {r['status']}, trying once more with {3 * args.frames} frames", flush=True)
+            logs = os.path.join(out, "logs")
+            os.replace(os.path.join(logs, f"{pkg}.log"), os.path.join(logs, f"{pkg}.1.log"))
             shutil.rmtree(os.path.join(out, "data", pkg), ignore_errors=True)
-            r = run_app(pkg, apk, args, out)
+            r = run_app(pkg, apk, args, out, frames=3 * args.frames)
             print(f"[sweep] {pkg}: {r['status']} in {r['seconds']} s", flush=True)
         results.append(r)
         shutil.rmtree(os.path.join(out, "data", pkg), ignore_errors=True)
