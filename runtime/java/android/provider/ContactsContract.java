@@ -1,10 +1,10 @@
 // android.provider.ContactsContract -- the contacts-database contract.
 // Apps query contacts via the CONTENT_URI constants + column-name
-// interfaces through ContentResolver. Mac.apk hosts no contacts
-// provider, so queries return null (no rows) -- honest "no contacts" --
-// but the URI/column/MIME constant surface must be complete so apps
-// compile and degrade gracefully. Constant names + string values mirror
-// AOSP (developers.android.com ContactsContract reference).
+// interfaces through ContentResolver. Win.apk serves the authority with
+// com.macapk.loader.ContactsProvider (every app's process, one shared
+// database; READ_CONTACTS / WRITE_CONTACTS enforced by the transport).
+// Constant names + string values mirror AOSP (developers.android.com
+// ContactsContract reference).
 package android.provider;
 
 import android.net.Uri;
@@ -25,6 +25,16 @@ public final class ContactsContract {
 
     public static final String AUTHORITY = "com.android.contacts";
     public static final Uri AUTHORITY_URI = Uri.parse("content://com.android.contacts");
+
+    // AOSP's query parameters of every contacts URI (ContactsContract.java, public API).
+    public static final String CALLER_IS_SYNCADAPTER = "caller_is_syncadapter";
+    public static final String DIRECTORY_PARAM_KEY = "directory";
+    public static final String LIMIT_PARAM_KEY = "limit";
+    public static final String PRIMARY_ACCOUNT_NAME = "name_for_primary_account";
+    public static final String PRIMARY_ACCOUNT_TYPE = "type_for_primary_account";
+    public static final String REMOVE_DUPLICATE_ENTRIES = "remove_duplicate_entries";
+    public static final String DEFERRED_SNIPPETING = "deferred_snippeting";
+    public static final String DEFERRED_SNIPPETING_QUERY = "deferred_snippeting_query";
 
     /**
      * AOSP: an id at or above Profile.MIN_ID belongs to the device owner's own
@@ -201,11 +211,7 @@ public final class ContactsContract {
 
         // Ported verbatim from AOSP (frameworks_base main,
         // ContactsContract.java:1720-1739). Returns null on any failure
-        // (bad uri, no provider, no matching row) -- never throws. Our
-        // ContentResolver.query() already returns null for the unregistered
-        // "com.android.contacts" authority (no contacts backend registered),
-        // so this composes into the honest "no matching contact" answer
-        // AOSP itself gives on a real device with no matching row.
+        // (bad uri, no provider, no matching row) -- never throws.
         public static Uri lookupContact(ContentResolver resolver, Uri lookupUri) {
             if (lookupUri == null) {
                 return null;
@@ -357,8 +363,13 @@ public final class ContactsContract {
         public static final String CONTACT_ID = "contact_id";
         public static final String AGGREGATION_MODE = "aggregation_mode";
         public static final String DELETED = "deleted";
-        public static final String ACCOUNT_NAME = "account_name";
-        public static final String ACCOUNT_TYPE = "account_type";
+        // AOSP's: the account columns are SyncColumns', which RawContacts also implements.
+        public static final String DATA_SET = "data_set";
+        public static final String ACCOUNT_TYPE_AND_DATA_SET = "account_type_and_data_set";
+        public static final String RAW_CONTACT_IS_READ_ONLY = "raw_contact_is_read_only";
+        public static final String RAW_CONTACT_IS_USER_PROFILE = "raw_contact_is_user_profile";
+        public static final String METADATA_DIRTY = "metadata_dirty";
+        public static final String BACKUP_ID = "backup_id";
     }
 
     public static final class RawContacts implements BaseColumns, RawContactsColumns,
@@ -370,8 +381,7 @@ public final class ContactsContract {
 
         /**
          * AOSP walks the raw-contact row to its aggregate contact and builds a
-         * lookup URI. With no provider the query returns null and so does this,
-         * which is AOSP's own answer when the raw contact does not exist.
+         * lookup URI; null when the raw contact does not exist.
          */
         public static Uri getContactLookupUri(ContentResolver resolver, Uri rawContactUri) {
             final Uri dataUri = Uri.withAppendedPath(rawContactUri, Data.CONTENT_DIRECTORY);
@@ -394,22 +404,19 @@ public final class ContactsContract {
         /**
          * AOSP reads the local-account name/type from the contacts provider's
          * own config, defaulting to null/null ("the device-local account has no
-         * name"). With no provider that default is what we report -- and null is
-         * exactly what AOSP returns for the standard unnamed local account.
+         * name"), the local account Win.apk's provider keeps.
          */
         public static String getLocalAccountName(Context context) { return null; }
 
         public static String getLocalAccountType(Context context) { return null; }
 
         /**
-         * AOSP wraps the cursor in an EntityIterator that groups Data rows by
-         * raw contact. Mac.apk has no android.content.EntityIterator
-         * implementation of that shape, and the cursor is always null here, so
-         * this reports the empty iterator AOSP itself returns for an empty
-         * cursor. See the class comment: no provider is registered.
+         * AOSP's EntityIteratorImpl: a RawContactsEntity cursor's rows grouped
+         * by raw contact (its _id), each data row (DATA_ID not null) a sub-value
+         * under Data.CONTENT_URI with DATA_ID as its _id.
          */
         public static android.content.EntityIterator newEntityIterator(Cursor cursor) {
-            return emptyEntityIterator(cursor);
+            return entityIterator(cursor, true);
         }
 
         /** The Data sub-directory twig of a raw contact. */
@@ -434,7 +441,7 @@ public final class ContactsContract {
         /**
          * Which account new contacts go to.
          *
-         * Mac.apk registers no contacts provider AND no accounts, so the
+         * Win.apk's contacts provider keeps no default-account setting, so the
          * default account is NOT SET -- AOSP's own state for a device where the
          * user has never chosen one, and the state its callers already branch
          * on.
@@ -1051,9 +1058,9 @@ public final class ContactsContract {
         public static final String CONTENT_TYPE = "vnd.android.cursor.dir/group";
         public static final String CONTENT_ITEM_TYPE = "vnd.android.cursor.item/group";
 
-        /** See RawContacts.newEntityIterator: no contacts provider is registered. */
+        /** AOSP's: one Entity per group row, with no sub-values. */
         public static android.content.EntityIterator newEntityIterator(Cursor cursor) {
-            return emptyEntityIterator(cursor);
+            return entityIterator(cursor, false);
         }
     }
 
@@ -1102,10 +1109,9 @@ public final class ContactsContract {
 
         /**
          * AOSP asks the contacts provider which account new contacts go to.
-         * Mac.apk registers no contacts provider AND no accounts (see
-         * android.accounts.AccountManager), so there is no default account and
-         * null -- AOSP's documented @Nullable "device-local storage" answer --
-         * is correct rather than a placeholder.
+         * Win.apk's contacts provider keeps no default-account setting, so
+         * there is no default account and null -- AOSP's documented @Nullable
+         * "device-local storage" answer -- is what it reports.
          *
          * @deprecated AOSP deprecated this in API 36.
          */
@@ -1298,21 +1304,69 @@ public final class ContactsContract {
         public static final String QUERY_PARAMETER_SIP_ADDRESS = "sip";
     }
 
+    /** A data row's own columns in a RawContactsEntity row. */
+    private static final java.util.Set<String> ENTITY_DATA_COLUMNS = new java.util.HashSet<>(
+            java.util.Arrays.asList("mimetype", "is_primary", "is_super_primary", "is_read_only",
+                    "data_version", "data1", "data2", "data3", "data4", "data5", "data6", "data7",
+                    "data8", "data9", "data10", "data11", "data12", "data13", "data14", "data15",
+                    "data_sync1", "data_sync2", "data_sync3", "data_sync4", "group_sourceid",
+                    "res_package", "preferred_phone_account_component_name",
+                    "preferred_phone_account_id", "carrier_presence"));
+
+    private static void putColumn(android.content.ContentValues v, Cursor c, int i, String name) {
+        switch (c.getType(i)) {
+            case Cursor.FIELD_TYPE_NULL: v.putNull(name); break;
+            case Cursor.FIELD_TYPE_INTEGER: v.put(name, c.getLong(i)); break;
+            case Cursor.FIELD_TYPE_FLOAT: v.put(name, c.getDouble(i)); break;
+            case Cursor.FIELD_TYPE_BLOB: v.put(name, c.getBlob(i)); break;
+            default: v.put(name, c.getString(i)); break;
+        }
+    }
+
     /**
-     * AOSP wraps the cursor in an EntityIterator that groups Data rows under a
-     * raw contact. Mac.apk registers no contacts provider, so the cursor handed
-     * to newEntityIterator is always null or empty; this returns the same empty,
-     * closeable iterator AOSP's own implementation yields for an empty cursor,
-     * and closes the cursor exactly once as AOSP does.
+     * AOSP's CursorEntityIterator shapes: with `grouped`, consecutive rows of
+     * one _id are one Entity, the raw contact's columns its values and each
+     * data row a sub-value (RawContacts.EntityIteratorImpl); without, each row
+     * is an Entity of its own (Groups). Closes the cursor once, as AOSP does.
      */
-    private static android.content.EntityIterator emptyEntityIterator(final Cursor cursor) {
+    private static android.content.EntityIterator entityIterator(final Cursor cursor,
+            final boolean grouped) {
         return new android.content.EntityIterator() {
             private boolean mClosed = false;
-            @Override public boolean hasNext() { return false; }
-            @Override public android.content.Entity next() {
-                throw new java.util.NoSuchElementException();
+            { if (cursor != null) cursor.moveToFirst(); }
+            @Override public boolean hasNext() {
+                return !mClosed && cursor != null && !cursor.isAfterLast() && cursor.getCount() > 0;
             }
-            @Override public void reset() { }
+            @Override public android.content.Entity next() {
+                if (!hasNext()) throw new java.util.NoSuchElementException();
+                String[] cols = cursor.getColumnNames();
+                int idCol = cursor.getColumnIndex(BaseColumns._ID);
+                android.content.ContentValues values = new android.content.ContentValues();
+                for (int i = 0; i < cols.length; i++) {
+                    if (grouped && (ENTITY_DATA_COLUMNS.contains(cols[i]) || cols[i].equals("data_id"))) continue;
+                    putColumn(values, cursor, i, cols[i]);
+                }
+                android.content.Entity entity = new android.content.Entity(values);
+                if (!grouped) {
+                    cursor.moveToNext();
+                    return entity;
+                }
+                long id = idCol >= 0 ? cursor.getLong(idCol) : -1;
+                int dataIdCol = cursor.getColumnIndex("data_id");
+                do {
+                    if (idCol >= 0 && cursor.getLong(idCol) != id) break;
+                    if (dataIdCol >= 0 && !cursor.isNull(dataIdCol)) {
+                        android.content.ContentValues data = new android.content.ContentValues();
+                        data.put(BaseColumns._ID, cursor.getLong(dataIdCol));
+                        for (int i = 0; i < cols.length; i++) {
+                            if (ENTITY_DATA_COLUMNS.contains(cols[i])) putColumn(data, cursor, i, cols[i]);
+                        }
+                        entity.addSubValue(Data.CONTENT_URI, data);
+                    }
+                } while (cursor.moveToNext());
+                return entity;
+            }
+            @Override public void reset() { if (cursor != null) cursor.moveToFirst(); }
             @Override public void close() {
                 if (mClosed) return;
                 mClosed = true;
@@ -1323,8 +1377,7 @@ public final class ContactsContract {
 
     // ========================================================================
     // API-36 contract classes added 2026-08-24. Constants and client-side
-    // helpers only; see the file header -- no provider is registered, and
-    // declaring these does not register one.
+    // helpers only; what the provider serves is com.macapk.loader.ContactsProvider's.
     // Source: frameworks/base/core/java/android/provider/ContactsContract.java
     // ========================================================================
 
