@@ -64,6 +64,32 @@ link_lib INTERPOSE libwinapk_link_interpose
 link_lib USER libwinapk_link_user -L"$LINK" -L"$STUBS" -lwinapk_link_interpose -lc -ldl
 link_lib LATE libwinapk_link_late -L"$LINK" -L"$STUBS" -lc -lwinapk_link_interpose
 link_lib PLAIN libwinapk_link_plain -L"$STUBS" -lc
+# A packed library: the export's name scrambled in .dynstr (and only there) after
+# linking, to upper case; the hash tables keep the real name's hash.
+# Two of it: one with DT_GNU_HASH (lld's default), one with DT_HASH as the packer
+# has (soname libsecexe.so).
+link_lib PACKED libwinapk_link_packed -L"$STUBS" -lc
+link_lib PACKED libwinapk_link_packed_sysv -Wl,--hash-style=sysv -L"$STUBS" -lc
+python3 - "$LINK/libwinapk_link_packed.so" "$LINK/libwinapk_link_packed_sysv.so" <<'PY'
+import struct, sys
+for path in sys.argv[1:]:
+    d = bytearray(open(path, "rb").read())
+    shoff = struct.unpack_from("<Q", d, 0x28)[0]
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", d, 0x3A)
+    secs = [struct.unpack_from("<IIQQQQIIQQ", d, shoff + i * shentsize) for i in range(shnum)]
+    names = secs[shstrndx][4]
+    for s in secs:
+        o = names + s[0]
+        if d[o:d.index(b"\0", o)] == b".dynstr":
+            start, size = s[4], s[5]
+            i = d.find(b"link_packed_secret\0", start, start + size)
+            assert i >= 0, "export not in .dynstr"
+            d[i:i + 18] = b"LINK_PACKED_SECRET"
+            open(path, "wb").write(d)
+            break
+    else:
+        sys.exit("no .dynstr")
+PY
 
 # The Bionic shim's guest-side test (winapk-bionic-test). Real ELF TLS, as an
 # NDK build for minSdk 29 or later uses.
@@ -141,6 +167,6 @@ python3 "$HERE/guest/gen_arm64_fuzz.py" 400 48 1 > "$ARM64_OUT/arm64_fuzz.S"
 
 echo "[build_guest] $OUT/libwinapk_poc_guest.so"
 echo "[build_guest] $OUT/libwinapk_poc_guest_packed.so"
-echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin,interpose,user,late,plain}.so"
+echo "[build_guest] $LINK/libwinapk_link_{root,mid,base,plugin,interpose,user,late,plain,packed,packed_sysv}.so"
 echo "[build_guest] $OUT/libwinapk_bionic_guest.so"
 echo "[build_guest] $ARM64_OUT/libwinapk_arm64_{isa_O2,isa_O3,isa_lse,bridge,flow,unload,rebased,patch_*,fuzz,bench}.so"

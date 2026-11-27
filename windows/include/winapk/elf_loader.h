@@ -107,10 +107,11 @@ public:
     ElfImage(const ElfImage&) = delete;
     ElfImage& operator=(const ElfImage&) = delete;
 
-    // Address of an exported (defined, global or weak) symbol, or nullptr.
+    // Address of an exported (defined, global or weak, not TLS) symbol, or
+    // nullptr. Looked up in the library's hash table, symbols and names as they
+    // are in memory at the call, as bionic's dlsym does: a packed library puts
+    // them right in its own constructors.
     void* dlsym(const char* name) const;
-    // Every exported symbol and its address.
-    const std::unordered_map<std::string, uintptr_t>& exports() const { return exports_; }
 
     // The library's TLS module id (elf_tls.h), or 0 if it has no PT_TLS.
     size_t tls_module() const { return tls_module_; }
@@ -194,7 +195,6 @@ private:
     std::string soname_;
     std::vector<std::string> needed_;
     size_t nsyms_ = 0;
-    std::unordered_map<std::string, uintptr_t> exports_;
     std::unordered_map<std::string, uint64_t> tls_exports_;  // offsets in the TLS block
     std::vector<uint64_t> irelative_slots_;  // vaddrs; resolved after protect
     std::vector<int64_t> irelative_addends_;

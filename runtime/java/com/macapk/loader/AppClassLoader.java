@@ -2124,6 +2124,15 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
     private final java.util.Set<String> preloadedDeps =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /** Libnames whose DT_NEEDED closure has been loaded, each once, as
+     *  bionic's dlopen loads a library once. Without it every library walked
+     *  its whole tree again: a React Native app, where dozens of libraries
+     *  need libc++_shared, libglog and libfolly, repeated the walk
+     *  exponentially (Roborock: libc++_shared "preloaded" thousands of times,
+     *  over ten minutes before a first frame, #217). */
+    private final java.util.Set<String> preloaded =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private boolean libBiasesAssigned;
     /** Assign the per-image ARM32 load biases (idempotent). MUST run before ANY translate():
      *  exposeDylibsForSoLoader / findLibrary used to translate first, with libBias still
@@ -2464,7 +2473,9 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      * libSystem directly.
      */
     private void preloadDependencies(String libname) {
+        if (preloaded.contains(libname)) return;  // its closure is loaded
         if (!preloading.add(libname)) return;     // already in progress
+        boolean complete = false;
         try {
             File so = locateApkSo(libname);
             if (so == null) return;
@@ -2538,8 +2549,12 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                         "preload load(" + depName + ") failed: " + e);
                 }
             }
+            complete = true;
         } finally {
             preloading.remove(libname);
+            // Only a walk that ran to its end: one cut short by a missing file
+            // or an exception is tried again by the next library that needs it.
+            if (complete) preloaded.add(libname);
         }
     }
 

@@ -666,6 +666,14 @@ jobs:
           "$JAVA_HOME/bin/javac" -cp "$cp" -d build/notification-actions-test windows/test/java/com/macapk/loader/NotificationActionsTest.java
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/notification-actions-test)" \
             com.macapk.loader.NotificationActionsTest
+      - name: Run the service discovery test
+        run: |
+          # NsdManager over a stand-in for Windows' DNS-SD, on a plain JVM: found and lost services,
+          # resolve, registration, a listener in use, and no DNS-SD.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/aosp-graphics.jar);$(cygpath -w stage/lib/macapk-loader.jar);$(cygpath -w stage/lib/aosp-app.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/nsd-test windows/test/java/android/net/nsd/NsdManagerTest.java
+          MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/nsd-test)" android.net.nsd.NsdManagerTest
       - name: Run the host touch test
         run: |
           # The MotionEvents touchscreen and pen contacts become, on a plain JVM.
@@ -716,6 +724,17 @@ jobs:
           MACAPK_LOG_LEVEL=7 "$JAVA_HOME/bin/java" -Djava.awt.headless=true -Duser.language=en -Duser.country=US \
             -cp "$cp;$(cygpath -w build/datetimeview-test)" DateTimeViewTest | tee datetimeview-test.log
           grep -q "ALL PASSED" datetimeview-test.log
+      - name: Run the Handler callback test
+        run: |
+          # android.os.Handler's callback under AOSP's name, mCallback, as apps
+          # replace ActivityThread.mH's by reflection (AliExpress, #210): asked
+          # first, handleMessage after it unless it answers true.
+          export JAVA_HOME="$(cygpath -u "$JAVA_HOME")"
+          cp="$(cygpath -w build/java/android-framework.jar);$(cygpath -w stage/lib/macapk-loader.jar)"
+          "$JAVA_HOME/bin/javac" -cp "$cp" -d build/handler-callback-test windows/test/java/HandlerCallbackTest.java
+          "$JAVA_HOME/bin/java" -cp "$cp;$(cygpath -w build/handler-callback-test)" HandlerCallbackTest \
+            | tee handler-callback-test.log
+          grep -q "ALL PASSED" handler-callback-test.log
       - name: Run the ICU test
         run: |
           # AOSP's ICU4J (android.icu, aosp-graphics.jar) on the ICU data the stage ships, named as the host
