@@ -94,6 +94,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -572,13 +573,31 @@ public final class AppInstall {
                 String file = name.substring(prefix.length());
                 if (!isFilenameSafe(file)) continue;
                 Files.createDirectories(libDir);
-                try (InputStream in = zip.getInputStream(z)) {
-                    Files.copy(in, libDir.resolve(file), StandardCopyOption.REPLACE_EXISTING);
+                Path target = libDir.resolve(file);
+                // NativeLibraryHelper's copyFileIfChanged: a library already there with the entry's size and
+                // CRC is left as it is, so the same library in two of an app's APKs (or twice in one) is written
+                // once. On Windows a second write over the first can be refused while it is still being scanned.
+                if (!sameFile(target, z)) {
+                    try (InputStream in = zip.getInputStream(z)) {
+                        Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
+                    }
                 }
                 n++;
             }
         }
         return n;
+    }
+
+    /** Whether target already holds the entry's bytes: its size, then its CRC-32, as isFileDifferent compares. */
+    static boolean sameFile(Path target, ZipEntry z) throws IOException {
+        if (!Files.isRegularFile(target) || z.getSize() < 0 || z.getCrc() < 0) return false;
+        if (Files.size(target) != z.getSize()) return false;
+        CRC32 crc = new CRC32();
+        try (InputStream in = Files.newInputStream(target)) {
+            byte[] buf = new byte[1 << 16];
+            for (int r; (r = in.read(buf)) > 0; ) crc.update(buf, 0, r);
+        }
+        return crc.getValue() == z.getCrc();
     }
 
     /** PackageParser.validateName(name, requireSeparator, requireFilename) for a manifest's package: segments of
