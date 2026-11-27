@@ -272,6 +272,20 @@ app's details page, closes the app at once, like Android's **Force stop**:
 the app is not told, so close its window instead when it has something to
 save.
 
+An app comes back where you left it after its process ended without you
+closing it, as on a phone: when Windows signs out, restarts or shuts down
+with the app's window open (each screen is stopped and saves its state
+first), when the app crashed, ran out of memory or was ended from Task
+Manager, or when a permission you took away stopped it. Its screens come
+back with what they saved (a half-typed text, the item you were on), the
+top one first and the ones under it when you go back. A screen that was in
+front when the app crashed or was ended does not come back, as Android drops
+it. Closing the window (its **X**), **Back** out of the app's first screen,
+**Stop** and an update of the app start it fresh next time. Win.apk keeps
+this in `%LOCALAPPDATA%\Win.apk\apps\<app>\task-state.parcel`; Android keeps
+it only until the phone restarts, Win.apk across a Windows restart too, as
+the app's window was open when Windows ended it.
+
 In an app:
 
 | You do | The app sees |
@@ -793,7 +807,7 @@ nothing is started in the apps: no agent, no pipe.
 | Win.apk itself | `%LOCALAPPDATA%\Programs\Win.apk`, or the folder you unzipped |
 | Your copy of each APK | `%LOCALAPPDATA%\Win.apk\library\<app>.apk`, and for an app that came as a bundle its splits in `<app>.splits` beside it (the installed APKs themselves, not a second copy) |
 | Per-app choices beside the APK | `<app>.label` (name), `<app>.package` (package, version, manifest orientation), `<app>.orientation` (your choice), `<app>.window` (remembered window size) |
-| Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation) |
+| Each app's run files, icon and name | `%LOCALAPPDATA%\Win.apk\apps\<app>` (and `aot-guard.txt`, an ARM-only app's crashes with its translation; `task-state.parcel`, its screens and their saved state after its process ended without you closing it) |
 | The Android file system: apps' data, the installed packages | `%LOCALAPPDATA%\Win.apk\android` |
 | Logs | `%LOCALAPPDATA%\Win.apk\logs` |
 | The Store's app, as installed (no tile; its download and checksum) | `%LOCALAPPDATA%\Win.apk\library\app.apkstore.*`, `%LOCALAPPDATA%\Win.apk\store-app` |

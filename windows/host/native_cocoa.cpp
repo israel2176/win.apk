@@ -327,6 +327,36 @@ DWORD WINAPI close_thread(void*) {
     return 0;
 }
 
+// The end of the Windows session (sign-out, restart, shutdown) is not the user dismissing the app: on a
+// device the system ending puts every activity to sleep (ActivityTaskManagerService.shuttingDown:
+// paused and stopped, each saving its state) and the process is killed, with its task kept. So the
+// activities are stopped here, not destroyed (ActivityHost.macapkShutdown), the task's saved state
+// stays in apps\<name>\task-state.parcel, and the app's next start comes back where it was. The same
+// caps as a close: kCloseTeardownMs, then the watchdog.
+DWORD WINAPI session_end_thread(void*) {
+    const ULONGLONG t0 = GetTickCount64();
+    bool done = false;
+    JNIEnv* env = nullptr;
+    JavaVMAttachArgs args{JNI_VERSION_1_6, const_cast<char*>("winapk-session-end"), nullptr};
+    if (g_vm && g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) == JNI_OK && env) {
+        if (jclass host = activity_host_class(env)) {
+            const jmethodID shutdown = env->GetStaticMethodID(host, "macapkShutdown", "(J)Z");
+            if (shutdown) {
+                done = env->CallStaticBooleanMethod(host, shutdown, static_cast<jlong>(kCloseTeardownMs)) == JNI_TRUE;
+            }
+        }
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            done = false;
+        }
+    }
+    char how[112];
+    std::snprintf(how, sizeof how, "the session ends; the app was stopped in %llu ms, its task kept",
+                  static_cast<unsigned long long>(GetTickCount64() - t0));
+    end_close(done ? how : "the session ends; the app did not stop in time");
+    return 0;
+}
+
 class JavaInput : public WindowInput {
     // TouchDispatcher takes AppKit view coordinates: points, origin at the
     // bottom left; it multiplies them by backingScale (the density) for the
@@ -477,12 +507,14 @@ public:
         *y = static_cast<float>(static_cast<int32_t>(packed & 0xffffffff)) * view_h / sh;
         return true;
     }
-    // The user closed the window (its X, Alt+F4, the taskbar; the end of the
-    // Windows session too). See close_thread.
-    void close_requested() override {
+    // The user closed the window (its X, Alt+F4, the taskbar). See close_thread.
+    void close_requested() override { end_with(close_thread); }
+    // The Windows session is ending. See session_end_thread.
+    void session_ending() override { end_with(session_end_thread); }
+    void end_with(LPTHREAD_START_ROUTINE teardown_thread) {
         if (g_closing.exchange(true)) end_close("asked to close again");  // no second wait
         HANDLE watchdog = CreateThread(nullptr, 0, close_watchdog, nullptr, 0, nullptr);
-        HANDLE teardown = watchdog ? CreateThread(nullptr, 0, close_thread, nullptr, 0, nullptr) : nullptr;
+        HANDLE teardown = watchdog ? CreateThread(nullptr, 0, teardown_thread, nullptr, 0, nullptr) : nullptr;
         if (!teardown) end_close("no thread for the app's teardown");
         CloseHandle(watchdog);
         CloseHandle(teardown);

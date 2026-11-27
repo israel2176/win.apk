@@ -4738,6 +4738,15 @@ namespace appops {
 bool stop_runtime_of(const fs::path& apk);
 }
 
+// Stop, Android's Force stop: on a device it ends the app's activities with its process
+// (ActivityTaskManagerService.onForceStopPackage), so the task the runtime keeps for the app's next start
+// (apps\<name>\task-state.parcel, the activities' saved state) goes too; the next start is a fresh one.
+void force_stop(const App& a) {
+    if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
+    std::error_code ec;
+    fs::remove(app_dir(a.name) / L"task-state.parcel", ec);
+}
+
 // Deletes a folder and what is in it without going through a junction or link inside it (the
 // shared-storage folders are junctions to the user's own folders): the link goes, not its target.
 void remove_tree(const fs::path& dir) {
@@ -7835,9 +7844,7 @@ void show_info(const App& app) {
         std::vector<Row> manage;
         if (app_is_running(a.name)) {  // the page is built again when that changes (refresh_running)
             manage.push_back(button_row(tr(L"Stop"), tr(L"Closes the app at once, as Force stop does on a phone."),
-                                        tr(L"Stop"), [a] {
-                                            if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
-                                        }));
+                                        tr(L"Stop"), [a] { force_stop(a); }));
         }
         // No "Update from a file": opening or dropping a newer file of the app already installs over it.
         manage.push_back(button_row(tr(L"Remove"), tr(L"Removes the app and its shortcuts. You can also remove what "
@@ -10355,9 +10362,7 @@ void command(int id) {
     const App a = *sel;
     switch (id) {
         case kCmdOpen: launch(a); break;
-        case kCmdStop:
-            if (!stop_run(a.name)) appops::stop_runtime_of(a.apk);
-            break;
+        case kCmdStop: force_stop(a); break;
         case kCmdInfo: show_info(a); break;
         case kCmdRemove: remove_app(a, true); break;
     }

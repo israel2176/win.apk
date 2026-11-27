@@ -1141,8 +1141,9 @@ the change refused from anyone but the launcher.
    which the run log's first `arm64 AOT:` line says).
 7. The render tick drives frames; input goes to `TouchDispatcher`; permission
    requests spawn the launcher's dialogs; a resize re-lays the app out.
-8. Closing the window (`WM_CLOSE`; `WM_ENDSESSION` at sign-out or shutdown)
-   hides it at once and runs upstream's close path on a thread of its own
+8. Closing the window (`WM_CLOSE`) is the user dismissing the task, as a
+   task swiped from recents: its saved state (below) is deleted. It
+   hides the window at once and runs upstream's close path on a thread of its own
    (`native_cocoa.cpp`, `close_thread`): `ActivityHost.macapkTerminate` has
    the task manager remove the task (the top paused first, then `onStop` and
    `onDestroy` for every activity from the top down), and waits up to two
@@ -1153,7 +1154,27 @@ the change refused from anyone but the launcher.
    `close: the app did not answer in time; ended` (a watchdog thread that
    uses no Java ends it half a second after the two); a second close request
    ends it at once, and the launcher's Stop ends the process from outside
-   with no lifecycle, as Force stop does. `SharedPreferences.apply()` writes
+   with no lifecycle, as Force stop does, and deletes the task's saved state.
+   The end of the Windows session (`WM_ENDSESSION`) is the system ending,
+   not a dismissal (`session_end_thread`, `ActivityHost.macapkShutdown`):
+   every resumed or paused activity is stopped, saving its state, nothing is
+   destroyed (ActivityTaskManagerService.shuttingDown), and the run log says
+   `close: the session ends; the app was stopped in <n> ms, its task kept`.
+   The task outlives its process as it does in system_server: the task
+   manager (`Tasks`) writes each change of its records to
+   `apps\<name>\task-state.parcel` (`SavedTask`: a marshalled Parcel of each
+   record's activity, intent, result target, icicle and persistent state),
+   keeping the records `ActivityRecord.handleAppDied` keeps (never launched,
+   or stopped with saved state since its last resume; not finishing). The
+   next process of the app restores them before its first start: the top is
+   relaunched with its saved Bundle (`LaunchActivityItem`'s state), the ones
+   under it as they are revealed, with results to the restored records; a
+   launcher start, or a start of the root activity, only brings the task
+   forward, another start goes on top of it. A crash the framework's handler
+   reports drops the top first (`AppHost.processCrashed`,
+   `finishTopCrashedActivities`); Back out of the root empties the task and
+   deletes the file; a file of another version code or APK update time is
+   dropped. `SharedPreferences.apply()` writes
    the file before it returns, so nothing is queued at that point. Minimizing
    the window is the task going to the back
    (`ActivityHost.macapkHostMinimized`: `onPause`, `onStop`); restoring it
@@ -1192,7 +1213,7 @@ default; `--data` moves it for a direct run):
 | Path | What |
 |---|---|
 | `library\<name>.apk`, `.splits\`, `.label`, `.package`, `.orientation`, `.window` | The user's copy of each app and the launcher's per-app files. The `.apk` is the installed `base.apk` under `android\data\app\` (a hard link, one copy on disk; an update renames the app's files aside and copies the new file in, so none is written in place); an app that came as a bundle (`.apkm`, `.xapk`, `.apks`) also has `<name>.splits\split_*.apk`, hard links to its installed splits. A bundle is in the library only while it installs: its members cannot be links, so keeping it took its size twice (a 191 MB Waze `.xapk` took about 380 MB). What goes with it is what was never installed: its `manifest.json` and icon, a bundletool set's whole-app alternatives |
-| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off) |
+| `apps\<name>\` | `classes.jar`, `.macapk-dex-stamp`, `icon.png`, `label.txt`, `package.txt`; for an arm64-only app that crashed with its translation loaded, `aot-guard.txt` (the crash guard's count and whether translation is off); `task-state.parcel`, the app's task kept across the end of its process (`SavedTask`: the activity records and their saved state), deleted when the user closes the window, backs out of the task or stops the app |
 | `android\` | The Android file system: `data\app\` (installed packages, with `lib\<isa>\` and the `.so.aot.*` translation files; `lib\arm64\.aot-tmp\<lib>\` holds an unfinished translation), `data\data\<package>\` (app data), `dev\socket\` (the socket files that stand for abstract-namespace `LocalSocket` names), the shared-storage volume |
 | `logs\` | `run-<name>.log` and `run-<name>.1.log`, `last-run.log` (a hard link to the newest run log), `install-<name>.log`, `gms.log`, `gms-tokens.log` (the Google token service), `install-helper.log`, `package-backfill.log`, `hs_err_pid*.log` |
 | `store-app\` | The Store's app: `installed.sha256` (the SHA-256 of the release asset installed, for the daily check), and `apk-store.apk` while it downloads or waits to be installed. An older install's `store\` (F-Droid's catalog) is removed at start |
