@@ -55,6 +55,7 @@ ShimTable signal_symbols();   // signal.cpp: sigaction, sigaltstack, masks, deli
 ShimTable fd_symbols();       // fd.cpp: pipe, eventfd, poll, select, epoll
 ShimTable socket_symbols();   // socket.cpp: BSD sockets on Winsock, getaddrinfo, inet_*
 ShimTable looper_symbols();   // looper.cpp: the NDK's ALooper
+ShimTable process_symbols();  // process.cpp: posix_spawn, the exec family, waitpid on child processes
 ShimTable locale_symbols();   // locale.cpp: <locale.h>, UTF-8 conversion, <wctype.h>, more <wchar.h>
 ShimTable zlib_symbols();     // zlib.cpp: libz.so, on the host's zlib
 
@@ -112,6 +113,15 @@ std::string format_va(const char* fmt, SysVVaList* va);
 // paths.cpp: the host path for a guest path (Android's absolute paths are
 // mapped under the android root; see paths.cpp).
 std::wstring host_path(const char* guest_path);
+// The mapping itself, as set_android_root and set_app_data gave it (for a child process, which
+// gets the same; process.cpp).
+std::wstring android_root();
+std::string app_package();
+std::wstring app_data_dir();
+// misc.cpp: the guest's `environ` array as it is now.
+char** guest_environ();
+// process.cpp: kill() of a child this process started: true (and *result) when `pid` is one.
+bool child_kill(int pid, int sig, int* result);
 // host_path() as a Windows file call takes it: a path that reaches the Win32 limit
 // (MAX_PATH) in its long-path form, "\\?\C:\..." (the JDK's pathToNTPath does the
 // same for java.io), so an app's deep files open whatever the PC's long-path policy.
