@@ -115,8 +115,8 @@ void test_runs() {
         t.attach(app, kA);
         t.ended(app, true);
         const auto clean = t.finish(app);
-        check("exit code 0 before its window: did not start, cleanly",
-              clean && clean->kind() == RunEnd::kDidNotStart && clean->clean);
+        check("exit code 0 before its window: closed by the app, quietly, as on a phone",
+              clean && clean->kind() == RunEnd::kQuiet && clean->clean);
     }
     {
         RunTable t;

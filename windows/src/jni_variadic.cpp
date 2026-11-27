@@ -65,6 +65,32 @@ int build_jvalues(const char* sig, SysVVaList* va, jvalue* out) {
     return n;
 }
 
+// An object argument no JNI reference can be: HotSpot's handles are pointers tagged in their low two
+// bits (0 local, 1 weak global, 2 global), so tag 3 or a value above the user address space is not
+// one, and the VM faults reading it far from the caller (WhatsApp's simplejni callStaticLongMethod
+// passed 0xffffffffffffffff and the JVM died in JavaCallArguments::parameters). Said in the log
+// with the method's signature and the argument's place, the first few times, so the crash names
+// its cause; ART's CheckJNI aborts on the same call.
+void report_bad_reference(jmethodID mid, const char* sig, const jvalue* argv, int n) {
+    static std::atomic<int> said{0};
+    const char* p = sig + 1;
+    for (int i = 0; i < n && *p && *p != ')'; ++i) {
+        const char c = *p;
+        while (*p == '[') ++p;
+        if (*p == 'L') {
+            while (*p && *p != ';') ++p;
+        }
+        if (*p) ++p;
+        if (c != 'L' && c != '[') continue;
+        const auto v = reinterpret_cast<uintptr_t>(argv[i].l);
+        if ((v & 3) != 3 && v < 0x0000800000000000ULL) continue;
+        if (said.fetch_add(1) >= 8) return;
+        std::fprintf(stderr, "[win.apk] JNI call: argument %d of method %p %s is %p, not a reference\n", i,
+                     reinterpret_cast<void*>(mid), sig, argv[i].l);
+        std::fflush(stderr);
+    }
+}
+
 [[noreturn]] void bad_signature(jmethodID mid) {
     std::fprintf(stderr, "[win.apk] no/invalid JNI signature for method %p in a variadic call\n",
                  reinterpret_cast<void*>(mid));
@@ -128,7 +154,9 @@ struct VarBridge<AField> {
         jmethodID mid = std::get<N - 2>(t);
         const char* sig = g_provider ? g_provider(g_provider_ctx, mid) : nullptr;
         jvalue argv[kMaxArgs];
-        if (build_jvalues(sig, va, argv) < 0) bad_signature(mid);
+        const int argc = build_jvalues(sig, va, argv);
+        if (argc < 0) bad_signature(mid);
+        report_bad_reference(mid, sig, argv, argc);
         if constexpr (std::is_same_v<R, jobject>) {
             R made = call_aform(host, argv, t, std::make_index_sequence<N - 1>{});
             if (!made && is_new_object(AField)) report_failed_new_object(host);

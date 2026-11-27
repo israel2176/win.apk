@@ -195,6 +195,12 @@ add_executable(winapk-toast-xml-test test/toast_xml_test.cpp)
 add_executable(winapk-swap-pacing-test test/swap_pacing_test.cpp)
 target_include_directories(winapk-swap-pacing-test PRIVATE host)
 
+# An app's GL threads taking turns on their display (host/gl/gl_turn.h): a fake eglMakeCurrent in
+# place of ANGLE's renderer, many threads. No window, no ANGLE. test/gl_turn_test.cpp.
+add_executable(winapk-gl-turn-test test/gl_turn_test.cpp host/gl/gl_turn.cpp)
+target_include_directories(winapk-gl-turn-test PRIVATE host third_party/khronos)
+target_compile_definitions(winapk-gl-turn-test PRIVATE KHRONOS_STATIC)
+
 # The translation's crash guard (host/aot_guard.h) through the real crash path,
 # test/aot_guard_test.cpp. The DLL is its stand-in for a translation, and must
 # be next to it.
@@ -381,7 +387,7 @@ if(WINAPK_JNI_INCLUDE)
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/src/native_methods.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_gl_bridges.cmake
     COMMENT "Extracting upstream's GL bindings")
-  target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_bridges.cpp
+  target_sources(winapk-runtime PRIVATE host/gl/gl_loader.cpp host/gl/gl_stubs.cpp host/gl/gl_turn.cpp host/gl/gl_bridges.cpp
                  host/gl/gl_surface.cpp host/gl/guest_gl.cpp host/gl/guest_gl_extensions.cpp host/vk/guest_vk.cpp
                  host/native_vulkan.cpp
                  host/native_window.cpp host/native_asset.cpp
@@ -408,7 +414,7 @@ if(WINAPK_JNI_INCLUDE)
   # The runtime's GL on ANGLE (test/gl_test.cpp), on whatever backend the
   # machine has.
   add_executable(winapk-gl-test test/gl_test.cpp host/gl/gl_surface.cpp host/gl/gl_loader.cpp host/gl/gl_stubs.cpp
-                 host/gl/guest_gl_extensions.cpp)
+                 host/gl/gl_turn.cpp host/gl/guest_gl_extensions.cpp)
   target_include_directories(winapk-gl-test PRIVATE host third_party/khronos)
   target_compile_definitions(winapk-gl-test PRIVATE KHRONOS_STATIC)
   target_link_options(winapk-gl-test PRIVATE -static)
