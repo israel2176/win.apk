@@ -860,8 +860,24 @@ WINAPK_GUEST_ABI int g_unlink(const char* path) {
     return -1;
 }
 WINAPK_GUEST_ABI int g_rename(const char* from, const char* to) {
-    if (MoveFileExW(file_path(from).c_str(), file_path(to).c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
-    set_errno_from_win32(GetLastError());
+    const std::wstring src = file_path(from), dst = file_path(to);
+    if (MoveFileExW(src.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_COPY_ALLOWED)) return 0;
+    const DWORD error = GetLastError();
+    // rename(2) of a directory replaces an empty directory of the new name, and fails with
+    // ENOTEMPTY on one that is not empty; MoveFileEx never replaces a directory.
+    const DWORD sa = GetFileAttributesW(src.c_str()), da = GetFileAttributesW(dst.c_str());
+    if (sa != INVALID_FILE_ATTRIBUTES && (sa & FILE_ATTRIBUTE_DIRECTORY) && da != INVALID_FILE_ATTRIBUTES &&
+        (da & FILE_ATTRIBUTE_DIRECTORY)) {
+        if (!RemoveDirectoryW(dst.c_str())) {
+            if (GetLastError() == ERROR_DIR_NOT_EMPTY) {
+                *guest_errno() = kENOTEMPTY;
+                return -1;
+            }
+        } else if (MoveFileExW(src.c_str(), dst.c_str(), 0)) {
+            return 0;
+        }
+    }
+    set_errno_from_win32(error);
     return -1;
 }
 WINAPK_GUEST_ABI int g_remove(const char* path) {
