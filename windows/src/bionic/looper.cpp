@@ -71,7 +71,8 @@ int poll_once(Looper* l, int timeout, int* out_fd, int* out_events, void** out_d
         for (const auto& [fd, r] : l->requests) fds.push_back({fd, poll_events(r.events), 0});
     }
     const int n = fd_poll(fds.data(), fds.size(), timeout);
-    if (n < 0) return kPollError;
+    // Interrupted by a signal: a wake, as Android's Looper::pollInner answers an EINTR from epoll_wait.
+    if (n < 0) return *guest_errno() == kEINTR ? kPollWake : kPollError;
     if (n == 0) return kPollTimeout;
     int result = kPollTimeout;
     if (fds[0].revents & 0x1) {
