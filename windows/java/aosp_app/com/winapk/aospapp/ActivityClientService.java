@@ -64,6 +64,16 @@ public final class ActivityClientService {
         });
     }
 
+    /** ActivityClientController.finishActivityAffinity (Activity.finishAffinity). */
+    public boolean finishActivityAffinity(IBinder token) {
+        return ask(() -> {
+            Tasks.Record r = tasks().find(token);
+            if (r == null) return false;
+            tasks().finishAffinity(r);
+            return true;
+        });
+    }
+
     public boolean isTopOfTask(IBinder token) {
         return ask(() -> {
             Tasks.Record r = tasks().find(token);

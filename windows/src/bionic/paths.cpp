@@ -24,6 +24,8 @@
 //   /apex/com.android.runtime/bin/linker64    -> <android root>/..., written with
 //                                                the process's ELF header
 //                                                (process_image.h)
+//   /proc/cpuinfo, /sys/devices/system/cpu/   -> <android root>/..., written with this
+//     {possible,present,online}                  machine's text first (cpuinfo.cpp)
 //   any other /...                            -> <android root>/...
 //
 // The android root is the per-user folder the runtime mirrors Android's
@@ -53,6 +55,7 @@
 #include <tlhelp32.h>
 
 #include "winapk/linker.h"
+#include "winapk/long_path.h"
 #include "winapk/mini_bionic.h"
 #include "winapk/process_image.h"
 
@@ -368,6 +371,7 @@ std::wstring host_path(const char* p) {
     } else if (is_process_image_path(p) && !host.empty() && host[0] != L'/') {
         ensure_process_image(host);
     }
+    if (p && (std::strncmp(p, "/proc/", 6) == 0 || std::strncmp(p, "/sys/", 5) == 0)) refresh_cpu_file(p, host);
     return host;
 }
 
@@ -426,24 +430,24 @@ std::wstring mapped_path(const char* p) {
 
 }  // namespace
 
-// A path near MAX_PATH by the long-path form of its full path (normalized first:
-// under "\\?\" Windows takes '/' and ".." as names); a shorter one as it is.
+// A path near MAX_PATH by the long-path form of its full path (long_path.h); a shorter one as it is.
 // An app's data folder sits under %LOCALAPPDATA%\Win.apk\android\data\data\<package>,
 // and its own deep files (Crashlytics' sessions name the package twice, Dart's caches,
 // a WebView's) pass 260 characters with a long user name or package; without the
 // long-path policy (off on most PCs) every such file call failed.
-std::wstring file_path(const char* p) {
-    std::wstring w = host_path(p);
-    if (w.size() < MAX_PATH - 12 || w.rfind(L"\\\\?\\", 0) == 0) return w;
-    const DWORD n = GetFullPathNameW(w.c_str(), 0, nullptr, nullptr);
-    if (n == 0) return w;
-    std::wstring full(n, L'\0');
-    const DWORD m = GetFullPathNameW(w.c_str(), n, &full[0], nullptr);
-    if (m == 0 || m >= n) return w;
-    full.resize(m);
-    if (full.rfind(L"\\\\?\\", 0) == 0) return full;
-    if (full.rfind(L"\\\\", 0) == 0) return L"\\\\?\\UNC\\" + full.substr(2);
-    return L"\\\\?\\" + full;
+std::wstring file_path(const char* p) { return long_path(host_path(p)); }
+
+std::wstring android_root() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_android_root;
+}
+std::string app_package() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_app_package;
+}
+std::wstring app_data_dir() {
+    std::lock_guard<std::mutex> hold(g_lock);
+    return g_app_data_dir;
 }
 
 }  // namespace winapk::bionic

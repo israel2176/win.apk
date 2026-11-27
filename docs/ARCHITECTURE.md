@@ -268,10 +268,12 @@ functions, every one declared with the System V calling convention
 | `socket.cpp` | BSD sockets on Winsock with Linux's constants translated; `getaddrinfo`; `getifaddrs`, `if_nametoindex`, `if_indextoname` and `if_nameindex` over one list of the adapters that are up (Linux-shaped names, Windows' interface indexes). Socket options: the ones Winsock has are mapped, among them multicast membership in all its forms (`ip_mreq`, `ip_mreqn`, `MCAST_JOIN_GROUP` and the other RFC 3678 requests), `SO_LINGER`, `SO_REUSEPORT` on datagram sockets (Windows' `SO_REUSEADDR`), the TCP keep-alive times, `TCP_USER_TIMEOUT`, path-MTU discovery as "don't fragment"; options that only tune (`SO_PRIORITY`, `TCP_QUICKACK`, `IP_RECVTOS`...) succeed with one log line each; any other fails with `ENOPROTOOPT`, so code that asks for a feature (`UDP_SEGMENT`) takes its fallback |
 | `paths.cpp` | Android's absolute paths (`/data`, `/sdcard`, `/system/fonts`, `/dev/null`) under the Android root; `/proc/self` is `/proc/<pid>` there, where Boot writes the process's `cmdline` and an open writes its `status` and its `maps` (the text native code reads, `GuestLinker::proc_maps`: the process's `app_process64` and `linker64`, then the guest libraries); `/system/bin/app_process64`, `/system/bin/linker64` and `/apex/com.android.runtime/bin/linker64` are files with the process's ELF header, x86_64's, and there is no 32-bit `/system/bin/linker`, as on a 64-bit-only device (`include/winapk/process_image.h`; app packers choose their loader's build by them); the characters of an Android file name that Windows forbids, stored as U+F000 + the character as WSL does |
 | `looper.cpp` | The NDK's `ALooper` |
-| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy); `mprotect`, `munmap` and `madvise(MADV_DONTNEED)` go region by region (`VirtualQuery`), as a range may hold reserved and committed pages of several allocations: opening a reserved page commits it, `PROT_NONE` leaves a reserved one as it is and keeps a committed one's contents, `MADV_DONTNEED` decommits and commits again in a mapping made here, system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied) and `waitpid` (`ECHILD`), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
+| `misc.cpp` | Clocks and time, `strptime`, `mmap` on `VirtualAlloc` (with `PROT_NONE` as a reservation; a file mapped `MAP_SHARED`, or read-only, is a view of the file (`MapViewOfFile`), also `MAP_FIXED` into an untouched reservation, so writes reach the file and every mapping sees them; a writable private one is a copy); `mprotect`, `munmap` and `madvise(MADV_DONTNEED)` go region by region (`VirtualQuery`), as a range may hold reserved and committed pages of several allocations: opening a reserved page commits it, `PROT_NONE` leaves a reserved one as it is and keeps a committed one's contents, `MADV_DONTNEED` decommits and commits again in a mapping made here, system properties, the guest environment (`setenv`, `putenv`, `clearenv`), `syscall` for futex and friends and for raw `mmap`, `mprotect` and `munmap` (Gecko's allocator), `sysconf`, `uname`, `getauxval`, `sched_getaffinity` (the process's affinity), `fork`/`vfork` (-1, `ENOSYS`: a Windows process cannot be copied; `process.cpp` starts programs), `random(3)` as Bionic's (NetBSD's) generator, libm (the `long double` rounding functions on binary128), libandroid's `ATrace` (tracing off) |
+| `process.cpp` | Child processes: `posix_spawn`/`posix_spawnp` with their file actions, the `exec` family (the program runs as a new Windows process, the caller waits for it and ends with its status, as an exec replaces the process), `waitpid`/`wait`/`wait3`/`wait4`/`waitid` and `kill` on a child. A program is an x86_64 Android ELF executable, run by `winapk-runtime.exe --exec` (the spawning program started again, `host/exec_main.cpp`) on the same guest linker and shim, with the parent's Android paths and the environment it gave; its stdin, stdout and stderr are the parent's descriptors (a shim pipe or socket pumped through a Windows pipe). `fork` stays `ENOSYS`, an arm64 program or a script `ENOEXEC`, a missing one `ENOENT` (there is no `/system/bin/sh`). Java's `ProcessBuilder` on such a file goes the same way (`jdk.internal.util.WinApkExec` in the java.base overlay) |
 | `locale.cpp` | The C and C.UTF-8 locales libc++ builds on, UTF-8 conversion, `wctype.h` |
-| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously (`abort()`'s log line carries the message `android_set_abort_message` kept, libc++abi's "terminating due to uncaught exception ..." among them), `pthread_kill` by suspending the target and injecting the call; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
+| `signal.cpp` | Signals delivered to guest handlers: a vectored exception handler maps access violations, illegal instructions, divide errors and breakpoints to SIGSEGV/SIGBUS/SIGILL/SIGFPE/SIGTRAP and calls the handler with Bionic's `siginfo_t` and `ucontext_t` (registers written back, so a handler can fix the fault or redirect `rip`); `SA_SIGINFO`, `SA_ONSTACK` with `sigaltstack`, `SA_RESETHAND`, `SA_NODEFER`, `sa_mask`; `raise`, `kill`, `tgkill`, `abort` synchronously (`abort()`'s log line carries the message `android_set_abort_message` kept, libc++abi's "terminating due to uncaught exception ..." among them), `pthread_kill` by suspending the target and injecting the call when it is in guest code, else by posting the signal to it and waking the wait it sleeps in (a futex, condition variable, semaphore, `pthread_join`, poll, read, sleep), which then runs the handler and returns `EINTR` or waits on (`SA_RESTART`) as Linux's call would, so a Windows lock the target holds is never under a handler; a handler that declines three times leaves the fault to the crash report. Not delivered: faults in HotSpot or in Windows DLLs, faults in arm64 guest code, handlers in arm64 libraries. POSIX timers do not fire |
 | `setjmp.cpp` | `setjmp` and `longjmp` for guest code |
+| `cpuinfo.cpp` | `/proc/cpuinfo` (a block per logical processor, the flags under Linux's names for what CPUID reports, the topology Windows reports) and `/sys/devices/system/cpu/{possible,present,online}`, as an x86_64 device's kernel shows them: files under the Android root, written when a path names one |
 | `cacerts.cpp` | Android's `/system/etc/security/cacerts` built from the roots Windows trusts plus the JDK's |
 | `zlib.cpp` | `libz.so` on a statically linked zlib, with the guest's `z_stream` layout converted on every call |
 
@@ -516,7 +518,9 @@ checked against its SHA-256.
   the SurfaceView, below.
 - **From native code** (`host/gl/guest_gl.cpp`): every GLES 1.1 to 3.2 and
   EGL 1.5 function wrapped for the System V convention, the Khronos and
-  ANGLE/Chromium extensions' functions too (`third_party/angle/`'s
+  ANGLE/Chromium extensions' functions too (GLES 1's those ANGLE has:
+  `glDrawTex*OES`, `glBindFramebufferOES`...; `OES_fixed_point`'s `gl*xOES`
+  are not ANGLE's and stay missing) (`third_party/angle/`'s
   `gl2ext_angle.h`), plus the EGL calls that need a window. `GL_EXTENSIONS`
   and `EGL_EXTENSIONS` name only the extensions whose every function the app
   can call and the ANGLE loaded resolves (`host/gl/guest_gl_extensions.cpp`):
@@ -530,11 +534,17 @@ draws nothing on it, because ANGLE takes no lock between contexts that share
 nothing on one Direct3D 11 device. A window surface's frame is read back at
 the app's swap, on its thread, and becomes a layer under the app's windows
 (below); until a SurfaceView's producer has drawn, the render tick shows black
-in its place, as AOSP's SurfaceView shows its background layer. Vulkan is not
-implemented. The app's GL threads share one ANGLE display, whose Direct3D 11
-renderer holds one context's state at a time, so each GL call takes the
+in its place, as AOSP's SurfaceView shows its background layer.
+The app's GL threads share one ANGLE display, whose Direct3D 11 renderer holds one context's state at a time, so each GL call takes the
 display's turn (`host/gl/gl_turn.h`): one call at a time, and a context
 another thread displaced is made current again before its thread's next call.
+Vulkan (`host/vk/guest_vk.cpp`) reaches the screen as a GL window surface does: an app's native code calls the PC's
+Vulkan (the loader beside the runtime and the GPU's driver, or SwiftShader on a
+PC with none) through System V wrappers generated from `vulkan_core.h`
+(`tools/gen_vk_thunks.py`), each dispatching on the instance's or device's
+table; the window system is emulated, a swapchain being images of the device's
+own, and `vkQueuePresentKHR` copies the presented one back and shows it as the
+guest layer, paced like `eglSwapBuffers`.
 
 ### The view tree's frames
 
@@ -978,10 +988,15 @@ the change refused from anyone but the launcher.
 
 ## An install, step by step
 
-1. The launcher names the app (`install_name`: the package when the file name
-   starts with one, as `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else
-   the file name up to its version; a package already in the library keeps
-   that app's name, so the install updates it), copies the file into
+1. The launcher reads the file first (`winapk-runtime --verify-apk`, one file
+   at a time: its package and versionCode) and names the app
+   (`install_name`: the package when the file name starts with one, as
+   `com.waze_5.26.5.0-..._apkmirror.com.apkm` does, else the file name up to
+   its version; then `launcher/installs.h` `place_install`: a package already
+   in the library keeps that app's name, so the install updates it, a file of
+   another package never takes the name of an app it is not, and a lower
+   versionCode than the installed app's installs only after the user's yes),
+   copies the file into
    `library\<name>.<ext>` (an update renames the app's files aside as
    `<file>.previous`, whatever their extension, deletes them once the new one
    is installed, and puts them back if the install fails or is cancelled; an
@@ -1275,7 +1290,7 @@ sets from its tag; a `ci.yml` build is the newest release tag + `-dev.<run>`
 
 ## What is not there
 
-As of this writing: DRM (`MediaDrm`, `AMediaDrm`), Vulkan, real sensor input,
+As of this writing: DRM (`MediaDrm`, `AMediaDrm`), real sensor input,
 signal delivery for faults in arm64 guest code and handlers in arm64
 libraries, POSIX timers, static ELF TLS, W^X thunk pools with unwind tables,
 code signing, 32-bit ARM,

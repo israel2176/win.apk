@@ -60,6 +60,7 @@
 // program (--java-main), not in java.exe, which reads its own location and
 // its arguments in the ANSI code page.
 
+#include "exec_main.h"
 #include "aosp_gfx.h"
 #include "hwui_host.h"
 #include "aot_guard.h"
@@ -2484,6 +2485,9 @@ void buffer_stderr() {
 }
 
 int wmain(int argc, wchar_t** argv) {
+    // An Android program an app started as a child process (src/bionic/process.cpp starts this
+    // executable again): before anything of the runtime's, its streams are the program's own.
+    if (argc > 1 && std::wstring(argv[1]) == L"--exec") return winapk::host::exec_program_main(argc - 2, argv + 2);
     buffer_stderr();
     winapk::host::install_crash_report();
     winapk::host::take_launcher_ready_event();
