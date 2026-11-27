@@ -3,7 +3,7 @@
 #   What changed ──┬─ Guest libraries (Ubuntu) ─────────┬─ Unit tests
 #                  ├─ Launcher check (Ubuntu, MinGW)    ├─ Runtime tests
 #                  └─ Build (Windows, ccache) ──────────┼─ App smoke test (10 apps)
-#                                                       ├─ AOSP app layer: lifecycle, accessibility tree (Ubuntu, informational)
+#                                                       ├─ AOSP app layer: task restore; lifecycle, accessibility tree (Ubuntu, informational)
 #                                                       ├─ AOSP graphics (Skia, minikin)
 #                                                       ├─ Package (preview + installer)
 #                                                       └─ Sweep 1/4 .. 4/4 ─ Sweep report  (only when asked)
@@ -1375,13 +1375,14 @@ jobs:
     # AOSP's own app layer (docs/research/aosp-app.md, step A1): lib/aosp-app.jar built over the
     # build's staged runtime with AOSP's resources and views, and AOSP 14's ActivityThread running an
     # Application and two activities through their lifecycle on a plain JVM, over the in-process
-    # activity manager (windows/test/aospapp). Informational, on Ubuntu: no host switch reads the
-    # jar yet; it fails nothing (continue-on-error) and says what it found in the summary.
-    name: AOSP app layer (informational)
+    # activity manager (windows/test/aospapp). On Ubuntu. The task kept across the end of the app's
+    # process (StateRestoreTest) fails the run: every app's process restores it. The lifecycle,
+    # magnifier and accessibility steps are informational (continue-on-error on each step) and say
+    # what they found in the summary.
+    name: AOSP app layer
     needs: [changes, build]
     if: >-
       !cancelled() && needs.build.result == 'success' && needs.changes.outputs.tests == 'true'
-    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -1409,7 +1410,10 @@ jobs:
       - name: AOSP's dependencies for Linux
         run: windows/test/aospgfx/fetch.sh thirdparty/aosp-gfx-linux linux
       # The lifecycle test, then the magnifier's (MagnifierTest: a window's child layers): one line each.
-      - name: The lifecycle and magnifier tests
+      - name: The lifecycle and magnifier tests (informational)
+        continue-on-error: true
+        env:
+          AOSPAPP_TESTS: lifecycle magnifier
         run: |
           set -o pipefail
           rc=0
@@ -1422,8 +1426,23 @@ jobs:
             echo "$(grep -E 'do not link' aospapp.log | head -n 1)"
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc
-      - name: The accessibility tree test
+      # The app's task across the end of its process (StateRestoreTest, one process per run): this
+      # step fails the run.
+      - name: The task restore test
         if: always()
+        env:
+          AOSPAPP_TESTS: restore
+        run: |
+          set -o pipefail
+          rc=0
+          windows/test/aospapp/run.sh stage thirdparty/aosp-gfx-linux aospapp-out build/java/android-framework.jar \
+            2>&1 | tee restore.log || rc=$?
+          echo "### Task restore: $(grep -E '^(ALL PASSED|FAILED)' restore.log | tail -n 1 | grep . || echo 'did not finish')" \
+            >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: The accessibility tree test (informational)
+        if: always()
+        continue-on-error: true
         run: |
           # What a screen reader is given of AOSP's views and what it can do with them
           # (HostAccessibility, com.winapk.aospviews.AccessibilityTree), in an activity this app
@@ -1441,6 +1460,7 @@ jobs:
           name: aosp-app
           path: |
             aospapp.log
+            restore.log
             a11y.log
             a11y-out/snapshot.txt
             stage/.build/aosp-app.links.txt

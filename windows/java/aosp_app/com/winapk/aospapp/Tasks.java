@@ -13,6 +13,12 @@
 //     TaskFragment.resumeTopActivity adds them), and destroys the finishing one once the one under it
 //     is idle (DestroyActivityItem; the executor passes through onStop on the way).
 //   * The task's last activity destroyed ends the task: `onTaskEmpty` runs (Win.apk ends the run).
+//   * The records outlive the app's process as they outlive it in system_server: each change is written
+//     to the task's saved state (SavedTask), and the next process of the app restores the task from it,
+//     the top relaunched with its saved Bundle and the others as they are revealed. The user dismissing
+//     the task (`terminate`, the window closed) drops it; the end of the Windows session (`shutdown`)
+//     stops every activity first, as ActivityTaskManagerService.shuttingDown puts them to sleep, so that
+//     each saves its state.
 //
 // Step A1 (docs/research/aosp-app.md): one task, the standard launch mode; launch modes, intent flags
 // (CLEAR_TOP, SINGLE_TOP, NEW_TASK...), configuration changes and relaunch, moving the task to the
@@ -76,6 +82,20 @@ public final class Tasks {
         boolean ownsBox;
         /** The configuration the activity last got (ActivityRecord's last reported one). */
         Configuration reported;
+        /** ActivityRecord.mHaveState: true until it is launched, then again once it stops with its
+         *  saved state, false from its resume on. A record without it does not survive the process
+         *  (handleAppDied). */
+        boolean haveState = true;
+        /** The icicle and persistent state as the saved task writes them (SavedTask.marshall), made
+         *  once when the activity reports them. */
+        byte[] marshalledIcicle;
+        byte[] marshalledPersistent;
+        private byte[] marshalledIntent;
+
+        byte[] marshalledIntent() {
+            if (marshalledIntent == null) marshalledIntent = SavedTask.marshall(intent);
+            return marshalledIntent;
+        }
 
         Record(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho, int requestCode) {
             this.info = info;
@@ -105,14 +125,124 @@ public final class Tasks {
     /** The window was closed: every activity goes, and the empty task ends the process. */
     private boolean terminating;
     private java.util.concurrent.CountDownLatch terminated;
+    /** Where the records are kept across the process's end (null: not kept, as for a process started
+     *  for a service, with no activity of its own). */
+    private SavedTask saved;
+    /** The user dismissed the task: nothing of it is kept from now on. */
+    private boolean dismissed;
+    /** The Windows session is ending: every activity is stopped, and nothing new starts. */
+    private boolean shuttingDown;
+    private java.util.concurrent.CountDownLatch shutDown;
 
     Tasks(Handler handler) { this.handler = handler; }
 
-    void attach(AospApp owner, IApplicationThread thread, IActivityClientController controller, Configuration cfg) {
+    void attach(AospApp owner, IApplicationThread thread, IActivityClientController controller, Configuration cfg,
+                SavedTask saved) {
         this.owner = owner;
         app = thread;
         clientController = controller;
         config = cfg;
+        this.saved = saved;
+    }
+
+    // ---- The task across the process's end (SavedTask) ----
+
+    /** The records the last process of the app left, back in the task, none launched: what
+     *  ActivityTaskManagerService still has of a task whose process died. True when there are any;
+     *  the caller then resumes the top (`resumeTop`) or starts on top of them. */
+    boolean restore() {
+        if (saved == null) return false;
+        List<SavedTask.Entry> entries = saved.read();
+        List<Record> made = new ArrayList<>();
+        for (SavedTask.Entry e : entries) {
+            Record r = null;
+            if (e.intent != null && e.activity != null) {
+                Intent i = new Intent(e.intent);
+                if (i.getComponent() == null) i.setComponent(new ComponentName(owner.info.packageName, e.activity));
+                ActivityInfo ai = owner.resolver.resolveActivity(i, null);
+                if (ai != null && ai.name.equals(e.activity)) {
+                    Record to = e.resultTo >= 0 && e.resultTo < made.size() ? made.get(e.resultTo) : null;
+                    r = new Record(ai, i, e.launchedFrom, to, to != null ? e.resultWho : null,
+                            to != null ? e.requestCode : -1);
+                    r.requestedOrientation = e.requestedOrientation;
+                    r.icicle = e.icicle;
+                    r.persistentState = e.persistentState;
+                    r.marshalledIcicle = SavedTask.marshall(e.icicle);
+                    r.marshalledPersistent = SavedTask.marshall(e.persistentState);
+                } else {
+                    System.err.println("[aosp-app] a saved activity the app no longer has: " + e.activity);
+                }
+            }
+            made.add(r);   // null keeps the result targets' indices
+        }
+        StringBuilder names = new StringBuilder();
+        for (Record r : made) {
+            if (r == null) continue;
+            windowOnStart(r, task.isEmpty());
+            task.add(r);
+            names.append(names.length() == 0 ? "" : ", ").append(r.info.name)
+                    .append(r.icicle != null ? " (saved state)" : "");
+        }
+        persist();
+        if (task.isEmpty()) return false;
+        System.err.println("[aosp-app] the task restored after its process ended, bottom first: " + names);
+        return true;
+    }
+
+    /** The restored task's top launched with its saved state and resumed (the task to the front). */
+    void resumeTop() {
+        Record t = top();
+        if (t != null) resume(t);
+    }
+
+    /** Writes what of the task outlives the process: every record ActivityRecord.handleAppDied keeps. */
+    private void persist() {
+        if (saved == null || dismissed) return;
+        List<Record> keep = new ArrayList<>();
+        for (Record r : task) {
+            if (r.finishing || !r.haveState || r.state == State.DESTROYING || r.state == State.DESTROYED) continue;
+            // A launched record whose state could not be marshalled has none to come back with.
+            if (r.launched && r.marshalledIcicle == null) continue;
+            keep.add(r);
+        }
+        saved.write(keep);
+    }
+
+    /** RuntimeInit's handler reported the app's crash (ActivityManagerService.handleApplicationCrash):
+     *  ActivityTaskManagerService.finishTopCrashedActivities finishes the task's top, so it does not
+     *  come back; the rest keep what they saved. Written now: the process ends next. */
+    void crashed() {
+        Record t = top();
+        if (t != null) t.haveState = false;
+        persist();
+    }
+
+    /** The Windows session ends (ActivityTaskManagerService.shuttingDown, then
+     *  ActivityTaskSupervisor.goingToSleepLocked): every activity that is resumed or paused is stopped,
+     *  which saves its state; nothing is destroyed, the process just ends after. `done` counts down
+     *  once every one has reported stopped. */
+    void shutdown(java.util.concurrent.CountDownLatch done) {
+        shuttingDown = true;
+        shutDown = done;
+        pendingLaunch = null;
+        System.err.println("[aosp-app] the session ends: the task's activities stopped, their state kept");
+        for (Record r : task) {
+            if (!r.launched || r.finishing) continue;
+            if (r.state == State.RESUMED || r.state == State.PAUSING || r.state == State.PAUSED) {
+                r.state = State.STOPPING;
+                stopping.remove(r);
+                ClientTransaction tx = ClientTransaction.obtain(app, r.token);
+                tx.setLifecycleStateRequest(StopActivityItem.obtain(0));
+                schedule(tx);
+            }
+        }
+        checkShutDown();
+    }
+
+    private void checkShutDown() {
+        if (!shuttingDown || shutDown == null) return;
+        for (Record r : task) if (!r.finishing && r.state == State.STOPPING) return;
+        shutDown.countDown();
     }
 
     /** The process's first activity, or the launcher activity again when the window comes back to
@@ -133,7 +263,7 @@ public final class Tasks {
      *  home screen's icon does; anything else starts as a start from inside would, its launch mode
      *  and flags deciding, with the task in front. */
     void arrive(Intent intent, String sender) {
-        if (terminating) return;
+        if (terminating || shuttingDown) return;
         boolean launcher = Intent.ACTION_MAIN.equals(intent.getAction())
                 && intent.hasCategory(Intent.CATEGORY_LAUNCHER);
         if (launcher && top() != null) {
@@ -203,6 +333,10 @@ public final class Tasks {
         terminating = true;
         terminated = done;
         pendingLaunch = null;
+        // The user dismissed the task (ActivityTaskManagerService.removeTask, a task swiped from
+        // recents): nothing of it comes back.
+        dismissed = true;
+        if (saved != null) saved.delete();
         if (task.isEmpty()) {
             if (topPaused != null) topPaused.run();
             done.countDown();
@@ -245,7 +379,7 @@ public final class Tasks {
     /** The task came to the front: its top restarted, started and resumed; an empty task starts its
      *  launcher activity again, as the home screen's icon would. */
     void toFront() {
-        if (!inBackground || terminating) return;
+        if (!inBackground || terminating || shuttingDown) return;
         inBackground = false;
         System.err.println("[aosp-app] the task in front again");
         Record r = top();
@@ -419,6 +553,12 @@ public final class Tasks {
         }
     }
 
+    /** The bottom record that is not finishing. */
+    Record root() {
+        for (Record r : task) if (!r.finishing) return r;
+        return null;
+    }
+
     boolean isRoot(Record r) { return !task.isEmpty() && task.get(0) == r; }
 
     int size() { return task.size(); }
@@ -450,6 +590,15 @@ public final class Tasks {
     /** ActivityStarter.startActivityInner, for the standard launch mode in one task: the record goes
      *  on top; the resumed activity is paused first. */
     void start(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho, int requestCode) {
+        try {
+            startInner(info, intent, from, resultTo, resultWho, requestCode);
+        } finally {
+            persist();
+        }
+    }
+
+    private void startInner(ActivityInfo info, Intent intent, String from, Record resultTo, String resultWho,
+                            int requestCode) {
         int flags = intent.getFlags();
         int mode = info.launchMode;
         // ActivityStarter.computeLaunchingTaskFlags / startActivityInner, for the one task: what is
@@ -562,6 +711,7 @@ public final class Tasks {
         } else {
             realStart(r);
         }
+        persist();
     }
 
     /** ActivityTaskSupervisor.realStartActivityLocked: launch, then resume, in one transaction. */
@@ -579,6 +729,15 @@ public final class Tasks {
         r.launched = true;
         r.state = State.RESUMED;
         schedule(tx);
+        // Resumed, it has no saved state (ActivityRecord.activityResumedLocked: setSavedState(null)).
+        forgetState(r);
+    }
+
+    private void forgetState(Record r) {
+        r.haveState = false;
+        r.icicle = null;
+        r.marshalledIcicle = null;
+        persist();
     }
 
     private void pause(Record r, boolean userLeaving) {
@@ -611,6 +770,7 @@ public final class Tasks {
         tx.setLifecycleStateRequest(ResumeActivityItem.obtain(false /* isForward */, false));
         r.state = State.RESUMED;
         schedule(tx);
+        forgetState(r);
     }
 
     // ---- Up navigation (Task.navigateUpTo, ActivityRecord.shouldUpRecreateTaskLocked) ----
@@ -685,6 +845,7 @@ public final class Tasks {
         } else if (r.state == State.PAUSED || r.state == State.STOPPED || !r.launched && r != pendingLaunch) {
             destroy(r);
         }
+        persist();
         return true;
     }
 
@@ -746,6 +907,7 @@ public final class Tasks {
      *  on the window when the record shows the box, or is on top of it. */
     void requestOrientation(Record r, int orientation) {
         r.requestedOrientation = orientation;
+        persist();
         if (r.finishing || owner.orientation == null) return;
         Record o = topBoxOwner();
         if (r == o || r == top()) owner.orientation.accept(orientation);
@@ -797,6 +959,11 @@ public final class Tasks {
     void paused(IBinder token) {
         Record r = find(token);
         if (r == null) return;
+        if (shuttingDown) {
+            // Stopped next (shutdown asked it): nothing starts or resumes now.
+            if (r.state == State.PAUSING) r.state = State.PAUSED;
+            return;
+        }
         r.state = State.PAUSED;
         if (terminating) {
             Runnable p = terminatePaused;
@@ -828,7 +995,7 @@ public final class Tasks {
      *  finishing, is destroyed). */
     void idle(IBinder token) {
         Record r = find(token);
-        if (r == null || r != top()) return;
+        if (r == null || r != top() || shuttingDown) return;
         for (Record s : new ArrayList<>(stopping)) {
             if (s.finishing) {
                 destroy(s);
@@ -846,8 +1013,19 @@ public final class Tasks {
         Record r = find(token);
         if (r == null) return;
         if (r.state == State.STOPPING) r.state = State.STOPPED;
-        r.icicle = icicle;
-        r.persistentState = persistent;
+        // ActivityRecord.activityStopped: a stop that saved state (an icicle; there is none for one
+        // finishing) gives the record its state; a persistent state is kept whenever one comes.
+        if (icicle != null) {
+            r.icicle = icicle;
+            r.marshalledIcicle = SavedTask.marshall(icicle);
+            r.haveState = true;
+        }
+        if (persistent != null) {
+            r.persistentState = persistent;
+            r.marshalledPersistent = SavedTask.marshall(persistent);
+        }
+        persist();
+        checkShutDown();
     }
 
     void destroyed(IBinder token) {
@@ -856,6 +1034,7 @@ public final class Tasks {
         r.state = State.DESTROYED;
         task.remove(r);
         stopping.remove(r);
+        persist();
         if (!task.isEmpty()) return;
         if (terminating) {
             if (terminated != null) terminated.countDown();

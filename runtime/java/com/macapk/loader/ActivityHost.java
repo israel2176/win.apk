@@ -87,6 +87,22 @@ public final class ActivityHost {
         }
     }
 
+    /** The Windows session is ending (sign-out, restart, shutdown): the process ends as a device's
+     *  system ending kills it, after every activity is stopped and has saved its state
+     *  (AppHost.shutdown); the task is kept for the app's next start. True when every activity
+     *  stopped in time. */
+    public static boolean macapkShutdown(long timeoutMs) {
+        if (InputRecorder.ON) InputRecorder.close();
+        com.macapk.loader.app.AppHost h = appHost();
+        if (h == null) return true;
+        try {
+            return h.shutdown().await(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
     // ---- The quit wait keeps the render thread running (2026-09-30) ----------
     //
     // AOSP android14-release opengl/java/android/opengl/GLSurfaceView.java: the
