@@ -52,6 +52,24 @@ EXPORT long syscall_rcx_is_return(void) {
     return rcx == here;
 }
 
+// Bytes 0f 05 that are not a SYSCALL instruction, which the loader must leave
+// alone: two jumped over (data in the middle of code), and two inside a mov's
+// immediate. syscall_decoy runs the code around them and returns 0x50f.
+__asm__(".text\n"
+        ".globl syscall_decoy\n"
+        ".type syscall_decoy, @function\n"
+        "syscall_decoy:\n"
+        "    jmp 1f\n"
+        ".globl syscall_decoy_skipped\n"
+        "syscall_decoy_skipped:\n"
+        "    .byte 0x0f, 0x05\n"
+        "1:\n"
+        ".globl syscall_decoy_immediate\n"
+        "syscall_decoy_immediate:\n"
+        "    movl $0x050f, %eax\n"
+        "    ret\n"
+        ".size syscall_decoy, . - syscall_decoy\n");
+
 static int g_ctor_ran;
 __attribute__((constructor)) static void ctor(void) { g_ctor_ran = (int)raw0(39) == getpid(); }
 

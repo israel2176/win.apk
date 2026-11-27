@@ -26,7 +26,7 @@ WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-elfrun.exe" \
     "$BUILD/guest/libwinapk_poc_guest.so" \
     "$BUILD/guest/libwinapk_poc_guest_packed.so"
 WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-linker-test.exe" "$BUILD/guest/link"
-WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-syscall-test.exe" "$BUILD/guest/libwinapk_syscall_guest.so"
+WINEDEBUG=-all "$WINE" "$BUILD/host/winapk-syscall-test.exe" "$BUILD/guest"
 # Translate the arm64 test libraries ahead of time, as CI's step does on Windows; without the
 # translations the test's AOT engine has nothing to load and three of its checks fail. The flags
 # are the background translation's (kAotCompileFlags in host/runtime_main.cpp) but for

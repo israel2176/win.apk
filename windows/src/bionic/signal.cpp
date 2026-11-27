@@ -15,11 +15,16 @@
 //     handler changed is what the thread resumes with.
 //   * Self-sent signals: raise(), kill(getpid(), sig), pthread_kill, tgkill,
 //     and abort(), which is raise(SIGABRT). To the calling thread they are
-//     delivered right away, as a call; to another thread by suspending it,
-//     parking its registers on its own stack and resuming it in
-//     winapk_sig_async_entry, which runs the handler there and restores the
-//     registers (RtlRestoreContext). A signal blocked by the target's mask is
-//     left pending and delivered when sigprocmask unblocks it.
+//     delivered right away, as a call; to another thread that runs guest code
+//     by suspending it, parking its registers on its own stack and resuming
+//     it in winapk_sig_async_entry, which runs the handler there and restores
+//     the registers (RtlRestoreContext). A thread in the shim or in Windows
+//     (it may hold a Windows lock there) gets the signal posted instead, and
+//     a wait it sleeps in (futex, condition variable, semaphore, poll, sleep)
+//     is woken: it runs the handler when it leaves the wait, and the call
+//     fails with EINTR or goes on as Linux's would (SignalWaitScope,
+//     signal_take_posted). A signal blocked by the target's mask is left
+//     pending and delivered when sigprocmask unblocks it.
 //
 // Semantics follow Linux and ART's libsigchain (what a device does, upstream's
 // bionic_shim_sigchain.cpp being the reference):
@@ -62,7 +67,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include <windows.h>
@@ -347,6 +354,77 @@ WINAPK_GUEST_ABI int g_sigaltstack(const GuestStack* ss, GuestStack* old) {
 
 int raise_self(int sig);
 
+// ---- signals posted to a thread that is not in guest code ------------------------------
+// A thread that another one signals is redirected to the handler only when it is stopped in
+// guest code (inject). Anywhere else it may be inside Windows holding a lock the handler's own
+// calls want (the heap's, the loader's), so the signal is posted to it instead: a bit in its
+// ThreadPost, which it takes when it next leaves a wait or calls sched_yield or sigprocmask
+// (signal_take_posted). A wait it sleeps in is woken for it: the address the wait sleeps on and
+// how to wake it are kept here while the wait lasts (SignalWaitScope), and sleeps that are not
+// WaitOnAddress also wait on the event.
+struct ThreadPost {
+    uint32_t tid = 0;
+    uint64_t created = 0;  // the thread's creation time: Windows hands a thread id out again
+    std::atomic<uint64_t> posted{0};
+    std::atomic<const void*> wait_addr{nullptr};
+    std::atomic<void (*)()> wake{nullptr};
+    HANDLE event = nullptr;
+    ~ThreadPost() {
+        if (event) CloseHandle(event);
+    }
+};
+std::mutex g_posts_lock;
+std::unordered_map<uint32_t, std::shared_ptr<ThreadPost>> g_posts;
+
+uint64_t creation_time(HANDLE thread) {
+    FILETIME created, exited, kernel, user;
+    if (!GetThreadTimes(thread, &created, &exited, &kernel, &user)) return 0;
+    return (uint64_t{created.dwHighDateTime} << 32) | created.dwLowDateTime;
+}
+
+// The record of thread `tid`, made by whichever side asks first: the thread itself, or one that
+// posts to it before it ever waited.
+std::shared_ptr<ThreadPost> post_for(uint32_t tid, uint64_t created) {
+    std::lock_guard<std::mutex> hold(g_posts_lock);
+    std::shared_ptr<ThreadPost>& p = g_posts[tid];
+    if (!p || p->created != created) {
+        p = std::make_shared<ThreadPost>();
+        p->tid = tid;
+        p->created = created;
+        p->event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    }
+    return p;
+}
+
+// The calling thread's record, dropped from the table when the thread ends.
+struct OwnPost {
+    std::shared_ptr<ThreadPost> p;
+    ~OwnPost() {
+        if (!p) return;
+        std::lock_guard<std::mutex> hold(g_posts_lock);
+        const auto it = g_posts.find(p->tid);
+        if (it != g_posts.end() && it->second == p) g_posts.erase(it);
+    }
+};
+thread_local OwnPost t_post;
+ThreadPost& own_post() {
+    if (!t_post.p) t_post.p = post_for(GetCurrentThreadId(), creation_time(GetCurrentThread()));
+    return *t_post.p;
+}
+
+// Wakes the wait `post`'s thread sleeps in, if any. Called with no thread suspended: the wake
+// functions take locks.
+void wake_waiter(const ThreadPost& post) {
+    if (post.event) SetEvent(post.event);
+    const void* addr = post.wait_addr.load();
+    if (!addr) return;
+    if (void (*wake)() = post.wake.load()) {
+        wake();
+    } else {
+        WakeByAddressAll(const_cast<void*>(addr));
+    }
+}
+
 // Delivers what was sent to this thread while blocked and is unblocked now.
 void deliver_pending() {
     ThreadSignals& ts = t_sig;
@@ -371,7 +449,10 @@ int apply_mask(int how, const uint64_t* set, uint64_t* old) {
         ts.mask &= ~kUnblockable;
     }
     if (old) *old = previous;
-    if (set) deliver_pending();
+    if (set) {
+        deliver_pending();
+        signal_take_posted();
+    }
     return 0;
 }
 WINAPK_GUEST_ABI int g_sigprocmask(int how, const uint64_t* set, uint64_t* old) {
@@ -853,11 +934,10 @@ int raise_self(int sig) {
 }
 
 // The injected call's entry on the target thread (Microsoft x64, set as its
-// Rip by inject()). A thread suspended inside a system call resumes through
-// the kernel's return path, which rewrites rcx and r11 (sysret) and leaves
-// the call's result in rax, so the arguments travel on the stack (the two
-// slots above the return address inject() wrote) and the stub keeps the live
-// rax over the stale one in the parked copy.
+// Rip by inject(), which does so only in guest code). The arguments travel on
+// the stack (the two slots above the return address inject() wrote), as a
+// thread resuming through the kernel's return path would have rcx and r11
+// rewritten (sysret), and the stub keeps the live rax over the parked one.
 extern "C" [[noreturn]] void winapk_sig_async_entry(int sig, CONTEXT* saved);
 extern "C" __attribute__((naked)) void winapk_sig_async_stub() {
     __asm__ volatile(
@@ -891,50 +971,88 @@ extern "C" void winapk_sig_async_entry(int sig, CONTEXT* saved) {
     __builtin_unreachable();
 }
 
-// Delivers `sig` to another thread of this process: its registers are parked
-// below its stack pointer (past the System V red zone) and it resumes in
-// winapk_sig_async_stub with the signal and the parked copy as arguments.
-// Nothing between SuspendThread and ResumeThread may take a lock the target
-// could hold (no allocation, no logging). Returns 0 or a Linux errno.
+// Parks the suspended thread's registers `ctx` below its stack pointer (past the System V red
+// zone) and points it at winapk_sig_async_stub, with the signal and the parked copy as
+// arguments. False when its stack has no room where a call can be parked.
+bool redirect(HANDLE h, const CONTEXT& ctx, int sig) {
+    // Below the red zone, a 16-aligned slot for the CONTEXT, then the
+    // shadow space and return-address slot the callee expects (rsp == 8
+    // mod 16 at entry); the stub's arguments sit in the shadow space.
+    uint64_t slot = (ctx.Rsp - 128 - sizeof(CONTEXT)) & ~uint64_t{15};
+    const uint64_t new_rsp = slot - 40;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(reinterpret_cast<const void*>(new_rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
+        (mbi.Protect & PAGE_GUARD) || reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize < ctx.Rsp) {
+        return false;
+    }
+    CONTEXT resumed = ctx;
+    std::memcpy(reinterpret_cast<void*>(slot), &ctx, sizeof(CONTEXT));
+    auto* frame = reinterpret_cast<uint64_t*>(new_rsp);
+    frame[0] = 0;  // the stub never returns
+    frame[1] = static_cast<uint64_t>(sig);
+    frame[2] = slot;
+    resumed.Rsp = new_rsp;
+    resumed.Rip = reinterpret_cast<uint64_t>(&winapk_sig_async_stub);
+    resumed.ContextFlags = CONTEXT_CONTROL;
+    return SetThreadContext(h, &resumed) != 0;
+}
+
+// How often, and how long apart, a sender looks again for a thread it posted to that has not
+// taken the signal: each look redirects it if it is in guest code by then, or wakes its wait
+// again (a wake that came just before the thread went to sleep is lost to WaitOnAddress).
+constexpr int kInjectLooks = 20;
+
+// Delivers `sig` to another thread of this process, as Linux does: at once if the thread runs
+// guest code (redirected into winapk_sig_async_stub, which runs the handler there); otherwise
+// posted to it and its wait woken, so it runs the handler when it leaves the wait, or at its
+// next sched_yield or sigprocmask, or when a later look finds it back in guest code. Only guest
+// code is interrupted: a thread stopped in Windows' code may hold a lock (the heap's, the
+// loader's) that the handler's own calls would wait on for good. What the decision needs is
+// gathered before the thread stops (the guest images' ranges, its record): between
+// SuspendThread and ResumeThread nothing may allocate, log or take a lock the target could
+// hold, the linker's included. Returns 0 or a Linux errno.
 int inject(uint32_t tid, int sig) {
     HANDLE h = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_QUERY_INFORMATION,
                           FALSE, tid);
     if (!h) return kESRCH;
-    if (SuspendThread(h) == static_cast<DWORD>(-1)) {
-        CloseHandle(h);
-        return kESRCH;
-    }
-    int result = 0;
-    alignas(16) CONTEXT ctx;
-    std::memset(&ctx, 0, sizeof(ctx));
-    ctx.ContextFlags = CONTEXT_FULL;
-    if (!GetThreadContext(h, &ctx)) {
-        result = kEAGAIN;
-    } else {
-        // Below the red zone, a 16-aligned slot for the CONTEXT, then the
-        // shadow space and return-address slot the callee expects (rsp == 8
-        // mod 16 at entry); the stub's arguments sit in the shadow space.
-        uint64_t slot = (ctx.Rsp - 128 - sizeof(CONTEXT)) & ~uint64_t{15};
-        const uint64_t new_rsp = slot - 40;
-        MEMORY_BASIC_INFORMATION mbi{};
-        if (!VirtualQuery(reinterpret_cast<const void*>(new_rsp), &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
-            (mbi.Protect & PAGE_GUARD) ||
-            reinterpret_cast<uint64_t>(mbi.BaseAddress) + mbi.RegionSize < ctx.Rsp) {
-            result = kEAGAIN;  // the target's stack is not where a call can be parked
-        } else {
-            CONTEXT resumed = ctx;
-            std::memcpy(reinterpret_cast<void*>(slot), &ctx, sizeof(CONTEXT));
-            auto* frame = reinterpret_cast<uint64_t*>(new_rsp);
-            frame[0] = 0;  // the stub never returns
-            frame[1] = static_cast<uint64_t>(sig);
-            frame[2] = slot;
-            resumed.Rsp = new_rsp;
-            resumed.Rip = reinterpret_cast<uint64_t>(&winapk_sig_async_stub);
-            resumed.ContextFlags = CONTEXT_CONTROL;
-            if (!SetThreadContext(h, &resumed)) result = kEAGAIN;
+    GuestLinker* linker = GuestLinker::process();
+    const std::vector<std::pair<uintptr_t, uintptr_t>> guest =
+        linker ? linker->x86_64_ranges() : std::vector<std::pair<uintptr_t, uintptr_t>>();
+    const std::shared_ptr<ThreadPost> post = post_for(tid, creation_time(h));
+    const auto in_guest = [&guest](uint64_t rip) {
+        for (const auto& r : guest) {
+            if (rip >= r.first && rip < r.second) return true;
         }
+        return false;
+    };
+    int result = 0;
+    bool posted = false;
+    for (int look = 0;; ++look) {
+        if (SuspendThread(h) == static_cast<DWORD>(-1)) {
+            if (!posted) result = kESRCH;
+            break;
+        }
+        alignas(16) CONTEXT ctx;
+        std::memset(&ctx, 0, sizeof(ctx));
+        ctx.ContextFlags = CONTEXT_FULL;
+        bool done = false;
+        if (GetThreadContext(h, &ctx) && in_guest(ctx.Rip) &&
+            (!posted || (post->posted.fetch_and(~bit(sig)) & bit(sig)))) {
+            // In guest code, and the signal not taken already at a safe point: run it there.
+            done = redirect(h, ctx, sig);
+            if (!done && posted) post->posted.fetch_or(bit(sig));  // no room: it stays posted
+        } else if (posted && !(post->posted.load() & bit(sig))) {
+            done = true;  // taken where it waited
+        }
+        if (!done && !posted) {
+            post->posted.fetch_or(bit(sig));
+            posted = true;
+        }
+        ResumeThread(h);
+        if (done || look >= kInjectLooks) break;
+        wake_waiter(*post);
+        Sleep(look == 0 ? 0 : 1);
     }
-    ResumeThread(h);
     CloseHandle(h);
     return result;
 }
@@ -948,19 +1066,27 @@ WINAPK_GUEST_ABI int g_raise(int sig) {
 // ---- waiting for a signal ---------------------------------------------------------------
 // sigwait, sigwaitinfo, sigtimedwait, pause and sigsuspend. Missing, each answered 0 at once through
 // the loader's fallback, and a thread whose whole loop is one of them (a signal thread, `for (;;)
-// pause();`) took a processor for good. A signal reaches a thread here only as a call on that thread
-// (raise_self, the injected entry), so the wait is a sleep in short slices that looks at what those
-// calls left: the pending set, the count of handlers run. Ten milliseconds is well under what a
-// signal-driven shutdown or reload notices.
+// pause();`) took a processor for good. A signal reaches a thread here as a call on that thread
+// (raise_self) or posted to it (inject), which sets its wait event: the wait sleeps on that event in
+// short slices, takes what was posted, and looks at what the calls left: the pending set, the count
+// of handlers run. The slices are for what nothing posts.
 // TODO(process-directed signals): kill(getpid(), sig) lands on its caller (misc.cpp), not on a thread
 // that waits for `sig` in sigwait, so that thread sleeps on; Linux would pick it.
 constexpr DWORD kSignalWaitSliceMs = 10;
+void wait_slice() {
+    if (void* event = signal_wait_event()) {
+        WaitForSingleObject(event, kSignalWaitSliceMs);
+    } else {
+        Sleep(kSignalWaitSliceMs);
+    }
+}
 
 // Takes the lowest pending signal of `set` (0 when `timeout_ms`, < 0 for none, runs out first).
 int take_pending(uint64_t set, int64_t timeout_ms) {
     ThreadSignals& ts = t_sig;
     const ULONGLONG start = GetTickCount64();
     for (;;) {
+        signal_take_posted();  // blocked, as sigwait's set is: into the pending set
         if (const uint64_t ready = ts.pending & set) {
             int sig = 1;
             while (!(ready & bit(sig))) ++sig;
@@ -968,7 +1094,7 @@ int take_pending(uint64_t set, int64_t timeout_ms) {
             return sig;
         }
         if (timeout_ms >= 0 && GetTickCount64() - start >= static_cast<ULONGLONG>(timeout_ms)) return 0;
-        Sleep(kSignalWaitSliceMs);
+        wait_slice();
     }
 }
 void fill_waited(GuestSiginfo* info, int sig) {
@@ -1005,7 +1131,9 @@ WINAPK_GUEST_ABI int g_sigtimedwait(const uint64_t* set, GuestSiginfo* info, con
 // pause and sigsuspend return once a handler has run on the thread: -1 with EINTR, always.
 int wait_for_handler() {
     const uint64_t before = t_sig.handlers_run;
-    while (t_sig.handlers_run == before) Sleep(kSignalWaitSliceMs);
+    for (signal_take_posted(); t_sig.handlers_run == before; signal_take_posted()) {
+        wait_slice();
+    }
     return *guest_errno() = kEINTR, -1;
 }
 WINAPK_GUEST_ABI int g_pause() { return wait_for_handler(); }
@@ -1287,10 +1415,47 @@ int signal_send(uint32_t tid, int sig) {
     return inject(tid, sig);
 }
 
+SignalWaitScope::SignalWaitScope(const void* addr, void (*wake)()) {
+    ThreadPost& post = own_post();
+    post_ = &post;
+    outer_wake_ = post.wake.exchange(wake);
+    outer_addr_ = post.wait_addr.exchange(addr);  // after the wake: a sender reads the address first
+}
+SignalWaitScope::~SignalWaitScope() {
+    auto* post = static_cast<ThreadPost*>(post_);
+    post->wait_addr.store(outer_addr_);
+    post->wake.store(outer_wake_);
+}
+bool SignalWaitScope::posted() const { return static_cast<ThreadPost*>(post_)->posted.load() != 0; }
+
+WaitEnd signal_take_posted() {
+    ThreadPost& post = own_post();
+    if (!post.posted.load()) return WaitEnd::kNone;  // the common case, with no write to the line
+    const uint64_t got = post.posted.exchange(0);
+    if (!got) return WaitEnd::kNone;
+    WaitEnd end = WaitEnd::kNone;
+    for (int sig = 1; sig <= kSigCount; ++sig) {
+        if (!(got & bit(sig))) continue;
+        // What the call does next is decided by the action as it is before its handler runs (which
+        // may reset it); a blocked signal waits in the pending set and interrupts nothing.
+        const GuestSigaction act = read_action(sig);
+        const auto h = reinterpret_cast<uintptr_t>(act.handler);
+        if (!(t_sig.mask & bit(sig)) && h != kSigIgn && h != kSigDfl && !handler_in_arm64_image(act.handler)) {
+            if (!(static_cast<uint32_t>(act.flags) & kSaRestart)) end = WaitEnd::kInterrupted;
+            else if (end == WaitEnd::kNone) end = WaitEnd::kRestart;
+        }
+        raise_self(sig);
+    }
+    return end;
+}
+
+void* signal_wait_event() { return own_post().event; }
+
 void signal_altstack_for_current_thread() {
     OwnAltStack& o = t_own_alt;
     if (o.tried) return;
     o.tried = true;
+    own_post();  // the thread's record, so a signal can be posted to it from now on
     ThreadSignals& ts = t_sig;
     if (ts.altstack.sp) return;  // the guest's own
     void* r = VirtualAlloc(nullptr, kOwnAltStackGuard + kOwnAltStackSize, MEM_RESERVE, PAGE_NOACCESS);

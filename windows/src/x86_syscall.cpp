@@ -614,9 +614,11 @@ size_t instruction_length(const uint8_t* p, size_t avail) {
 }
 
 size_t patch_syscalls(const CodeRange* ranges, size_t nranges, const uintptr_t* entries, size_t nentries) {
-    activate();
     Walk walk(ranges, nranges);
     for (size_t i = 0; i < nentries; ++i) walk.from(entries[i]);
+    if (walk.sites().empty()) return 0;  // nothing changed, and nothing else turned on
+    // A library that enters the kernel itself: the handler, and from now on the run-time scan.
+    activate();
     AcquireSRWLockExclusive(&g_lock);
     const size_t n = patch_sites(walk.sites(), true);
     ReleaseSRWLockExclusive(&g_lock);

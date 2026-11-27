@@ -311,18 +311,22 @@
     {"GL_OES_depth_texture", ""}, \
     {"GL_OES_draw_buffers_indexed", "glEnableiOES glDisableiOES glBlendEquationiOES glBlendEquationSeparateiOES glBlendFunciOES glBlendFuncSeparateiOES glColorMaskiOES glIsEnablediOES"}, \
     {"GL_OES_draw_elements_base_vertex", "glDrawElementsBaseVertexOES glDrawRangeElementsBaseVertexOES glDrawElementsInstancedBaseVertexOES glMultiDrawElementsBaseVertexEXT"}, \
+    {"GL_OES_draw_texture", "glDrawTexsOES glDrawTexiOES glDrawTexxOES glDrawTexsvOES glDrawTexivOES glDrawTexxvOES glDrawTexfOES glDrawTexfvOES"}, \
     {"GL_OES_element_index_uint", ""}, \
     {"GL_OES_extended_matrix_palette", ""}, \
     {"GL_OES_fbo_render_mipmap", ""}, \
     {"GL_OES_fragment_precision_high", ""}, \
+    {"GL_OES_framebuffer_object", "glIsRenderbufferOES glBindRenderbufferOES glDeleteRenderbuffersOES glGenRenderbuffersOES glRenderbufferStorageOES glGetRenderbufferParameterivOES glIsFramebufferOES glBindFramebufferOES glDeleteFramebuffersOES glGenFramebuffersOES glCheckFramebufferStatusOES glFramebufferRenderbufferOES glFramebufferTexture2DOES glGetFramebufferAttachmentParameterivOES glGenerateMipmapOES"}, \
     {"GL_OES_geometry_point_size", ""}, \
     {"GL_OES_geometry_shader", "glFramebufferTextureOES"}, \
     {"GL_OES_get_program_binary", "glGetProgramBinaryOES glProgramBinaryOES"}, \
     {"GL_OES_gpu_shader5", ""}, \
     {"GL_OES_mapbuffer", "glMapBufferOES glUnmapBufferOES glGetBufferPointervOES"}, \
     {"GL_OES_matrix_get", ""}, \
+    {"GL_OES_matrix_palette", "glCurrentPaletteMatrixOES glLoadPaletteFromModelViewMatrixOES glMatrixIndexPointerOES glWeightPointerOES"}, \
     {"GL_OES_packed_depth_stencil", ""}, \
     {"GL_OES_primitive_bounding_box", "glPrimitiveBoundingBoxOES"}, \
+    {"GL_OES_query_matrix", "glQueryMatrixxOES"}, \
     {"GL_OES_required_internalformat", ""}, \
     {"GL_OES_rgb8_rgba8", ""}, \
     {"GL_OES_sample_shading", "glMinSampleShadingOES"}, \
@@ -342,6 +346,7 @@
     {"GL_OES_texture_border_clamp", "glTexParameterIivOES glTexParameterIuivOES glGetTexParameterIivOES glGetTexParameterIuivOES glSamplerParameterIivOES glSamplerParameterIuivOES glGetSamplerParameterIivOES glGetSamplerParameterIuivOES"}, \
     {"GL_OES_texture_buffer", "glTexBufferOES glTexBufferRangeOES"}, \
     {"GL_OES_texture_compression_astc", ""}, \
+    {"GL_OES_texture_cube_map", "glTexGenfOES glTexGenfvOES glTexGeniOES glTexGenivOES glGetTexGenfvOES glGetTexGenivOES"}, \
     {"GL_OES_texture_cube_map_array", ""}, \
     {"GL_OES_texture_env_crossbar", ""}, \
     {"GL_OES_texture_float", ""}, \

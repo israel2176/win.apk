@@ -52,13 +52,31 @@ How the instructions are found, without taking data for code:
   its defined function symbols in `.dynsym` and `.symtab`, `e_entry`; and
   following direct jumps, branches and calls. Only bytes decoded as `SYSCALL`
   on such a path change.
-- **Code written at run time** (a decrypted `.text`, an unpacked next stage):
-  while x86_64 guest code runs in the process, a guest `mmap` or `mprotect`
+- **Code written at run time** (a decrypted `.text`, an unpacked next stage),
+  once a loaded library has been found to contain a `SYSCALL`: a guest `mmap` or `mprotect`
   asking for `PROT_EXEC` on private memory gets everything it asked for but
   execution. Its first run faults; the handler decodes from the faulting
   instruction, patches what it finds and makes the pages it decoded
   executable. Making the memory executable again after rewriting it starts
-  that over. Processes with only arm64 libraries never take this path.
+  that over.
+
+Apps that never load a library with a `SYSCALL` are not changed at all: a
+library with none loads byte for byte as in its file (the stack-guard patch
+aside), no handler is installed, and memory a JIT makes executable is
+executable at once, as before. Only once a library with a `SYSCALL` is loaded
+does the run-time scan start, and from then on each page a guest makes
+executable takes one fault at its first run: about 5 microseconds a page
+under Wine (`winapk-syscall-test` prints it: 2000 rounds of two fresh pages
+made read-execute cost 4.1 microseconds a round with the scan off and 14.1
+with it on). A JIT that toggles W^X on every write pays that per page per
+toggle; one that keeps a writable and an executable mapping of one anonymous
+file does not (shared file views are not scanned). The reverse is a limit: a
+protector whose `SYSCALL`s are all in code it decrypts later, with none in
+the file, is not scanned at run time.
+
+An anonymous file (`memfd_create`) mapped `MAP_SHARED` with `PROT_EXEC` is now
+a view of the file, as on Linux, so code written through a second, writable
+mapping of it runs (it used to be a private copy that never saw the writes).
 
 What differs from a device:
 
@@ -74,8 +92,11 @@ What differs from a device:
 - Every raw call costs an exception (microseconds); libc's functions do not.
 
 Tested by `winapk-syscall-test` (`windows/test/x86_syscall_test.cpp`,
-`windows/test/guest/syscall_guest.c`): the decoder against known encodings,
-then raw calls from a constructor, the kernel's register and error
+`windows/test/guest/syscall_guest.c`, `jit_guest.c`): the decoder against known encodings;
+ordinary compiled code with no `SYSCALL` loaded byte for byte as in its file
+with the run-time scan left off; JIT-style code (W^X rounds, a dual-mapped
+anonymous file) before and after the scan is on; `0f 05` bytes that are no
+instruction (jumped over, inside an immediate) left alone; then raw calls from a constructor, the kernel's register and error
 conventions, raw `mmap`/`mprotect`/`munmap`, and code written at run time,
 across a page boundary, rewritten and made executable again. Under Wine a
 `SYSCALL` that was not patched reaches the Linux kernel itself, so the test's
