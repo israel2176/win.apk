@@ -24,6 +24,7 @@
 #include "winapk/jni_bind.h"
 #include "winapk/mini_bionic.h"
 
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -97,6 +98,65 @@ struct Slot<Field> {
     std::abort();
 }
 
+// A method lookup that found nothing, said in the log (the first few): native code that goes on
+// with the null jmethodID aborts at its next Call*Method, as ART's JNI does
+// (CHECK_NON_NULL_ARGUMENT), far from the lookup and with no name. The NoSuchMethodError stays
+// pending for the caller, as JNI leaves it.
+void report_missing_method(JNIEnv* env, jclass cls, const char* name, const char* sig, bool is_static) {
+    static std::atomic<int> said{0};
+    if (said.fetch_add(1) >= 16) return;
+    jthrowable error = env->ExceptionOccurred();
+    env->ExceptionClear();
+    std::string cls_name = "?";
+    if (cls) {
+        jclass class_class = env->FindClass("java/lang/Class");
+        jmethodID get_name = class_class ? env->GetMethodID(class_class, "getName", "()Ljava/lang/String;") : nullptr;
+        auto s = get_name ? static_cast<jstring>(env->CallObjectMethod(cls, get_name)) : nullptr;
+        if (s) {
+            if (const char* c = env->GetStringUTFChars(s, nullptr)) {
+                cls_name = c;
+                env->ReleaseStringUTFChars(s, c);
+            }
+            env->DeleteLocalRef(s);
+        }
+        if (class_class) env->DeleteLocalRef(class_class);
+        env->ExceptionClear();
+    }
+    // What the lookup threw: NoSuchMethodError, or a class that did not link (NoClassDefFoundError,
+    // VerifyError) when the method is there.
+    std::string why = error ? "?" : "nothing thrown";
+    if (error) {
+        jclass object_class = env->FindClass("java/lang/Object");
+        jmethodID to_string =
+            object_class ? env->GetMethodID(object_class, "toString", "()Ljava/lang/String;") : nullptr;
+        auto s = to_string ? static_cast<jstring>(env->CallObjectMethod(error, to_string)) : nullptr;
+        if (s) {
+            if (const char* c = env->GetStringUTFChars(s, nullptr)) {
+                why = c;
+                env->ReleaseStringUTFChars(s, c);
+            }
+            env->DeleteLocalRef(s);
+        }
+        if (object_class) env->DeleteLocalRef(object_class);
+        env->ExceptionClear();
+    }
+    std::fprintf(stderr, "[win.apk] JNI Get%sMethodID: no %s.%s%s (%s)\n", is_static ? "Static" : "",
+                 cls_name.c_str(), name ? name : "(null)", sig ? sig : "(null)", why.c_str());
+    std::fflush(stderr);
+    if (error) {
+        env->Throw(error);
+        env->DeleteLocalRef(error);
+    }
+}
+
+WINAPK_GUEST_ABI jmethodID guest_get_static_method_id(JNIEnv* genv, jclass cls, const char* name, const char* sig) {
+    GuestEnv* g = guest_env_from(genv);
+    JNIEnv* env = g ? g->host : genv;
+    jmethodID m = env->GetStaticMethodID(cls, name, sig);
+    if (!m) report_missing_method(env, cls, name, sig, true);
+    return m;
+}
+
 // GetMethodID as ART does it for constructors. ART resolves every method,
 // "<init>" included, through the class and then its superclasses
 // (Class::FindClassMethod), so a constructor only an ancestor declares is
@@ -109,7 +169,11 @@ WINAPK_GUEST_ABI jmethodID guest_get_method_id(JNIEnv* genv, jclass cls, const c
     GuestEnv* g = guest_env_from(genv);
     JNIEnv* env = g ? g->host : genv;
     jmethodID m = env->GetMethodID(cls, name, sig);
-    if (m || !name || std::strcmp(name, "<init>") != 0) return m;
+    if (m) return m;
+    if (!name || std::strcmp(name, "<init>") != 0) {
+        report_missing_method(env, cls, name, sig, false);
+        return m;
+    }
     jthrowable error = env->ExceptionOccurred();
     env->ExceptionClear();
     for (jclass c = env->GetSuperclass(cls); c && !m;) {
@@ -121,6 +185,7 @@ WINAPK_GUEST_ABI jmethodID guest_get_method_id(JNIEnv* genv, jclass cls, const c
     }
     if (!m && error) env->Throw(error);  // no ancestor has it either: HotSpot's error stands
     if (error) env->DeleteLocalRef(error);
+    if (!m) report_missing_method(env, cls, name, sig, false);
     return m;
 }
 
@@ -257,6 +322,7 @@ void build_guest_table() {
     *reinterpret_cast<void**>(&t.RegisterNatives) = reinterpret_cast<void*>(&guest_register_natives);
     *reinterpret_cast<void**>(&t.GetJavaVM) = reinterpret_cast<void*>(&guest_get_java_vm);
     *reinterpret_cast<void**>(&t.GetMethodID) = reinterpret_cast<void*>(&guest_get_method_id);
+    *reinterpret_cast<void**>(&t.GetStaticMethodID) = reinterpret_cast<void*>(&guest_get_static_method_id);
     *reinterpret_cast<void**>(&t.GetFieldID) = reinterpret_cast<void*>(&guest_get_field_id);
     *reinterpret_cast<void**>(&t.FindClass) = reinterpret_cast<void*>(&guest_find_class);
 }

@@ -145,6 +145,11 @@ jint JNICALL mock_Throw(JNIEnv* env, jthrowable t) {
     return 0;
 }
 void JNICALL mock_DeleteLocalRef(JNIEnv* env, jobject) { note(env, "DeleteLocalRef"); }
+// No class is found by name here: the log line of a missing method then names its class "?".
+jclass JNICALL mock_FindClass(JNIEnv* env, const char*) {
+    note(env, "FindClass");
+    return nullptr;
+}
 
 // mock JavaVM
 jint JNICALL mock_vm_GetEnv(JavaVM*, void** penv, jint) {
@@ -173,6 +178,7 @@ void build_mock() {
     g_mock_table.ExceptionClear = mock_ExceptionClear;
     g_mock_table.Throw = mock_Throw;
     g_mock_table.DeleteLocalRef = mock_DeleteLocalRef;
+    g_mock_table.FindClass = mock_FindClass;
     g_mock_env.functions = &g_mock_table;
 
     std::memset(&g_mock_invoke, 0, sizeof(g_mock_invoke));
@@ -287,17 +293,18 @@ int main() {
         check("GetMethodID finds an inherited constructor (ART)",
               m == reinterpret_cast<jmethodID>(0x6666) && !g_pending && g_thrown == 0);
 
-        // No ancestor has it: the class's own NoSuchMethodError is rethrown.
+        // No ancestor has it: the class's own NoSuchMethodError is rethrown. The log line of the miss takes
+        // the error off to read it and throws it again: the same error is pending.
         m = fn(genv, reinterpret_cast<jclass>(5), "<init>", "(I)V");
         check("GetMethodID keeps the error when no ancestor has the constructor",
-              !m && g_pending == reinterpret_cast<jthrowable>(kNoSuchMethod) && g_thrown == 1);
+              !m && g_pending == reinterpret_cast<jthrowable>(kNoSuchMethod) && g_thrown == 2);
 
         // Other methods are HotSpot's lookup alone, error left as it was.
         g_pending = nullptr;
         g_thrown = 0;
         m = fn(genv, reinterpret_cast<jclass>(5), "run", "()V");
-        check("GetMethodID does not retry a missing non-constructor",
-              !m && g_pending == reinterpret_cast<jthrowable>(kNoSuchMethod) && g_thrown == 0);
+        check("GetMethodID does not retry a missing non-constructor (the log line rethrows its error once)",
+              !m && g_pending == reinterpret_cast<jthrowable>(kNoSuchMethod) && g_thrown == 1);
         g_pending = nullptr;
     }
 
