@@ -48,6 +48,8 @@ namespace {
 // Sleeps to the next tick of the period on systemTime's clock, then signals the descriptor, while
 // callbacks are waiting. A timer with 1 ms resolution (timeBeginPeriod is the host's).
 void vsync_loop(AChoreographer* c) {
+    HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, 0x00000002 /* CREATE_WAITABLE_TIMER_HIGH_RESOLUTION */,
+                                          TIMER_ALL_ACCESS);
     for (;;) {
         {
             std::unique_lock<std::mutex> hold(c->lock);
@@ -56,8 +58,19 @@ void vsync_loop(AChoreographer* c) {
         const int64_t period = g_period_ns.load();
         const int64_t now = systemTime(SYSTEM_TIME_MONOTONIC);
         const int64_t next = (now / period + 1) * period;
-        const int64_t wait_ms = (next - now) / 1000000;
-        if (wait_ms > 0) Sleep(static_cast<DWORD>(wait_ms));
+        const int64_t wait_ns = next - now;
+        if (wait_ns > 0) {
+            if (timer) {
+                LARGE_INTEGER due;
+                due.QuadPart = -(wait_ns / 100);
+                if (due.QuadPart >= 0) due.QuadPart = -1;
+                SetWaitableTimer(timer, &due, 0, nullptr, nullptr, FALSE);
+                WaitForSingleObject(timer, INFINITE);
+            } else {
+                const DWORD wait_ms = static_cast<DWORD>(wait_ns / 1000000);
+                if (wait_ms > 0) Sleep(wait_ms);
+            }
+        }
         {
             std::lock_guard<std::mutex> hold(c->lock);
             c->tick_ns = next;

@@ -3076,6 +3076,26 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
             // Unreadable here means the translator will report it properly.
         }
         File shimDir = translatorBin.getParentFile();
+        if (System.getProperty("os.name", "").startsWith("Windows")) {
+            File stub = new File(shimDir, "winapk-guest-stub.dll");
+            if (stub.isFile()) {
+                try {
+                    File tmp = new File(output.getParentFile(), output.getName() + ".tmp");
+                    java.nio.file.Files.copy(stub.toPath(), tmp.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    java.nio.file.Files.move(tmp.toPath(), output.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    java.nio.file.Files.writeString(
+                        new File(output.getPath() + ".source").toPath(),
+                        input.getAbsolutePath(),
+                        java.nio.charset.StandardCharsets.UTF_8);
+                    writeNativeIdStamp(output);
+                    return true;
+                } catch (java.io.IOException e) {
+                    NativeLog.w(TAG, "translate: direct stub copy failed for " + input.getName() + ": " + e);
+                }
+            }
+        }
         java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(
             translatorBin.getAbsolutePath(),
             "--in",  input.getAbsolutePath(),
