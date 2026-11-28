@@ -878,6 +878,18 @@ public final class AppInstall {
                 for (Path k : kids) deleteTree(k);
             }
         }
-        Files.delete(p);
+        try {
+            Files.delete(p);
+        } catch (java.nio.file.AccessDeniedException denied) {
+            // Linux removes a file whatever its own mode (only its directory's counts), so an app that
+            // makes one of its files read-only (AliExpress' lib/arm64/libsgmain.so is, after its first run)
+            // still has it replaced by its next install. Windows refuses to delete a
+            // read-only file: the attribute goes first.
+            java.nio.file.attribute.DosFileAttributeView dos = Files.getFileAttributeView(p,
+                    java.nio.file.attribute.DosFileAttributeView.class, java.nio.file.LinkOption.NOFOLLOW_LINKS);
+            if (dos == null || !dos.readAttributes().isReadOnly()) throw denied;
+            dos.setReadOnly(false);
+            Files.delete(p);
+        }
     }
 }

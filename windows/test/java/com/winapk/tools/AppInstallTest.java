@@ -84,7 +84,9 @@ public class AppInstallTest {
         check("kept splits listed in order", AppInstall.keptSplits(apk).size() == 2
                 && AppInstall.keptSplits(apk).get(0).getFileName().toString().equals("split_config.x86_64.apk"));
 
-        // Installed again from the kept files, as the runtime does with a stale record.
+        // Installed again from the kept files, as the runtime does with a stale record. The app has made its
+        // library read-only meanwhile (AliExpress' libsgmain.so is): Linux removes it all the same.
+        dir.resolve("lib/x86_64/libnative.so").toFile().setReadOnly();
         Files.delete(record);
         rc = AppInstall.install(apk, android, "x86_64,arm64-v8a", record);
         check("kept .apk + .splits install again", rc == 0);
