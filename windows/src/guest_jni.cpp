@@ -124,7 +124,7 @@ void report_missing_method(JNIEnv* env, jclass cls, const char* name, const char
     }
     // What the lookup threw: NoSuchMethodError, or a class that did not link (NoClassDefFoundError,
     // VerifyError) when the method is there.
-    std::string why = "nothing thrown";
+    std::string why = error ? "?" : "nothing thrown";
     if (error) {
         jclass object_class = env->FindClass("java/lang/Object");
         jmethodID to_string =
