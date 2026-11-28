@@ -682,11 +682,42 @@ final class MacApkWebViewBridge {
             if (path.startsWith(ANDROID_ASSET_PATH) || path.startsWith(ANDROID_RES_PATH)) {
                 data = macapkReadAsset(viewId, url);
             } else if (macapkAllowsFileAccess(viewId)) {
-                // WebSettings.setAllowFileAccess: any file the app itself can read,
-                // by the name the app knows it (java.io maps /data/user/0/... to the host).
-                java.io.File f = new java.io.File(path);
+                // WebSettings.setAllowFileAccess: restrict to the app's own sandbox directories.
                 try {
-                    if (f.isFile()) data = java.nio.file.Files.readAllBytes(f.toPath());
+                    String canon = new java.io.File(path).getCanonicalPath();
+                    boolean allowed = false;
+                    WebView wv = viewFor(viewId);
+                    android.content.Context ctx = wv != null ? wv.getContext() : null;
+                    if (ctx != null) {
+                        java.io.File[] roots = new java.io.File[] {
+                            ctx.getFilesDir(), ctx.getCacheDir(),
+                            ctx.getDataDir(), ctx.getExternalFilesDir(null)
+                        };
+                        for (java.io.File root : roots) {
+                            if (root == null) continue;
+                            String rCanon = root.getCanonicalPath();
+                            if (canon.equals(rCanon) || canon.startsWith(rCanon + java.io.File.separator)) {
+                                allowed = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!allowed) {
+                        String norm = path.replace('\\', '/');
+                        if (!norm.contains("/../") && !norm.endsWith("/..")) {
+                            String pkg = ctx != null ? ctx.getPackageName() : null;
+                            if (pkg != null && (norm.startsWith("/data/data/" + pkg + "/")
+                                    || norm.startsWith("/data/user/0/" + pkg + "/")
+                                    || norm.startsWith("/sdcard/")
+                                    || norm.startsWith("/storage/emulated/0/"))) {
+                                allowed = true;
+                            }
+                        }
+                    }
+                    if (allowed) {
+                        java.io.File f = new java.io.File(canon);
+                        if (f.isFile()) data = java.nio.file.Files.readAllBytes(f.toPath());
+                    }
                 } catch (java.io.IOException | RuntimeException e) {
                     data = null;
                 }

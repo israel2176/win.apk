@@ -45,9 +45,12 @@ public final class HostTrust {
     public static synchronized void install() {
         if (!System.getProperty("os.name", "").startsWith("Windows")) return;
         if (System.getProperty("javax.net.ssl.trustStore") != null) return;
-        final java.io.File store = new java.io.File(System.getProperty("java.io.tmpdir"), "winapk-trust.jks");
+        final java.io.File dir = privateTrustDir();
+        if (dir == null) return;
+        final java.io.File store = new java.io.File(dir, "winapk-trust.jks");
+        final char[] pass = storePassword(dir);
         if (store.isFile() && store.length() > 0) {
-            use(store);
+            use(store, pass);
             final long age = System.currentTimeMillis() - store.lastModified();
             if (age >= 0 && age < MAX_AGE_MS) {
                 log(false, "TLS trust anchors: the JDK's and Windows' from " + store);
@@ -56,7 +59,7 @@ public final class HostTrust {
             Thread refresh = new Thread(() -> {
                 try {
                     Thread.sleep(REFRESH_DELAY_MS);
-                    build(store);
+                    build(store, pass);
                 } catch (Throwable t) {
                     log(true, "TLS trust anchors: refresh failed (" + t + ")");
                 }
@@ -68,10 +71,43 @@ public final class HostTrust {
             return;
         }
         try {
-            build(store);
-            use(store);
+            build(store, pass);
+            use(store, pass);
         } catch (Throwable t) {
             log(true, "TLS trust anchors: kept the JDK's (" + t + ")");
+        }
+    }
+
+    private static java.io.File privateTrustDir() {
+        String root = System.getProperty("winapk.android.root");
+        java.io.File base = (root != null && !root.isEmpty())
+            ? new java.io.File(root).getParentFile()
+            : null;
+        if (base == null) {
+            String local = System.getenv("LOCALAPPDATA");
+            if (local != null && !local.isEmpty()) base = new java.io.File(local, "Win.apk");
+        }
+        if (base == null) return null;
+        java.io.File dir = new java.io.File(base, "trust");
+        if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) return null;
+        return dir;
+    }
+
+    private static char[] storePassword(java.io.File dir) {
+        java.io.File pwFile = new java.io.File(dir, "trust.key");
+        try {
+            if (pwFile.isFile() && pwFile.length() >= 16) {
+                byte[] b = java.nio.file.Files.readAllBytes(pwFile.toPath());
+                String s = new String(b, java.nio.charset.StandardCharsets.UTF_8).trim();
+                if (!s.isEmpty()) return s.toCharArray();
+            }
+            byte[] rnd = new byte[24];
+            new java.security.SecureRandom().nextBytes(rnd);
+            String hex = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(rnd);
+            java.nio.file.Files.writeString(pwFile.toPath(), hex, java.nio.charset.StandardCharsets.UTF_8);
+            return hex.toCharArray();
+        } catch (Throwable t) {
+            return "winapk-fallback".toCharArray();
         }
     }
 
@@ -81,18 +117,16 @@ public final class HostTrust {
     /** After the app's first frame, as a rule; the next start reads the result. */
     private static final long REFRESH_DELAY_MS = 20_000;
 
-    private static void use(java.io.File store) {
+    private static void use(java.io.File store, char[] pass) {
         System.setProperty("javax.net.ssl.trustStore", store.getAbsolutePath());
         System.setProperty("javax.net.ssl.trustStoreType", "JKS");
-        System.setProperty("javax.net.ssl.trustStorePassword", PASSWORD);
+        System.setProperty("javax.net.ssl.trustStorePassword", new String(pass));
     }
-
-    private static final String PASSWORD = "winapk";
 
     /** Writes the JDK's CAs plus the roots Windows trusts to `store`, through a
      *  file of its own that replaces it in one step, so another app starting
      *  at the same moment reads either the old set or the new one. */
-    private static void build(java.io.File store) throws Exception {
+    private static void build(java.io.File store, char[] pass) throws Exception {
         java.security.KeyStore merged = java.security.KeyStore.getInstance("JKS");
         merged.load(null, null);
         int n = 0;
@@ -116,7 +150,7 @@ public final class HostTrust {
         java.io.File part = java.io.File.createTempFile("winapk-trust-", ".part", store.getParentFile());
         try {
             try (java.io.FileOutputStream out = new java.io.FileOutputStream(part)) {
-                merged.store(out, PASSWORD.toCharArray());
+                merged.store(out, pass);
             }
             java.nio.file.Files.move(part.toPath(), store.toPath(),
                 java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);

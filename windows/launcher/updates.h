@@ -149,7 +149,7 @@ enum class SetupVerdict {
     kVersion,        // its product version is not the release's
 };
 
-inline bool setup_runs(SetupVerdict v) { return v == SetupVerdict::kOk || v == SetupVerdict::kOkUnsigned; }
+inline bool setup_runs(SetupVerdict v) { return v == SetupVerdict::kOk; }
 
 // A version as written in a tag or a version resource, compared as text: without a leading v and without the
 // blanks and NULs around it (Inno Setup pads ProductVersion with spaces; a resource string may keep its NUL).
@@ -165,21 +165,18 @@ inline std::wstring plain_version(const std::wstring& v) {
 // Whether an installer may run as the update to `version`, whose asset GitHub lists with `size` bytes and the
 // SHA-256 `sha256`. `own_signer`: who signed this build, empty when nobody did. The checks go from the cheapest
 // to the one that matters most for trust: the size (a cut-off download), the SHA-256 (the very bytes GitHub
-// serves), the signature (a broken one is refused even by an unsigned build; a signed build takes only its own
-// signer's), then the version inside (an older installer replayed under a newer release's name). The version is
-// compared as text, suffix and all: 0.9.0-preview is not 0.9.0.
+// serves), the signature (a broken one is refused; both this build and the installer must be validly signed by
+// the same signer), then the version inside (an older installer replayed under a newer release's name).
 inline SetupVerdict judge_setup(const SetupFacts& f, uint64_t size, const std::string& sha256,
                                 const std::wstring& version, const std::wstring& own_signer) {
     if (size == 0 || f.size != size) return SetupVerdict::kSize;
     if (sha256.size() != 64 || f.sha256 != sha256) return SetupVerdict::kDigest;
     if (f.signature == Signature::kInvalid) return SetupVerdict::kBadSignature;
-    if (!own_signer.empty()) {
-        if (f.signature != Signature::kValid) return SetupVerdict::kNotSigned;
-        if (f.signer != own_signer) return SetupVerdict::kSignerChanged;
-    }
+    if (own_signer.empty() || f.signature != Signature::kValid) return SetupVerdict::kNotSigned;
+    if (f.signer != own_signer) return SetupVerdict::kSignerChanged;
     const std::wstring want = plain_version(version);
     if (want.empty() || plain_version(f.product_version) != want) return SetupVerdict::kVersion;
-    return f.signature == Signature::kValid ? SetupVerdict::kOk : SetupVerdict::kOkUnsigned;
+    return SetupVerdict::kOk;
 }
 
 // What a response's body must come to, so that a download cut off is never kept as whole (the launcher's

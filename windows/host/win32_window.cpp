@@ -66,7 +66,20 @@ HWND embed_parent_requested() {
         SetEnvironmentVariableW(L"WINAPK_EMBED_PARENT", nullptr);  // not for the processes this one starts
         if (n == 0 || n >= 32) return static_cast<HWND>(nullptr);
         const HWND h = reinterpret_cast<HWND>(static_cast<uintptr_t>(wcstoull(buf, nullptr, 10)));
-        return IsWindow(h) ? h : static_cast<HWND>(nullptr);
+        if (!IsWindow(h)) return static_cast<HWND>(nullptr);
+        DWORD owner_pid = 0;
+        GetWindowThreadProcessId(h, &owner_pid);
+        if (!owner_pid) return static_cast<HWND>(nullptr);
+        HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, owner_pid);
+        if (!proc) return static_cast<HWND>(nullptr);
+        wchar_t exe[MAX_PATH * 2];
+        DWORD len = MAX_PATH * 2;
+        const bool ok = QueryFullProcessImageNameW(proc, 0, exe, &len) != 0;
+        CloseHandle(proc);
+        if (!ok) return static_cast<HWND>(nullptr);
+        const wchar_t* slash = wcsrchr(exe, L'\\');
+        const wchar_t* name = slash ? slash + 1 : exe;
+        return _wcsicmp(name, L"Win.apk.exe") == 0 ? h : static_cast<HWND>(nullptr);
     }();
     return parent;
 }
@@ -84,7 +97,20 @@ HWND start_window_requested() {
         SetEnvironmentVariableW(L"WINAPK_START_WINDOW", nullptr);  // not for the processes this one starts
         if (n == 0 || n >= 32) return static_cast<HWND>(nullptr);
         const HWND h = reinterpret_cast<HWND>(static_cast<uintptr_t>(wcstoull(buf, nullptr, 10)));
-        return IsWindow(h) ? h : static_cast<HWND>(nullptr);
+        if (!IsWindow(h)) return static_cast<HWND>(nullptr);
+        DWORD owner_pid = 0;
+        GetWindowThreadProcessId(h, &owner_pid);
+        if (!owner_pid) return static_cast<HWND>(nullptr);
+        HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, owner_pid);
+        if (!proc) return static_cast<HWND>(nullptr);
+        wchar_t exe[MAX_PATH * 2];
+        DWORD len = MAX_PATH * 2;
+        const bool ok = QueryFullProcessImageNameW(proc, 0, exe, &len) != 0;
+        CloseHandle(proc);
+        if (!ok) return static_cast<HWND>(nullptr);
+        const wchar_t* slash = wcsrchr(exe, L'\\');
+        const wchar_t* name = slash ? slash + 1 : exe;
+        return _wcsicmp(name, L"Win.apk.exe") == 0 ? h : static_cast<HWND>(nullptr);
     }();
     return start && IsWindow(start) && IsWindowVisible(start) && !IsIconic(start) ? start : nullptr;
 }

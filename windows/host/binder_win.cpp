@@ -207,7 +207,9 @@ std::vector<uint8_t> encode(const Message& m) {
             put(b, o.handle);
         }
     }
-    const uint32_t len = static_cast<uint32_t>(b.size() - sizeof(uint32_t));
+    const size_t payload = b.size() - sizeof(uint32_t);
+    if (payload > kMaxFrame) return {};
+    const uint32_t len = static_cast<uint32_t>(payload);
     std::memcpy(b.data(), &len, sizeof len);
     return b;
 }
@@ -229,7 +231,11 @@ bool decode(const std::vector<uint8_t>& frame, Message* m) {
     Reader r{frame.data(), frame.size()};
     if (!r.get(&m->head) || m->head.magic != kMagic) return false;
     const Head& h = m->head;
-    if (h.data_len > r.left || h.n_off > (1u << 20) || h.n_obj > (1u << 20)) return false;
+    if (h.data_len > r.left) return false;
+    const size_t after_data = r.left - h.data_len;
+    if (h.n_off > after_data / sizeof(int32_t)) return false;
+    const size_t after_off = after_data - static_cast<size_t>(h.n_off) * sizeof(int32_t);
+    if (h.n_obj > after_off / sizeof(int32_t)) return false;
     m->data.assign(r.p, r.p + h.data_len);
     r.p += h.data_len;
     r.left -= h.data_len;
@@ -413,15 +419,21 @@ int32_t incoming_binder(const WireObject& o) {
 
 // Ports and kinds as MacApkBinderTransport reads them, from a decoded message.
 // A handle that arrived becomes a new CRT fd of this process.
-void incoming_objects(const Message& m, std::vector<int32_t>* ports, std::vector<int32_t>* kinds) {
+void incoming_objects(const Message& m, bool allow_fds, std::vector<int32_t>* ports, std::vector<int32_t>* kinds) {
     for (const WireObject& o : m.objects) {
         int32_t port = 0;
         if (o.kind == kKindBinder) {
             port = incoming_binder(o);
-        } else if (o.kind == kKindPfd || o.kind == kKindFd) {
+        } else if (allow_fds && (o.kind == kKindPfd || o.kind == kKindFd)) {
             HANDLE h = reinterpret_cast<HANDLE>(static_cast<uintptr_t>(o.handle));
-            port = h ? _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_BINARY) : -1;
-            if (port < 0 && h) CloseHandle(h);
+            DWORD flags = 0;
+            const DWORD ftype = (h && GetHandleInformation(h, &flags)) ? GetFileType(h) : FILE_TYPE_UNKNOWN;
+            if (ftype == FILE_TYPE_DISK || ftype == FILE_TYPE_PIPE) {
+                port = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_BINARY);
+                if (port < 0) CloseHandle(h);
+            } else {
+                port = -1;
+            }
         }
         ports->push_back(port);
         kinds->push_back(o.kind);
@@ -478,7 +490,8 @@ DWORD WINAPI serve_connection(void* param) {
     ULONG client_pid = 0;
     HANDLE client = nullptr;
     if (GetNamedPipeClientProcessId(pipe, &client_pid)) client = open_peer(client_pid);
-    if (!trusted_peer(client) && !(g_accept_launcher && trusted_launcher(client))) {
+    const bool is_trusted_peer = trusted_peer(client);
+    if (!is_trusted_peer && !(args->root > 0 && g_accept_launcher && trusted_launcher(client))) {
         std::fprintf(stderr, "[binder] connection from pid %lu refused: not this user's Win.apk runtime\n",
                      static_cast<unsigned long>(client_pid));
         if (client) CloseHandle(client);
@@ -525,7 +538,7 @@ DWORD WINAPI serve_connection(void* param) {
             uid_known = calling_uid >= 0 && calling_uid != kUnknownCallerUid;
         }
         std::vector<int32_t> ports, kinds;
-        incoming_objects(in, &ports, &kinds);
+        incoming_objects(in, is_trusted_peer, &ports, &kinds);
         jbyteArray jdata = env->NewByteArray(static_cast<jsize>(in.data.size()));
         if (jdata && !in.data.empty())
             env->SetByteArrayRegion(jdata, 0, static_cast<jsize>(in.data.size()),

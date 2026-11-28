@@ -10,10 +10,12 @@
 #include <vector>
 
 #include <windows.h>
+#include <sddl.h>
 #include <tlhelp32.h>
 
 #include <jvmti.h>
 
+#include "winapk/binder_wire.h"
 #include "winapk/debug_protocol.h"
 #include "winapk/linker.h"
 #include "winapk/mini_bionic.h"
@@ -511,19 +513,50 @@ DWORD WINAPI serve(void*) {
     JavaVMAttachArgs args{JNI_VERSION_1_8, name, nullptr};
     if (g_vm->AttachCurrentThreadAsDaemon(reinterpret_cast<void**>(&env), &args) != JNI_OK) return 1;
     const std::wstring pipe_name = winapk::debug::pipe_name(GetCurrentProcessId());
-    auto listen = [&] {
+    const std::wstring self_sid = winapk::binder::process_sid(GetCurrentProcess());
+    const std::wstring self_img = winapk::binder::process_image(GetCurrentProcess());
+    const std::wstring launcher_img = winapk::binder::launcher_image_for(self_img);
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = FALSE;
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (!self_sid.empty()) {
+        const std::wstring sddl = L"D:P(A;;GA;;;" + self_sid + L")(A;;GA;;;SY)";
+        if (ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.c_str(), SDDL_REVISION_1, &sd, nullptr)) {
+            sa.lpSecurityDescriptor = sd;
+        }
+    }
+    auto trusted_client = [&](HANDLE pipe) {
+        ULONG pid = 0;
+        if (!GetNamedPipeClientProcessId(pipe, &pid) || !pid) return false;
+        HANDLE proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+        if (!proc) return false;
+        const std::wstring csid = winapk::binder::process_sid(proc);
+        const std::wstring cimg = winapk::binder::process_image(proc);
+        CloseHandle(proc);
+        if (csid.empty() || csid != self_sid) return false;
+        return (!launcher_img.empty() && winapk::binder::same_path(cimg, launcher_img)) ||
+               (!self_img.empty() && winapk::binder::same_path(cimg, self_img));
+    };
+    auto listen = [&](bool first) {
         for (;;) {
-            HANDLE pipe = CreateNamedPipeW(pipe_name.c_str(), PIPE_ACCESS_DUPLEX,
-                                           PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
-                                           PIPE_UNLIMITED_INSTANCES, 1 << 16, 4096, 0, nullptr);
+            DWORD mode = PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS;
+            HANDLE pipe = CreateNamedPipeW(
+                pipe_name.c_str(), PIPE_ACCESS_DUPLEX | (first ? FILE_FLAG_FIRST_PIPE_INSTANCE : 0), mode,
+                PIPE_UNLIMITED_INSTANCES, 1 << 16, 4096, 0, sa.lpSecurityDescriptor ? &sa : nullptr);
             if (pipe != INVALID_HANDLE_VALUE) return pipe;
+            if (first && GetLastError() == ERROR_ACCESS_DENIED) return INVALID_HANDLE_VALUE;
             Sleep(1000);
         }
     };
-    HANDLE pipe = listen();
+    HANDLE pipe = listen(true);
+    if (pipe == INVALID_HANDLE_VALUE) {
+        if (sd) LocalFree(sd);
+        return 1;
+    }
     for (;;) {
         const bool connected = ConnectNamedPipe(pipe, nullptr) || GetLastError() == ERROR_PIPE_CONNECTED;
-        if (connected) {
+        if (connected && trusted_client(pipe)) {
             std::string question;
             char c = 0;
             DWORD got = 0;
@@ -541,7 +574,7 @@ DWORD WINAPI serve(void*) {
         }
         // The next connection's end exists before this one closes: the launcher's next question, sent the
         // moment it has read this answer to its end, always finds the pipe.
-        HANDLE next = listen();
+        HANDLE next = listen(false);
         if (connected) FlushFileBuffers(pipe);  // until the reader has it all, or is gone
         DisconnectNamedPipe(pipe);
         CloseHandle(pipe);

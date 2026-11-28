@@ -88,6 +88,61 @@ bool dropped_ending(const Char* s, size_t start, size_t end) {
     return !(n == 1 || (n == 2 && s[start] == '.'));
 }
 
+// Whether `p[start..end]` (inclusive) is a DOS reserved device name (base name before first '.').
+template <typename Char>
+bool is_dos_reserved(const Char* s, size_t start, size_t end) {
+    size_t dot = end + 1;
+    for (size_t i = start; i <= end; ++i) {
+        if (s[i] == '.') {
+            dot = i;
+            break;
+        }
+    }
+    const size_t n = dot - start;
+    auto eq3 = [&](const char* lit) {
+        for (size_t k = 0; k < 3; ++k) {
+            Char c = s[start + k];
+            if (c >= 'a' && c <= 'z') c = static_cast<Char>(c - 'a' + 'A');
+            if (c != static_cast<Char>(lit[k])) return false;
+        }
+        return true;
+    };
+    if (n == 3) return eq3("CON") || eq3("PRN") || eq3("AUX") || eq3("NUL");
+    if (n == 4) {
+        const Char last = s[start + 3];
+        if (last >= '1' && last <= '9') return eq3("COM") || eq3("LPT");
+    }
+    return false;
+}
+
+// Lexically fold `.` and `..` in an Android path (starting with '/'), clamping at root.
+std::string fold_android_path(const char* p, size_t len) {
+    std::vector<std::string> parts;
+    size_t i = 0;
+    while (i < len) {
+        while (i < len && (p[i] == '/' || p[i] == '\\')) ++i;
+        if (i >= len) break;
+        size_t j = i;
+        while (j < len && p[j] != '/' && p[j] != '\\') ++j;
+        const size_t seg_len = j - i;
+        if (seg_len == 1 && p[i] == '.') {
+            // skip
+        } else if (seg_len == 2 && p[i] == '.' && p[i + 1] == '.') {
+            if (!parts.empty()) parts.pop_back();
+        } else {
+            parts.emplace_back(p + i, seg_len);
+        }
+        i = j;
+    }
+    if (parts.empty()) return "/";
+    std::string out;
+    for (const auto& s : parts) {
+        out.push_back('/');
+        out += s;
+    }
+    return out;
+}
+
 constexpr wchar_t kPrivate = 0xF000;  // DrvFs' and Cygwin's base for a forbidden character
 
 // Whether any name in the Android path part `p` needs the mapping: the scan
@@ -102,26 +157,10 @@ bool needs_host_names(const char* p, size_t len) {
         } else if (forbidden(c)) {
             return true;
         } else if (i + 1 == len || is_separator(static_cast<unsigned char>(p[i + 1]))) {
-            if (dropped_ending(p, start, i)) return true;
+            if (dropped_ending(p, start, i) || is_dos_reserved(p, start, i)) return true;
         }
     }
     return false;
-}
-
-// Guest code that knows no drive letters takes the host paths Java hands
-// it ("C:\...") for relative ones and joins them onto getcwd() or "/":
-// SQLite's unixFullPathname yields "C:\cwd/C:\data\x.db" or "/C:\data\x.db".
-// The last drive-letter path after a separator is the one that was meant.
-const char* meant_path(const char* p, size_t* len) {
-    for (size_t i = *len; i-- > 2;) {
-        if (p[i] == ':' && i + 1 < *len && (p[i + 1] == '\\' || p[i + 1] == '/') &&
-            ((p[i - 1] >= 'A' && p[i - 1] <= 'Z') || (p[i - 1] >= 'a' && p[i - 1] <= 'z')) &&
-            (p[i - 2] == '/' || p[i - 2] == '\\')) {
-            *len -= i - 1;
-            return p + i - 1;
-        }
-    }
-    return p;
 }
 
 bool starts_with(const char* s, const char* prefix) { return std::strncmp(s, prefix, std::strlen(prefix)) == 0; }
@@ -177,7 +216,13 @@ std::wstring host_names(const char* p, size_t len) {
             continue;
         }
         const bool last = i + 1 == w.size() || is_separator(w[i + 1]);
-        if (forbidden(c) || (last && dropped_ending(w.c_str(), start, i))) w[i] = static_cast<wchar_t>(kPrivate + c);
+        bool map = forbidden(c) || (last && dropped_ending(w.c_str(), start, i));
+        if (!map && i == start) {
+            size_t end = i;
+            while (end + 1 < w.size() && !is_separator(w[end + 1])) ++end;
+            if (is_dos_reserved(w.c_str(), start, end)) map = true;
+        }
+        if (map) w[i] = static_cast<wchar_t>(kPrivate + c);
     }
     return w;
 }
@@ -186,10 +231,17 @@ std::wstring host_names(const char* p, size_t len) {
 // UTF-16 unit either way). A private-use dot or space counts only at the end,
 // where host_names writes it, so every name comes back exactly as it went.
 void android_name(wchar_t* name) {
-    for (wchar_t* c = name; *c; ++c) {
-        if (*c <= kPrivate || *c > kPrivate + 0x7F) continue;
-        const wchar_t plain = static_cast<wchar_t>(*c - kPrivate);
-        if (forbidden(plain) || ((plain == L'.' || plain == L' ') && c[1] == 0)) *c = plain;
+    const size_t n = std::wcslen(name);
+    for (size_t i = 0; i < n; ++i) {
+        wchar_t& ch = name[i];
+        if (ch <= kPrivate || ch > kPrivate + 0x7F) continue;
+        const wchar_t plain = static_cast<wchar_t>(ch - kPrivate);
+        if (forbidden(plain) || ((plain == L'.' || plain == L' ') && name[i + 1] == 0)) {
+            ch = plain;
+        } else if (i == 0) {
+            ch = plain;
+            if (!is_dos_reserved(name, 0, n - 1)) ch = static_cast<wchar_t>(kPrivate + plain);
+        }
     }
 }
 
@@ -197,8 +249,6 @@ void android_name(wchar_t* name) {
 // names it maps, and not as a host path, which it leaves as it is.
 bool is_android_path(const char* p) {
     if (!p) return false;
-    size_t len = std::strlen(p);
-    p = meant_path(p, &len);
     return p[0] == '/' && p[1] != '/';
 }
 
@@ -292,19 +342,30 @@ namespace {
 std::wstring mapped_path(const char* p) {
     if (!p) return {};
     size_t len = std::strlen(p);
-    p = meant_path(p, &len);
-    // A host path (drive letter, UNC, relative): as it is.
-    if (p[0] != '/' || p[1] == '/') return to_wide(p, len);
+    // Block UNC (//server/share or \\server\share) and device namespaces (\\?\, \\.\).
+    if ((p[0] == '/' && p[1] == '/') || (p[0] == '\\' && p[1] == '\\')) return {};
+    if (p[0] != '/') return to_wide(p, len);
     if (std::strcmp(p, "/dev/null") == 0) return L"NUL";
-    // /proc/self is the process's own directory, /proc/<pid>. Its files that are
-    // not made on the fly (stdio.cpp: maps) are real ones under <android root>/
-    // proc/<pid>, written by Boot for this process (cmdline), so one running app
-    // does not read another's.
+    const std::string folded = fold_android_path(p, len);
+    p = folded.c_str();
+    len = folded.size();
+    // /proc/self is the process's own directory, /proc/<pid>. Foreign /proc/<pid> is blocked.
     std::string own_proc;
-    if (std::strncmp(p, "/proc/self", 10) == 0 && (p[10] == '\0' || p[10] == '/')) {
-        own_proc = "/proc/" + std::to_string(GetCurrentProcessId()) + (p + 10);
-        p = own_proc.c_str();
-        len = own_proc.size();
+    if (std::strncmp(p, "/proc/", 6) == 0) {
+        const std::string self_pid = std::to_string(GetCurrentProcessId());
+        if (std::strncmp(p, "/proc/self", 10) == 0 && (p[10] == '\0' || p[10] == '/')) {
+            own_proc = "/proc/" + self_pid + (p + 10);
+            p = own_proc.c_str();
+            len = own_proc.size();
+        } else {
+            const char* rest = p + 6;
+            bool is_num = *rest >= '0' && *rest <= '9';
+            const char* end = rest;
+            while (*end >= '0' && *end <= '9') ++end;
+            if (is_num && (*end == '\0' || *end == '/')) {
+                if (std::string(rest, end) != self_pid) return {};
+            }
+        }
     }
     if (const char* rest = cacerts_rest(p)) {
         std::wstring root;

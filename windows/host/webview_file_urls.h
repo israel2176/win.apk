@@ -83,7 +83,7 @@ inline std::wstring engine_url(const std::wstring& u) {
     } else if (has_at(u, 5, L"/") && !has_at(u, 5, L"//")) {
         path = 5;
     } else {
-        return u;
+        return L"about:blank";
     }
     return std::wstring(kFileOrigin) + u.substr(path);
 }
@@ -174,7 +174,7 @@ inline bool file_request_allowed(bool file_ok, const std::wstring& data_origin, 
     auto ours = [&](const std::wstring& o) {
         return o == kFileOrigin || (!data_origin.empty() && o == data_origin);
     };
-    if (!origin.empty() && origin != L"null" && !ours(origin_of(origin))) return false;
+    if (!origin.empty() && !ours(origin_of(origin))) return false;
     if (!referer.empty() && !on_file_origin(referer) && !ours(origin_of(referer))) return false;
     return true;
 }

@@ -484,9 +484,9 @@ bool app_overrides(View* v, const std::wstring& url, bool redirect, bool gesture
     }
     CloseHandle(done);
     if (r != WAIT_OBJECT_0) {
-        std::fprintf(stderr, "[win.apk] webview %d: no shouldOverrideUrlLoading answer in %lu ms; loading %s\n",
+        std::fprintf(stderr, "[win.apk] webview %d: no shouldOverrideUrlLoading answer in %lu ms; blocking %s\n",
                      v->id, kDecisionWaitMs, wv2::redact(url).c_str());
-        return false;
+        return true;
     }
     return !allow;
 }
@@ -640,12 +640,6 @@ void finish_intercept(int id, const InterceptAnswer& ans) {
             if (View* v = find_view(p.view)) v->missing_doc = p.uri;
         }
         std::wstring headers = ans.headers;
-        // The page's own about:blank (loadDataWithBaseURL with no base) has an
-        // opaque origin; Android's page reads the app's assets in CORS mode
-        // (a module script, fetch) all the same.
-        if (p.null_origin && headers.find(L"Access-Control-Allow-Origin") == std::wstring::npos) {
-            headers += L"Access-Control-Allow-Origin: *\r\n";
-        }
         ComPtr<ICoreWebView2WebResourceResponse> resp;
         p.env->CreateWebResourceResponse(body, ans.status, ans.reason.c_str(), headers.c_str(), resp.put());
         if (resp) p.args->put_Response(resp.get());
@@ -1005,7 +999,14 @@ void hook(View* v) {
                 a->get_Uri(&raw);
                 const std::wstring uri = wv2::take_co_string(raw);
                 if (View* v = find_view(id)) {
-                    if (!uri.empty()) v->wv->Navigate(uri.c_str());
+                    if (!uri.empty()) {
+                        const std::wstring scheme = wv2::scheme_of(uri);
+                        if (scheme == L"http" || scheme == L"https" || scheme == L"about" ||
+                            scheme == L"data" || scheme == L"blob" || scheme == L"file") {
+                            const std::wstring target = wv2::engine_url(uri);
+                            if (target != L"about:blank" || scheme == L"about") v->wv->Navigate(target.c_str());
+                        }
+                    }
                 }
                 return S_OK;
             })
@@ -1056,7 +1057,18 @@ void hook(View* v) {
                 g_dialogs[did] = d;
                 const size_t plen = wcslen(kBridgePrefix);
                 if (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_PROMPT && msg.compare(0, plen, kBridgePrefix) == 0) {
-                    queue_bridge_call(id, did, msg.substr(plen));
+                    LPWSTR src_raw = nullptr;
+                    v->wv->get_Source(&src_raw);
+                    const std::wstring top_origin = wv2::origin_of(wv2::take_co_string(src_raw));
+                    const std::wstring frame_origin = wv2::origin_of(wv2::engine_url(url));
+                    const bool same_origin = (!top_origin.empty() && top_origin == frame_origin) ||
+                                             (top_origin.empty() && frame_origin.empty());
+                    if (same_origin) {
+                        queue_bridge_call(id, did, msg.substr(plen));
+                    } else {
+                        d.deferral->Complete();
+                        g_dialogs.erase(did);
+                    }
                 } else if (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_ALERT) {
                     post_event(id, EV_JS_ALERT, msg, url, L"", did);
                 } else if (kind == COREWEBVIEW2_SCRIPT_DIALOG_KIND_CONFIRM ||
@@ -1472,7 +1484,19 @@ void set_cookie_now(ICoreWebView2CookieManager* m, const std::wstring& url, cons
         std::wstring key = trim(e == std::wstring::npos ? parts[k] : parts[k].substr(0, e));
         const std::wstring v = e == std::wstring::npos ? L"" : trim(parts[k].substr(e + 1));
         for (wchar_t& ch : key) ch = static_cast<wchar_t>(towlower(ch));
-        if (key == L"domain" && !v.empty()) domain = v;
+        if (key == L"domain" && !v.empty()) {
+            std::wstring cand = v;
+            if (!cand.empty() && cand[0] == L'.') cand.erase(0, 1);
+            std::wstring host_lc = host, cand_lc = cand;
+            for (wchar_t& ch : host_lc) ch = static_cast<wchar_t>(towlower(ch));
+            for (wchar_t& ch : cand_lc) ch = static_cast<wchar_t>(towlower(ch));
+            const bool domain_ok = !cand_lc.empty() &&
+                                   (host_lc == cand_lc ||
+                                    (host_lc.size() > cand_lc.size() &&
+                                     host_lc[host_lc.size() - cand_lc.size() - 1] == L'.' &&
+                                     host_lc.compare(host_lc.size() - cand_lc.size(), cand_lc.size(), cand_lc) == 0));
+            if (domain_ok) domain = v;
+        }
         else if (key == L"path" && !v.empty()) path = v;
         else if (key == L"secure") secure = true;
         else if (key == L"httponly") http_only = true;

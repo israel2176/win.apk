@@ -93,11 +93,7 @@ final class WinNTFileSystem extends FileSystem {
     private static final boolean ENABLE_ADS;
     static {
         String enableADS = GetPropertyAction.privilegedGetProperty("jdk.io.File.enableADS");
-        if (enableADS != null) {
-            ENABLE_ADS = !enableADS.equalsIgnoreCase(Boolean.FALSE.toString());
-        } else {
-            ENABLE_ADS = true;
-        }
+        ENABLE_ADS = "true".equalsIgnoreCase(enableADS);
     }
 
     WinNTFileSystem() {

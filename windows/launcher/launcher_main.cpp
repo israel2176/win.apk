@@ -1985,6 +1985,7 @@ int http_get(const std::wstring& url, const fs::path& out, const std::wstring& e
     uc.dwStructSize = sizeof(uc);
     uc.dwHostNameLength = uc.dwUrlPathLength = uc.dwExtraInfoLength = static_cast<DWORD>(-1);
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return 0;
+    if (uc.nScheme != INTERNET_SCHEME_HTTPS) return 0;
     const std::wstring host(uc.lpszHostName, uc.dwHostNameLength);
     const std::wstring path = std::wstring(uc.lpszUrlPath, uc.dwUrlPathLength) +
                               std::wstring(uc.lpszExtraInfo, uc.dwExtraInfoLength);
@@ -2378,11 +2379,15 @@ bool newest_release(const std::string& json, Release* best, bool* found_out) {
                         else j.skip();
                     });
                     if (utf8_to_wide(name) == kSetupAsset && !link.empty() && !l.asset) {
-                        l.asset = true;
-                        l.asset_state = state;
-                        l.digest = digest;
-                        l.size = std::strtoull(size.c_str(), nullptr, 10);
-                        url = utf8_to_wide(link);
+                        const std::wstring wlink = utf8_to_wide(link);
+                        if (wlink.rfind(L"https://github.com/", 0) == 0 ||
+                            wlink.rfind(L"https://objects.githubusercontent.com/", 0) == 0) {
+                            l.asset = true;
+                            l.asset_state = state;
+                            l.digest = digest;
+                            l.size = std::strtoull(size.c_str(), nullptr, 10);
+                            url = wlink;
+                        }
                     }
                 });
             } else {
@@ -2462,11 +2467,11 @@ winapk::launcher::Signature authenticode(const fs::path& file, std::wstring* sig
     WINTRUST_DATA data{};
     data.cbStruct = sizeof(data);
     data.dwUIChoice = WTD_UI_NONE;
-    data.fdwRevocationChecks = WTD_REVOKE_NONE;
+    data.fdwRevocationChecks = WTD_REVOKE_WHOLECHAIN;
     data.dwUnionChoice = WTD_CHOICE_FILE;
     data.pFile = &info;
     data.dwStateAction = WTD_STATEACTION_VERIFY;
-    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL | WTD_REVOCATION_CHECK_NONE;
+    data.dwProvFlags = WTD_CACHE_ONLY_URL_RETRIEVAL;
     GUID action = WINTRUST_ACTION_GENERIC_VERIFY_V2;
     const LONG status = WinVerifyTrust(static_cast<HWND>(INVALID_HANDLE_VALUE), &action, &data);
     Signature out;
@@ -4508,20 +4513,50 @@ void install(const fs::path& source, std::wstring name = L"", bool quiet = false
 // one session, as `adb install-multiple` installs them (installs.h, group_install_sets); a lone .apk and a
 // bundle install as they are. Should the question get no answer, each file installs alone, and AppInstall
 // refuses a split without its base as Android does.
+inline std::wstring quote_win32_arg(std::wstring_view arg) {
+    std::wstring out = L"\"";
+    size_t backslashes = 0;
+    for (wchar_t ch : arg) {
+        if (ch == L'\\') {
+            ++backslashes;
+        } else if (ch == L'"') {
+            out.append(backslashes * 2 + 1, L'\\');
+            out.push_back(L'"');
+            backslashes = 0;
+        } else {
+            out.append(backslashes, L'\\');
+            out.push_back(ch);
+            backslashes = 0;
+        }
+    }
+    out.append(backslashes * 2, L'\\');
+    out.push_back(L'"');
+    return out;
+}
+
 DWORD WINAPI install_sets_thread(void* param) {
     std::unique_ptr<std::vector<fs::path>> apks(static_cast<std::vector<fs::path>*>(param));
-    wchar_t tmp_dir[MAX_PATH + 1];
-    wchar_t tmp[MAX_PATH + 1];
+    std::error_code ec;
+    const fs::path stage_dir = data_dir() / L"staging";
+    fs::create_directories(stage_dir, ec);
+    unsigned long long rnd = 0;
+    BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&rnd), sizeof(rnd), BCRYPT_USE_SYSTEM_RNG);
+    const fs::path tmp = stage_dir / (L"wap-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(rnd) + L".txt");
     std::wstring text;
-    if (GetTempPathW(MAX_PATH + 1, tmp_dir) && GetTempFileNameW(tmp_dir, L"wap", 0, tmp)) {
-        std::wstring args = L"--apk-set-to \"" + std::wstring(tmp) + L"\"";
-        for (const fs::path& f : *apks) args += L" \"" + f.wstring() + L"\"";
-        HANDLE p = start_runtime(args, logs_dir() / L"install-set.log");
-        if (p && wait_exit(p) == 0) {
-            std::ifstream in(tmp, std::ios::binary);
-            text = utf8_to_wide(std::string(std::istreambuf_iterator<char>(in), {}));
+    {
+        HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                               FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+        if (h != INVALID_HANDLE_VALUE) {
+            CloseHandle(h);
+            std::wstring args = L"--apk-set-to " + quote_win32_arg(tmp.wstring());
+            for (const fs::path& f : *apks) args += L" " + quote_win32_arg(f.wstring());
+            HANDLE p = start_runtime(args, logs_dir() / L"install-set.log");
+            if (p && wait_exit(p) == 0) {
+                std::ifstream in(tmp, std::ios::binary);
+                text = utf8_to_wide(std::string(std::istreambuf_iterator<char>(in), {}));
+            }
+            DeleteFileW(tmp.c_str());
         }
-        DeleteFileW(tmp);
     }
     std::vector<winapk::launcher::ApkPart> parts = winapk::launcher::parse_apk_set(text);
     if (parts.size() != apks->size()) {  // no answer: each file alone
@@ -7081,12 +7116,15 @@ bool update_can_start() {
 bool run_installer() {
     if (!update_can_start()) return false;
     const fs::path setup = setup_file(g_update.latest().version);
-    const auto r = reinterpret_cast<INT_PTR>(ShellExecuteW(g_main, L"open", setup.c_str(), nullptr, nullptr,
-                                                           SW_SHOWNORMAL));
-    if (r <= 32) {
+    STARTUPINFOW si{sizeof(si)};
+    PROCESS_INFORMATION pi{};
+    std::wstring cmd = L"\"" + setup.wstring() + L"\"";
+    if (!CreateProcessW(setup.c_str(), cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &pi)) {
         info(tr(L"The installer could not be started."), kError);
         return false;
     }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
     save_window_size();
     g_page.build = nullptr;  // the Update button's page_click must not rebuild a page of a window that is gone
     if (g_log_wnd) DestroyWindow(g_log_wnd);
@@ -11394,12 +11432,28 @@ bool read_bytes(const fs::path& p, Bytes* out) {
 // Written to a temporary file and renamed over the old one, so a reader sees
 // the old file or the new one.
 bool write_bytes(const fs::path& p, const void* data, size_t n) {
+    unsigned long long rnd = 0;
+    BCryptGenRandom(nullptr, reinterpret_cast<PUCHAR>(&rnd), sizeof(rnd), BCRYPT_USE_SYSTEM_RNG);
     const fs::path tmp = p.parent_path() / (L"." + p.filename().wstring() + L".tmp." +
-                                            std::to_wstring(GetCurrentProcessId()));
-    std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-    f.write(static_cast<const char*>(data), static_cast<std::streamsize>(n));
-    f.close();  // a full disk shows here, when the buffer is written
-    if (f && MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
+                                            std::to_wstring(GetCurrentProcessId()) + L"." + std::to_wstring(rnd));
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                           FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool ok = true;
+    const auto* ptr = static_cast<const char*>(data);
+    size_t left = n;
+    while (left > 0) {
+        const DWORD chunk = static_cast<DWORD>(std::min<size_t>(left, 1u << 20));
+        DWORD wrote = 0;
+        if (!WriteFile(h, ptr, chunk, &wrote, nullptr) || wrote != chunk) {
+            ok = false;
+            break;
+        }
+        ptr += wrote;
+        left -= wrote;
+    }
+    CloseHandle(h);
+    if (ok && MoveFileExW(tmp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return true;
     std::error_code ec;
     fs::remove(tmp, ec);  // no temporary file left behind, and the old file stays
     return false;
@@ -11509,8 +11563,19 @@ bool verify(const Key& k, const std::string& payload, const std::string& sig) {
 bool load_key(Key* k) {
     Bytes sealed;
     if (!k->alg || !read_bytes(key_file(), &sealed)) return false;
+    static constexpr char kKeyEntropy[] = "Win.apk app-ops signing key v1";
+    DATA_BLOB ent{sizeof(kKeyEntropy) - 1, reinterpret_cast<BYTE*>(const_cast<char*>(kKeyEntropy))};
     DATA_BLOB in{static_cast<DWORD>(sealed.size()), sealed.data()}, out{};
-    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return false;
+    if (!CryptUnprotectData(&in, nullptr, &ent, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+        if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &out)) return false;
+        // Migrate legacy key without entropy to entropy-protected blob.
+        DATA_BLOB re_in{out.cbData, out.pbData}, re_out{};
+        if (CryptProtectData(&re_in, L"Win.apk app-ops signing key", &ent, nullptr, nullptr,
+                             CRYPTPROTECT_UI_FORBIDDEN, &re_out)) {
+            write_bytes(key_file(), re_out.pbData, re_out.cbData);
+            LocalFree(re_out.pbData);
+        }
+    }
     const bool ok = BCryptImportKeyPair(k->alg, nullptr, BCRYPT_ECCPRIVATE_BLOB, &k->key, out.pbData, out.cbData, 0) == 0;
     SecureZeroMemory(out.pbData, out.cbData);
     LocalFree(out.pbData);
@@ -11528,8 +11593,10 @@ bool load_or_create_key(Key* k, std::string* why) {
             return false;
         }
         Bytes priv = k->blob(BCRYPT_ECCPRIVATE_BLOB);
+        static constexpr char kKeyEntropy[] = "Win.apk app-ops signing key v1";
+        DATA_BLOB ent{sizeof(kKeyEntropy) - 1, reinterpret_cast<BYTE*>(const_cast<char*>(kKeyEntropy))};
         DATA_BLOB in{static_cast<DWORD>(priv.size()), priv.data()}, out{};
-        const bool sealed = CryptProtectData(&in, L"Win.apk app-ops signing key", nullptr, nullptr, nullptr,
+        const bool sealed = CryptProtectData(&in, L"Win.apk app-ops signing key", &ent, nullptr, nullptr,
                                              CRYPTPROTECT_UI_FORBIDDEN, &out);
         SecureZeroMemory(priv.data(), priv.size());
         if (!sealed) {
@@ -12343,7 +12410,7 @@ int special_access(const std::string& op) {
 bool installs_allowed_from_caller() {
     Caller c;
     std::string why;
-    if (!resolve(&c, &why)) return true;
+    if (!resolve(&c, &why)) return false;
     if (mode(c.id, kInstallApps) == "allow") return true;
     constexpr int kSettings = 103;
     const int answer = ask(c, tr(L"For your security, your PC currently isn't allowed to install unknown apps "

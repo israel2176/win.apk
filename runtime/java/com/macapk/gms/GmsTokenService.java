@@ -138,9 +138,15 @@ public class GmsTokenService extends Binder {
 
     /** A cached key of the form app:<package>:... belongs to that app alone. */
     private static void checkKey(String[] who, String key) {
-        if (who == null || key == null || !key.startsWith("app:")) return;
-        if (!key.startsWith("app:" + who[0] + ":")) {
+        if (who == null) return;
+        if (key == null || !key.startsWith("app:" + who[0] + ":")) {
             throw new SecurityException(who[0] + " may not use another app's cached token");
+        }
+    }
+
+    private static void enforceSystemOrGms(String[] who, String op) {
+        if (who != null && !"com.google.android.gms".equals(who[0])) {
+            throw new SecurityException(who[0] + " is not permitted to call " + op);
         }
     }
 
@@ -186,11 +192,13 @@ public class GmsTokenService extends Binder {
                     return true;
                 }
                 case TX_INVALIDATE_VALUE: {
+                    enforceSystemOrGms(who, "TX_INVALIDATE_VALUE");
                     GmsStore.invalidateAuthTokenValue(data.readString());
                     reply.writeNoException();
                     return true;
                 }
                 case TX_SCOPED: {
+                    enforceSystemOrGms(who, "TX_SCOPED");
                     String account = data.readString(), scope = data.readString();
                     String t = GoogleAuthClient.fetchScopedToken(account, scope);
                     reply.writeNoException();
@@ -211,7 +219,7 @@ public class GmsTokenService extends Binder {
                         if (!who[0].equals(appPkg)) {
                             throw new SecurityException(who[0] + " asked for a token minted for " + appPkg);
                         }
-                        if (who[1] != null && !who[1].equalsIgnoreCase(appSig)) {
+                        if (who[1] == null || !who[1].equalsIgnoreCase(appSig)) {
                             throw new SecurityException(who[0] + " named a certificate that is not its own");
                         }
                     }
@@ -229,6 +237,7 @@ public class GmsTokenService extends Binder {
                     return true;
                 }
                 case TX_SIGN_IN: {
+                    enforceSystemOrGms(who, "TX_SIGN_IN");
                     String email = GoogleAuthClient.exchangeOAuthToken(data.readString());
                     reply.writeNoException();
                     reply.writeString(email);

@@ -108,8 +108,10 @@ public final class GmsStore {
      *  place for "things the Mac.apk installation knows", so a user clearing
      *  Mac.apk's data clears the Google session too. */
     public static File dir() {
-        String override = System.getenv("MACAPK_GMS_DIR");
-        if (override != null && !override.isEmpty()) return new File(override);
+        if (Boolean.getBoolean("winapk.test")) {
+            String override = System.getenv("MACAPK_GMS_DIR");
+            if (override != null && !override.isEmpty()) return new File(override);
+        }
         return new File(System.getProperty("user.home"),
                 "Library/Application Support/Mac.apk/gms");
     }

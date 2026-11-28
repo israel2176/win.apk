@@ -49,17 +49,43 @@ public final class WinApkPaths {
     /** The host file an Android path names; anything else as it is. */
     public static String hostPath(String p) {
         if (!isAndroid(p)) return p;
+        String folded = fold(normalize(p));
         try {
-            String h = host0(p);
-            return h != null ? h : p;
+            String h = host0(folded);
+            return h != null ? h : folded;
         } catch (UnsatisfiedLinkError unbound) {
             // A JVM without winapk-runtime's table (the overlay's own tests): the table's
             // last rule, <android root>/<the rest>, with the same host names.
             String root = System.getProperty("winapk.android.root");
-            if (root == null) return p;
+            if (root == null) return folded;
             while (root.endsWith("\\") || root.endsWith("/")) root = root.substring(0, root.length() - 1);
-            return root + hostNames(normalize(p)).replace('/', '\\');
+            return root + hostNames(folded).replace('/', '\\');
         }
+    }
+
+    private static boolean isDosReserved(String p, int start, int end) {
+        int dot = end + 1;
+        for (int i = start; i <= end; i++) {
+            if (p.charAt(i) == '.') {
+                dot = i;
+                break;
+            }
+        }
+        int baseLen = dot - start;
+        if (baseLen == 3) {
+            return p.regionMatches(true, start, "CON", 0, 3)
+                || p.regionMatches(true, start, "PRN", 0, 3)
+                || p.regionMatches(true, start, "AUX", 0, 3)
+                || p.regionMatches(true, start, "NUL", 0, 3);
+        }
+        if (baseLen == 4) {
+            char last = p.charAt(start + 3);
+            if (last >= '1' && last <= '9') {
+                return p.regionMatches(true, start, "COM", 0, 3)
+                    || p.regionMatches(true, start, "LPT", 0, 3);
+            }
+        }
+        return false;
     }
 
     // Whether Windows refuses `c` in a file name wherever it stands (NUL is never a name's).
@@ -84,9 +110,15 @@ public final class WinApkPaths {
                 continue;
             }
             boolean map = forbidden(c);
-            if (!map && (c == '.' || c == ' ') && (i == n - 1 || p.charAt(i + 1) == '/' || p.charAt(i + 1) == '\\')) {
+            boolean atEnd = (i == n - 1 || p.charAt(i + 1) == '/' || p.charAt(i + 1) == '\\');
+            if (!map && (c == '.' || c == ' ') && atEnd) {
                 int len = i + 1 - start;
                 map = c == ' ' || !(len == 1 || (len == 2 && p.charAt(start) == '.'));
+            }
+            if (!map && i == start) {
+                int end = i;
+                while (end + 1 < n && p.charAt(end + 1) != '/' && p.charAt(end + 1) != '\\') end++;
+                if (isDosReserved(p, start, end)) map = true;
             }
             if (map) {
                 if (sb == null) sb = new StringBuilder(p);
