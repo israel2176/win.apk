@@ -245,6 +245,18 @@ public class AppInstallTest {
                 String.valueOf(AppInstall.validateSession(List.of(typed, abiTyped))).startsWith("INSTALL_FAILED_MISSING_SPLIT"));
         check("required split types: all present installs", AppInstall.validateSession(List.of(typed, abiTyped, dpiTyped)) == null);
 
+        // A Play bundle's base names requiredSplitTypes with no isSplitRequired (Mizrahi Tefahot, issue #223:
+        // base__abi,base__density): ApkLite counts that as requiring its splits, so the base alone is refused.
+        Path playBase = Files.write(library.resolve("play-base.apk"), zip(Map.of("AndroidManifest.xml",
+                manifest(pkg, null, 7, false, "abi,density", null))));
+        check("required split types without isSplitRequired: the base alone is refused",
+                String.valueOf(AppInstall.validateSession(List.of(playBase))).equals(
+                        "INSTALL_FAILED_MISSING_SPLIT: Missing split for " + pkg));
+        check("required split types without isSplitRequired: one type missing is refused",
+                String.valueOf(AppInstall.validateSession(List.of(playBase, abiTyped))).startsWith("INSTALL_FAILED_MISSING_SPLIT"));
+        check("required split types without isSplitRequired: all present installs",
+                AppInstall.validateSession(List.of(playBase, abiTyped, dpiTyped)) == null);
+
         // Parts of other apps or versions, or a split twice: refused with Android's messages.
         Path other = Files.write(library.resolve("other.apk"), zip(Map.of("AndroidManifest.xml",
                 manifest("com.example.other", "config.xxhdpi", 7, false, null, null))));

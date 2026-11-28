@@ -50,7 +50,8 @@ app (its base and splits such as `config.arm64_v8a.apk`) install together
 when you drop them or choose them together, as `adb install-multiple`
 installs them. Win.apk refuses what Android refuses, with Android's reason
 in the log: a split on its own ("Full install must include a base package"),
-a base that declares its splits required without them
+a base that requires its splits without them, such as a Play app's
+`base.apk` without its `config.arm64_v8a` part
 (`INSTALL_FAILED_MISSING_SPLIT`), and parts of another app or another
 version. The app's install from before is then left as it was.
 
