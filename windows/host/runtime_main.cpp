@@ -340,6 +340,13 @@ bool create_vm(HMODULE jvm, std::vector<std::string>& opts, JavaVM** vm, JNIEnv*
     winapk::host::rearm_crash_report();  // HotSpot installed its own unhandled-exception filter
     winapk::host::cds_vm_created(*vm, *env);
     open_platform_packages(*env);
+    if (jclass pref = (*env)->FindClass("android/security/MacApkProviderPreference")) {
+        if (jmethodID install = (*env)->GetStaticMethodID(pref, "install", "()V")) {
+            (*env)->CallStaticVoidMethod(pref, install);
+        }
+        (*env)->DeleteLocalRef(pref);
+    }
+    if ((*env)->ExceptionCheck()) (*env)->ExceptionClear();
     return true;
 }
 

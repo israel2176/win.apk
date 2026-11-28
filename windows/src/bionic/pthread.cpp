@@ -733,6 +733,10 @@ WINAPK_GUEST_ABI int g_sem_post(void* s) {
     return 0;
 }
 WINAPK_GUEST_ABI int g_sem_getvalue(void* s, int* v) {
+    if (!s || !v) {
+        *guest_errno() = kEINVAL;
+        return -1;
+    }
     *v = word(s, 0)->load(std::memory_order_relaxed);
     return 0;
 }

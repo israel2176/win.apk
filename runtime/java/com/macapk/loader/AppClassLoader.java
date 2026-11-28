@@ -749,6 +749,8 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                 Class<?> winner = findLoadedClass(classDotted);
                 if (winner != null) return winner;
                 throw le;
+            } catch (Error e) {
+                throw e;
             } catch (Throwable t) {
                 NativeLog.w(TAG, "findClass(" + classDotted
                     + ") rewriter pipeline threw: " + t
@@ -2116,6 +2118,10 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      *  recursion if two libraries reference each other in DT_NEEDED. */
     private final java.util.Set<String> preloading =
         java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+    private final java.util.Set<String> preloadedLibs =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Map<String, java.util.List<String>> dtNeededCache =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
     private boolean libBiasesAssigned;
     /** Assign the per-image ARM32 load biases (idempotent). MUST run before ANY translate():
@@ -2457,11 +2463,13 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
      * libSystem directly.
      */
     private void preloadDependencies(String libname) {
-        if (!preloading.add(libname)) return;     // already in progress
+        if (preloadedLibs.contains(libname) || !preloading.add(libname)) return;
         try {
             File so = locateApkSo(libname);
             if (so == null) return;
-            for (String soname : ElfReader.readDtNeeded(so)) {
+            java.util.List<String> needed = dtNeededCache.computeIfAbsent(
+                so.getAbsolutePath(), k -> ElfReader.readDtNeeded(so));
+            for (String soname : needed) {
                 // soname is e.g. "libc++_shared.so". Strip the prefix
                 // and suffix to recover the System.loadLibrary form.
                 if (!soname.startsWith("lib")
@@ -2524,6 +2532,7 @@ public final class AppClassLoader extends dalvik.system.PathClassLoader {
                     // searches only the declaring class's loader, so the symbols
                     // were loaded and still unresolvable. See NativeLoaderShim.
                     loadIntoThisLoader(cached.getAbsolutePath());
+                    preloadedLibs.add(depName);
                 } catch (UnsatisfiedLinkError e) {
                     NativeLog.w(TAG,
                         "preload load(" + depName + ") failed: " + e);

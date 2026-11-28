@@ -180,9 +180,15 @@ void gl_read_current(std::vector<uint32_t>* argb, int W, int H) {
     argb_from_rgba(rgba.data(), argb->data(), W, H);
 }
 
+std::mutex& gl_display_lock() {
+    static std::mutex m;
+    return m;
+}
+
 void* gl_shared_display() { return init() ? g_display : nullptr; }
 
 void gl_view_release(long long view) {
+    std::lock_guard<std::mutex> hold(gl_display_lock());
     auto it = g_surfaces.find(view);
     if (it == g_surfaces.end()) return;
     if (it->second.surface != EGL_NO_SURFACE) {

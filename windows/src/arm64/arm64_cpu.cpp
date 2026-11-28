@@ -929,6 +929,15 @@ void set_hooks(const Hooks& h) { g_hooks = h; }
 const Hooks& hooks() { return g_hooks; }
 
 void step(Cpu& c) {
+    if (g_hooks.code_range && !g_hooks.code_range(c.pc, nullptr, nullptr)) {
+        if (g_hooks.host_call) {
+            g_hooks.host_call(c);
+            return;
+        }
+        std::fprintf(stderr, "[win.apk] arm64: pc=0x%llx outside registered ARM64 code\n",
+                     static_cast<unsigned long long>(c.pc));
+        std::abort();
+    }
     uint32_t insn;
     std::memcpy(&insn, reinterpret_cast<const void*>(c.pc), 4);
     bool branched = false;
