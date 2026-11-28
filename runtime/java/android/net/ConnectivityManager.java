@@ -320,7 +320,8 @@ public class ConnectivityManager {
                             r.cb.onLinkPropertiesChanged(n, new LinkProperties());
                             r.cb.onBlockedStatusChanged(n, false); } });
                         else        deliver(r, new Runnable() { @Override public void run() {
-                            r.cb.onCapabilitiesChanged(n, cap); } });
+                            r.cb.onCapabilitiesChanged(n, cap);
+                            r.cb.onLinkPropertiesChanged(n, getLinkProperties(n)); } });
                     }
                 }
                 com.macapk.loader.NativeLog.i("Connectivity", "network edge: "
@@ -427,8 +428,17 @@ public class ConnectivityManager {
     // this is a deliberate no-op (the app's broadcast never arrives, same as
     // a network that never materializes). The callback-based overloads above
     // are the ones apps actually wait on for connectivity.
-    public void requestNetwork(NetworkRequest request, android.app.PendingIntent operation) {}
-    public void registerNetworkCallback(NetworkRequest request, android.app.PendingIntent operation) {}
+    public void requestNetwork(NetworkRequest request, android.app.PendingIntent operation) {
+        if (operation == null || offline()) return;
+        try {
+            android.content.Intent extra = new android.content.Intent();
+            extra.putExtra(EXTRA_NETWORK, getActiveNetwork());
+            operation.send(0, extra);
+        } catch (Throwable ignored) {}
+    }
+    public void registerNetworkCallback(NetworkRequest request, android.app.PendingIntent operation) {
+        requestNetwork(request, operation);
+    }
     public void releaseNetworkRequest(android.app.PendingIntent operation) {}
 
     /** AOSP stops delivering to this callback. Previously a no-op, which was

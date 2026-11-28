@@ -35,6 +35,7 @@ final class HucFollow {
     // and a follow-up request needs them after the first one was sent.
     final LinkedHashMap<String, List<String>> reqProps = new LinkedHashMap<String, List<String>>();
     boolean streaming;
+    boolean doInput = true;
     /** OkHttp HttpURLConnectionImpl.connected: set by connect(), getOutputStream()
      *  and every response accessor, and never cleared. The JDK's own flag drops
      *  back to false once the response is read (disconnectInternal), after which
@@ -164,7 +165,7 @@ final class HucFollow {
             n.setConnectTimeout(d.getConnectTimeout());
             n.setReadTimeout(d.getReadTimeout());
             n.setUseCaches(d.getUseCaches());
-            n.setDoInput(d.getDoInput());
+            n.setDoInput(true);
             n.setIfModifiedSince(d.getIfModifiedSince());
             n.setAllowUserInteraction(d.getAllowUserInteraction());
             n.setInstanceFollowRedirects(true);

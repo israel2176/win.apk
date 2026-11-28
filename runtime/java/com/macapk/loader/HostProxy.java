@@ -237,9 +237,12 @@ public final class HostProxy {
         if (port < 1 || port > 65535 || timeoutMs < 1) throw new IOException("Invalid proxy destination or timeout");
         Policy current = policy();
         Proxy route = Proxy.NO_PROXY;
-        if (current.config != null || current.failure != null) {
-            try { route = current.select(new URI("https", null, host, port, null, null, null)).get(0); }
-            catch (URISyntaxException invalid) { throw new IOException("Invalid proxy destination", invalid); }
+        try {
+            URI uri = new URI("https", null, host, port, null, null, null);
+            List<Proxy> candidates = current.select(uri);
+            if (candidates != null && !candidates.isEmpty()) route = candidates.get(0);
+        } catch (URISyntaxException invalid) {
+            throw new IOException("Invalid proxy destination", invalid);
         }
         Socket socket = new Socket(Proxy.NO_PROXY);
         long deadline = System.nanoTime() + timeoutMs * 1_000_000L;

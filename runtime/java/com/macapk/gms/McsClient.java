@@ -247,43 +247,39 @@ public final class McsClient {
         long securityToken = GmsStore.securityToken();
         if (androidId == 0 || securityToken == 0) throw new IOException("not checked in");
 
-        SSLSocket s = openSocket();
-        socket = s;
-        InputStream in = s.getInputStream();
-
-        // Handshake: version byte + LoginRequest, once.
-        //
-        // `out` is PUBLISHED INSIDE THE LOCK, together with the version byte.
-        // Assigning it before taking writeLock let another thread's ack (
-        // PushRegisterService -> ackMessage -> sendStreamAck, on its own
-        // HandlerThread) see a non-null `out` for a brand-new socket and write an
-        // IqStanza onto it BEFORE the version byte. Google would read 0x07 as our
-        // version and close the stream, and the escalating backoff would then
-        // stall push for minutes. Making `out` volatile (same version) did not
-        // help and slightly widened it, since writeFrame re-reads the field.
-        //
-        // The STREAM COUNTERS reset here too, and that is a real protocol bug
-        // rather than tidiness: `last_stream_id_received` means "the last frame
-        // ON THIS STREAM". These were instance fields on a singleton that
-        // connectAndRun re-enters on every reconnect, so from connection 2 onward
-        // we reported a number far larger than the server had sent, and the
-        // LoginRequest carries no stream id to resynchronise it. Both reference
-        // implementations reset per connection: microG constructs a fresh
-        // McsInputStream per socket (streamId = 0), and Chromium's
-        // ResetStateAndBuildLoginRequest sets stream_id_in_ = 0.
-        synchronized (writeLock) {
-            inboundCount = 0;
-            lastAckedStreamId = 0;
-            out = s.getOutputStream();
-            out.write(VERSION_BYTE);
-            writeFrame(TAG_LOGIN_REQUEST, buildLoginRequest(androidId, securityToken));
-            out.flush();
+        IOException last = null;
+        SSLSocket s = null;
+        InputStream in = null;
+        for (int port : PORTS) {
+            try {
+                s = openSocket(port);
+                socket = s;
+                in = s.getInputStream();
+                synchronized (writeLock) {
+                    inboundCount = 0;
+                    lastAckedStreamId = 0;
+                    out = s.getOutputStream();
+                    out.write(VERSION_BYTE);
+                    writeFrame(TAG_LOGIN_REQUEST, buildLoginRequest(androidId, securityToken));
+                    out.flush();
+                }
+                log("connected to " + socket.getInetAddress() + " (port " + port + "), login sent");
+                int serverVersion = in.read();
+                if (serverVersion < 0) throw new IOException("server closed before version byte");
+                last = null;
+                break;
+            } catch (IOException e) {
+                last = e;
+                log("port " + port + " handshake failed: " + e);
+                try { if (s != null) s.close(); } catch (IOException ignored) {}
+                s = null;
+                socket = null;
+                synchronized (writeLock) { out = null; }
+            }
         }
-        log("connected to " + socket.getInetAddress() + ", login sent");
-
-        // Read the server's version byte, once.
-        int serverVersion = in.read();
-        if (serverVersion < 0) throw new IOException("server closed before version byte");
+        if (last != null || s == null || in == null) {
+            throw (last != null) ? last : new IOException("no MCS port answered");
+        }
 
         lastPingSentMs = System.currentTimeMillis();
         lastAckRecvMs = System.currentTimeMillis();
@@ -304,41 +300,32 @@ public final class McsClient {
         }
     }
 
-    private SSLSocket openSocket() throws IOException {
-        IOException last = null;
-        for (int port : PORTS) {
-            Socket plain = null;
-            boolean complete = false;
-            try {
-                if (RUNTIME_PROXY != Proxy.NO_PROXY) {
-                    // Win.apk's WINAPK_PROXY (a SOCKS proxy for this connection
-                    // only) wins over the per-app policy, as it did before.
-                    plain = new Socket(RUNTIME_PROXY);
-                    plain.connect(InetSocketAddress.createUnresolved(HOST, port),   // the proxy resolves it
-                            CONNECT_TIMEOUT_MS);
-                } else {
-                    plain = com.macapk.loader.HostProxy.connect(HOST, port, CONNECT_TIMEOUT_MS);
-                }
-                plain.setKeepAlive(true);
-                plain.setTcpNoDelay(true);
-                SSLSocket s = (SSLSocket) factory().createSocket(plain, HOST, port, true);
-                SSLParameters sp = s.getSSLParameters();
-                sp.setEndpointIdentificationAlgorithm("HTTPS");   // raw SSLSocket does NOT verify the name
-                sp.setServerNames(List.of(new SNIHostName(HOST)));
-                s.setSSLParameters(sp);
-                s.setSoTimeout(CONNECT_TIMEOUT_MS);
-                s.startHandshake();                               // a timeout here is fatal
-                s.setSoTimeout(READ_TICK_MS);
-                complete = true;
-                return s;
-            } catch (IOException e) {
-                last = e;
-                log("port " + port + " failed: " + e);
-            } finally {
-                if (!complete && plain != null) try { plain.close(); } catch (IOException ignored) {}
+    private SSLSocket openSocket(int port) throws IOException {
+        Socket plain = null;
+        boolean complete = false;
+        try {
+            if (RUNTIME_PROXY != Proxy.NO_PROXY) {
+                plain = new Socket(RUNTIME_PROXY);
+                plain.connect(InetSocketAddress.createUnresolved(HOST, port),
+                        CONNECT_TIMEOUT_MS);
+            } else {
+                plain = com.macapk.loader.HostProxy.connect(HOST, port, CONNECT_TIMEOUT_MS);
             }
+            plain.setKeepAlive(true);
+            plain.setTcpNoDelay(true);
+            SSLSocket s = (SSLSocket) factory().createSocket(plain, HOST, port, true);
+            SSLParameters sp = s.getSSLParameters();
+            sp.setEndpointIdentificationAlgorithm("HTTPS");
+            sp.setServerNames(List.of(new SNIHostName(HOST)));
+            s.setSSLParameters(sp);
+            s.setSoTimeout(CONNECT_TIMEOUT_MS);
+            s.startHandshake();
+            s.setSoTimeout(READ_TICK_MS);
+            complete = true;
+            return s;
+        } finally {
+            if (!complete && plain != null) try { plain.close(); } catch (IOException ignored) {}
         }
-        throw (last != null) ? last : new IOException("no MCS port answered");
     }
 
     /** A private SSLContext: the JVM-global default is mutable by guest code. */

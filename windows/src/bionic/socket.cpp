@@ -35,6 +35,7 @@
 #include <ws2tcpip.h>
 #include <afunix.h>
 #include <windows.h>
+#include <bcrypt.h>
 #include <iphlpapi.h>
 
 namespace winapk::bionic {
@@ -105,6 +106,27 @@ bool to_host(const void* guest, int len, sockaddr_storage* out, int* out_len) {
     if (!guest || len < 2 || len > static_cast<int>(sizeof(*out))) return false;
     std::memcpy(out, guest, static_cast<size_t>(len));
     out->ss_family = static_cast<ADDRESS_FAMILY>(host_family(out->ss_family));
+    if (out->ss_family == AF_UNIX && len > 2) {
+        auto* un = reinterpret_cast<sockaddr_un*>(out);
+        if (un->sun_path[0] == '\0') {
+            const size_t name_len = static_cast<size_t>(len - 3);
+            uint8_t digest[32]{};
+            BCRYPT_ALG_HANDLE alg = nullptr;
+            if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0) {
+                BCryptHash(alg, nullptr, 0, reinterpret_cast<PUCHAR>(un->sun_path + 1),
+                           static_cast<ULONG>(name_len), digest, sizeof(digest));
+                BCryptCloseAlgorithmProvider(alg, 0);
+            }
+            char hex[17]{};
+            for (int i = 0; i < 8; ++i) std::snprintf(hex + i * 2, 3, "%02x", digest[i]);
+            const std::wstring wpath = host_path((std::string("/dev/socket/a-") + hex).c_str());
+            const int n = WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1, un->sun_path,
+                                              static_cast<int>(sizeof(un->sun_path)), nullptr, nullptr);
+            if (n <= 1) return false;
+            *out_len = static_cast<int>(offsetof(sockaddr_un, sun_path)) + n;
+            return true;
+        }
+    }
     *out_len = len;
     return true;
 }
