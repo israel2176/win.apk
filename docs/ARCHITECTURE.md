@@ -327,7 +327,10 @@ HotSpot differs: `GetMethodID` finds an inherited constructor, `GetFieldID`
 knows libcore's renamed `FileDescriptor.descriptor`, and `FindClass` inside a
 library's `JNI_OnLoad` leaves the class uninitialized (HotSpot registers the
 library only after `JNI_OnLoad`, so an initializer calling one of its natives
-would fail).
+would fail). A method lookup that finds nothing is said in the log
+(`JNI GetMethodID: no <class>.<name><signature> (<what it threw>)`, the first
+16): code that goes on with the null ID aborts at its next call, as on ART,
+with nothing that names the method.
 
 ### The variadic JNI bridge
 
@@ -352,6 +355,14 @@ and `System.load`s the result. On Windows (`host/guest_libs.cpp`,
    guest `JavaVM`.
 3. Natives bound by name: HotSpot's `NativeLibraries.findEntry0` is replaced
    so that, for a stub module, the lookup is `dlsym` on the guest library.
+   While a library's `JNI_OnLoad` runs, ART already has it in its class
+   loader's list; HotSpot adds it, and sets its handle, only after. So for the
+   length of `JNI_OnLoad` the JDK's record of the load
+   (`NativeLibraryContext.peek()`) is put in its class loader's map, and a
+   lookup through it, its handle still 0, is answered from the libraries whose
+   `JNI_OnLoad` is running: a static initializer `JNI_OnLoad` sets off
+   (`GetStaticMethodID` runs it, on ART too) finds the library's `Java_*`
+   functions (libpag's `VideoSurface.<clinit>` calls its `nativeInit`).
 4. A JVMTI `NativeMethodBind` hook sees every binding, and whenever the
    address is guest code it puts a thunk built from the method's signature in
    its place. The guest's `RegisterNatives` slot wraps function pointers the

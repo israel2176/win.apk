@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include <windows.h>
 
@@ -38,6 +39,7 @@ namespace {
 std::mutex g_lock;
 std::unique_ptr<winapk::GuestLinker> g_linker;
 JavaVM* g_guest_vm = nullptr;
+JavaVM* g_host_vm = nullptr;  // the JVM's own: JNIEnv for the thread running a JNI_OnLoad
 // The stub module of each app library System.load()'ed, and its guest library.
 std::unordered_map<jlong, winapk::GuestLibrary*> g_by_module;
 
@@ -49,6 +51,8 @@ std::unordered_map<jlong, int> g_direct;
 // module for the same ELF (a stub and a System.load of the file itself) does
 // not run it again, as a second load of an open library is a no-op on Android.
 std::unordered_map<winapk::GuestLibrary*, jint> g_onload_done;
+// The libraries whose JNI_OnLoad is running (see LoadingLibrary).
+std::vector<winapk::GuestLibrary*> g_onloading;
 
 using FindEntry = jlong(JNICALL*)(JNIEnv*, jclass, jlong, jstring);
 FindEntry g_jdk_find_entry = nullptr;
@@ -126,6 +130,130 @@ void on_guest_unload(const winapk::ElfImage* image, void*) {
     }
 }
 
+// A library's natives found by name while its JNI_OnLoad runs, as on ART. ART puts the library in
+// its class loader's list before calling JNI_OnLoad (java_vm_ext.cc, LoadNativeLibrary), so a
+// static initializer that JNI_OnLoad sets off (GetStaticMethodID initializes the class, on ART
+// too) finds the library's Java_* functions. HotSpot puts it in the list (NativeLibraries'
+// `libraries`) only once JNI_OnLoad has returned, and sets its handle after that too: libpag's
+// JNI_OnLoad asks for org.libpag.VideoSurface.Make, whose <clinit> calls its native nativeInit,
+// which threw UnsatisfiedLinkError; the lookup answered null and Roborock aborted at its next
+// call with it. So for the length of JNI_OnLoad the JDK's record of the load being made
+// (NativeLibraryContext.peek()) is put in its class loader's map, and a lookup through it, its
+// handle not set yet, is answered from the libraries whose JNI_OnLoad is running.
+class LoadingLibrary {
+public:
+    LoadingLibrary(JNIEnv* env, winapk::GuestLibrary* lib) : env_(env), lib_(lib) {
+        {
+            std::lock_guard<std::mutex> hold(g_lock);
+            g_onloading.push_back(lib);
+        }
+        if (env_) list_in_loader();
+    }
+    ~LoadingLibrary() {
+        if (map_) {
+            jthrowable pending = env_->ExceptionOccurred();
+            env_->ExceptionClear();
+            // The JDK puts it back itself once the load has succeeded.
+            if (jclass map_cls = env_->FindClass("java/util/Map")) {
+                jmethodID remove = env_->GetMethodID(map_cls, "remove", "(Ljava/lang/Object;)Ljava/lang/Object;");
+                if (remove) {
+                    jobject old = env_->CallObjectMethod(map_, remove, key_);
+                    if (old) env_->DeleteLocalRef(old);
+                }
+                env_->DeleteLocalRef(map_cls);
+            }
+            env_->ExceptionClear();
+            env_->DeleteGlobalRef(map_);
+            env_->DeleteGlobalRef(key_);
+            if (pending) {
+                env_->Throw(pending);
+                env_->DeleteLocalRef(pending);
+            }
+        }
+        std::lock_guard<std::mutex> hold(g_lock);
+        for (auto it = g_onloading.rbegin(); it != g_onloading.rend(); ++it) {
+            if (*it == lib_) {
+                g_onloading.erase(std::next(it).base());
+                break;
+            }
+        }
+    }
+    LoadingLibrary(const LoadingLibrary&) = delete;
+    LoadingLibrary& operator=(const LoadingLibrary&) = delete;
+
+private:
+    void list_in_loader() {
+        JNIEnv* env = env_;
+        jthrowable pending = env->ExceptionOccurred();
+        env->ExceptionClear();
+        jobject impl = nullptr, from = nullptr, loader = nullptr, libs = nullptr, map = nullptr, name = nullptr;
+        jclass ctx = env->FindClass("jdk/internal/loader/NativeLibraries$NativeLibraryContext");
+        jmethodID peek =
+            ctx ? env->GetStaticMethodID(ctx, "peek", "()Ljdk/internal/loader/NativeLibraries$NativeLibraryImpl;")
+                : nullptr;
+        impl = peek ? env->CallStaticObjectMethod(ctx, peek) : nullptr;
+        jclass impl_cls = impl ? env->GetObjectClass(impl) : nullptr;
+        jfieldID from_f = impl_cls ? env->GetFieldID(impl_cls, "fromClass", "Ljava/lang/Class;") : nullptr;
+        jfieldID name_f = impl_cls ? env->GetFieldID(impl_cls, "name", "Ljava/lang/String;") : nullptr;
+        from = from_f ? env->GetObjectField(impl, from_f) : nullptr;
+        name = name_f ? env->GetObjectField(impl, name_f) : nullptr;
+        jclass class_cls = env->FindClass("java/lang/Class");
+        jmethodID get_loader =
+            class_cls ? env->GetMethodID(class_cls, "getClassLoader", "()Ljava/lang/ClassLoader;") : nullptr;
+        if (from && get_loader) loader = env->CallObjectMethod(from, get_loader);
+        if (loader) {
+            jclass cl = env->FindClass("java/lang/ClassLoader");
+            jfieldID f = cl ? env->GetFieldID(cl, "libraries", "Ljdk/internal/loader/NativeLibraries;") : nullptr;
+            libs = f ? env->GetObjectField(loader, f) : nullptr;
+            if (cl) env->DeleteLocalRef(cl);
+        } else if (from) {
+            jclass boot = env->FindClass("jdk/internal/loader/BootLoader");
+            jmethodID get =
+                boot ? env->GetStaticMethodID(boot, "getNativeLibraries", "()Ljdk/internal/loader/NativeLibraries;")
+                     : nullptr;
+            libs = get ? env->CallStaticObjectMethod(boot, get) : nullptr;
+            if (boot) env->DeleteLocalRef(boot);
+        }
+        if (libs) {
+            jclass libs_cls = env->GetObjectClass(libs);
+            jfieldID f = env->GetFieldID(libs_cls, "libraries", "Ljava/util/Map;");
+            map = f ? env->GetObjectField(libs, f) : nullptr;
+            env->DeleteLocalRef(libs_cls);
+        }
+        if (map && name) {
+            jclass map_cls = env->FindClass("java/util/Map");
+            jmethodID put_if_absent =
+                map_cls ? env->GetMethodID(map_cls, "putIfAbsent",
+                                           "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;")
+                        : nullptr;
+            jobject was = put_if_absent ? env->CallObjectMethod(map, put_if_absent, name, impl) : nullptr;
+            if (put_if_absent && !env->ExceptionCheck() && !was) {
+                map_ = env->NewGlobalRef(map);
+                key_ = env->NewGlobalRef(name);
+            }
+            if (was) env->DeleteLocalRef(was);
+            if (map_cls) env->DeleteLocalRef(map_cls);
+        }
+        // Another JDK than the one shipped: the names bind once the load has returned, as before.
+        env->ExceptionClear();
+        for (jobject o : {impl, from, loader, libs, map, name}) {
+            if (o) env->DeleteLocalRef(o);
+        }
+        for (jclass c : {ctx, impl_cls, class_cls}) {
+            if (c) env->DeleteLocalRef(c);
+        }
+        if (pending) {
+            env->Throw(pending);
+            env->DeleteLocalRef(pending);
+        }
+    }
+
+    JNIEnv* env_;
+    winapk::GuestLibrary* lib_;
+    jobject map_ = nullptr;  // global refs while listed
+    jobject key_ = nullptr;
+};
+
 // System.loadLibrary's second half on Android: the library's own JNI_OnLoad,
 // found with dlsym on its handle, called with the JavaVM; JNI_VERSION_1_6 when
 // it has none. Once per library: a later module for the same ELF gets the
@@ -142,6 +270,9 @@ jint run_jni_onload(winapk::GuestLibrary* lib, const std::string& so) {
     jint version = JNI_VERSION_1_6;
     if (on_load) {
         // Its FindClass calls get ART's semantics (guest_jni.cpp, guest_find_class).
+        JNIEnv* env = nullptr;
+        if (g_host_vm && g_host_vm->GetEnv(reinterpret_cast<void**>(&env), JNI_VERSION_1_6) != JNI_OK) env = nullptr;
+        LoadingLibrary loading(env, lib);
         winapk::guest_jni_enter_onload();
         version = reinterpret_cast<OnLoad>(winapk::arm64::host_callable(reinterpret_cast<void*>(on_load)))(
             g_guest_vm, nullptr);
@@ -201,11 +332,22 @@ jlong JNICALL find_entry(JNIEnv* env, jclass cls, jlong handle, jstring name) {
         auto it = g_by_module.find(handle);
         if (it != g_by_module.end()) lib = it->second;
     }
-    if (!lib) return g_jdk_find_entry ? g_jdk_find_entry(env, cls, handle, name) : 0;
+    std::vector<winapk::GuestLibrary*> loading;
+    if (!lib && handle == 0) {
+        // A library whose JNI_OnLoad is running (LoadingLibrary): its handle is not set yet.
+        std::lock_guard<std::mutex> hold(g_lock);
+        loading = g_onloading;
+    }
+    if (!lib && loading.empty()) return g_jdk_find_entry ? g_jdk_find_entry(env, cls, handle, name) : 0;
     const char* n = env->GetStringUTFChars(name, nullptr);
     if (!n) return 0;
     std::string error;
-    void* p = g_linker->lookup(lib, n, nullptr, &error);
+    void* p = nullptr;
+    if (lib) {
+        p = g_linker->lookup(lib, n, nullptr, &error);
+    } else {
+        for (auto it = loading.rbegin(); it != loading.rend() && !p; ++it) p = g_linker->lookup(*it, n, nullptr, &error);
+    }
     env->ReleaseStringUTFChars(name, n);
     return reinterpret_cast<jlong>(p);
 }
@@ -401,6 +543,7 @@ bool guest_libs_init(JNIEnv* env, jvmtiEnv* jvmti) {
     if (env->ExceptionCheck()) env->ExceptionClear();
     JavaVM* vm = nullptr;
     env->GetJavaVM(&vm);
+    g_host_vm = vm;
     // Upstream's order: the guest JNI view and the bind hook exist before the
     // first guest library is loaded.
     winapk::guest_jni_set_signature_provider(winapk::jvmti_method_signature, jvmti);
