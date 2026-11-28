@@ -20,8 +20,15 @@
 //
 // A program that cannot be loaded ends as bionic's linker ends it: CANNOT LINK EXECUTABLE on stderr
 // and exit status 1.
+//
+// A program an app started ends with the app's process, as on Android, where the activity manager
+// kills an app's whole process group when its process dies (ProcessList.killProcessGroup), the
+// programs it started among them. Here each one watches the process that started it (an app, or a
+// program of the app's, which ends the same way), so none is left running, holding the app's files,
+// after the app.
 
 #include <windows.h>
+#include <tlhelp32.h>
 #include <fcntl.h>
 #include <io.h>
 
@@ -144,6 +151,40 @@ DWORD WINAPI program_thread(void* p) {
     run(reinterpret_cast<void*>(image->load_bias() + entry), prog.args, prog.env);
 }
 
+// The process that started this one, if it is still the one (a process id is reused only after its
+// process has ended, so a parent created after this process is another program).
+HANDLE open_parent() {
+    const DWORD self = GetCurrentProcessId();
+    DWORD parent = 0;
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return nullptr;
+    PROCESSENTRY32W pe{};
+    pe.dwSize = sizeof pe;
+    for (BOOL more = Process32FirstW(snap, &pe); more; more = Process32NextW(snap, &pe)) {
+        if (pe.th32ProcessID == self) {
+            parent = pe.th32ParentProcessID;
+            break;
+        }
+    }
+    CloseHandle(snap);
+    if (!parent) return nullptr;
+    HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, parent);
+    if (!h) return nullptr;
+    FILETIME pc{}, sc{}, x{}, k{}, u{};
+    if (!GetProcessTimes(h, &pc, &x, &k, &u) || !GetProcessTimes(GetCurrentProcess(), &sc, &x, &k, &u) ||
+        CompareFileTime(&pc, &sc) > 0) {
+        CloseHandle(h);
+        return nullptr;
+    }
+    return h;
+}
+
+DWORD WINAPI end_with_parent(void* parent) {
+    WaitForSingleObject(static_cast<HANDLE>(parent), INFINITE);
+    TerminateProcess(GetCurrentProcess(), 128 + 9);  // as SIGKILL leaves it
+    return 0;
+}
+
 }  // namespace
 
 int winapk::host::exec_program_main(int argc, wchar_t** argv) {
@@ -187,6 +228,14 @@ int winapk::host::exec_program_main(int argc, wchar_t** argv) {
     if (!root.empty()) winapk::set_android_root(utf8(root).c_str());
     if (!package.empty()) winapk::set_app_data(utf8(package).c_str(), utf8(data_dir).c_str());
     winapk::mini_bionic_program_mode(env);
+    if (!package.empty()) {
+        if (HANDLE parent = open_parent()) {
+            if (HANDLE w = CreateThread(nullptr, 64 << 10, end_with_parent, parent, STACK_SIZE_PARAM_IS_A_RESERVATION,
+                                        nullptr)) {
+                CloseHandle(w);
+            }
+        }
+    }
 
     // Linux gives a program's main thread 8 MB of stack; this process's own may be smaller.
     HANDLE t = CreateThread(nullptr, 8 << 20, program_thread, &prog, STACK_SIZE_PARAM_IS_A_RESERVATION, nullptr);

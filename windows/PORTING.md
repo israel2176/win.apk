@@ -249,7 +249,7 @@ implements in `runtime/src`; on Windows `windows/host/native_*.cpp`):
 | `apk_unpacker.cpp` | 4,473 | install layout, split bundles, DEX conversion | `java/.../AppInstall.java` + the upstream converter | done |
 | `window_policy.cpp`, `window_traits.cpp` | 3,009 | window shape per activity, orientation, resize | `win32_window.cpp`, `DisplayConfig` (section 7, "Display") | resizing, orientation and the letterbox done; no per-activity window shape |
 | `apk_native_exec.cpp` | 509 | APK-shipped executables | later (M5) | not started |
-| `app_process_group.cpp` | 66 | child processes die with the app | Job objects | not started |
+| `app_process_group.cpp` | 66 | child processes die with the app | `host/exec_main.cpp`: an `--exec` program an app started watches the process that started it and ends with it (a program of the program's the same way) | done |
 | `app_native_stub.cpp` | 19 | no-op library for unloadable `.so` | not needed: a library that cannot load fails as on Android | - |
 | `host_keymap.h` | 157 | host keys to Android keys | `android_key_code` in `win32_window.cpp` | done |
 
