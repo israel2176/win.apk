@@ -46,9 +46,10 @@
 //    checks one (validateApkInstallLocked, AOSP 14) before anything installed
 //    is touched: one base (an APK whose manifest names no `split`; "Full
 //    install must include a base package"), each split name once, every APK
-//    of the base's package and version code, and a base that declares
-//    android:isSplitRequired has its splits (with the types its
-//    android:requiredSplitTypes lists): else INSTALL_FAILED_MISSING_SPLIT. A
+//    of the base's package and version code, and a base that requires its
+//    splits (android:isSplitRequired, or any android:requiredSplitTypes, as
+//    ApkLite counts it) has them, with the types it lists: else
+//    INSTALL_FAILED_MISSING_SPLIT. A
 //    refused set exits 3 with Android's error on stderr, and the app's install
 //    from before stays as it was. Then each APK is named as the device names
 //    a staged one, by its manifest: base.apk, split_<split name>.apk.
@@ -259,8 +260,8 @@ public final class AppInstall {
     }
 
     /** What the installer reads of an APK before it installs it (ApkLiteParseUtils.parseApkLite):
-     *  the manifest's package, split, version code and split types, and <application>'s
-     *  isSplitRequired. */
+     *  the manifest's package, split, version code and split types, and whether it requires its splits
+     *  (<application>'s isSplitRequired, or any requiredSplitTypes). */
     static final class ApkLite {
         String packageName;
         String splitName;  // null: a base
@@ -284,8 +285,11 @@ public final class AppInstall {
         long code = root.get("versionCode") instanceof Integer c ? c & 0xffffffffL : 0;
         long major = root.get("versionCodeMajor") instanceof Integer m ? m : 0;
         a.versionCode = (major << 32) | code;
-        a.splitRequired = Boolean.TRUE.equals(app.get("isSplitRequired"));
         a.requiredSplitTypes = namesOf(root.get("requiredSplitTypes"));
+        // ApkLite: mSplitRequired = isSplitRequired || hasAnyRequiredSplitTypes(). A base that only names
+        // requiredSplitTypes (base__abi, base__density: a Play bundle's) is refused alone on a device too, with
+        // INSTALL_FAILED_MISSING_SPLIT; installed alone here it lacked its native libraries (issue #223).
+        a.splitRequired = Boolean.TRUE.equals(app.get("isSplitRequired")) || !a.requiredSplitTypes.isEmpty();
         a.splitTypes = namesOf(root.get("splitTypes"));
         return a;
     }

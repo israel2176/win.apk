@@ -1041,9 +1041,11 @@ the change refused from anyone but the launcher.
    upstream chooses them. Before the installed copy is touched, the APKs are
    checked as one session the way PackageInstallerSession checks one
    (`validateApkInstallLocked`, AOSP 14): one base, each split once, every APK
-   of the base's package and version code, and a base that declares
-   `android:isSplitRequired` with its splits (those of every type its
-   `android:requiredSplitTypes` lists). A set that fails exits 3 with
+   of the base's package and version code, and a base that requires its
+   splits with them: one that declares `android:isSplitRequired` or names
+   any `android:requiredSplitTypes` (a Play bundle's `base__abi`,
+   `base__density`), as AOSP's `ApkLite` counts both, comes with a split of
+   every type it lists. A set that fails exits 3 with
    Android's error (`INSTALL_FAILED_INVALID_APK: Full install must include a
    base package`, `INSTALL_FAILED_MISSING_SPLIT: Missing split for <package>`,
    `Inconsistent package`/`version`, `Split <name> was defined multiple
