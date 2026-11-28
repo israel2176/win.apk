@@ -313,8 +313,12 @@ void cds_apply(std::vector<std::string>* opts, const fs::path& jdk, const fs::pa
         return;
     }
     const double t0 = startup_seconds();
+#ifndef NDEBUG
     std::wstring dir_w;
     g.dir = env_set(L"WINAPK_CDS_DIR", &dir_w) && !dir_w.empty() ? fs::path(dir_w) : data / "cds";
+#else
+    g.dir = data / "cds";
+#endif
     std::error_code ec;
     fs::create_directories(g.dir, ec);
     const std::vector<std::string> blocked = cds::drop_baked_patches(opts, baked, g.dir / "patch-digests.txt");

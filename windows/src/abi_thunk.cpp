@@ -82,8 +82,7 @@ private:
     std::vector<uint8_t> b_;
 };
 
-// Bump allocator over RWX chunks. Thunks are never freed: they live as long
-// as the native method or JNI table entry that points at them.
+// Bump allocator over W^X chunks (PAGE_READWRITE -> PAGE_EXECUTE_READ).
 class ThunkPool {
 public:
     void* place(const std::vector<uint8_t>& code) {
@@ -91,12 +90,15 @@ public:
         const size_t need = (code.size() + 15) & ~size_t{15};
         if (!cur_ || used_ + need > kChunk) {
             cur_ = static_cast<uint8_t*>(
-                VirtualAlloc(nullptr, kChunk, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+                VirtualAlloc(nullptr, kChunk, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
             if (!cur_) return nullptr;
             used_ = 0;
         }
         uint8_t* p = cur_ + used_;
+        DWORD old = 0;
+        if (!VirtualProtect(p, need, PAGE_READWRITE, &old)) return nullptr;
         std::memcpy(p, code.data(), code.size());
+        VirtualProtect(p, need, PAGE_EXECUTE_READ, &old);
         used_ += need;
         FlushInstructionCache(GetCurrentProcess(), p, code.size());
         return p;

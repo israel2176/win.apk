@@ -81,7 +81,7 @@ LONG CALLBACK fix_unpatched_guard_load(EXCEPTION_POINTERS* info) {
         // The page is usually back to read-execute by now (a decryptor
         // restores it): open it for the one byte, then put it back.
         DWORD old = 0;
-        if (VirtualProtect(insn, 1, PAGE_EXECUTE_READWRITE, &old)) {
+        if (VirtualProtect(insn, 1, PAGE_READWRITE, &old)) {
             insn[0] = kPrefixGs;
             DWORD ignored;
             VirtualProtect(insn, 1, old, &ignored);

@@ -29,7 +29,7 @@ using GetState = DWORD(WINAPI*)(DWORD, XINPUT_STATE*);
 
 GetState load_xinput() {
     for (const wchar_t* dll : {L"xinput1_4.dll", L"xinput1_3.dll", L"xinput9_1_0.dll"}) {
-        if (HMODULE m = LoadLibraryW(dll)) {
+        if (HMODULE m = LoadLibraryExW(dll, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {
             if (auto f = reinterpret_cast<GetState>(GetProcAddress(m, "XInputGetState"))) return f;
         }
     }

@@ -243,8 +243,10 @@ std::wstring quoted(const fs::path& p) { return quoted(p.wstring()); }
 HMODULE load_jvm(const fs::path& jdk) {
     const fs::path home = ansi_safe(jdk);
     // jvm.dll needs the DLLs next to java.exe (the VC runtime among them).
-    SetDllDirectoryW((home / "bin").c_str());
-    HMODULE jvm = LoadLibraryW((home / "bin" / "server" / "jvm.dll").c_str());
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+    AddDllDirectory((home / "bin").c_str());
+    HMODULE jvm = LoadLibraryExW((home / "bin" / "server" / "jvm.dll").c_str(), nullptr,
+                                 LOAD_LIBRARY_SEARCH_DEFAULT_DIRS | LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR);
     if (!jvm) std::fprintf(stderr, "[win.apk] cannot load jvm.dll (error %lu)\n", GetLastError());
     return jvm;
 }
@@ -942,8 +944,10 @@ const wchar_t* const kAotCompileFlags = L"-O2 -mllvm -fast-isel -march=native -f
 
 fs::path aot_clang() {
     std::error_code ec;
+#ifndef NDEBUG
     const fs::path set = env_var(L"WINAPK_AOT_CLANG");
     if (!set.empty() && fs::is_regular_file(set, ec)) return set;
+#endif
     const fs::path bundled = exe_dir().parent_path() / "clang" / "bin" / "clang.exe";
     if (fs::is_regular_file(bundled, ec)) return bundled;
     wchar_t found[MAX_PATH * 4];

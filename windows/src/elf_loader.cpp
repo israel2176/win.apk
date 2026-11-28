@@ -79,7 +79,10 @@ bool read_file(const std::filesystem::path& path, std::vector<uint8_t>* out, std
 
 DWORD page_protection(uint32_t pf) {
     const bool r = pf & kPfR, w = pf & kPfW, x = pf & kPfX;
-    if (x && w) return PAGE_EXECUTE_READWRITE;
+    if (x && w) {
+        std::fprintf(stderr, "[win.apk] elf: stripping write permission from PF_W|PF_X segment\n");
+        return PAGE_EXECUTE_READ;
+    }
     if (x) return PAGE_EXECUTE_READ;
     if (w) return PAGE_READWRITE;
     if (r) return PAGE_READONLY;
@@ -92,20 +95,20 @@ public:
     Sleb128Reader(const uint8_t* p, const uint8_t* end) : p_(p), end_(end) {}
     bool ok() const { return ok_; }
     int64_t next() {
-        int64_t value = 0;
+        uint64_t value = 0;
         unsigned shift = 0;
-        uint8_t byte;
+        uint8_t byte = 0;
         do {
-            if (p_ >= end_) {
+            if (p_ >= end_ || shift >= 64) {
                 ok_ = false;
                 return 0;
             }
             byte = *p_++;
-            value |= static_cast<int64_t>(byte & 0x7f) << shift;
+            value |= static_cast<uint64_t>(byte & 0x7f) << shift;
             shift += 7;
-        } while ((byte & 0x80) && shift < 64);
-        if (shift < 64 && (byte & 0x40)) value |= -(static_cast<int64_t>(1) << shift);
-        return value;
+        } while (byte & 0x80);
+        if (shift < 64 && (byte & 0x40)) value |= (~uint64_t{0}) << shift;
+        return static_cast<int64_t>(value);
     }
 
 private:
@@ -273,8 +276,21 @@ bool ElfImage::map_segments(const std::vector<uint8_t>& file, std::string* error
     lo_vaddr_ = UINT64_MAX;
     hi_vaddr_ = 0;
     for (const Segment& s : loads_) {
+        if (s.memsz > UINT64_MAX - s.vaddr) {
+            *error = "segment address overflow";
+            return false;
+        }
+        const uint64_t end = s.vaddr + s.memsz;
+        if (end > UINT64_MAX - 4095) {
+            *error = "segment page alignment overflow";
+            return false;
+        }
         lo_vaddr_ = std::min(lo_vaddr_, page_down(s.vaddr));
-        hi_vaddr_ = std::max(hi_vaddr_, page_up(s.vaddr + s.memsz));
+        hi_vaddr_ = std::max(hi_vaddr_, page_up(end));
+    }
+    if (hi_vaddr_ <= lo_vaddr_ || hi_vaddr_ - lo_vaddr_ > SIZE_MAX) {
+        *error = "invalid segment span";
+        return false;
     }
     size_ = static_cast<size_t>(hi_vaddr_ - lo_vaddr_);
 
@@ -366,22 +382,42 @@ bool ElfImage::read_dynamic(std::string* error) {
     // Symbol count: DT_HASH stores it (nchain); DT_GNU_HASH has to be walked
     // to the end of its last non-empty chain.
     size_t nsyms = 0;
-    if (hash_) {
+    if (hash_ && in_image(hash_, 2 * sizeof(uint32_t))) {
         nsyms = at<const uint32_t>(hash_)[1];
-    } else if (gnu_hash_) {
+    } else if (gnu_hash_ && in_image(gnu_hash_, 4 * sizeof(uint32_t))) {
         const uint32_t* gh = at<const uint32_t>(gnu_hash_);
         const uint32_t nbuckets = gh[0], symoffset = gh[1], bloom_words = gh[2];
-        const uint32_t* buckets = reinterpret_cast<const uint32_t*>(
-            reinterpret_cast<const uint64_t*>(gh + 4) + bloom_words);
-        const uint32_t* chain = buckets + nbuckets;
-        uint32_t last = 0;
-        for (uint32_t b = 0; b < nbuckets; ++b) last = std::max(last, buckets[b]);
-        if (last >= symoffset) {
-            while (!(chain[last - symoffset] & 1)) ++last;
-            nsyms = last + 1;
-        } else {
-            nsyms = symoffset;
+        const uint64_t bloom_bytes = static_cast<uint64_t>(bloom_words) * sizeof(uint64_t);
+        const uint64_t buckets_off = 4 * sizeof(uint32_t) + bloom_bytes;
+        const uint64_t buckets_bytes = static_cast<uint64_t>(nbuckets) * sizeof(uint32_t);
+        if (bloom_words > 0 && buckets_off <= hi_vaddr_ - gnu_hash_ &&
+            buckets_bytes <= hi_vaddr_ - gnu_hash_ - buckets_off) {
+            const uint32_t* buckets = reinterpret_cast<const uint32_t*>(
+                reinterpret_cast<const uint8_t*>(gh) + buckets_off);
+            const uint64_t chain_vaddr = gnu_hash_ + buckets_off + buckets_bytes;
+            const uint32_t* chain = at<const uint32_t>(chain_vaddr);
+            uint32_t last = 0;
+            for (uint32_t b = 0; b < nbuckets; ++b) last = std::max(last, buckets[b]);
+            if (last >= symoffset) {
+                while (in_image(chain_vaddr + static_cast<uint64_t>(last - symoffset) * sizeof(uint32_t),
+                                sizeof(uint32_t)) &&
+                       !(chain[last - symoffset] & 1)) {
+                    ++last;
+                }
+                if (in_image(chain_vaddr + static_cast<uint64_t>(last - symoffset) * sizeof(uint32_t),
+                             sizeof(uint32_t))) {
+                    nsyms = last + 1;
+                }
+            } else {
+                nsyms = symoffset;
+            }
         }
+    }
+    if (symtab_ && in_image(symtab_, sizeof(Sym))) {
+        const size_t max_syms = static_cast<size_t>((hi_vaddr_ - symtab_) / sizeof(Sym));
+        if (nsyms > max_syms) nsyms = max_syms;
+    } else {
+        nsyms = 0;
     }
     nsyms_ = nsyms;
     const Sym* syms = at<const Sym>(symtab_);
@@ -405,9 +441,19 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
     std::vector<std::string> missing;
     std::string fatal;
 
+    auto sym_name = [&](const Sym& s) -> const char* {
+        if (!strtab || s.st_name >= strsz_) return "";
+        const size_t max_len = strsz_ - s.st_name;
+        return strnlen(strtab + s.st_name, max_len) < max_len ? (strtab + s.st_name) : "";
+    };
+
     auto symbol_value = [&](uint32_t idx, uint64_t* out) -> bool {
+        if (idx >= nsyms_ || !syms) {
+            fatal = "relocation symbol index out of range";
+            return false;
+        }
         const Sym& s = syms[idx];
-        const char* name = strtab + s.st_name;
+        const char* name = sym_name(s);
         if (st_type(s.st_info) == kSttTls) {
             fatal = std::string("TLS symbol ") + name + " used by a non-TLS relocation";
             return false;
@@ -450,6 +496,10 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
     // The (module, offset) pair of a dynamic TLS relocation's symbol. Symbol 0
     // stands for this library's own block (local-dynamic code).
     auto tls_symbol_value = [&](uint32_t idx, size_t* module, uint64_t* offset) -> bool {
+        if (idx >= nsyms_ || !syms) {
+            fatal = "TLS relocation symbol index out of range";
+            return false;
+        }
         if (idx == 0 || syms[idx].st_shndx != kShnUndef) {
             if (!tls_module_) {
                 fatal = "TLS relocation in a library without PT_TLS";
@@ -459,7 +509,7 @@ bool ElfImage::apply_relocations(const SymbolResolver& resolve, const TlsSymbolR
             *offset = idx == 0 ? 0 : syms[idx].st_value;
             return true;
         }
-        const char* name = strtab + syms[idx].st_name;
+        const char* name = sym_name(syms[idx]);
         if (resolve_tls && resolve_tls(name, module, offset)) return true;
         fatal = std::string("undefined TLS symbol ") + name;
         return false;

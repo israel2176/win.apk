@@ -469,7 +469,7 @@ const AotModule* load_dll(const std::filesystem::path& dll, uint64_t bias, uint6
     // not its hash: reading the whole DLL at every start would cost more than
     // what it guards against now that nothing is renamed in before it is on
     // the disk.
-    const AotFile check = aot_check_dll(dll, false);
+    const AotFile check = aot_check_dll(dll, true);
     if (check == AotFile::kMissing) return nullptr;
     if (check == AotFile::kBroken || (check == AotFile::kUnsealed && sealed)) {
         std::fprintf(stderr, "[win.apk] arm64 AOT: ignoring %s: incomplete (%s); it is translated again\n",
