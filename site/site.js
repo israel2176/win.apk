@@ -17,7 +17,7 @@
       meta_default: 'Windows 10 and 11, 64-bit',
       meta_req: 'Windows 10 and 11, 64-bit', meta_pre: 'preview',
       star: 'Star us on GitHub', star_short: 'Star us',
-      free: 'Free and open source.', other_versions: 'Other versions',
+      free: 'Free and open source.', portable_zip: 'Portable ZIP', other_versions: 'Other versions',
       alt_library: 'The Win.apk library with installed Android apps',
       f1_t: 'Double-click to install', f1_d: 'APK files and app bundles install like any Windows program.',
       f2_t: 'A window of its own', f2_d: 'Each app is in the Start menu and on the taskbar, with Windows notifications.',
@@ -47,7 +47,7 @@
       meta_default: 'Windows 10 ו-11, ‏64 ביט',
       meta_req: 'Windows 10 ו-11, ‏64 ביט', meta_pre: 'גרסת תצוגה',
       star: 'פרגנו בכוכב ב-GitHub', star_short: 'פרגנו בכוכב',
-      free: 'חינם וקוד פתוח.', other_versions: 'גרסאות נוספות',
+      free: 'חינם וקוד פתוח.', portable_zip: 'גרסה ניידת (ZIP)', other_versions: 'גרסאות נוספות',
       alt_library: 'הספרייה של Win.apk עם אפליקציות אנדרואיד מותקנות',
       f1_t: 'לחיצה כפולה ומתקינים', f1_d: 'קובצי APK וחבילות אפליקציה מותקנים כמו כל תוכנה.',
       f2_t: 'חלון משלה', f2_d: 'כל אפליקציה בתפריט התחל ובשורת המשימות, עם התראות של Windows.',
@@ -129,6 +129,10 @@
     document.title = t.title;
     var desc = document.querySelector('meta[name=description]');
     if (desc) desc.content = t.description;
+    var ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) ogTitle.content = t.title;
+    var ogDesc = document.querySelector('meta[property="og:description"]');
+    if (ogDesc) ogDesc.content = t.description;
     // A Hebrew prefix letter before a Latin word ("ב-Win.apk") takes a non-breaking hyphen, so a line never ends
     // on the letter alone.
     var text = lang === 'he' ? function (s) { return s.replace(/(^|[\s(])([בהוכלמש])-(?=[A-Za-z0-9])/g, '$1$2‑'); }
@@ -142,17 +146,21 @@
     // A Hebrew screenshot (images/he/<name>) when the deploy has one (it lists them in images/he/shots.json, so
     // no picture is asked for in vain), else the English one. A picture missing altogether hides its figure, and
     // a gallery left with none hides its section.
+    var SHOT_SIZES = { 'images/library.png': [972, 686], 'images/dark.png': [972, 686], 'images/he/library.png': [1053, 717] };
     document.querySelectorAll('img[data-shot]').forEach(function (el) {
       // The program's own dark theme on a page shown dark.
       var name = el.dataset.shotDark && dark.matches ? el.dataset.shotDark : el.dataset.shot;
+      var fig = el.closest('figure');
+      var sec = el.closest('section');
+      if (fig) fig.hidden = false;
+      if (sec) sec.hidden = false;
       el.onerror = function () {
         el.onerror = null;
-        var fig = el.closest('figure');
         if (fig) fig.hidden = true;
-        var sec = el.closest('section');
         if (sec && !sec.querySelector('figure:not([hidden])')) sec.hidden = true;
       };
       var want = (lang === 'he' && heShots.indexOf(name) >= 0 ? 'images/he/' : 'images/') + name;
+      if (SHOT_SIZES[want]) { el.width = SHOT_SIZES[want][0]; el.height = SHOT_SIZES[want][1]; }
       if (el.getAttribute('src') !== want) el.src = want;
     });
     document.querySelectorAll('[data-doc]').forEach(function (el) { el.href = GH + '/blob/main/' + DOCS[lang][el.dataset.doc]; });
@@ -199,25 +207,40 @@
     return best;
   }
 
+  function safeGhUrl(u) {
+    return typeof u === 'string' && /^https:\/\/github\.com\/israel2176\/win\.apk\//.test(u) ? u : null;
+  }
+
   function point(c) {
     if (!c) return;
     release = c;
-    document.querySelectorAll('[data-dl=setup]').forEach(function (el) { el.href = c.setup; });
-    document.querySelectorAll('[data-dl=notes]').forEach(function (el) { el.href = c.notes; });
-    if (c.zip) document.querySelectorAll('[data-dl=zip]').forEach(function (el) { el.href = c.zip; });
+    var setupUrl = safeGhUrl(c.setup);
+    var notesUrl = safeGhUrl(c.notes);
+    var zipUrl = safeGhUrl(c.zip);
+    if (setupUrl) document.querySelectorAll('[data-dl=setup]').forEach(function (el) { el.href = setupUrl; });
+    if (notesUrl) document.querySelectorAll('[data-dl=notes]').forEach(function (el) { el.href = notesUrl; });
+    if (zipUrl) document.querySelectorAll('[data-dl=zip]').forEach(function (el) { el.href = zipUrl; });
     meta();
   }
 
-  var cached = store('sessionStorage', 'winapk-release');
+  var CACHE_KEY = 'winapk-release-v1';
+  var TTL_MS = 15 * 60 * 1000;
+  var cached = store('localStorage', CACHE_KEY);
   if (cached) {
-    try { point(JSON.parse(cached)); return; } catch (e) {}
+    try {
+      var parsed = JSON.parse(cached);
+      if (parsed && parsed.ts && (Date.now() - parsed.ts < TTL_MS) && parsed.data) {
+        point(parsed.data);
+        return;
+      }
+    } catch (e) {}
   }
   if (!window.fetch) return;
   fetch('https://api.github.com/repos/' + REPO + '/releases?per_page=30', { headers: { Accept: 'application/vnd.github+json' } })
     .then(function (r) { return r.ok ? r.json() : []; })
     .then(function (list) {
       var c = choose(Array.isArray(list) ? list : []);
-      if (c) store('sessionStorage', 'winapk-release', JSON.stringify(c));
+      if (c) store('localStorage', CACHE_KEY, JSON.stringify({ ts: Date.now(), data: c }));
       point(c);
     })
     .catch(function () { /* The buttons keep the releases page. */ });

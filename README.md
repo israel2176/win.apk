@@ -11,7 +11,7 @@
 [![Latest release](https://img.shields.io/github/v/release/israel2176/win.apk?include_prereleases&label=release&color=6c5ce7)](https://github.com/israel2176/win.apk/releases)
 [![Windows 10/11 x64](https://img.shields.io/badge/Windows-10%20%7C%2011%20x64-0078d4)](docs/getting-started.md#what-you-need)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue)](LICENSE)
-[![Sweep: 90 of 92 apps start](https://img.shields.io/badge/F--Droid%20sweep-90%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
+[![Sweep: 81 of 92 apps start](https://img.shields.io/badge/F--Droid%20sweep-81%2F92%20start-2ea44f)](docs/APPS.md#the-automated-sweep)
 
 **English** · [עברית](README.he.md) · [Website](https://israel2176.github.io/win.apk/)
 
@@ -75,15 +75,15 @@ The full table, checked against the code, is on
 | Java and Kotlin apps | Apps with only arm64 native code: slower until translated | Apps with only 32-bit ARM code (`armeabi-v7a`) |
 | x86_64 native code | `MediaCodec`: H.264 with AAC/MP3 audio | Vulkan |
 | OpenGL ES 1.1-3.2 on Direct3D 11, `NativeActivity` games | Bluetooth: paired devices, RFCOMM, LE scans and GATT client | |
-| Sound (AudioTrack, SoundPool, AAudio output, OpenSL ES), microphone | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
-| Video (`MediaPlayer`, `VideoView`) on Media Foundation | Notifications: no action buttons | Real sensors (none is reported) |
+| Sound (AudioTrack, SoundPool, AAudio output) | Wi-Fi: information, no connecting | NDK media API (`AMediaCodec`) |
+| Video (`MediaPlayer`, `VideoView`) on Media Foundation | OpenSL ES (unit-tested only); notifications: no action buttons | Real sensors (none is reported) |
 | WebView and Custom Tabs on WebView2 | Google's real Play services and Play Store (experimental) | In-app purchases, Play Integrity, the Maps SDK's map |
 | Webcam, location, clipboard, file pickers, Xbox controllers | Input: multi-touch from a touchscreen or a pen, pinch by Ctrl+wheel or the touchpad; no multi-touch from a mouse alone | |
 | Permissions, Google sign-in, push messages (FCM) | | |
 
 **Measured, not promised:**
 
-- In the last automated sweep, **90 of 92** open-source F-Droid apps of every
+- In the last automated sweep, **81 of 92** open-source F-Droid apps of every
   kind started and drew their first screen on Windows
   ([details](docs/APPS.md#the-automated-sweep)). Starting is not the same as
   every screen working.
