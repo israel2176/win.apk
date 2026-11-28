@@ -2371,7 +2371,15 @@ every such change is listed here:
   form gets no default at all, as AOSP's base `onGetDefaultValue` returns null
   (the raw String the base twin returned broke DroidFish's
   ColorPickerPreference, which casts the default to Integer, with a
-  ClassCastException). Not Windows-specific.
+  ClassCastException). Not Windows-specific. `getEditor()` is the
+  manager's, as AOSP's: during `setDefaultValues`' batch that is the one
+  editor the batch applies at its end, where a fresh editor per write was
+  never applied and no platform preference's default was saved (ArtScroll read
+  its `ListPreference`'s key back as null and stopped in `onCreate`). With
+  `PreferenceAttrs.java` and `PreferenceActivity.java`: `android:key`,
+  `android:dependency` and `android:fragment` resolve a reference
+  (`@string/...`, or `@<id>` as a compiled XML's parser gives it), as AOSP's
+  `TypedArray.getString` does.
 - `runtime/java/android/provider/MediaStoreProvider.java`: a projection may
   hold an aggregate over a known column (`COUNT(is_music)`, `COUNT(*)`,
   `MAX(date_added)`) or an alias (`_data AS path`), as MediaProvider's

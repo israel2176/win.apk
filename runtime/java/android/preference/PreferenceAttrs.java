@@ -73,6 +73,16 @@ final class PreferenceAttrs {
 
     /** Resolve a reference to its numeric id, or 0. */
     static int resolveId(Context ctx, String v) {
+        // A compiled XML's parser (AOSP's XmlBlock.Parser) gives a reference as
+        // TypedValue.coerceToString does: "@" and the id, in decimal.
+        if (v != null && v.length() > 1 && v.charAt(0) == '@'
+                && Character.isDigit(v.charAt(1))) {
+            try {
+                return Integer.decode(v.substring(1)).intValue();
+            } catch (NumberFormatException e) {
+                return 0;
+            }
+        }
         String[] r = ref(v);
         if (r == null || ctx == null) return 0;
         try {
