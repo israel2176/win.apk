@@ -194,7 +194,7 @@ bool syscall_library(const std::string& path, unsigned* checksum) {
     auto ctor = reinterpret_cast<IntFn>(img->dlsym("syscall_ctor_ran"));
     check("syscall_ctor_ran", ctor && ctor() == 1);
     for (const char* name : {"syscall_getpid", "syscall_rcx_is_return", "syscall_pipe_roundtrip", "syscall_errors",
-                             "syscall_runtime_code"}) {
+                             "syscall_runtime_code", "syscall_copied_code", "syscall_cross_page"}) {
         auto fn = reinterpret_cast<LongFn>(img->dlsym(name));
         const long r = fn ? fn() : -1000;
         check(name, r == 1, "returned " + std::to_string(r));

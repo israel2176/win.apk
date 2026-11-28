@@ -57,7 +57,15 @@ How the instructions are found, without taking data for code:
   execution. Its first run faults; the handler decodes from the faulting
   instruction, patches what it finds and makes the pages it decoded
   executable. Making the memory executable again after rewriting it starts
-  that over.
+  that over. An instruction that starts on a page already run and ends on one
+  not run yet faults with the second page named, not the instruction's: that
+  page is the one opened (an ijiami-packed library's unpacked code looped on
+  such a fault).
+- **A copy of patched code**: a stub that moves itself into memory it maps
+  (UPX's decompressor does) copies the `UD2` the scan made of its `SYSCALL`s,
+  which the copy's first run can no longer find. The bytes around each patched
+  site (16 before it, 8 from it) are kept; a `UD2` that is not a site but sits
+  in the same bytes as one is taken as that site's copy, and answered.
 
 Apps that never load a library with a `SYSCALL` are not changed at all: a
 library with none loads byte for byte as in its file (the stack-guard patch
@@ -159,6 +167,13 @@ and the library's code it restores is byte for byte the unpacked file's. The
 library then still crashes when the stub hands over to it; the cause is not
 found yet, so UPX-packed libraries are **not** listed as working. The packed
 copy is not part of CI's tests.
+
+On Windows (November 2026), soundcore's ijiami `libexec.so` (UPX-packed) runs
+its stub, its copy of the stub and its unpacked library, which loads
+`libexecmain.so`; a thread the unpacked code starts then stops at a `UD2` of
+its own (`libexec.so+0x86b85`, not a site), and another reads a null pointer
+(`+0x83f5d`). Both are in code only the unpacked library has; what it checked
+before is not found yet.
 
 ## Dynamically loaded DEX
 
