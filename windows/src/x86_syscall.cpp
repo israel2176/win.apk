@@ -9,12 +9,14 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <map>
 #include <mutex>
 #include <set>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -532,6 +534,13 @@ private:
 
 SRWLOCK g_lock = SRWLOCK_INIT;
 std::unordered_set<uintptr_t> g_sites;   // SYSCALLs made UD2, under g_lock
+// The bytes around each site as patched, under g_lock: code that copies itself (a UPX stub moves its
+// decompressor into memory it maps, then runs it there) carries the UD2 the scan put in, which the
+// copy's first run cannot find as a SYSCALL any more. A UD2 that is not a site but sits in the same
+// bytes as one is such a copy, and is the SYSCALL a device would run there.
+// 16 bytes before a site and 8 from it: the end of a stub is followed by other bytes in its copy.
+constexpr size_t kBefore = 16, kFrom = 8;
+std::unordered_map<uintptr_t, std::array<uint8_t, kBefore + kFrom>> g_site_bytes;
 std::map<uintptr_t, int> g_pending;      // page -> the PROT_* asked for, executable once run, under g_lock
 std::atomic<bool> g_active{false};       // x86_64 guest code has been loaded
 
@@ -541,6 +550,19 @@ DWORD win_exec_protect(int prot) {
 
 bool executable(DWORD protect) {
     return protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY);
+}
+
+// Whether [p, p + n) is committed memory that can be read.
+bool readable(uintptr_t p, size_t n) {
+    for (uintptr_t at = p; at < p + n;) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(reinterpret_cast<void*>(at), &mbi, sizeof mbi) || mbi.State != MEM_COMMIT ||
+            (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || mbi.Protect == 0) {
+            return false;
+        }
+        at = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+    }
+    return true;
 }
 
 // Under g_lock (exclusive). `writable`: the bytes may be written as they are.
@@ -560,20 +582,28 @@ size_t patch_sites(const std::vector<uintptr_t>& sites, bool writable) {
         g_sites.insert(s);
         ++n;
     }
+    // After every site is patched: a copy carries them all.
+    for (uintptr_t s : sites) {
+        if (g_sites.count(s) && readable(s - kBefore, kBefore + kFrom)) {
+            std::memcpy(g_site_bytes[s].data(), reinterpret_cast<const void*>(s - kBefore), kBefore + kFrom);
+        }
+    }
     g_sites_patched.fetch_add(n, std::memory_order_relaxed);
     return n;
 }
 
 // A guest page asked to be executable is first run: patch what can be reached
-// from here, then let the pages decoded run.
-bool on_execute(uintptr_t rip) {
-    const uintptr_t page = rip & ~(kPage - 1);
+// from here, then let the pages decoded run. `at` is the address the fault names: the page of an
+// instruction that starts at the end of a page already open and runs into the next one is that next
+// page, not rip's (an ijiami-packed library's unpacked code looped on such a fault for ever).
+bool on_execute(uintptr_t rip, uintptr_t at) {
+    const uintptr_t page = at & ~(kPage - 1);
     AcquireSRWLockExclusive(&g_lock);
     if (!g_pending.count(page)) {
         ReleaseSRWLockExclusive(&g_lock);
         // Another thread may have opened it while this one waited.
         MEMORY_BASIC_INFORMATION mbi{};
-        return VirtualQuery(reinterpret_cast<void*>(rip), &mbi, sizeof mbi) && mbi.State == MEM_COMMIT &&
+        return VirtualQuery(reinterpret_cast<void*>(at), &mbi, sizeof mbi) && mbi.State == MEM_COMMIT &&
                executable(mbi.Protect) && !(mbi.Protect & PAGE_GUARD);
     }
     if (arm64::is_guest_code(reinterpret_cast<const void*>(rip))) {
@@ -584,6 +614,7 @@ bool on_execute(uintptr_t rip) {
     uintptr_t lo = page, hi = page + kPage;
     while (g_pending.count(lo - kPage)) lo -= kPage;
     while (g_pending.count(hi)) hi += kPage;
+    lo = std::min(lo, rip & ~(kPage - 1));  // the instruction that ran into the page starts before it
     const CodeRange run{lo, hi};
     Walk walk(&run, 1);
     walk.from(rip);
@@ -606,7 +637,24 @@ bool is_site(uintptr_t rip) {
     AcquireSRWLockShared(&g_lock);
     const bool yes = g_sites.count(rip) != 0;
     ReleaseSRWLockShared(&g_lock);
-    return yes;
+    if (yes || !readable(rip - kBefore, kBefore + kFrom)) return yes;
+    // A copy of patched code (see g_site_bytes): a site from now on.
+    AcquireSRWLockExclusive(&g_lock);
+    bool copy = false;
+    for (const auto& [site, bytes] : g_site_bytes) {
+        if (std::memcmp(bytes.data(), reinterpret_cast<const void*>(rip - kBefore), bytes.size()) == 0) {
+            copy = true;
+            break;
+        }
+    }
+    if (copy) {
+        g_sites.insert(rip);
+        std::array<uint8_t, kBefore + kFrom> bytes;
+        std::memcpy(bytes.data(), reinterpret_cast<const void*>(rip - kBefore), bytes.size());
+        g_site_bytes.emplace(rip, bytes);
+    }
+    ReleaseSRWLockExclusive(&g_lock);
+    return copy;
 }
 
 // First in the vectored chain, so that neither the guest's signal emulation
@@ -633,7 +681,8 @@ LONG CALLBACK on_exception(EXCEPTION_POINTERS* ep) {
     }
     if (r->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && r->NumberParameters >= 2 &&
         r->ExceptionInformation[0] == 8 /* EXCEPTION_EXECUTE_FAULT */ && g_active.load(std::memory_order_relaxed)) {
-        return on_execute(c->Rip) ? EXCEPTION_CONTINUE_EXECUTION : EXCEPTION_CONTINUE_SEARCH;
+        return on_execute(c->Rip, r->ExceptionInformation[1]) ? EXCEPTION_CONTINUE_EXECUTION
+                                                              : EXCEPTION_CONTINUE_SEARCH;
     }
     return EXCEPTION_CONTINUE_SEARCH;
 }
@@ -694,6 +743,7 @@ void forget(const void* addr, size_t len) {
     for (auto it = g_sites.begin(); it != g_sites.end();) {
         it = (*it >= lo && *it < hi) ? g_sites.erase(it) : std::next(it);
     }
+    // Their bytes stay known: a copy made before the unmap still runs them.
     g_pending.erase(g_pending.lower_bound(lo & ~(kPage - 1)), g_pending.lower_bound(hi));
     ReleaseSRWLockExclusive(&g_lock);
 }

@@ -127,6 +127,48 @@ EXPORT long syscall_runtime_code(void) {
     return 1;
 }
 
+// Code that copies itself and runs the copy, as a UPX stub moves its decompressor into memory it maps:
+// the copy carries the SYSCALL the scan made a trap, and must still be the kernel's call.
+// syscall_copy_src is mov eax, 39; syscall; ret, with bytes around it the copy keeps.
+__asm__(".text\n"
+        ".p2align 4\n"
+        "syscall_copy_before: .byte 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc\n"
+        ".globl syscall_copy_src\n"
+        ".type syscall_copy_src, @function\n"
+        "syscall_copy_src:\n"
+        "  mov $39, %eax\n"
+        "  syscall\n"
+        "  ret\n"
+        "  .byte 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc, 0xcc\n");
+long syscall_copy_src(void);
+
+EXPORT long syscall_copied_code(void) {
+    const unsigned char* src = (const unsigned char*)syscall_copy_src - 16;
+    long p = raw6(9, 0, 4096, 3 /* RW */, 0x22 /* PRIVATE|ANONYMOUS */, -1, 0);
+    if (p < 0 && p > -4096) return -1;
+    memcpy((void*)(p + 256), src, 16 + 8 + 8);
+    if (raw3(10, p, 4096, 5 /* R|X */) != 0) return -2;
+    long pid = ((long (*)(void))(p + 256 + 16))();
+    raw3(11, p, 4096, 0);
+    return pid == getpid() ? 1 : -3;
+}
+
+// An instruction that starts at the end of a page already run and ends in the next page, made
+// executable at the same time but not run yet: the fault names the second page, not rip's.
+EXPORT long syscall_cross_page(void) {
+    long p = raw6(9, 0, 8192, 3, 0x22, -1, 0);
+    if (p < 0 && p > -4096) return -1;
+    unsigned char* a = (unsigned char*)p;
+    a[0] = 0xc3;                                                    // ret: runs page A alone
+    static const unsigned char code[] = {0xb8, 0x27, 0x00, 0x00, 0x00, 0x0f, 0x05, 0xc3};  // mov eax, 39 ...
+    memcpy(a + 4096 - 3, code, sizeof code);                        // ... its immediate in page B
+    if (raw3(10, p, 8192, 5) != 0) return -2;
+    ((void (*)(void))a)();
+    long pid = ((long (*)(void))(a + 4096 - 3))();
+    raw3(11, p, 8192, 0);
+    return pid == getpid() ? 1 : -3;
+}
+
 // /proc/self/auxv, read by raw calls as a loader stub with no libc reads it: (type, value) pairs ending
 // in AT_NULL, AT_PAGESZ 4096, AT_RANDOM pointing at 16 readable bytes, AT_PLATFORM "x86_64", and every
 // value the one getauxval gives. One bit per check, so the test names a failure.
