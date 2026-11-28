@@ -1542,6 +1542,132 @@ WINAPK_GUEST_ABI uint64_t g_getauxval(uint64_t type) {
     return 0;
 }
 
+// ---- __stack_chk_guard ---------------------------------------------------------------------
+// Bionic's global stack protector guard, set at start from AT_RANDOM's first eight bytes
+// (libc_init_common.cpp, __libc_init_globals). x86_64 and arm64 compilers read the guard from the
+// thread's TLS slot instead; the global is for code built with -mstack-protector-guard=global and
+// for code that reads it to check it is set, as packers do. It was bound to zeroed memory.
+uint64_t g_stack_chk_guard = [] {
+    uint64_t random = 0, guard = 0;
+    if (winapk::auxv_value(winapk::process_auxv(), 25 /* AT_RANDOM */, &random) && random) {
+        std::memcpy(&guard, reinterpret_cast<const void*>(random), sizeof guard);
+    }
+    return guard;
+}();
+
+// ---- <fenv.h> -------------------------------------------------------------------------------
+// Bionic's x86_64 fenv (FreeBSD's amd64 one): the x87 unit and SSE's MXCSR both hold the flags,
+// masks and rounding mode, and each call reads or sets both. The values are Linux's, which are
+// the hardware's bits: FE_INVALID 0x01 ... FE_INEXACT 0x20, rounding 0x000/0x400/0x800/0xc00 in
+// the x87 control word (MXCSR's the same, three bits higher).
+struct GuestFenv {           // bionic's fenv_t on x86_64, 32 bytes
+    struct {
+        uint32_t control, status, tag;
+        char other[16];
+    } x87;
+    uint32_t mxcsr;
+};
+static_assert(sizeof(GuestFenv) == 32);
+constexpr uint32_t kFeAllExcept = 0x3f;
+constexpr uint32_t kFeRoundMask = 0xc00;
+constexpr int kMxcsrRoundShift = 3;   // MXCSR's RC is bits 13-14, the x87 control word's 10-11
+constexpr int kMxcsrMaskShift = 7;    // MXCSR's exception masks are bits 7-12
+
+// FE_DFL_ENV is &__fe_dfl_env: the state a thread starts with.
+GuestFenv g_fe_dfl_env = {{0x037f, 0, 0xffff, {}}, 0x1f80};
+
+uint32_t read_mxcsr() { return _mm_getcsr(); }
+void write_mxcsr(uint32_t v) { _mm_setcsr(v); }
+void x87_getenv(GuestFenv* e) { __asm__ volatile("fnstenv %0" : "=m"(e->x87)); }
+void x87_setenv(const GuestFenv* e) { __asm__ volatile("fldenv %0" : : "m"(e->x87)); }
+uint16_t x87_status() {
+    uint16_t s;
+    __asm__ volatile("fnstsw %0" : "=am"(s));
+    return s;
+}
+uint16_t x87_control() {
+    uint16_t c;
+    __asm__ volatile("fnstcw %0" : "=m"(c));
+    return c;
+}
+void x87_set_control(uint16_t c) { __asm__ volatile("fldcw %0" : : "m"(c)); }
+
+WINAPK_GUEST_ABI int g_fetestexcept(int excepts) {
+    return static_cast<int>((x87_status() | read_mxcsr()) & static_cast<uint32_t>(excepts) & kFeAllExcept);
+}
+WINAPK_GUEST_ABI int g_fegetexceptflag(uint32_t* flagp, int excepts) {
+    *flagp = static_cast<uint32_t>(g_fetestexcept(excepts));
+    return 0;
+}
+WINAPK_GUEST_ABI int g_fesetexceptflag(const uint32_t* flagp, int excepts) {
+    const uint32_t e = static_cast<uint32_t>(excepts) & kFeAllExcept;
+    GuestFenv env;
+    x87_getenv(&env);
+    env.x87.status = (env.x87.status & ~e) | (*flagp & e);
+    x87_setenv(&env);
+    write_mxcsr((read_mxcsr() & ~e) | (*flagp & e));
+    return 0;
+}
+WINAPK_GUEST_ABI int g_feclearexcept(int excepts) {
+    const uint32_t none = 0;
+    return g_fesetexceptflag(&none, excepts);
+}
+WINAPK_GUEST_ABI int g_feraiseexcept(int excepts) {
+    const uint32_t e = static_cast<uint32_t>(excepts) & kFeAllExcept;
+    g_fesetexceptflag(&e, excepts);
+    __asm__ volatile("fwait");
+    return 0;
+}
+WINAPK_GUEST_ABI int g_fegetround() { return x87_control() & kFeRoundMask; }
+WINAPK_GUEST_ABI int g_fesetround(int round) {
+    if (static_cast<uint32_t>(round) & ~kFeRoundMask) return -1;
+    x87_set_control(static_cast<uint16_t>((x87_control() & ~kFeRoundMask) | round));
+    write_mxcsr((read_mxcsr() & ~(kFeRoundMask << kMxcsrRoundShift)) |
+                (static_cast<uint32_t>(round) << kMxcsrRoundShift));
+    return 0;
+}
+WINAPK_GUEST_ABI int g_fegetenv(GuestFenv* envp) {
+    x87_getenv(envp);
+    envp->mxcsr = read_mxcsr();
+    x87_set_control(static_cast<uint16_t>(envp->x87.control));  // fnstenv masked every exception
+    return 0;
+}
+WINAPK_GUEST_ABI int g_fesetenv(const GuestFenv* envp) {
+    x87_setenv(envp);
+    write_mxcsr(envp->mxcsr);
+    return 0;
+}
+WINAPK_GUEST_ABI int g_feholdexcept(GuestFenv* envp) {
+    g_fegetenv(envp);
+    GuestFenv held = *envp;
+    held.x87.status &= ~kFeAllExcept;
+    held.x87.control |= kFeAllExcept;
+    held.mxcsr = (held.mxcsr & ~kFeAllExcept) | (kFeAllExcept << kMxcsrMaskShift);
+    g_fesetenv(&held);
+    return 0;
+}
+WINAPK_GUEST_ABI int g_feupdateenv(const GuestFenv* envp) {
+    const int raised = g_fetestexcept(kFeAllExcept);
+    g_fesetenv(envp);
+    return g_feraiseexcept(raised);
+}
+// The GNU extensions bionic has: which exceptions trap (unmasked), returning the old set.
+WINAPK_GUEST_ABI int g_fegetexcept() { return ~x87_control() & kFeAllExcept; }
+WINAPK_GUEST_ABI int g_feenableexcept(int excepts) {
+    const uint32_t e = static_cast<uint32_t>(excepts) & kFeAllExcept;
+    const int old = g_fegetexcept();
+    x87_set_control(static_cast<uint16_t>(x87_control() & ~e));
+    write_mxcsr(read_mxcsr() & ~(e << kMxcsrMaskShift));
+    return old;
+}
+WINAPK_GUEST_ABI int g_fedisableexcept(int excepts) {
+    const uint32_t e = static_cast<uint32_t>(excepts) & kFeAllExcept;
+    const int old = g_fegetexcept();
+    x87_set_control(static_cast<uint16_t>(x87_control() | e));
+    write_mxcsr(read_mxcsr() | (e << kMxcsrMaskShift));
+    return old;
+}
+
 // ---- randomness ---------------------------------------------------------------------------
 WINAPK_GUEST_ABI void g_arc4random_buf(void* buf, size_t n) {
     BCryptGenRandom(nullptr, static_cast<PUCHAR>(buf), static_cast<ULONG>(n), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
@@ -2888,6 +3014,22 @@ const ShimSymbol kSymbols[] = {
     WINAPK_SHIM("getpagesize", g_getpagesize),
     WINAPK_SHIM("uname", g_uname),
     WINAPK_SHIM("getauxval", g_getauxval),
+    {"__stack_chk_guard", &g_stack_chk_guard},
+    {"__fe_dfl_env", &g_fe_dfl_env},
+    WINAPK_SHIM("fetestexcept", g_fetestexcept),
+    WINAPK_SHIM("feclearexcept", g_feclearexcept),
+    WINAPK_SHIM("feraiseexcept", g_feraiseexcept),
+    WINAPK_SHIM("fegetexceptflag", g_fegetexceptflag),
+    WINAPK_SHIM("fesetexceptflag", g_fesetexceptflag),
+    WINAPK_SHIM("fegetround", g_fegetround),
+    WINAPK_SHIM("fesetround", g_fesetround),
+    WINAPK_SHIM("fegetenv", g_fegetenv),
+    WINAPK_SHIM("fesetenv", g_fesetenv),
+    WINAPK_SHIM("feholdexcept", g_feholdexcept),
+    WINAPK_SHIM("feupdateenv", g_feupdateenv),
+    WINAPK_SHIM("fegetexcept", g_fegetexcept),
+    WINAPK_SHIM("feenableexcept", g_feenableexcept),
+    WINAPK_SHIM("fedisableexcept", g_fedisableexcept),
     WINAPK_SHIM("arc4random", g_arc4random),
     WINAPK_SHIM("arc4random_buf", g_arc4random_buf),
     WINAPK_SHIM("arc4random_uniform", g_arc4random_uniform),

@@ -118,6 +118,54 @@ static void check(const char* what, int ok, const char* got) {
     if (!ok) ++failures;
 }
 
+// <fenv.h> on x86_64 (bionic's fenv_t is 32 bytes: the x87 environment and MXCSR) and bionic's
+// global stack protector guard, set from AT_RANDOM at start.
+typedef struct { unsigned char bytes[32]; } guest_fenv_t;
+int feclearexcept(int);
+int fetestexcept(int);
+int feraiseexcept(int);
+int fegetround(void);
+int fesetround(int);
+int fegetenv(guest_fenv_t*);
+int fesetenv(const guest_fenv_t*);
+int feholdexcept(guest_fenv_t*);
+int feupdateenv(const guest_fenv_t*);
+extern const guest_fenv_t __fe_dfl_env;
+extern unsigned long __stack_chk_guard;
+unsigned long getauxval(unsigned long);
+
+static void test_fenv_and_stack_guard(void) {
+    enum { kInvalid = 0x01, kDivByZero = 0x04, kInexact = 0x20, kAll = 0x3d, kDownward = 0x400,
+           kTowardZero = 0xc00 };
+    feclearexcept(kAll | 0x12);
+    volatile double zero = 0.0, one = 1.0;
+    volatile double inf = one / zero;
+    (void)inf;
+    check("1.0 / 0.0 raises FE_DIVBYZERO", fetestexcept(kAll) & kDivByZero, 0);
+    check("feclearexcept clears it", feclearexcept(kDivByZero) == 0 && !(fetestexcept(kAll) & kDivByZero), 0);
+    check("feraiseexcept sets FE_INVALID", feraiseexcept(kInvalid) == 0 && (fetestexcept(kInvalid) & kInvalid), 0);
+    guest_fenv_t env;
+    check("feholdexcept saves the flags and clears them",
+          feholdexcept(&env) == 0 && fetestexcept(kAll | 0x12) == 0, 0);
+    check("feupdateenv restores them", feupdateenv(&env) == 0 && (fetestexcept(kInvalid) & kInvalid), 0);
+    feclearexcept(kAll | 0x12);
+    check("fegetround is FE_TONEAREST", fegetround() == 0, 0);
+    volatile double three = 3.0;
+    check("fesetround(FE_DOWNWARD)", fesetround(kDownward) == 0 && fegetround() == kDownward, 0);
+    const double down = one / three;
+    fesetround(kTowardZero);
+    check("fesetround(FE_TOWARDZERO) rounds toward zero", fegetround() == kTowardZero && one / three == down, 0);
+    check("fesetround refuses a mode that is not one", fesetround(0x123) != 0 && fegetround() == kTowardZero, 0);
+    check("fesetenv(FE_DFL_ENV) is round to nearest again", fesetenv(&__fe_dfl_env) == 0 && fegetround() == 0, 0);
+    check("fegetenv", fegetenv(&env) == 0, 0);
+    (void)kInexact;
+    const unsigned long random = getauxval(25 /* AT_RANDOM */);
+    unsigned long first8 = 0;
+    if (random) memcpy(&first8, (const void*)random, sizeof first8);
+    check("__stack_chk_guard is AT_RANDOM's first 8 bytes, as bionic sets it",
+          random && __stack_chk_guard == first8 && __stack_chk_guard != 0, 0);
+}
+
 static void check_str(const char* what, const char* got, const char* want) {
     check(what, strcmp(got, want) == 0, got);
 }
@@ -2535,5 +2583,6 @@ EXPORT int bionic_test(const char* dir) {
     test_missing_forms(dir);
     test_flock(dir);
     test_popular_imports(dir);
+    test_fenv_and_stack_guard();
     return failures;
 }
