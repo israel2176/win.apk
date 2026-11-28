@@ -75,6 +75,7 @@ const char* const kHostClasses[] = {
     "com.macapk.loader.NativeOs",
     "com.macapk.loader.NativeSqlite",
     "com.macapk.loader.WinProcesses",
+    "com.macapk.loader.UserVerificationBridge",
     "com.macapk.loader.WindowsTextInput",
     "com.macapk.loader.monet.HostWallpaper",
     "javax.microedition.khronos.egl.MacApkEGL10",
@@ -127,6 +128,7 @@ const HostMethods kProviders[] = {
     native_accessibility_methods(),
     native_text_input_methods(),
     native_data_protection_methods(),
+    native_user_verification_methods(),
 };
 
 const JNINativeMethod* implementation_of(const char* clazz, const char* name, const char* sig) {

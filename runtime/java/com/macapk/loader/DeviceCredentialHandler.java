@@ -8,8 +8,8 @@ import android.content.pm.ActivityInfo;
 import android.content.pm.ResolveInfo;
 import android.hardware.biometrics.BiometricManager;
 
-/** Android's confirm-device-credential activity backed by the Mac's real
- * password check. A result is delivered only after the OS prompt finishes. */
+/** Android's confirm-device-credential activity backed by the host's real
+ * check (Windows Hello). A result is delivered only after the OS prompt finishes. */
 final class DeviceCredentialHandler {
     private static final String SETTINGS_PACKAGE = "com.android.settings";
     private static final String COMPONENT = SETTINGS_PACKAGE + ".password.ConfirmDeviceCredentialActivity";

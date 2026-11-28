@@ -165,6 +165,11 @@ add_dependencies(winapk-aot-cache-test winapk-aot-test-dll)
 add_executable(winapk-aot-stamp-test test/aot_stamp_test.cpp)
 target_include_directories(winapk-aot-stamp-test PRIVATE include)
 
+# What Windows Hello's answers mean to BiometricManager and BiometricPrompt (host/user_verification.h). No
+# Windows call in it. test/user_verification_test.cpp.
+add_executable(winapk-user-verification-test test/user_verification_test.cpp)
+target_include_directories(winapk-user-verification-test PRIVATE host)
+
 # Which pages of a loaded PE image are host code, which an arm64 library may not mprotect
 # (include/winapk/host_code.h). No file and no Windows call in it. test/host_code_test.cpp.
 add_executable(winapk-host-code-test test/host_code_test.cpp)
@@ -370,7 +375,7 @@ if(WINAPK_JNI_INCLUDE)
                               host/native_location.cpp host/machine_load.cpp
                               host/native_signin.cpp host/native_notifications.cpp
                               host/native_accessibility.cpp host/uia_provider.cpp host/uia_tree.cpp
-                              host/binder_win.cpp host/native_data_protection.cpp
+                              host/binder_win.cpp host/native_data_protection.cpp host/native_user_verification.cpp
                               host/user_folders.cpp host/unix_socket_dir.cpp host/crash_report.cpp host/aot_guard.cpp host/cds.cpp host/cds_util.cpp
                               host/debug_agent.cpp host/aosp_gfx.cpp host/aosp_gfx_redirect.cpp host/hwui_host.cpp
                               host/runtime.rc)

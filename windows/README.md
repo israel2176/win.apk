@@ -4220,6 +4220,15 @@ every such change is listed here:
   `hasSystemFeature` and `getSystemAvailableFeatures`, when there is Vulkan; upstream's `noteGuestVulkan`, which
   gave the features only to an app whose manifest required them (and MoltenVK's libvulkan), is gone.
 
+- `runtime/java/com/macapk/loader/UserVerificationBridge.java`: `available()` asks the host (`nativeBound`)
+  instead of answering false, so `BiometricManager`, `BiometricPrompt`, `KeyguardManager.isDeviceSecure`, the
+  confirm-credential screen (`DeviceCredentialHandler.java`, its comment) and the Keystore's keys that need the
+  user reach Windows Hello (`windows/host/native_user_verification.cpp`; what its answers mean,
+  `windows/host/user_verification.h`, `winapk-user-verification-test`). Every prompt used to end in
+  "Host user verification is not enabled in this runtime". `android/hardware/biometrics/BiometricManager.java`:
+  `Strings`' labels are Android's ("Use biometrics", "Use screen lock") instead of upstream's Touch ID and Mac
+  password.
+
 ## License
 
 AGPL-3.0, like Mac.apk (see `LICENSE`). The Mac.apk name and logo belong to the
