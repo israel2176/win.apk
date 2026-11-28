@@ -84,6 +84,10 @@ public final class BluetoothLeScanner {
                 return;
             }
             if (sClients.isEmpty()) {
+                Thread prev = sDrainThread;
+                if (prev != null && prev.isAlive()) {
+                    try { prev.join(600); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+                }
                 int error = HostBluetooth.scanStart();
                 if (error != 0) {
                     fail(callback, error);
@@ -91,8 +95,10 @@ public final class BluetoothLeScanner {
                 }
                 sBonded = bondedAddresses(adapter);
                 sRunning = true;
-                Thread t = new Thread(BluetoothLeScanner::drain, "ble-scan");
+                final int gen = ++sScanGeneration;
+                Thread t = new Thread(() -> drain(gen), "ble-scan");
                 t.setDaemon(true);
+                sDrainThread = t;
                 t.start();
             }
             Client c = new Client(filters, settings != null ? settings : new ScanSettings.Builder().build());
@@ -116,11 +122,17 @@ public final class BluetoothLeScanner {
     }
 
     public void stopScan(ScanCallback callback) {
+        Thread toJoin = null;
         synchronized (sLock) {
             if (sClients.remove(callback) == null || !sClients.isEmpty()) return;
             sRunning = false;
+            sScanGeneration++;
+            toJoin = sDrainThread;
         }
         HostBluetooth.scanStop();
+        if (toJoin != null && toJoin != Thread.currentThread()) {
+            try { toJoin.join(600); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
+        }
     }
 
     /** A removal: no PendingIntent scan is running, so there is nothing to stop. */
@@ -156,12 +168,15 @@ public final class BluetoothLeScanner {
         return out;
     }
 
+    private static Thread sDrainThread;
+    private static int sScanGeneration;
+
     /** The host's advertisements to the callbacks, until the last one stops. */
-    private static void drain() {
+    private static void drain(int gen) {
         for (;;) {
             Object[] e = HostBluetooth.scanNext(500);
             synchronized (sLock) {
-                if (!sRunning) return;
+                if (!sRunning || gen != sScanGeneration) return;
             }
             if (e == null) {
                 deliverBatches(false);

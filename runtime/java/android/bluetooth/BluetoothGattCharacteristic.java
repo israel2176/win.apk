@@ -109,13 +109,42 @@ public class BluetoothGattCharacteristic implements android.os.Parcelable {
         mValue = value == null ? null : value.getBytes();
         return true;
     }
-    public boolean setValue(int value, int formatType, int offset) { return true; }
+    public boolean setValue(int value, int formatType, int offset) {
+        int len = formatType & 0x0F;
+        if (offset < 0 || len <= 0) return false;
+        if (mValue == null || mValue.length < offset + len) {
+            byte[] next = new byte[offset + len];
+            if (mValue != null) System.arraycopy(mValue, 0, next, 0, mValue.length);
+            mValue = next;
+        }
+        for (int i = 0; i < len; i++) {
+            mValue[offset + i] = (byte) ((value >> (i * 8)) & 0xFF);
+        }
+        return true;
+    }
     public boolean setValue(int mantissa, int exponent, int formatType, int offset) {
         return true;
     }
-    public Integer getIntValue(int formatType, int offset) { return null; }
+    public Integer getIntValue(int formatType, int offset) {
+        int len = formatType & 0x0F;
+        if (mValue == null || offset < 0 || len <= 0 || offset + len > mValue.length) return null;
+        int val = 0;
+        for (int i = 0; i < len; i++) {
+            val |= (mValue[offset + i] & 0xFF) << (i * 8);
+        }
+        if ((formatType & 0x20) != 0 && len < 4) {
+            int signBit = 1 << (len * 8 - 1);
+            if ((val & signBit) != 0) val -= (1 << (len * 8));
+        }
+        return val;
+    }
     public Float getFloatValue(int formatType, int offset) { return null; }
-    public String getStringValue(int offset) { return null; }
+    public String getStringValue(int offset) {
+        if (mValue == null || offset < 0 || offset >= mValue.length) return null;
+        int end = offset;
+        while (end < mValue.length && mValue[end] != 0) end++;
+        return new String(mValue, offset, end - offset, java.nio.charset.StandardCharsets.UTF_8);
+    }
 
     // PARCELABLE on AOSP. A GATT-server app passes characteristics across
     // process boundaries, so the type has to be marshallable for those

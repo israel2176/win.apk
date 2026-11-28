@@ -306,10 +306,7 @@ public final class BluetoothGatt implements BluetoothProfile {
             case HostBluetooth.GATT_CHAR_READ:
                 if (status == GATT_SUCCESS) c.setValue(value);
                 end();
-                deliver(() -> {
-                    mCallback.onCharacteristicRead(this, c, status);
-                    mCallback.onCharacteristicRead(this, c, value != null ? value : new byte[0], status);
-                });
+                deliver(() -> mCallback.onCharacteristicRead(this, c, value != null ? value : new byte[0], status));
                 break;
             case HostBluetooth.GATT_CHAR_WRITE:
                 end();
@@ -317,10 +314,7 @@ public final class BluetoothGatt implements BluetoothProfile {
                 break;
             case HostBluetooth.GATT_CHAR_CHANGED:
                 c.setValue(value);
-                deliver(() -> {
-                    mCallback.onCharacteristicChanged(this, c);
-                    mCallback.onCharacteristicChanged(this, c, value != null ? value : new byte[0]);
-                });
+                deliver(() -> mCallback.onCharacteristicChanged(this, c, value != null ? value : new byte[0]));
                 break;
             case HostBluetooth.GATT_DESC_READ:
             case HostBluetooth.GATT_DESC_WRITE: {

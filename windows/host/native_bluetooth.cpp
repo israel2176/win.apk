@@ -1131,15 +1131,25 @@ void on_advertisement(IInspectable* args_obj) {
     const std::vector<uint8_t> bytes = bt::advertisement_bytes(sections);
     {
         std::lock_guard<std::mutex> l(g_scan_lock);
+        static std::unordered_map<uint64_t, std::vector<uint8_t>> g_last_scan_response;
         if (g_last_advertisement.size() > 2048) {
             g_last_advertisement.clear();
+            g_last_scan_response.clear();
             g_last_name.clear();
         }
         if (scan_response) {
-            e.record = g_last_advertisement[e.address];
-            e.record.insert(e.record.end(), bytes.begin(), bytes.end());
+            g_last_scan_response[e.address] = bytes;
         } else {
             g_last_advertisement[e.address] = bytes;
+        }
+        if (e.legacy) {
+            std::vector<uint8_t> padded(62, 0);
+            const auto& adv_bytes = g_last_advertisement[e.address];
+            const auto& rsp_bytes = g_last_scan_response[e.address];
+            std::copy_n(adv_bytes.begin(), std::min<size_t>(adv_bytes.size(), 31), padded.begin());
+            std::copy_n(rsp_bytes.begin(), std::min<size_t>(rsp_bytes.size(), 31), padded.begin() + 31);
+            e.record = std::move(padded);
+        } else {
             e.record = bytes;
         }
         // A name seen in an earlier packet (the scan response, usually)
@@ -1825,8 +1835,18 @@ void do_notify(Connection& c, const Command& cmd) {
 // Windows negotiates the MTU itself; requestMtu answers with what it got.
 void do_mtu(Connection& c) {
     int mtu = 23;
-    if (c.connected && !c.services.empty()) {
-        IGattDeviceService3* s3 = query<IGattDeviceService3>(c.services[0].service, kIidService3);
+    if (c.connected) {
+        IGattDeviceService* first_svc = nullptr;
+        if (!c.services.empty()) {
+            first_svc = c.services[0].service;
+            if (first_svc) first_svc->AddRef();
+        } else if (c.service_list) {
+            UINT32 n = 0;
+            if (SUCCEEDED(c.service_list->get_Size(&n)) && n > 0) {
+                if (FAILED(c.service_list->GetAt(0, &first_svc))) first_svc = nullptr;
+            }
+        }
+        IGattDeviceService3* s3 = first_svc ? query<IGattDeviceService3>(first_svc, kIidService3) : nullptr;
         IGattSession* session = nullptr;
         UINT16 pdu = 0;
         if (s3 && SUCCEEDED(s3->get_Session(&session)) && session && SUCCEEDED(session->get_MaxPduSize(&pdu)) && pdu) {
@@ -1834,6 +1854,7 @@ void do_mtu(Connection& c) {
         }
         release(session);
         release(s3);
+        release(first_svc);
     }
     push_event(c, Event{kEvMtu, c.connected ? kGattSuccess : kGattError, mtu, 0, {}, {}});
 }

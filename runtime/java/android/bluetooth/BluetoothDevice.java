@@ -177,6 +177,11 @@ public class BluetoothDevice implements Parcelable {
         if (uuid == null) throw new java.io.IOException("uuid is null");
         return new BluetoothSocket(this, uuid, false);
     }
+    /** Hidden AOSP method used via reflection by OBD-II/serial apps. */
+    public BluetoothSocket createRfcommSocket(int channel) throws java.io.IOException {
+        if (channel < 1 || channel > 30) throw new java.io.IOException("invalid RFCOMM channel: " + channel);
+        return new BluetoothSocket(this, java.util.UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"), true);
+    }
 
     /** AOSP connectGatt(): begins a GATT client connection, reported to the
      *  callback (onConnectionStateChange). A host that cannot connect

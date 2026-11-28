@@ -520,17 +520,24 @@ jobjectArray JNICALL Radio_bluetoothRadio(JNIEnv* env, jclass) {
     HANDLE radio = nullptr;
     HBLUETOOTH_RADIO_FIND find = BluetoothFindFirstRadio(&params, &radio);
     if (!find) return nullptr;
-    BluetoothFindRadioClose(find);
-    BLUETOOTH_RADIO_INFO info{};
-    info.dwSize = sizeof(info);
     std::vector<std::string> out;
-    if (BluetoothGetRadioInfo(radio, &info) == ERROR_SUCCESS) {
-        // A radio switched off in Settings stays listed but stops accepting
-        // connections, which is what "on" means to an app.
-        const bool on = BluetoothIsConnectable(radio) || BluetoothIsDiscoverable(radio);
-        out = {utf8(info.szName), bt_address(info.address), on ? "1" : "0"};
-    }
-    CloseHandle(radio);
+    do {
+        BLUETOOTH_RADIO_INFO info{};
+        info.dwSize = sizeof(info);
+        if (BluetoothGetRadioInfo(radio, &info) == ERROR_SUCCESS) {
+            const bool on = BluetoothIsConnectable(radio) || BluetoothIsDiscoverable(radio);
+            if (out.empty() || on) {
+                out = {utf8(info.szName), bt_address(info.address), on ? "1" : "0"};
+            }
+            if (on) {
+                CloseHandle(radio);
+                break;
+            }
+        }
+        CloseHandle(radio);
+        radio = nullptr;
+    } while (BluetoothFindNextRadio(find, &radio));
+    BluetoothFindRadioClose(find);
     return out.empty() ? nullptr : to_java(env, out);
 }
 

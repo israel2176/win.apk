@@ -4018,7 +4018,7 @@ public final class MacApkPackageManager extends PackageManager {
         if (name == null) return false;
         boolean has = version <= 0 && SYSTEM_FEATURES.contains(name);
         if (version <= 0 && "android.hardware.bluetooth_le".equals(name)) {
-            has = BluetoothBridge.available();
+            has = HostBluetooth.leAvailable() || BluetoothBridge.available();
         }
         // AOSP declares these from the device's camera HAL; here, only when a
         // webcam really autofocuses / has a torch (CameraBridge asks the driver).
@@ -4077,7 +4077,8 @@ public final class MacApkPackageManager extends PackageManager {
             fl.name = FEATURE_CAMERA_FLASH_NAME;
             res.add(fl);
         }
-        if (BluetoothBridge.available()) {
+        if ((HostBluetooth.leAvailable() || BluetoothBridge.available())
+                && !SYSTEM_FEATURES.contains("android.hardware.bluetooth_le")) {
             android.content.pm.FeatureInfo ble = new android.content.pm.FeatureInfo();
             ble.name = "android.hardware.bluetooth_le";
             res.add(ble);
