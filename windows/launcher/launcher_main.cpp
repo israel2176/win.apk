@@ -109,6 +109,7 @@
 #include <vector>
 
 #include "app_runs.h"
+#include "compat_policy.h"
 #include "debug_threads.h"
 #include "google_apps.h"
 #include "installs.h"
@@ -1188,7 +1189,17 @@ std::wstring run_args(const fs::path& apk) { return L"--run \"" + apk.wstring() 
 void remove_app_shortcuts(const App& app);
 
 void make_app_shortcuts(const App& app, bool desktop) {
-    if (system_app(app.name)) {  // a system component has no shortcut (and loses one an older launcher made)
+    winapk::launcher::CompatRecord compat;
+    if (const fs::path cf = app_dir(app.name) / L"compat.json"; fs::exists(cf)) {
+        std::ifstream in(cf, std::ios::binary);
+        std::string raw((std::istreambuf_iterator<char>(in)), {});
+        if (raw.find("\"verdict\": \"unsupported\"") != std::string::npos ||
+            raw.find("\"verdict\": \"quarantined\"") != std::string::npos ||
+            raw.find("\"verdict\": \"unopenable\"") != std::string::npos) {
+            compat.verdict = "unsupported";
+        }
+    }
+    if (system_app(app.name) || !winapk::launcher::should_display_in_library(compat)) {
         remove_app_shortcuts(app);
         return;
     }
@@ -1215,7 +1226,8 @@ void remove_app_shortcuts(const App& app) {
 // an app's notifications show no name or icon: once (the ShortcutVersion
 // setting), every app's shortcuts are written again. Bump the version when
 // what a shortcut holds changes. 2: Google's apps lost theirs.
-constexpr DWORD kShortcutVersion = 2;
+// 3: R3 compatibility filtering removes unsupported/unopenable app shortcuts.
+constexpr DWORD kShortcutVersion = 3;
 
 void refresh_app_shortcuts() {
     if (setting(L"ShortcutVersion", 0) >= kShortcutVersion) return;
@@ -3369,7 +3381,19 @@ void rebuild_tiles() {
         if (!find_app(name) && !g_setup_names.count(name) && shown.insert(name).second) g_tiles.push_back({-1, name});
     }
     for (size_t i = 0; i < g_apps.size(); ++i) {
-        if (!system_app(g_apps[i].name)) g_tiles.push_back({static_cast<int>(i), L""});
+        if (system_app(g_apps[i].name)) continue;
+        winapk::launcher::CompatRecord compat;
+        if (const fs::path cf = app_dir(g_apps[i].name) / L"compat.json"; fs::exists(cf)) {
+            std::ifstream in(cf, std::ios::binary);
+            std::string raw((std::istreambuf_iterator<char>(in)), {});
+            if (raw.find("\"userOverride\": true") != std::string::npos) compat.user_override = true;
+            if (raw.find("\"verdict\": \"unsupported\"") != std::string::npos) compat.verdict = "unsupported";
+            else if (raw.find("\"verdict\": \"quarantined\"") != std::string::npos) compat.verdict = "quarantined";
+            else if (raw.find("\"verdict\": \"unopenable\"") != std::string::npos) compat.verdict = "unopenable";
+        }
+        if (winapk::launcher::should_display_in_library(compat)) {
+            g_tiles.push_back({static_cast<int>(i), L""});
+        }
     }
     compute_layout();
     InvalidateRect(g_main, nullptr, FALSE);
@@ -6536,6 +6560,12 @@ void start_embedded(Embedded& e, const App& app) {
     auto* job = new RunJob{app.name, app.apk, {}};
     job->env = {L"WINAPK_EMBED_PARENT=" + std::to_wstring(reinterpret_cast<uintptr_t>(e.panel)),
                 L"WINAPK_PHONE_SIZE=" + std::to_wstring(w) + L"x" + std::to_wstring(h)};
+    if (app.name == L"app.apkstore") {
+        job->env.push_back(L"WINAPK_SUPPORTED_ABIS=x86_64,arm64-v8a");
+        job->env.push_back(L"WINAPK_MAX_SDK=36");
+        job->env.push_back(L"WINAPK_UNSUPPORTED_FEATURES=vulkan,watch,automotive,television,telephony,nfc,biometrics,ir,uwb,usb_host,vr");
+        job->env.push_back(L"WINAPK_UNSUPPORTED_ENGINES=pairip,netease_nis,alibaba_sg,gecko_multiprocess");
+    }
     CloseHandle(CreateThread(nullptr, 0, run_thread, job, 0, nullptr));
     place_panels();
     update_timer();
@@ -10866,12 +10896,21 @@ void write_registry() {
         if (since.empty()) since = when;
         out += first ? "\n" : ",\n";
         first = false;
+        winapk::launcher::CompatRecord compat;
+        if (const fs::path cf = app_dir(app.name) / L"compat.json"; fs::exists(cf)) {
+            std::ifstream in(cf, std::ios::binary);
+            std::string raw((std::istreambuf_iterator<char>(in)), {});
+            if (raw.find("\"verdict\": \"unsupported\"") != std::string::npos) compat.verdict = "unsupported";
+            else if (raw.find("\"verdict\": \"quarantined\"") != std::string::npos) compat.verdict = "quarantined";
+            else if (raw.find("\"verdict\": \"unopenable\"") != std::string::npos) compat.verdict = "unopenable";
+        }
+        const std::string reg_state = winapk::launcher::registry_state_for_compat(compat);
         out += "{\"package\":" + json_string(p[0]) + ",\"label\":" + json_string(wide_to_utf8(app.label)) +
                ",\"versionCode\":" + std::to_string(p.size() > 1 ? std::atoll(p[1].c_str()) : 0) +
                ",\"versionName\":" + json_string(p.size() > 2 ? p[2] : "") +
                ",\"apkPath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
                ",\"bundlePath\":" + json_string(wide_to_utf8(app.apk.wstring())) +
-               ",\"dirName\":" + json_string(wide_to_utf8(app.name)) + ",\"state\":\"installed\"" +
+               ",\"dirName\":" + json_string(wide_to_utf8(app.name)) + ",\"state\":" + json_string(reg_state) +
                ",\"installedAt\":" + json_string(since) + ",\"updatedAt\":" + json_string(when) + "}";
     }
     out += "\n]}\n";

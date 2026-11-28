@@ -72,9 +72,11 @@ public final class AppMeta {
                 }
             }
             save(new File(appDir, "package.txt"), text.toString());
+            AppCompat.Result compat = AppCompat.evaluate(java.util.List.of(new File(apkPath).toPath()));
+            save(new File(appDir, "compat.json"), compat.toJson());
             label = resolve(mf.applicationLabel, apkPath, pkg);
         } catch (Throwable t) {
-            System.err.println("[win.apk] reading the app's name failed: " + t);
+            throw new IllegalStateException("Manifest.parse failed for " + apkPath + ": " + t, t);
         }
         if (label == null || label.isEmpty()) label = pkg;
         if (label == null || label.isEmpty()) label = new File(apkPath).getName();

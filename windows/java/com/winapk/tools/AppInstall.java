@@ -176,6 +176,12 @@ public final class AppInstall {
                 System.err.println("[install] invalid package name \"" + pkg + "\" in " + source + ": " + bad);
                 return 3;
             }
+            AppCompat.Result compat = AppCompat.evaluate(members);
+            if (!compat.isInstallAllowed()) {
+                System.err.println("[install] INSTALL_FAILED_UNSUPPORTED: " + pkg + " (" + compat.reasonCode
+                        + ": " + compat.reasonDetail + ")");
+                return 3;
+            }
             // PackageManagerService refuses an app whose native code is for none of the device's ABIs
             // (NativeLibraryHelper.copyNativeBinariesForSupportedAbi: INSTALL_FAILED_NO_MATCHING_ABIS),
             // before anything is installed: an armeabi-v7a-only app on an x86_64 device with no ARM

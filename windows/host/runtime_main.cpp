@@ -114,6 +114,8 @@ struct Options {
     fs::path package_to;  // --package-to: write the app's package name there and stop
     fs::path apk_set_to;  // --apk-set-to: each of apk_set's package and split name there, and stop
     std::vector<std::wstring> apk_set;
+    fs::path check_compat_out;  // --check-compat <apk> [--splits ...] --out <json>
+    std::vector<std::wstring> check_compat_splits;
     bool gms = false;     // --gms <subcommand> [args]: com.macapk.gms.GmsCli, no app
     std::vector<std::wstring> gms_args;
     bool system = false;  // --system: the system broker, no app
@@ -367,6 +369,19 @@ bool parse_args(int argc, wchar_t** argv, Options* o) {
             // The files are the rest of the line, as --gms's arguments are.
             if (!value(&o->apk_set_to)) return false;
             for (int j = i + 1; j < argc; ++j) o->apk_set.emplace_back(argv[j]);
+            break;
+        } else if (a == L"--check-compat") {
+            if (!value(&o->apk)) return false;
+            while (i < argc) {
+                const std::wstring next = argv[i++];
+                if (next == L"--out") {
+                    if (i >= argc) return false;
+                    o->check_compat_out = argv[i++];
+                    break;
+                }
+                if (next != L"--splits") o->check_compat_splits.push_back(next);
+            }
+            if (o->check_compat_out.empty()) return false;
             break;
         }
         else if (a == L"--system") o->system = true;
@@ -2533,6 +2548,13 @@ int wmain(int argc, wchar_t** argv) {
         std::vector<std::wstring> args{L"--set", b.options.apk_set_to.wstring()};
         args.insert(args.end(), b.options.apk_set.begin(), b.options.apk_set.end());
         return run_java(b.options, b.options.lib / "winapk-tools.jar", L"com.winapk.tools.AppInstall", args);
+    }
+    if (!b.options.check_compat_out.empty()) {
+        std::vector<std::wstring> args{b.options.apk.wstring()};
+        args.insert(args.end(), b.options.check_compat_splits.begin(), b.options.check_compat_splits.end());
+        args.push_back(L"--out");
+        args.push_back(b.options.check_compat_out.wstring());
+        return run_java(b.options, b.options.lib / "winapk-tools.jar", L"com.winapk.tools.AppCompat", args);
     }
 
     // F-Droid and other stores install through PackageInstaller, which hands

@@ -72,6 +72,21 @@ public final class Manifest {
      *  these (:353, :367), so they are what a package with no <uses-sdk> keeps. */
     static final int DEFAULT_MIN_SDK_VERSION = 1;
     static final int DEFAULT_TARGET_SDK_VERSION = 0;
+    public static final int PREVIEW_MIN_SDK = 10000;
+
+    public static final class UsesLibraryEntry {
+        public final String name;
+        public final boolean required;
+        public final boolean isNative;
+        public UsesLibraryEntry(String name, boolean required, boolean isNative) {
+            this.name = name;
+            this.required = required;
+            this.isNative = isNative;
+        }
+    }
+
+    public final java.util.List<String> requiredFeatures = new java.util.ArrayList<>();
+    public final java.util.List<UsesLibraryEntry> usesLibraries = new java.util.ArrayList<>();
 
     public final String packageName;
     /** <manifest android:sharedUserId>, or null. Packages that share one share
@@ -1897,7 +1912,11 @@ public final class Manifest {
             String tag = sdk.getLocalName() != null ? sdk.getLocalName() : sdk.getTagName();
             if (!"uses-sdk".equals(tag)) continue;
             usesSdkPresent = true;
+            String minRaw = sdk.getAttributeNS(ANDROID_NS, "minSdkVersion");
             int minVers = attrInt(sdk, "minSdkVersion", DEFAULT_MIN_SDK_VERSION);
+            if (minRaw != null && !minRaw.isEmpty() && !Character.isDigit(minRaw.charAt(0)) && minRaw.charAt(0) != '0') {
+                minVers = PREVIEW_MIN_SDK;
+            }
             // Absent (or unparseable) target -> minVers: parseUsesSdk's
             // `else { targetVers = minVers; }`.
             int targetVers = attrInt(sdk, "targetSdkVersion", minVers);
@@ -2167,6 +2186,25 @@ public final class Manifest {
         // com.google.uid.shared is fixed across builds/devices), not per-APK
         // behaviour, and it forges nothing: the Play Store keeps its real cert; we
         // only place it in its real uid group.
+        for (FeatureEntry fe : reqFeatures) {
+            if (fe.required && fe.name != null) built.requiredFeatures.add(fe.name);
+        }
+        if (app != null) {
+            NodeList appKids = app.getChildNodes();
+            for (int i = 0; i < appKids.getLength(); i++) {
+                Node kn = appKids.item(i);
+                if (kn.getNodeType() != Node.ELEMENT_NODE) continue;
+                Element ke = (Element) kn;
+                String kt = ke.getLocalName() != null ? ke.getLocalName() : ke.getTagName();
+                if ("uses-library".equals(kt) || "uses-native-library".equals(kt)) {
+                    String lname = ke.getAttributeNS(ANDROID_NS, "name");
+                    if (lname != null && !lname.isEmpty()) {
+                        boolean req = !"false".equalsIgnoreCase(ke.getAttributeNS(ANDROID_NS, "required"));
+                        built.usesLibraries.add(new UsesLibraryEntry(lname, req, "uses-native-library".equals(kt)));
+                    }
+                }
+            }
+        }
         if (built.sharedUserId == null) built.sharedUserId = impliedSharedUserId(built.packageName);
         return built;
     }
