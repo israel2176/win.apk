@@ -412,7 +412,7 @@ public class PreferenceActivity extends android.app.ListActivity
                             (int) HEADER_ID_UNDEFINED);
                     assignTitle(header, attrs);
                     header.iconRes = PreferenceAttrs.resId(this, attrs, "icon", 0);
-                    header.fragment = PreferenceAttrs.raw(attrs, "fragment");
+                    header.fragment = PreferenceAttrs.string(this, attrs, "fragment");
 
                     if (curBundle == null) curBundle = new Bundle();
 

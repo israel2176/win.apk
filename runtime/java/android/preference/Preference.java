@@ -182,7 +182,11 @@ public class Preference implements Comparable<Preference> {
         if (attrs == null || context == null) return;
 
         mIconResId = PreferenceAttrs.resId(context, attrs, "icon", 0);
-        String key = PreferenceAttrs.raw(attrs, "key");
+        // AOSP reads key, fragment and dependency with TypedArray.getString, which
+        // resolves a reference: android:key="@string/pref_key_x" is the key
+        // "pref_key_x", not the text "@string/pref_key_x" (ArtScroll's preferences
+        // were written under the reference's text and read back as null).
+        String key = PreferenceAttrs.string(context, attrs, "key");
         if (key != null) mKey = key;
 
         String rawTitle = PreferenceAttrs.raw(attrs, "title");
@@ -194,7 +198,7 @@ public class Preference implements Comparable<Preference> {
         if (summary != null) mSummary = summary;
 
         mOrder = PreferenceAttrs.integer(context, attrs, "order", mOrder);
-        String fragment = PreferenceAttrs.raw(attrs, "fragment");
+        String fragment = PreferenceAttrs.string(context, attrs, "fragment");
         if (fragment != null) mFragment = fragment;
 
         mLayoutResource = PreferenceAttrs.resId(context, attrs, "layout", mLayoutResource);
@@ -205,7 +209,7 @@ public class Preference implements Comparable<Preference> {
         mSelectable = PreferenceAttrs.bool(context, attrs, "selectable", true);
         mPersistent = PreferenceAttrs.bool(context, attrs, "persistent", mPersistent);
 
-        String dependency = PreferenceAttrs.raw(attrs, "dependency");
+        String dependency = PreferenceAttrs.string(context, attrs, "dependency");
         if (dependency != null) mDependencyKey = dependency;
 
         // AOSP: mDefaultValue = onGetDefaultValue(a, attr). The virtual call is
@@ -722,7 +726,17 @@ public class Preference implements Comparable<Preference> {
         mPreferenceDataStore = dataStore;
     }
 
+    /** AOSP returns mPreferenceManager.getEditor(): during the manager's batch
+     *  (setDefaultValues' inflation) that is the one editor the batch applies at
+     *  its end, and tryCommit does not apply it per write. A fresh editor here
+     *  was never applied, so no platform preference's default was saved
+     *  (ArtScroll read its ListPreference's key back as null and crashed in
+     *  onCreate). Unattached, the default store's, divergence (1). */
     public SharedPreferences.Editor getEditor() {
+        if (mPreferenceManager != null) {
+            SharedPreferences.Editor editor = mPreferenceManager.getEditor();
+            if (editor != null) return editor;
+        }
         SharedPreferences sp = getSharedPreferences();
         return sp == null ? null : sp.edit();
     }
