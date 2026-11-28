@@ -597,9 +597,21 @@ void JNICALL Cocoa_setPhoneSize(JNIEnv*, jclass, jint w, jint h) {
     window_set_phone_size(g_phone_w, g_phone_h);
 }
 
+int host_display_hz() {
+    static const int hz = [] {
+        DEVMODEW dm{};
+        dm.dmSize = sizeof(dm);
+        if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmDisplayFrequency >= 30) {
+            return static_cast<int>(dm.dmDisplayFrequency);
+        }
+        return kDisplayHz;
+    }();
+    return hz;
+}
+
 jint JNICALL Cocoa_phoneWidth(JNIEnv*, jclass) { return g_phone_w; }
 jint JNICALL Cocoa_phoneHeight(JNIEnv*, jclass) { return g_phone_h; }
-jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return kDisplayHz; }  // swap_pacing.h: what swaps are paced to
+jint JNICALL Cocoa_displayHz(JNIEnv*, jclass) { return host_display_hz(); }
 
 // Surface pixels per point. TouchDispatcher multiplies view points by it, and
 // the surface is the phone size at the device density, so the two must agree.
@@ -1181,7 +1193,7 @@ public:
         }
     }
     void wait() {
-        next_.QuadPart += freq_.QuadPart / 60;
+        next_.QuadPart += freq_.QuadPart / host_display_hz();
         LARGE_INTEGER now;
         QueryPerformanceCounter(&now);
         if (next_.QuadPart <= now.QuadPart) {

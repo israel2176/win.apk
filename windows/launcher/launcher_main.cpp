@@ -3392,7 +3392,10 @@ void refresh() {
     g_library_stamp = library_stamp();
     g_apps = library();
     scan_packages();
-    g_icons.clear();
+    for (auto it = g_icons.begin(); it != g_icons.end();) {
+        if (find_app(it->first)) ++it;
+        else it = g_icons.erase(it);
+    }
     if (!find_app(g_selected)) g_selected.clear();
     rebuild_tiles();
 }
